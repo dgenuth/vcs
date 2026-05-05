@@ -6242,6 +6242,8 @@ function renderSettings(c) {
     authNote.appendChild(el('div',{style:{fontSize:'9px',color:'var(--green)',fontWeight:'600',marginBottom:'3px'}},'✅ Upgrade Path: Microsoft OAuth (coming after GitHub Pages hosting)'));
     authNote.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.6'}},'Once hosted on GitHub Pages, we will wire up Microsoft/Outlook sign-in — same as Fathom, Teams, and all your Microsoft apps. Users click "Sign in with Microsoft", the Microsoft portal verifies their identity, and sends back a confirmed token. VCS never handles passwords at all. Only users whose Microsoft email matches your approved list get through. Until then, keep the VCS URL private and only share it with approved team members.'));
     secUsers.appendChild(authNote);;
+    const exportRow=el('div',{style:{display:'flex',gap:'6px',marginTop:'8px',flexWrap:'wrap'}});
+    secUsers.appendChild(exportRow);
     exportRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){
       const data=JSON.stringify(getApprovedUsers(),null,2);
       const blob=new Blob([data],{type:'application/json'});
