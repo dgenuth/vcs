@@ -2218,7 +2218,7 @@ async function loadFromGoogleDrive() {
         '• The "Load from Google Drive" button will work', el('br',{}),
         '• Saving will push back to Drive automatically', el('br',{}),
         '• All features unlock (voice, calendar sync, etc.)'
-      );
+      ));
       const btns = el('div',{class:'modal-btns'});
       btns.appendChild(el('button',{class:'btn-primary',onclick(){window.open('https://pages.github.com','_blank');closeModal();}},'🚀 GitHub Pages Setup Guide'));
       btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));
