@@ -2204,33 +2204,74 @@ async function loadFromGoogleDrive() {
   if (!composioKey) { toast('⚠ Add your Composio API key in Settings first','#f59e0b'); return; }
   if (!fileId) { toast('⚠ Add your Google Drive File ID in Settings first','#f59e0b'); return; }
 
+  // Detect iframe/file:// sandbox environment — Composio calls will be blocked by CORS
+  const isBlocked = window.location.protocol === 'file:' || window.self !== window.top;
+  if (isBlocked) {
+    openModal(body => {
+      body.appendChild(el('h3',{},'☁ Google Drive — Hosting Required'));
+      body.appendChild(el('p',{style:{fontSize:'11px',lineHeight:'1.7',color:'var(--text)',marginBottom:'10px'}},
+        'Live Google Drive loading requires VCS to be hosted on a real HTTPS URL (e.g. GitHub Pages). '+
+        'Right now the app is running inside a sandboxed environment that blocks outbound API calls.'));
+      body.appendChild(el('div',{style:{background:'rgba(79,124,255,.08)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'5px',padding:'10px',fontSize:'10px',lineHeight:'1.8',marginBottom:'10px'}},
+        el('strong',{},'Once you deploy to GitHub Pages:'), el('br',{}),
+        '• Logging in will automatically load your file from Drive', el('br',{}),
+        '• The "Load from Google Drive" button will work', el('br',{}),
+        '• Saving will push back to Drive automatically', el('br',{}),
+        '• All features unlock (voice, calendar sync, etc.)'
+      );
+      const btns = el('div',{class:'modal-btns'});
+      btns.appendChild(el('button',{class:'btn-primary',onclick(){window.open('https://pages.github.com','_blank');closeModal();}},'🚀 GitHub Pages Setup Guide'));
+      btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));
+      body.appendChild(btns);
+    });
+    return;
+  }
+
   toast('📂 Loading from Google Drive...','#4f7cff');
   try {
-    // Step 1: Download the file from Drive via Composio
+    // Composio: download file — uses file_id (snake_case) as confirmed in working API
     const dlResp = await fetch('https://backend.composio.dev/api/v2/actions/GOOGLEDRIVE_DOWNLOAD_FILE/execute',{
       method:'POST',
       headers:{'Content-Type':'application/json','x-api-key':composioKey},
-      body:JSON.stringify({input:{fileId}})
+      body:JSON.stringify({input:{file_id:fileId},connected_account_id:'soy-knab'})
     });
+    if (!dlResp.ok) throw new Error('Composio API error: '+dlResp.status+' '+dlResp.statusText);
     const dlData = await dlResp.json();
-    const s3url = dlData?.data?.downloaded_file_content?.s3url || dlData?.data?.downloaded_file_content?.url;
-    if (!s3url) throw new Error('Could not get download URL from Google Drive. Response: '+JSON.stringify(dlData).slice(0,200));
 
-    // Step 2: Fetch the actual file bytes
-    const fileResp = await fetch(s3url);
-    if (!fileResp.ok) throw new Error('Could not download file bytes: '+fileResp.status);
-    const arrayBuffer = await fileResp.arrayBuffer();
+    // Composio may return base64 directly or an S3 URL depending on file size
+    const b64 = dlData?.data?.file_content || dlData?.output?.file_content;
+    const s3url = dlData?.data?.downloaded_file_content?.s3url || dlData?.data?.downloaded_file_content?.url || dlData?.data?.s3url;
+
+    let arrayBuffer;
+    if (b64) {
+      // Base64 path
+      const binary = atob(b64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      arrayBuffer = bytes.buffer;
+    } else if (s3url) {
+      // S3 URL path
+      const fileResp = await fetch(s3url);
+      if (!fileResp.ok) throw new Error('Could not download file bytes: '+fileResp.status);
+      arrayBuffer = await fileResp.arrayBuffer();
+    } else {
+      throw new Error('Unexpected Composio response — no file content found. Response: '+JSON.stringify(dlData).slice(0,300));
+    }
+
     const file = new File([arrayBuffer], S.settings.driveFileName||'Vendor_Catalogue.xlsm', {
       type: 'application/vnd.ms-excel.sheet.macroEnabled.12'
     });
-
-    // Step 3: Load it just like a manually uploaded file
     await loadFile(file);
     S.driveLastSync = new Date();
-    toast('✅ Loaded from Google Drive successfully');
+    toast('✅ Loaded from Google Drive');
   } catch(e) {
-    toast('❌ Drive load failed: '+e.message,'#ef4444');
     console.error('Drive load error:', e);
+    // Distinguish network/CORS from API errors
+    if (e.message.includes('fetch')) {
+      toast('❌ Network error — check your internet connection or host on HTTPS','#ef4444');
+    } else {
+      toast('❌ Drive load failed: '+e.message.slice(0,80),'#ef4444');
+    }
   }
 }
 
@@ -2408,41 +2449,159 @@ function debouncedSaveSettings() {
 }
 
 // ─── User Auth & Permissions ──────────────────────────────────────────────────
-const ROLES = {admin:'Admin', manager:'Manager', viewer:'Viewer'};
+const ROLES = {admin:'Admin', manager:'Manager', viewer:'Viewer', restricted:'Restricted Viewer'};
+const ROLE_COLORS = {admin:'var(--green)',manager:'var(--blue)',viewer:'var(--muted)',restricted:'var(--amber)'};
 const ROLE_PERMS = {
-  admin:  {editAll:true,manageUsers:true,deleteHistory:true,configAI:true,configSF:true,exportData:true,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true},
-  manager:{editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configSF:false,exportData:true,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true},
-  viewer: {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configSF:false,exportData:true,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false},
+  admin:      {editAll:true,manageUsers:true,deleteHistory:true,configAI:true,configDrive:true,configSF:true,exportData:true,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,viewFees:true,viewContacts:true,viewFinancials:true},
+  manager:    {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:true,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,viewFees:true,viewContacts:true,viewFinancials:true},
+  viewer:     {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,viewFees:true,viewContacts:true,viewFinancials:true},
+  restricted: {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,viewFees:false,viewContacts:false,viewFinancials:false},
 };
-const USER = {email:null,name:null,role:null,loggedIn:false,loginTime:null,sfToken:null,sfInstance:null};
+// Fields that restricted/viewer roles may have explicitly hidden by admin
+// hiddenFields is stored per-user in the approved users list
+const ALL_RESTRICTABLE_FIELDS = [
+  {key:'adminFee',label:'Admin Fee'},
+  {key:'tiers',label:'Tiers / Rebates'},
+  {key:'email',label:'Contact Email'},
+  {key:'bizPhone',label:'Contact Phone'},
+  {key:'mobile',label:'Mobile Phone'},
+  {key:'procContact',label:'Contact Name'},
+  {key:'title',label:'Contact Title'},
+  {key:'contractNo',label:'Contract Number'},
+  {key:'notes',label:'Notes'},
+  {key:'comments',label:'Comments'},
+  {key:'perpetuity',label:'Perpetuity Clause'},
+  {key:'tail',label:'Tail Period'},
+];
+const USER = {email:null,name:null,role:null,loggedIn:false,loginTime:null,sfToken:null,sfInstance:null,hiddenFields:[]};
 const AUTH_KEY = 'vcs_approved_users';
+const LOGIN_LOG_KEY = 'vcs_login_log';
 function getApprovedUsers(){try{return JSON.parse(localStorage.getItem(AUTH_KEY)||'[]');}catch(e){return [];}}
 function setApprovedUsers(u){localStorage.setItem(AUTH_KEY,JSON.stringify(u));}
 
-function attemptLogin(email){
+// Login attempt log — stored in localStorage, admin-viewable
+function getLoginLog(){try{return JSON.parse(localStorage.getItem(LOGIN_LOG_KEY)||'[]');}catch(e){return[];}}
+function logLoginAttempt(email,success,reason){
+  const log=getLoginLog();
+  log.unshift({ts:new Date().toISOString(),email,success,reason,ua:navigator.userAgent.slice(0,80)});
+  if(log.length>200) log.splice(200); // keep last 200
+  localStorage.setItem(LOGIN_LOG_KEY,JSON.stringify(log));
+}
+
+function attemptLogin(email, password){
   email=String(email||'').trim().toLowerCase();
-  if(!email||!email.includes('@'))return{ok:false,msg:'Enter a valid email address'};
+  if(!email||!email.includes('@')){return{ok:false,msg:'Enter a valid email address'};}
   const users=getApprovedUsers();
-  // Bootstrap: first user becomes admin
-  if(!users.length){setApprovedUsers([{email,name:email.split('@')[0],role:'admin',added:isoDate(new Date()),addedBy:'system (bootstrap)'}]);return loginAs({email,name:email.split('@')[0],role:'admin'});}
+  // Bootstrap: first ever login becomes admin with no password required
+  if(!users.length){
+    const bootstrapUser={email,name:email.split('@')[0],role:'admin',added:isoDate(new Date()),addedBy:'system (bootstrap)',password:'',hiddenFields:[]};
+    setApprovedUsers([bootstrapUser]);
+    logLoginAttempt(email,true,'bootstrap admin');
+    return loginAs(bootstrapUser);
+  }
   const found=users.find(u=>u.email.toLowerCase()===email);
-  if(!found)return{ok:false,msg:'Access denied — your email is not in the approved users list. Contact your administrator.'};
+  if(!found){
+    logLoginAttempt(email,false,'not in approved list');
+    return{ok:false,msg:'Access denied — your email is not in the approved users list. Contact your administrator.'};
+  }
+  // Password check — only enforced if the user record has a password set
+  if(found.password && found.password.trim()!==''){
+    if(String(password||'').trim()!==found.password.trim()){
+      logLoginAttempt(email,false,'wrong password');
+      return{ok:false,msg:'Incorrect password. Contact your administrator if you need a reset.'};
+    }
+  }
+  logLoginAttempt(email,true,'ok');
   return loginAs(found);
 }
 function loginAs(u){
-  USER.email=u.email;USER.name=u.name||u.email.split('@')[0];USER.role=u.role||'viewer';USER.loggedIn=true;USER.loginTime=new Date();
-  sessionStorage.setItem('vcs_session',JSON.stringify({email:USER.email,name:USER.name,role:USER.role,loginTime:USER.loginTime.toISOString()}));
+  USER.email=u.email;
+  USER.name=u.name||u.email.split('@')[0];
+  USER.role=u.role||'viewer';
+  USER.loggedIn=true;
+  USER.loginTime=new Date();
+  USER.hiddenFields=Array.isArray(u.hiddenFields)?u.hiddenFields:[];
+  sessionStorage.setItem('vcs_session',JSON.stringify({email:USER.email,name:USER.name,role:USER.role,loginTime:USER.loginTime.toISOString(),hiddenFields:USER.hiddenFields}));
   return{ok:true};
 }
 function restoreSession(){
-  try{const s=JSON.parse(sessionStorage.getItem('vcs_session')||'null');if(!s||!s.email)return false;
-  const users=getApprovedUsers();if(users.length&&!users.find(u=>u.email.toLowerCase()===s.email.toLowerCase()))return false;
-  USER.email=s.email;USER.name=s.name;USER.role=s.role;USER.loggedIn=true;USER.loginTime=new Date(s.loginTime);return true;}catch(e){return false;}
+  try{
+    const s=JSON.parse(sessionStorage.getItem('vcs_session')||'null');
+    if(!s||!s.email)return false;
+    const users=getApprovedUsers();
+    if(users.length&&!users.find(u=>u.email.toLowerCase()===s.email.toLowerCase()))return false;
+    USER.email=s.email;USER.name=s.name;USER.role=s.role;USER.loggedIn=true;
+    USER.loginTime=new Date(s.loginTime);
+    USER.hiddenFields=Array.isArray(s.hiddenFields)?s.hiddenFields:[];
+    return true;
+  }catch(e){return false;}
 }
-function logout(){
-  USER.email=null;USER.name=null;USER.role=null;USER.loggedIn=false;USER.loginTime=null;USER.sfToken=null;USER.sfInstance=null;
+
+// Check if a field is visible to the current user
+function canViewField(fieldKey){
+  if(!USER.loggedIn) return false;
+  if(USER.role==='admin'||USER.role==='manager') return true;
+  // Check role-level permission
+  const perms=ROLE_PERMS[USER.role]||{};
+  const feeFields=['adminFee','tiers','perpetuity','tail'];
+  const contactFields=['email','bizPhone','mobile','procContact','title'];
+  if(feeFields.includes(fieldKey)&&perms.viewFees===false) return false;
+  if(contactFields.includes(fieldKey)&&perms.viewContacts===false) return false;
+  // Check per-user hidden fields set by admin
+  if(USER.hiddenFields&&USER.hiddenFields.includes(fieldKey)) return false;
+  return true;
+}
+
+async function logout(){
+  // If there are unsaved changes and Drive is configured, offer to push before logout
+  if(S.loaded && S.dirty.size>0 && S.settings.driveFileId && S.settings.composioKey && S.settings.driveAutoSync){
+    try{
+      toast('☁ Syncing to Drive before sign out...','#4f7cff');
+      // Build minimal save without download — push current state to Drive
+      await pushSessionToDrive();
+    }catch(e){console.warn('Drive push on logout failed:',e);}
+  }
+  USER.email=null;USER.name=null;USER.role=null;USER.loggedIn=false;USER.loginTime=null;USER.sfToken=null;USER.sfInstance=null;USER.hiddenFields=[];
   sessionStorage.removeItem('vcs_session');sessionStorage.removeItem('vcs_sf_token');
   $('login-screen').style.display='flex';$('upload-screen').style.display='none';$('app').style.display='none';$('user-badge').style.display='none';
+}
+
+// Auto-load from Google Drive after login (requires HTTPS hosting)
+async function tryAutoLoadFromDrive(){
+  if(!S.settings.composioKey||!S.settings.driveFileId) return false;
+  try{
+    toast('☁ Loading Vendor Catalogue from Google Drive...','#4f7cff');
+    const resp=await fetch('https://backend.composio.dev/api/v2/actions/GOOGLEDRIVE_DOWNLOAD_FILE/execute',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-api-key':S.settings.composioKey},
+      body:JSON.stringify({input:{file_id:S.settings.driveFileId},connected_account_id:'soy-knab'})
+    });
+    if(!resp.ok) throw new Error('Drive fetch failed: '+resp.status);
+    const data=await resp.json();
+    // Composio returns base64 file content
+    const b64=data?.data?.file_content||data?.response?.data?.file_content||data?.output?.file_content;
+    if(!b64) throw new Error('No file content in Drive response');
+    const binary=atob(b64);
+    const bytes=new Uint8Array(binary.length);
+    for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+    const fileName=S.settings.driveFileName||'Vendor_Catalogue.xlsm';
+    const file=new File([bytes],fileName,{type:'application/vnd.ms-excel.sheet.macroEnabled.12'});
+    await loadFile(file);
+    return true;
+  }catch(e){
+    console.warn('Auto-load from Drive failed:',e.message);
+    toast('⚠ Could not load from Drive — load file manually','#f59e0b');
+    return false;
+  }
+}
+
+// Push current workbook state to Drive (used on logout and explicit save)
+async function pushSessionToDrive(){
+  if(!S.originalBuffer||!S.settings.driveFileId||!S.settings.composioKey) return false;
+  try{
+    const fileName=S.fileName||S.settings.driveFileName||'Vendor_Catalogue.xlsm';
+    return await saveToDrive(S.originalBuffer, fileName);
+  }catch(e){console.warn('pushSessionToDrive failed:',e);return false;}
 }
 
 // History helper — auto-tags entries with current user
@@ -2451,7 +2610,12 @@ function logHistory(entry) {
   entry.userName = USER.loggedIn ? USER.name : 'system';
   S.history.push(entry);
 }
-function hasPermission(p){return USER.loggedIn&&!!(ROLE_PERMS[USER.role]||{})[p];}
+function hasPermission(p){
+  if(!USER.loggedIn) return false;
+  // configDrive — only admin
+  if(p==='configDrive') return USER.role==='admin';
+  return !!(ROLE_PERMS[USER.role]||{})[p];
+}
 function updateUserBadge(){
   const b=$('user-badge');if(!USER.loggedIn){b.style.display='none';return;}
   const roleC={admin:'var(--green)',manager:'var(--blue)',viewer:'var(--muted)'};
@@ -5891,59 +6055,228 @@ function renderSettings(c) {
   if (hasPermission('manageUsers')) {
     const secUsers=el('div',{class:'settings-section'});
     secUsers.appendChild(el('h3',{},'👥 User Management'));
-    secUsers.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Manage who can access VCS and their permission level. Users must log in with their company email. Stored locally in this browser.'));
+    secUsers.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.5'}},'Control who can access VCS and what they can do. Only Admins can manage users. Stored in this browser — export user list to share settings with another device.'));
 
-    const users=getApprovedUsers();
-    if(users.length) {
-      const tbl=el('div',{style:{marginBottom:'10px'}});
-      users.forEach((u,i)=>{
-        const row=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',padding:'4px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
-        row.appendChild(el('span',{style:{flex:'1',fontWeight:u.email===USER.email?'700':'400',color:u.email===USER.email?'var(--blue)':'var(--text)'}},u.email+(u.email===USER.email?' (you)':'')));
-        row.appendChild(el('span',{style:{color:{admin:'var(--green)',manager:'var(--blue)',viewer:'var(--muted)'}[u.role]||'var(--muted)',fontWeight:'600',width:'60px'}},ROLES[u.role]||u.role));
-        // Role change dropdown
-        const sel=el('select',{class:'detail-edit-field',style:{width:'80px',fontSize:'9px'}});
-        ['admin','manager','viewer'].forEach(r=>{const o=el('option',{value:r},ROLES[r]);if(r===u.role)o.selected=true;sel.appendChild(o);});
-        sel.addEventListener('change',()=>{
-          const users2=getApprovedUsers();
-          const idx=users2.findIndex(x=>x.email===u.email);
-          if(idx>=0){users2[idx].role=sel.value;setApprovedUsers(users2);if(u.email===USER.email){USER.role=sel.value;updateUserBadge();}renderSettings(c);}
-        });
-        row.appendChild(sel);
-        if(u.email!==USER.email) {
-          row.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'},onclick(){
-            if(!confirm('Remove '+u.email+' from approved users?'))return;
-            const users3=getApprovedUsers().filter(x=>x.email!==u.email);setApprovedUsers(users3);renderSettings(c);
-          }},'✕'));
-        }
-        tbl.appendChild(row);
-      });
-      secUsers.appendChild(tbl);
+    // Role legend
+    const legend=el('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',marginBottom:'10px',padding:'6px 8px',background:'rgba(255,255,255,.03)',borderRadius:'4px',border:'1px solid var(--border)'}});
+    legend.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'4px',alignSelf:'center'}},'Roles:'));
+    const roleDescriptions={admin:'Full access — manage users, settings, edit all',manager:'Edit contracts/notes, save, export — no user management',viewer:'View everything, no edits, no export',restricted:'View only — admin sets which fields are hidden'};
+    for(const[role,desc] of Object.entries(roleDescriptions)){
+      const pill=el('span',{style:{fontSize:'9px',padding:'2px 7px',borderRadius:'10px',background:'rgba(255,255,255,.05)',border:'1px solid var(--border)',cursor:'default'},title:desc});
+      pill.appendChild(el('span',{style:{color:ROLE_COLORS[role],fontWeight:'700'}},ROLES[role]));
+      legend.appendChild(pill);
     }
-    // Add user form
-    const addRow=el('div',{style:{display:'flex',gap:'5px',alignItems:'center'}});
-    const emailIn=el('input',{type:'email',class:'modal-input',placeholder:'user@company.com',style:{flex:'1',height:'26px',fontSize:'10px'}});
-    const roleIn=el('select',{class:'detail-edit-field',style:{width:'80px',fontSize:'9px'}});
-    ['manager','viewer','admin'].forEach(r=>roleIn.appendChild(el('option',{value:r},ROLES[r])));
-    addRow.appendChild(emailIn); addRow.appendChild(roleIn);
-    addRow.appendChild(el('button',{class:'btn-xs btn-green',onclick(){
+    secUsers.appendChild(legend);
+
+    // User table
+    const users=getApprovedUsers();
+    const tblWrap=el('div',{style:{marginBottom:'12px'}});
+    users.forEach((u)=>{
+      const isYou=u.email===USER.email;
+      const card=el('div',{style:{background:'rgba(255,255,255,.02)',border:'1px solid var(--border)',borderRadius:'5px',padding:'8px 10px',marginBottom:'6px'}});
+
+      // Row 1: email + role badge + remove
+      const row1=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'6px'}});
+      row1.appendChild(el('span',{style:{flex:'1',fontSize:'10px',fontWeight:isYou?'700':'400',color:isYou?'var(--blue)':'var(--text)'}},u.email+(isYou?' (you)':'')));
+      row1.appendChild(el('span',{style:{fontSize:'9px',padding:'1px 6px',borderRadius:'10px',background:'rgba(255,255,255,.06)',color:ROLE_COLORS[u.role]||'var(--muted)',fontWeight:'600',border:'1px solid var(--border)'}},ROLES[u.role]||u.role));
+      if(!isYou){
+        row1.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',fontSize:'9px'},title:'Remove user',onclick(){
+          if(!confirm('Remove '+u.email+' from VCS? They will no longer be able to log in.'))return;
+          const updated=getApprovedUsers().filter(x=>x.email!==u.email);
+          setApprovedUsers(updated);renderSettings(c);toast(u.email+' removed');
+        }},'✕ Remove'));
+      }
+      card.appendChild(row1);
+
+      // Row 2: role selector + password
+      const row2=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',marginBottom:'6px'}});
+      row2.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'36px'}},'Role:'));
+      const sel=el('select',{class:'detail-edit-field',style:{fontSize:'9px',width:'140px'}});
+      // Only admin can assign admin role; non-admins see all 4 roles except can't elevate to admin
+      // If this is YOU and you're admin — show locked badge, no dropdown (can never demote yourself)
+      if(isYou && USER.role==='admin'){
+        row2.appendChild(el('span',{style:{fontSize:'9px',padding:'2px 8px',borderRadius:'10px',background:'rgba(34,197,94,.12)',color:'var(--green)',border:'1px solid rgba(34,197,94,.3)',fontWeight:'600'}},'🔒 Admin (locked — cannot change own role)'));
+      } else {
+        const assignableRoles=isYou?['admin']:['manager','viewer','restricted','admin'];
+        for(const r of assignableRoles){
+          const o=el('option',{value:r},ROLES[r]);
+          if(r===u.role)o.selected=true;
+          sel.appendChild(o);
+        }
+        sel.addEventListener('change',()=>{
+          const all=getApprovedUsers();
+          const idx=all.findIndex(x=>x.email===u.email);
+          if(idx>=0){all[idx].role=sel.value;setApprovedUsers(all);if(isYou){USER.role=sel.value;updateUserBadge();}renderSettings(c);toast('✓ '+u.email+' → '+ROLES[sel.value]);}
+        });
+        row2.appendChild(sel);
+      }
+      // Login As — admin can impersonate any other user in a new tab to test their experience
+      if(!isYou){
+        row2.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'4px',color:'var(--amber)',fontSize:'9px'},title:'Open a new tab logged in as this user to test their view',onclick(){
+          // Build a self-contained URL with a temporary impersonation token stored in sessionStorage
+          // We encode the target user info into the URL hash so the new tab can auto-login
+          const targetUser=getApprovedUsers().find(x=>x.email===u.email);
+          if(!targetUser){toast('User not found','#ef4444');return;}
+          // Store impersonation payload in localStorage with a short-lived key
+          const impKey='vcs_impersonate_'+Date.now();
+          localStorage.setItem(impKey,JSON.stringify({email:targetUser.email,name:targetUser.name,role:targetUser.role,hiddenFields:targetUser.hiddenFields||[],expires:Date.now()+300000})); // 5 min TTL
+          const url=window.location.href.split('#')[0]+'#impersonate='+impKey;
+          window.open(url,'_blank');
+          toast('👁 Opening as '+targetUser.email+' — expires in 5 min');
+        }},'👁 Login As'));
+      }
+
+      // Password field (optional)
+      row2.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'8px'}},'Password:'));
+      const pwIn=el('input',{type:'password',class:'detail-edit-field',placeholder:'(none set)',style:{width:'110px',fontSize:'9px'},value:u.password||''});
+      const pwSaveBtn=el('button',{class:'btn-xs btn-ghost',onclick(){
+        const all=getApprovedUsers();
+        const idx=all.findIndex(x=>x.email===u.email);
+        if(idx>=0){all[idx].password=pwIn.value.trim();setApprovedUsers(all);toast('✓ Password updated for '+u.email);}
+      }},'Set');
+      row2.appendChild(pwIn);
+      row2.appendChild(pwSaveBtn);
+      card.appendChild(row2);
+
+      // Row 3: field restrictions (only for viewer / restricted roles)
+      if(u.role==='viewer'||u.role==='restricted'){
+        const restrictWrap=el('div',{style:{borderTop:'1px solid var(--border)',paddingTop:'6px',marginTop:'4px'}});
+        restrictWrap.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'4px',fontWeight:'600'}},'🔒 Hidden Fields (this user cannot see):'));
+        const fieldGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px'}});
+        const hiddenFields=u.hiddenFields||[];
+        for(const f of ALL_RESTRICTABLE_FIELDS){
+          const isHidden=hiddenFields.includes(f.key);
+          const btn=el('button',{
+            class:'col-toggle-btn'+(isHidden?' on':''),
+            style:{fontSize:'8px',padding:'1px 5px',background:isHidden?'rgba(239,68,68,.15)':'',borderColor:isHidden?'rgba(239,68,68,.4)':'',color:isHidden?'var(--red)':''},
+            title:isHidden?'Click to show this field':'Click to hide this field from user',
+            onclick(){
+              const all=getApprovedUsers();
+              const idx=all.findIndex(x=>x.email===u.email);
+              if(idx<0)return;
+              let hf=[...(all[idx].hiddenFields||[])];
+              if(isHidden) hf=hf.filter(k=>k!==f.key);
+              else hf.push(f.key);
+              all[idx].hiddenFields=hf;
+              setApprovedUsers(all);
+              renderSettings(c);
+            }
+          }, (isHidden?'🚫 ':'')+f.label);
+          fieldGrid.appendChild(btn);
+        }
+        restrictWrap.appendChild(fieldGrid);
+        restrictWrap.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px'}},'Red = hidden from this user. Click to toggle.'));
+        card.appendChild(restrictWrap);
+      }
+
+      // Added by / date footer
+      if(u.added){
+        const footer=el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'6px',borderTop:'1px solid var(--border)',paddingTop:'4px'}});
+        footer.textContent='Added '+u.added+(u.addedBy&&u.addedBy!=='system (bootstrap)'?' by '+u.addedBy:'');
+        card.appendChild(footer);
+      }
+      tblWrap.appendChild(card);
+    });
+    secUsers.appendChild(tblWrap);
+
+    // Add new user form
+    const addSec=el('div',{style:{padding:'10px',background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'5px',marginBottom:'10px'}});
+    addSec.appendChild(el('div',{style:{fontSize:'10px',fontWeight:'600',color:'var(--blue)',marginBottom:'8px'}},'+ Add New User'));
+    const addRow=el('div',{style:{display:'flex',gap:'5px',alignItems:'center',flexWrap:'wrap'}});
+    const emailIn=el('input',{type:'email',class:'modal-input',placeholder:'user@company.com',style:{flex:'1',minWidth:'160px',height:'26px',fontSize:'10px',marginBottom:'0'}});
+    const roleIn=el('select',{class:'detail-edit-field',style:{width:'130px',fontSize:'9px'}});
+    ['manager','viewer','restricted','admin'].forEach(r=>roleIn.appendChild(el('option',{value:r},ROLES[r])));
+    const pwNewIn=el('input',{type:'password',class:'modal-input',placeholder:'Password (optional)',style:{width:'140px',height:'26px',fontSize:'10px',marginBottom:'0'}});
+    addRow.appendChild(emailIn); addRow.appendChild(roleIn); addRow.appendChild(pwNewIn);
+    addRow.appendChild(el('button',{class:'btn-xs btn-green',style:{height:'26px',padding:'0 10px'},onclick(){
       const e=emailIn.value.trim().toLowerCase();
       if(!e||!e.includes('@')){toast('Enter a valid email','#f59e0b');return;}
-      const users4=getApprovedUsers();
-      if(users4.find(x=>x.email===e)){toast('User already exists','#f59e0b');return;}
-      users4.push({email:e,name:e.split('@')[0],role:roleIn.value,added:isoDate(new Date()),addedBy:USER.email});
-      setApprovedUsers(users4);
-      emailIn.value='';
+      const all=getApprovedUsers();
+      if(all.find(x=>x.email===e)){toast('User already exists','#f59e0b');return;}
+      all.push({email:e,name:e.split('@')[0],role:roleIn.value,password:pwNewIn.value.trim(),hiddenFields:[],added:isoDate(new Date()),addedBy:USER.email});
+      setApprovedUsers(all);
+      emailIn.value='';pwNewIn.value='';
       renderSettings(c);
       toast('✓ '+e+' added as '+ROLES[roleIn.value]);
-    }},'+ Add'));
-    secUsers.appendChild(addRow);
-    // Authentication mode info
-    const msInfo=el('div',{style:{marginTop:'12px',padding:'8px 10px',background:'rgba(79,124,255,.05)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px'}});
-    msInfo.appendChild(el('div',{style:{fontSize:'10px',fontWeight:'600',color:'var(--blue)',marginBottom:'4px'}},'🔐 Authentication Mode'));
-    msInfo.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.5',marginBottom:'6px'}},'Currently using email-based login with a local approved users list. For enterprise deployment, this can be upgraded to full Microsoft OAuth (MSAL.js) which validates against your Azure AD tenant — users sign in with their Outlook credentials and permissions are managed through Microsoft 365 groups.'));
-    msInfo.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.5'}},'To upgrade: Host this file on a web server (even localhost), register an App in Azure AD, and enable the MSAL.js integration. Contact your administrator when ready.'));
-    secUsers.appendChild(msInfo);
+    }},'Add User'));
+    addSec.appendChild(addRow);
+    secUsers.appendChild(addSec);
+
+    // Login attempt log
+    const logSec=el('div',{style:{marginBottom:'4px'}});
+    const logHdr=el('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'6px',cursor:'pointer'},onclick(){
+      const logBody=$('vcs-login-log-body');
+      logBody.style.display=logBody.style.display==='none'?'block':'none';
+    }});
+    logHdr.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'600',color:'var(--blue)'}},'🔍 Login Attempt Log'));
+    logHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'▼ click to expand'));
+    logSec.appendChild(logHdr);
+    const logBody=el('div',{id:'vcs-login-log-body',style:{display:'none'}});
+    const log=getLoginLog();
+    if(!log.length){
+      logBody.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)'}},'No login attempts recorded yet.'));
+    } else {
+      const logTbl=el('div',{style:{maxHeight:'180px',overflowY:'auto',border:'1px solid var(--border)',borderRadius:'4px',fontSize:'9px'}});
+      log.slice(0,50).forEach(entry=>{
+        const row=el('div',{style:{display:'flex',gap:'8px',padding:'3px 6px',borderBottom:'1px solid var(--border)',alignItems:'center',background:entry.success?'transparent':'rgba(239,68,68,.05)'}});
+        row.appendChild(el('span',{style:{color:entry.success?'var(--green)':'var(--red)',fontWeight:'700',minWidth:'14px'}},entry.success?'✓':'✗'));
+        row.appendChild(el('span',{style:{color:'var(--muted)',minWidth:'120px'}},new Date(entry.ts).toLocaleString()));
+        row.appendChild(el('span',{style:{flex:'1',color:entry.success?'var(--text)':'var(--red)'}},entry.email));
+        if(!entry.success) row.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'8px'}},entry.reason));
+        logTbl.appendChild(row);
+      });
+      logBody.appendChild(logTbl);
+      if(log.length>50) logBody.appendChild(el('p',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px'}},log.length-50+' older entries not shown.'));
+      logBody.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginTop:'6px',color:'var(--red)'},onclick(){
+        if(!confirm('Clear all login attempt logs?'))return;
+        localStorage.removeItem(LOGIN_LOG_KEY);renderSettings(c);toast('Log cleared');
+      }},'🗑 Clear Log'));
+    }
+    logSec.appendChild(logBody);
+    secUsers.appendChild(logSec);
+
+    // Authentication status note
+    const authNote=el('div',{style:{marginTop:'12px',padding:'10px',background:'rgba(245,158,11,.06)',border:'1px solid rgba(245,158,11,.25)',borderRadius:'5px'}});
+    authNote.appendChild(el('div',{style:{fontSize:'10px',fontWeight:'700',color:'var(--amber)',marginBottom:'5px'}},'⚠ Current Authentication: Email-Only (Soft Gate)'));
+    authNote.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.6',marginBottom:'6px'}},'Right now VCS checks if the email entered matches your approved list — but it cannot verify the person actually owns that email. Anyone who knows an approved email address could type it in. This is adequate for internal use on a non-public URL, but is not a true security wall.'));
+    authNote.appendChild(el('div',{style:{fontSize:'9px',color:'var(--green)',fontWeight:'600',marginBottom:'3px'}},'✅ Upgrade Path: Microsoft OAuth (coming after GitHub Pages hosting)'));
+    authNote.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.6'}},'Once hosted on GitHub Pages, we will wire up Microsoft/Outlook sign-in — same as Fathom, Teams, and all your Microsoft apps. Users click "Sign in with Microsoft", the Microsoft portal verifies their identity, and sends back a confirmed token. VCS never handles passwords at all. Only users whose Microsoft email matches your approved list get through. Until then, keep the VCS URL private and only share it with approved team members.'));
+    secUsers.appendChild(authNote);;
+    exportRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){
+      const data=JSON.stringify(getApprovedUsers(),null,2);
+      const blob=new Blob([data],{type:'application/json'});
+      const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='vcs_users.json';a.click();
+      toast('Users exported');
+    }},'⬇ Export User List'));
+    const importFile=el('input',{type:'file',accept:'.json',style:{display:'none'}});
+    importFile.addEventListener('change',async()=>{
+      if(!importFile.files[0])return;
+      try{
+        const text=await importFile.files[0].text();
+        const imported=JSON.parse(text);
+        if(!Array.isArray(imported))throw new Error('Invalid format');
+        // Merge: keep existing, add new from import
+        const existing=getApprovedUsers();
+        let added=0;
+        for(const u of imported){
+          if(!existing.find(x=>x.email===u.email)){existing.push(u);added++;}
+        }
+        setApprovedUsers(existing);
+        renderSettings(c);
+        toast('✓ Imported '+added+' new user'+(added!==1?'s':''));
+      }catch(e){toast('Import failed: '+e.message,'#ef4444');}
+    });
+    exportRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){importFile.click();}},'⬆ Import User List'));
+    exportRow.appendChild(importFile);
+    secUsers.appendChild(exportRow);
+
     c.appendChild(secUsers);
+  } else if(USER.loggedIn){
+    // Non-admin sees a read-only note
+    const noAccess=el('div',{class:'settings-section'});
+    noAccess.appendChild(el('h3',{},'👥 User Management'));
+    noAccess.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'Only Admins can manage users and access controls. Contact your administrator to request access changes.'));
+    c.appendChild(noAccess);
   }
 
   // ── Salesforce Configuration ──
@@ -5976,7 +6309,8 @@ function renderSettings(c) {
     c.appendChild(secSF);
   }
 
-  // ── Google Drive Configuration ──
+  // ── Google Drive Configuration (Admin only) ──
+  if(hasPermission('configDrive')) {
   const secDrive=el('div',{class:'settings-section'});
   secDrive.appendChild(el('h3',{},'☁ Google Drive Connection'));
   secDrive.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Connect your Vendor Catalogue to Google Drive. VCS will load directly from Drive and save back to Drive — no manual file management.'));
@@ -6009,8 +6343,10 @@ function renderSettings(c) {
 
   secDrive.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.5',marginTop:'4px'}},'Important: Your Google Drive must be connected via Composio using the same account where the Vendor Catalogue lives. Your current Composio Drive connection is dgenuthps@gmail.com. If your file is in a different account, connect that Drive account in Composio first.'));
   c.appendChild(secDrive);
+  } // end configDrive admin block
 
-  // ── Composio Key ──
+  // ── Composio Key (Admin only) ──
+  if(hasPermission('configDrive')) {
   const secComposio=el('div',{class:'settings-section'});
   secComposio.appendChild(el('h3',{},'🔗 Composio API Key (Outlook Calendar)'));
   secComposio.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px',lineHeight:'1.5'}},'Enables the "Add to My Outlook Calendar" button. Free — no AI tokens used. Get yours at composio.dev → API Keys.'));
@@ -6021,6 +6357,7 @@ function renderSettings(c) {
   compRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){compIn.type=compIn.type==='password'?'text':'password';}},'👁'));
   secComposio.appendChild(compRow);
   c.appendChild(secComposio);
+    } // end composio admin block
 
   const secAI=el('div',{class:'settings-section'});
   secAI.appendChild(el('h3',{},'🤖 AI Configuration'));
@@ -6443,6 +6780,36 @@ function render() {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 function init() {
+  // ── Impersonation handler (admin Login As feature) ──
+  // Checks URL hash for #impersonate=KEY, auto-logs in as target user for 5 min
+  const hashParams = new URLSearchParams(window.location.hash.slice(1));
+  const impKey = hashParams.get('impersonate');
+  if(impKey){
+    try{
+      const imp = JSON.parse(localStorage.getItem(impKey)||'null');
+      if(imp && imp.expires > Date.now()){
+        localStorage.removeItem(impKey); // one-time use
+        // Clear URL hash without reload
+        history.replaceState(null,'',window.location.pathname+window.location.search);
+        loginAs({email:imp.email,name:imp.name,role:imp.role,hiddenFields:imp.hiddenFields||[]});
+        // Show impersonation banner
+        document.body.insertAdjacentHTML('afterbegin',
+          `<div id="impersonate-banner" style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#f59e0b;color:#000;font-size:11px;font-weight:700;padding:5px 12px;display:flex;align-items:center;justify-content:space-between;">
+            <span>👁 Admin Preview: Viewing as <strong>${imp.email}</strong> (${ROLES[imp.role]}) — this is a test session</span>
+            <button onclick="window.close()" style="background:rgba(0,0,0,.15);border:none;padding:2px 8px;border-radius:3px;cursor:pointer;font-size:10px;font-weight:700;">✕ Close Tab</button>
+          </div>`);
+        document.body.style.paddingTop='28px';
+        $('login-screen').style.display='none';
+        $('upload-screen').style.display='flex';
+        updateUserBadge();
+        $('upload-user-info').innerHTML='<span style="color:#f59e0b;font-weight:700">👁 Admin preview as '+imp.email+'</span> — load the file to test their view';
+        return; // skip normal auth flow
+      } else {
+        localStorage.removeItem(impKey);
+      }
+    }catch(e){ localStorage.removeItem(impKey||''); }
+  }
+
   // ── Auth gate ──
   if (restoreSession()) {
     $('login-screen').style.display='none';
@@ -6462,15 +6829,31 @@ function init() {
     $('login-screen').style.display='flex';
     $('upload-screen').style.display='none';
   }
-  $('login-btn').addEventListener('click',()=>{
+  $('login-btn').addEventListener('click', async ()=>{
     const email=$('login-email').value;
-    const result=attemptLogin(email);
+    const pass=$('login-pass').value;
+    const result=attemptLogin(email, pass);
     if(result.ok){
       $('login-screen').style.display='none';
-      $('upload-screen').style.display='flex';
       updateUserBadge();
-      $('upload-user-info').innerHTML='Signed in as <strong>'+USER.name+'</strong> ('+ROLES[USER.role]+') — <a href="#" style="color:var(--blue)" onclick="event.preventDefault();logout();">Sign out</a>';
       toast('Welcome, '+USER.name+' ('+ROLES[USER.role]+')');
+      // Try auto-load from Google Drive if configured
+      loadSettings();
+      const autoLoaded = S.settings.driveAutoSync && S.settings.driveFileId && S.settings.composioKey
+        ? await tryAutoLoadFromDrive()
+        : false;
+      if(!autoLoaded){
+        $('upload-screen').style.display='flex';
+        $('upload-user-info').innerHTML='Signed in as <strong>'+USER.name+'</strong> <span style="color:'+ROLE_COLORS[USER.role]+'">'+ROLES[USER.role]+'</span> — <a href="#" style="color:var(--blue)" onclick="event.preventDefault();logout();">Sign out</a>';
+        // Check for unsaved session
+        const saved=loadSessionState();
+        if(saved&&saved.dirtyVendors?.length){
+          const ageMin=Math.round((Date.now()-new Date(saved.ts))/60000);
+          const notice=el('div',{style:{marginTop:'10px',padding:'8px 10px',background:'rgba(245,158,11,.1)',border:'1px solid rgba(245,158,11,.3)',borderRadius:'4px',fontSize:'10px',color:'var(--text)',lineHeight:'1.5'}});
+          notice.innerHTML='<strong>⚠ Unsaved session found</strong> from '+ageMin+' minute'+(ageMin!==1?'s':'')+' ago with '+saved.dirtyVendors.length+' changed vendor'+(saved.dirtyVendors.length!==1?'s':'')+'. Load your file to restore it.';
+          $('upload-user-info').appendChild(notice);
+        }
+      }
     } else {
       $('login-error').textContent=result.msg;
     }
