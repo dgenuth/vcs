@@ -2206,49 +2206,47 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
 // ─── Google Drive Integration ─────────────────────────────────────────────────
 // ─── Google Drive OAuth (GIS) ────────────────────────────────────────────────
-// Uses Google Identity Services token model — popup-free after first auth.
-// Client ID is stored in S.settings.googleClientId (set in Settings by admin).
-// Token is cached in GDriveToken / GDriveTokenExpiry (session memory only).
 async function getGDriveToken() {
-  // Return cached token if still valid (>60s remaining)
+  // Return cached token if still valid
   if (GDriveToken && Date.now() < GDriveTokenExpiry - 60000) return GDriveToken;
+
   const clientId = S.settings.googleClientId;
   if (!clientId) {
-    throw new Error('No Google Client ID configured. Go to Settings → Google Drive Connection and add your Client ID.');
+    throw new Error('No Google Client ID in Settings. Add it under Google Drive Connection.');
   }
+  if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+    throw new Error('Google Identity Services not loaded. Check your internet connection and refresh.');
+  }
+
   return new Promise((resolve, reject) => {
-    if (typeof google === 'undefined' || !google.accounts) {
-      reject(new Error('Google Identity Services not loaded. Check your internet connection and refresh.'));
-      return;
-    }
-    const client = google.accounts.oauth2.initTokenClient({
-      client_id: clientId,
-      scope: 'https://www.googleapis.com/auth/drive.file',
-      callback: (response) => {
-        if (response.error) { reject(new Error('Google auth error: '+response.error)); return; }
-        GDriveToken = response.access_token;
-        GDriveTokenExpiry = Date.now() + (response.expires_in || 3600) * 1000;
-        resolve(GDriveToken);
-      }
-    });
-    client.requestAccessToken({prompt: GDriveToken ? '' : 'none'});
-  }).catch(() => {
-    // If silent token fails, prompt user
-    return new Promise((resolve, reject) => {
+    try {
       const client = google.accounts.oauth2.initTokenClient({
-        client_id: S.settings.googleClientId,
+        client_id: clientId,
         scope: 'https://www.googleapis.com/auth/drive.file',
         callback: (response) => {
-          if (response.error) { reject(new Error('Google auth error: '+response.error)); return; }
-          GDriveToken = response.access_token;
-          GDriveTokenExpiry = Date.now() + (response.expires_in || 3600) * 1000;
-          resolve(GDriveToken);
+          if (response && response.access_token) {
+            GDriveToken = response.access_token;
+            GDriveTokenExpiry = Date.now() + ((response.expires_in || 3600) * 1000);
+            resolve(GDriveToken);
+          } else {
+            const errMsg = (response && response.error) ? response.error : 'Unknown OAuth error';
+            console.error('OAuth error response:', JSON.stringify(response));
+            reject(new Error('Google auth failed: ' + errMsg));
+          }
+        },
+        error_callback: (err) => {
+          console.error('OAuth error_callback:', JSON.stringify(err));
+          reject(new Error('Google auth error: ' + (err.type || JSON.stringify(err))));
         }
       });
-      client.requestAccessToken({prompt: 'consent'});
-    });
+      // Always prompt — most reliable approach
+      client.requestAccessToken({ prompt: 'select_account' });
+    } catch(e) {
+      reject(e);
+    }
   });
 }
+
 
 async function loadFromGoogleDrive() {
   const fileId = S.settings.driveFileId;
