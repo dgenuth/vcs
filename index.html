@@ -662,6 +662,12 @@ async function completeLogin() {
   updateUserBadge();
   toast('Welcome, ' + USER.name + ' (' + ROLES[USER.role] + ')');
   loadSettings();
+  // Pull settings + user list from Drive — source of truth across all devices
+  // Do this BEFORE auto-loading file so Drive settings (fileId etc) are available
+  try {
+    const driveConfigLoaded = await loadConfigFromDrive();
+    if (driveConfigLoaded) updateUserBadge(); // refresh badge with Drive user data
+  } catch(e) { console.warn('Drive config load on login:', e.message); }
   const autoLoaded = S.settings.driveAutoSync && S.settings.driveFileId && S.settings.googleClientId
     ? await tryAutoLoadFromDrive()
     : false;
@@ -1410,7 +1416,23 @@ async function executeSave() {
   if (!S.originalBuffer) return;
   try {
     toast('Saving…', '#4f7cff');
-    const zip = await JSZip.loadAsync(S.originalBuffer);
+    // Fetch fresh copy from Drive before applying changes (prevents overwriting concurrent edits)
+    let sourceBuffer = S.originalBuffer;
+    if (S.settings.driveFileId && S.settings.googleClientId && GDriveToken && Date.now() < GDriveTokenExpiry - 5000) {
+      try {
+        const freshResp = await fetch(
+          'https://www.googleapis.com/drive/v3/files/'+S.settings.driveFileId+'?alt=media',
+          {headers:{Authorization:'Bearer '+GDriveToken}}
+        );
+        if (freshResp.ok) {
+          sourceBuffer = await freshResp.arrayBuffer();
+          toast('☁ Got latest from Drive — applying your changes...','#4f7cff');
+        }
+      } catch(e) {
+        console.warn('Could not fetch fresh copy from Drive, using local buffer:', e.message);
+      }
+    }
+    const zip = await JSZip.loadAsync(sourceBuffer);
     const sheetFile = S.psdSheetFile || 'xl/worksheets/sheet7.xml';
 
     // ── FIX 1: Delete calcChain.xml to prevent Excel repair dialog ──
@@ -1507,7 +1529,7 @@ async function executeSave() {
       compression: 'DEFLATE',
       compressionOptions: { level: 4 }
     });
-    const outName = S.fileName.replace(/\.(xlsm|xlsx)$/i, '_updated.xlsm');
+    const outName = S.fileName.replace(/\.(xlsm|xlsx)$/i, '.xlsm'); // preserve original filename
     const blob = new Blob([uint8], { type: 'application/vnd.ms-excel.sheet.macroEnabled.12' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href=url; a.download=outName; a.click();
@@ -2608,9 +2630,120 @@ function loadSettings() {
 
 // Auto-save settings when they change — debounced
 let _settingsSaveTimer = null;
+let _driveConfigSaveTimer = null;
 function debouncedSaveSettings() {
   clearTimeout(_settingsSaveTimer);
+  clearTimeout(_driveConfigSaveTimer);
   _settingsSaveTimer = setTimeout(saveSettings, 500);
+  // Also push to Drive after a short delay (non-blocking)
+  _driveConfigSaveTimer = setTimeout(() => {
+    saveConfigToDrive().catch(e => console.warn('Drive config save:', e.message));
+  }, 3000); // 3 second delay to batch rapid changes
+}
+
+// ─── Drive-backed Settings + User List ───────────────────────────────────────
+// Stores vcs_config.json in same Drive folder as the catalogue
+// Contains: settings + approved user list
+// Loaded on login, saved whenever settings or users change
+
+const VCS_CONFIG_FILENAME = 'vcs_config.json';
+let vcsConfigFileId = null; // cached Drive file ID for vcs_config.json
+
+async function findOrCreateConfigFile() {
+  if (vcsConfigFileId) return vcsConfigFileId;
+  if (!GDriveToken || Date.now() >= GDriveTokenExpiry - 5000) return null;
+  try {
+    // Search for existing config file in Drive
+    const searchResp = await fetch(
+      "https://www.googleapis.com/drive/v3/files?q=name%3D'vcs_config.json'%20and%20trashed%3Dfalse&fields=files(id,name)",
+      {headers:{Authorization:'Bearer '+GDriveToken}}
+    );
+    const searchData = await searchResp.json();
+    if (searchData.files && searchData.files.length > 0) {
+      vcsConfigFileId = searchData.files[0].id;
+      return vcsConfigFileId;
+    }
+    // Create new config file
+    const createResp = await fetch('https://www.googleapis.com/drive/v3/files', {
+      method: 'POST',
+      headers: {Authorization:'Bearer '+GDriveToken, 'Content-Type':'application/json'},
+      body: JSON.stringify({name: VCS_CONFIG_FILENAME, mimeType: 'application/json'})
+    });
+    const created = await createResp.json();
+    vcsConfigFileId = created.id;
+    return vcsConfigFileId;
+  } catch(e) {
+    console.warn('Could not find/create config file:', e.message);
+    return null;
+  }
+}
+
+async function saveConfigToDrive() {
+  if (!GDriveToken || Date.now() >= GDriveTokenExpiry - 5000) return;
+  try {
+    const fileId = await findOrCreateConfigFile();
+    if (!fileId) return;
+    const config = {
+      settings: (() => {
+        const s = {};
+        PERSIST_KEYS.forEach(k => { if (S.settings[k] !== undefined) s[k] = S.settings[k]; });
+        if (S.dbHiddenCols instanceof Set) s.dbHiddenCols = [...S.dbHiddenCols];
+        return s;
+      })(),
+      users: getApprovedUsers(),
+      savedBy: USER.email || 'unknown',
+      savedAt: new Date().toISOString()
+    };
+    const content = JSON.stringify(config, null, 2);
+    const boundary = 'vcs_cfg_'+Date.now();
+    const body = new Blob([
+      '--'+boundary+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+
+      JSON.stringify({name: VCS_CONFIG_FILENAME})+'\r\n',
+      '--'+boundary+'\r\nContent-Type: application/json\r\n\r\n'+content+'\r\n',
+      '--'+boundary+'--'
+    ]);
+    await fetch(
+      'https://www.googleapis.com/upload/drive/v3/files/'+fileId+'?uploadType=multipart',
+      {method:'PATCH', headers:{Authorization:'Bearer '+GDriveToken,'Content-Type':'multipart/related; boundary='+boundary}, body}
+    );
+    console.log('Config saved to Drive');
+  } catch(e) {
+    console.warn('Could not save config to Drive:', e.message);
+  }
+}
+
+async function loadConfigFromDrive() {
+  if (!GDriveToken || Date.now() >= GDriveTokenExpiry - 5000) return false;
+  try {
+    const fileId = await findOrCreateConfigFile();
+    if (!fileId) return false;
+    const resp = await fetch(
+      'https://www.googleapis.com/drive/v3/files/'+fileId+'?alt=media',
+      {headers:{Authorization:'Bearer '+GDriveToken}}
+    );
+    if (!resp.ok) return false;
+    const config = await resp.json();
+    if (config.settings) {
+      // Merge Drive settings — Drive wins over localStorage except for googleClientId
+      // (googleClientId is device-specific and should stay local)
+      const localClientId = S.settings.googleClientId;
+      if (config.settings.dbHiddenCols) {
+        S.dbHiddenCols = new Set(Array.isArray(config.settings.dbHiddenCols) ? config.settings.dbHiddenCols : []);
+        delete config.settings.dbHiddenCols;
+      }
+      Object.assign(S.settings, config.settings);
+      if (localClientId) S.settings.googleClientId = localClientId; // preserve local
+    }
+    if (config.users && config.users.length > 0) {
+      // Merge user lists — Drive wins (it's the source of truth)
+      setApprovedUsers(config.users);
+    }
+    console.log('Config loaded from Drive, saved by', config.savedBy, 'at', config.savedAt);
+    return true;
+  } catch(e) {
+    console.warn('Could not load config from Drive:', e.message);
+    return false;
+  }
 }
 
 // ─── User Auth & Permissions ──────────────────────────────────────────────────
@@ -2642,7 +2775,11 @@ const USER = {email:null,name:null,role:null,loggedIn:false,loginTime:null,sfTok
 const AUTH_KEY = 'vcs_approved_users';
 const LOGIN_LOG_KEY = 'vcs_login_log';
 function getApprovedUsers(){try{return JSON.parse(localStorage.getItem(AUTH_KEY)||'[]');}catch(e){return [];}}
-function setApprovedUsers(u){localStorage.setItem(AUTH_KEY,JSON.stringify(u));}
+function setApprovedUsers(u){
+  localStorage.setItem(AUTH_KEY,JSON.stringify(u));
+  // Push to Drive after short delay (non-blocking)
+  setTimeout(() => saveConfigToDrive().catch(e=>console.warn('Drive user save:',e.message)), 2000);
+}
 
 // Login attempt log — stored in localStorage, admin-viewable
 function getLoginLog(){try{return JSON.parse(localStorage.getItem(LOGIN_LOG_KEY)||'[]');}catch(e){return[];}}
