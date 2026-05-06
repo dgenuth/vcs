@@ -504,6 +504,7 @@ const NOW = new Date();
 let GDriveToken = null;
 let GDriveTokenExpiry = 0;
 
+var S;
 S = {
   vendors: [], channelVendors: [], allVendors: [],
   itw: [], reviews: [], reviewTPs: [],
@@ -6823,7 +6824,7 @@ function init() {
       toast('Welcome, '+USER.name+' ('+ROLES[USER.role]+')');
       // Try auto-load from Google Drive if configured
       loadSettings();
-      const autoLoaded = S.settings.driveAutoSync && S.settings.driveFileId && S.settings.composioKey
+      const autoLoaded = S.settings.driveAutoSync && S.settings.driveFileId && S.settings.googleClientId
         ? await tryAutoLoadFromDrive()
         : false;
       if(!autoLoaded){
@@ -6990,8 +6991,7 @@ function init() {
   applyTheme(S.settings.theme||'dark');
   if (S.settings.fontSize) applyFontSize(parseInt(S.settings.fontSize));
   if (S.settings.compactRows) document.body.classList.add('compact');
-  loadSettings(); // Restore persisted settings
-  loadSettings(); // Restore persisted settings — also sets S.dbHiddenCols if saved
+  loadSettings(); // Restore persisted settings (also sets S.dbHiddenCols if saved)
   applyTheme(S.settings.theme||'dark');
   if (S.settings.fontSize) applyFontSize(parseInt(S.settings.fontSize));
   if (S.settings.compactRows) document.body.classList.add('compact');
