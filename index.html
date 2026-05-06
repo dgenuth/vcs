@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js" async defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
@@ -47,6 +48,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);height:100vh
 #login-screen{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:var(--bg)}
 #upload-screen{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:var(--bg)}
 .login-box{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:40px 36px;max-width:420px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.4)}
+.oauth-btn{width:100%;padding:10px 14px;border-radius:5px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);display:flex;align-items:center;justify-content:center;margin-bottom:10px;transition:opacity .15s}
+.oauth-btn:hover{opacity:.88}
+.ms-btn{background:#0078d4;color:#fff;border:none}
+.g-btn{background:#fff;color:#3c4043;border:1px solid #dadce0}
 .login-box h1{font-size:20px;margin-bottom:4px;color:var(--text)}
 .login-box .sub{font-size:11px;color:var(--muted);margin:6px 0 16px;line-height:1.6}
 .login-box input{width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--font);margin-bottom:10px;outline:none;box-sizing:border-box}
@@ -410,7 +415,16 @@ body.light-theme .sb-logo-text{color:var(--blue)}
   <div class="login-box">
     <div class="up-logo">VCS</div>
     <h1>Sign In</h1>
-    <p class="sub">Vendor Contract Scheduler — Prime Source<br>Enter your company email to continue.</p>
+    <p class="sub">Vendor Contract Scheduler — Prime Source<br>Sign in with your Microsoft or Google account.</p>
+    <button class="oauth-btn ms-btn" id="ms-login-btn">
+      <svg width="16" height="16" viewBox="0 0 21 21" style="margin-right:8px"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
+      Sign in with Microsoft
+    </button>
+    <button class="oauth-btn g-btn" id="g-login-btn">
+      <svg width="16" height="16" viewBox="0 0 48 48" style="margin-right:8px"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+      Sign in with Google
+    </button>
+    <div style="margin:12px 0;display:flex;align-items:center;gap:8px"><hr style="flex:1;border:none;border-top:1px solid var(--border)"><span style="font-size:9px;color:var(--muted)">or use email</span><hr style="flex:1;border:none;border-top:1px solid var(--border)"></div>
     <input type="email" id="login-email" placeholder="yourname@company.com" autocomplete="email">
     <input type="password" id="login-pass" placeholder="Password (optional)" autocomplete="current-password">
     <button class="login-btn" id="login-btn">Sign In</button>
@@ -501,6 +515,153 @@ body.light-theme .sb-logo-text{color:var(--blue)}
 
 // ─── State ────────────────────────────────────────────────────────────────────
 const NOW = new Date();
+// ─── Microsoft + Google OAuth Configuration ──────────────────────────────────
+const MS_CLIENT_ID = '717ba339-9c8f-4521-b86d-b3e91dcaed4a';
+const MS_TENANT_ID = '8363e2da-e1a6-4296-98df-020abbd50ab4';
+const MS_AUTHORITY = 'https://login.microsoftonline.com/' + MS_TENANT_ID;
+const GOOGLE_CLIENT_ID_AUTH = '690262071158-vfuo0pm2rd1bkqnkj26ut5g6a5nhbqfd.apps.googleusercontent.com';
+
+let msalInstance = null;
+
+function getMsalInstance() {
+  if (msalInstance) return msalInstance;
+  if (typeof msal === 'undefined') throw new Error('MSAL not loaded yet — please wait a moment and try again.');
+  msalInstance = new msal.PublicClientApplication({
+    auth: {
+      clientId: MS_CLIENT_ID,
+      authority: MS_AUTHORITY,
+      redirectUri: 'https://dgenuth.github.io/vcs/'
+    },
+    cache: { cacheLocation: 'localStorage', storeAuthStateInCookie: false }
+  });
+  return msalInstance;
+}
+
+async function signInWithMicrosoft() {
+  try {
+    $('login-error').textContent = '';
+    const instance = getMsalInstance();
+    const response = await instance.loginPopup({
+      scopes: ['User.Read'],
+      prompt: 'select_account'
+    });
+    const email = response.account.username.toLowerCase();
+    const name = response.account.name || email.split('@')[0];
+    return handleOAuthLogin(email, name, 'microsoft');
+  } catch(e) {
+    console.error('Microsoft login error:', e);
+    const msg = e.errorCode === 'user_cancelled' ? 'Sign-in cancelled.' : 'Microsoft sign-in failed: ' + (e.errorMessage || e.message || e.errorCode);
+    $('login-error').textContent = msg;
+    return false;
+  }
+}
+
+async function signInWithGoogle() {
+  try {
+    $('login-error').textContent = '';
+    if (typeof google === 'undefined' || !google.accounts) {
+      $('login-error').textContent = 'Google sign-in not loaded. Please refresh and try again.';
+      return false;
+    }
+    return new Promise((resolve) => {
+      google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID_AUTH,
+        callback: (response) => {
+          try {
+            // Decode JWT to get email and name
+            const payload = JSON.parse(atob(response.credential.split('.')[1]));
+            const email = payload.email.toLowerCase();
+            const name = payload.name || email.split('@')[0];
+            resolve(handleOAuthLogin(email, name, 'google'));
+          } catch(e) {
+            $('login-error').textContent = 'Google sign-in failed: ' + e.message;
+            resolve(false);
+          }
+        },
+        error_callback: (err) => {
+          $('login-error').textContent = 'Google sign-in error: ' + (err.type || 'unknown');
+          resolve(false);
+        }
+      });
+      google.accounts.id.prompt((notification) => {
+        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+          // Fall back to popup
+          google.accounts.id.renderButton(
+            Object.assign(document.createElement('div'), {style: 'display:none'}),
+            {theme: 'outline', size: 'large'}
+          );
+          google.accounts.id.prompt();
+        }
+      });
+    });
+  } catch(e) {
+    $('login-error').textContent = 'Google sign-in failed: ' + e.message;
+    return false;
+  }
+}
+
+function handleOAuthLogin(email, name, provider) {
+  // Check against approved users list
+  const users = getApprovedUsers();
+  const found = users.find(u => u.email.toLowerCase() === email);
+
+  if (users.length > 0 && !found) {
+    $('login-error').textContent = 'Access denied — ' + email + ' is not an approved user. Contact your administrator.';
+    return false;
+  }
+
+  // Bootstrap admin on first ever login (empty user list)
+  if (users.length === 0) {
+    const adminUser = { email, name, role: 'admin', added: new Date().toISOString() };
+    setApprovedUsers([adminUser]);
+    loginAs({ email, name, role: 'admin', hiddenFields: [] });
+  } else {
+    const role = found.role || 'viewer';
+    const displayName = found.name || name;
+    loginAs({ email, name: displayName, role, hiddenFields: found.hiddenFields || [] });
+  }
+
+  logLoginAttempt(email, true);
+  completeLogin();
+  return true;
+}
+
+function loginAs(userObj) {
+  USER.email = userObj.email;
+  USER.name = userObj.name;
+  USER.role = userObj.role;
+  USER.loggedIn = true;
+  USER.loginTime = new Date();
+  USER.hiddenFields = userObj.hiddenFields || [];
+  // Persist session
+  sessionStorage.setItem('vcs_session', JSON.stringify({
+    email: USER.email, name: USER.name, role: USER.role,
+    loginTime: USER.loginTime.toISOString(), hiddenFields: USER.hiddenFields
+  }));
+}
+
+async function completeLogin() {
+  $('login-screen').style.display = 'none';
+  $('app').style.display = 'flex';
+  updateUserBadge();
+  toast('Welcome, ' + USER.name + ' (' + ROLES[USER.role] + ')');
+  loadSettings();
+  const autoLoaded = S.settings.driveAutoSync && S.settings.driveFileId && S.settings.googleClientId
+    ? await tryAutoLoadFromDrive()
+    : false;
+  if (!autoLoaded) {
+    $('upload-screen').style.display = 'flex';
+    $('upload-user-info').innerHTML = 'Signed in as <strong>' + USER.name + '</strong> <span style="color:' + ROLE_COLORS[USER.role] + '">' + ROLES[USER.role] + '</span> — <a href="#" style="color:var(--blue)" onclick="event.preventDefault();logout();">Sign out</a>';
+    const saved = loadSessionState();
+    if (saved && saved.dirtyVendors?.length) {
+      const ageMin = Math.round((Date.now() - new Date(saved.ts)) / 60000);
+      const notice = el('div', {style:{marginTop:'10px',padding:'8px 10px',background:'rgba(245,158,11,.1)',border:'1px solid rgba(245,158,11,.3)',borderRadius:'4px',fontSize:'10px',color:'var(--text)',lineHeight:'1.5'}});
+      notice.innerHTML = '<strong>⚠ Unsaved session found</strong> from ' + ageMin + ' minute' + (ageMin!==1?'s':'') + ' ago with ' + saved.dirtyVendors.length + ' changed vendor' + (saved.dirtyVendors.length!==1?'s':'') + '. Load your file to restore it.';
+      $('upload-user-info').appendChild(notice);
+    }
+  }
+}
+
 // Google Drive OAuth token (set after user authorizes)
 let GDriveToken = null;
 let GDriveTokenExpiry = 0;
@@ -2502,16 +2663,7 @@ function attemptLogin(email, password){
   logLoginAttempt(email,true,'ok');
   return loginAs(found);
 }
-function loginAs(u){
-  USER.email=u.email;
-  USER.name=u.name||u.email.split('@')[0];
-  USER.role=u.role||'viewer';
-  USER.loggedIn=true;
-  USER.loginTime=new Date();
-  USER.hiddenFields=Array.isArray(u.hiddenFields)?u.hiddenFields:[];
-  sessionStorage.setItem('vcs_session',JSON.stringify({email:USER.email,name:USER.name,role:USER.role,loginTime:USER.loginTime.toISOString(),hiddenFields:USER.hiddenFields}));
-  return{ok:true};
-}
+// loginAs moved to OAuth auth section above
 function restoreSession(){
   try{
     const s=JSON.parse(sessionStorage.getItem('vcs_session')||'null');
@@ -6814,6 +6966,8 @@ function init() {
     $('login-screen').style.display='flex';
     $('upload-screen').style.display='none';
   }
+  $('ms-login-btn').addEventListener('click', ()=>signInWithMicrosoft());
+  $('g-login-btn').addEventListener('click', ()=>signInWithGoogle());
   $('login-btn').addEventListener('click', async ()=>{
     const email=$('login-email').value;
     const pass=$('login-pass').value;
