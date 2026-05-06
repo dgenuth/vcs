@@ -45,6 +45,7 @@ body.light-theme input[type='date']::-webkit-calendar-picker-indicator{filter:no
 body{font-family:var(--font);background:var(--bg);color:var(--text);height:100vh;overflow:hidden}{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:10px}
 /* Login */
 #login-screen{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:var(--bg)}
+#upload-screen{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:var(--bg)}
 .login-box{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:40px 36px;max-width:420px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.4)}
 .login-box h1{font-size:20px;margin-bottom:4px;color:var(--text)}
 .login-box .sub{font-size:11px;color:var(--muted);margin:6px 0 16px;line-height:1.6}
@@ -2403,7 +2404,7 @@ function startAutoSave() {
   }, 30000); // every 30 seconds
 }
 const SETTINGS_STORAGE_KEY = 'vcs_user_settings_v2';
-const PERSIST_KEYS = ['theme','fontSize','compactRows','defaultView','showKPIs','showHebrew','autoSortByScore','showSnoozed','showDismissedDefault','animateBadges','emailSignature','cols','dbHiddenCols','sidebarWidth','sfClientId','sfRedirectUri','sfLoginUrl','composioKey','driveFileId','driveAutoSync'];
+const PERSIST_KEYS = ['theme','fontSize','compactRows','defaultView','showKPIs','showHebrew','autoSortByScore','showSnoozed','showDismissedDefault','animateBadges','emailSignature','cols','dbHiddenCols','sidebarWidth','sfClientId','sfRedirectUri','sfLoginUrl','composioKey','driveFileId','driveFileName','driveAutoSync','googleClientId'];
 
 function saveSettings() {
   try {
@@ -6850,11 +6851,11 @@ function init() {
 
   $('upload-btn').addEventListener('click',()=>$('file-input').click());
   $('drive-load-btn').addEventListener('click',()=>{
-    if (!S.settings.composioKey || !S.settings.driveFileId) {
+    if (!S.settings.googleClientId || !S.settings.driveFileId) {
       openModal(body=>{
         body.appendChild(el('h3',{},'☁ Connect Google Drive'));
         body.appendChild(el('p',{style:{fontSize:'11px',lineHeight:'1.6',color:'var(--text)',marginBottom:'12px'}},'To load your Vendor Catalogue directly from Google Drive, configure two things in Settings:'));
-        body.appendChild(el('div',{style:{fontSize:'10px',lineHeight:'1.8',marginBottom:'12px'}},'1. Your Composio API key (from app.composio.dev → API Keys)\n2. Your Google Drive File ID (from the file\'s URL in Drive)'));
+        body.appendChild(el('div',{style:{fontSize:'10px',lineHeight:'1.8',marginBottom:'12px'}},'1. Your Google Client ID (from Google Cloud Console → APIs & Services → Credentials)\n2. Your Google Drive File ID (from the file\'s URL in Drive)'));
         body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'12px'}},'File ID example: in https://drive.google.com/file/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms/view — the File ID is the long string between /d/ and /view.'));
         const btns=el('div',{class:'modal-btns'});
         btns.appendChild(el('button',{class:'btn-primary',onclick(){S.view='settings';closeModal();$('upload-screen').style.display='none';$('app').style.display='flex';render();}},'Go to Settings'));
