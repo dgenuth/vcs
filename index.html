@@ -443,7 +443,6 @@ body.light-theme .sb-logo-text{color:var(--blue)}
     <div style="margin:12px 0;display:flex;align-items:center;gap:10px"><hr style="flex:1;border:none;border-top:1px solid var(--border)"><span style="font-size:10px;color:var(--muted)">or</span><hr style="flex:1;border:none;border-top:1px solid var(--border)"></div>
     <button class="up-btn" id="drive-load-btn" style="background:transparent;color:var(--blue);border:1px solid var(--blue)">☁ Load from Google Drive</button>
     <div id="upload-user-info" style="margin-top:16px;font-size:10px;color:var(--muted)"></div>
-    <button id="sync-config-btn" onclick="syncConfigFromDrive()" style="display:none;margin-top:8px;background:transparent;border:none;color:var(--muted);font-size:9px;cursor:pointer;text-decoration:underline">☁ Sync settings from Drive</button>
   </div>
 </div>
 
@@ -675,9 +674,6 @@ async function completeLogin() {
   if (!autoLoaded) {
     $('upload-screen').style.display = 'flex';
     $('upload-user-info').innerHTML = 'Signed in as <strong>' + USER.name + '</strong> <span style="color:' + ROLE_COLORS[USER.role] + '">' + ROLES[USER.role] + '</span> — <a href="#" style="color:var(--blue)" onclick="event.preventDefault();logout();">Sign out</a>';
-    // Show sync button on new devices where settings haven't loaded yet
-    const syncBtn = $('sync-config-btn');
-    if (syncBtn && S.settings.googleClientId) syncBtn.style.display = 'block';
     const saved = loadSessionState();
     if (saved && saved.dirtyVendors?.length) {
       const ageMin = Math.round((Date.now() - new Date(saved.ts)) / 60000);
@@ -2653,26 +2649,6 @@ function debouncedSaveSettings() {
 const VCS_CONFIG_FILENAME = 'vcs_config.json';
 let vcsConfigFileId = null; // cached Drive file ID for vcs_config.json
 
-async function syncConfigFromDrive() {
-  try {
-    toast('Syncing settings from Drive...','#4f7cff');
-    const token = await getGDriveToken(); // will show popup if needed
-    GDriveToken = token;
-    const loaded = await loadConfigFromDrive();
-    if (loaded) {
-      toast('✅ Settings + users synced from Drive');
-      updateUserBadge();
-      // Show sync btn only when clientId is set
-      const btn = $('sync-config-btn');
-      if (btn) btn.style.display = 'none';
-    } else {
-      toast('⚠ Could not sync — check Google Client ID in Settings','#f59e0b');
-    }
-  } catch(e) {
-    toast('Sync failed: '+e.message,'#ef4444');
-  }
-}
-
 async function findOrCreateConfigFile() {
   if (vcsConfigFileId) return vcsConfigFileId;
   if (!GDriveToken || Date.now() >= GDriveTokenExpiry - 5000) return null;
@@ -2737,30 +2713,7 @@ async function saveConfigToDrive() {
 }
 
 async function loadConfigFromDrive() {
-  // If no token, try to get one silently (no popup) using stored googleClientId
-  if (!GDriveToken || Date.now() >= GDriveTokenExpiry - 5000) {
-    const clientId = S.settings.googleClientId;
-    if (!clientId) return false;
-    if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) return false;
-    try {
-      await new Promise((resolve) => {
-        const client = google.accounts.oauth2.initTokenClient({
-          client_id: clientId,
-          scope: 'https://www.googleapis.com/auth/drive',
-          callback: (response) => {
-            if (response && response.access_token) {
-              GDriveToken = response.access_token;
-              GDriveTokenExpiry = Date.now() + ((response.expires_in || 3600) * 1000);
-            }
-            resolve();
-          },
-          error_callback: () => resolve()
-        });
-        client.requestAccessToken({ prompt: '' }); // silent — no popup
-      });
-    } catch(e) { return false; }
-    if (!GDriveToken) return false; // silent auth failed, skip
-  }
+  if (!GDriveToken || Date.now() >= GDriveTokenExpiry - 5000) return false;
   try {
     const fileId = await findOrCreateConfigFile();
     if (!fileId) return false;
@@ -7225,12 +7178,31 @@ function init() {
   $('save-btn').addEventListener('click',()=>saveFile());
 
   // Refresh button — recalculates all scores/tiers/expiry without reloading file
-  $('refresh-btn').addEventListener('click',()=>{
-    if (!S.loaded) return;
+  $('refresh-btn').addEventListener('click', async ()=>{
+    toast('🔄 Refreshing...','#4f7cff');
+
+    // 1. Pull latest config from Drive (settings + users) — keeps all devices in sync
+    try {
+      const configUpdated = await loadConfigFromDrive();
+      if (configUpdated) updateUserBadge();
+    } catch(e) { console.warn('Config refresh failed:', e.message); }
+
+    // 2. Pull latest file from Drive if configured
+    if (S.settings.driveFileId && S.settings.googleClientId) {
+      try {
+        const loaded = await tryAutoLoadFromDrive();
+        if (loaded) {
+          toast('✅ Refreshed — latest data and settings from Drive');
+          return; // tryAutoLoadFromDrive already calls render()
+        }
+      } catch(e) { console.warn('Drive refresh failed:', e.message); }
+    }
+
+    // 3. Fallback — recalculate scores/tiers on existing data
+    if (!S.loaded) { toast('No file loaded','#f59e0b'); return; }
     const today=new Date();
     S.vendors.forEach(v=>{
       v.score=calcScore(v); v.tier=getActionTier(v);
-      // Compute display term from effective date → current expiry
       const eff=parseDate(v.effectiveDate)||parseDate(v.inContractSince);
       const exp=getCurrentExpiry(v);
       if(eff&&exp&&exp>eff) v._displayTerm=fmtDuration(Math.round((exp-eff)/86400000));
