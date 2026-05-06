@@ -523,9 +523,14 @@ const GOOGLE_CLIENT_ID_AUTH = '690262071158-vfuo0pm2rd1bkqnkj26ut5g6a5nhbqfd.app
 
 let msalInstance = null;
 
-function getMsalInstance() {
+async function getMsalInstance() {
   if (msalInstance) return msalInstance;
-  if (typeof msal === 'undefined') throw new Error('MSAL not loaded yet — please wait a moment and try again.');
+  // Wait up to 10 seconds for MSAL to load
+  for (let i = 0; i < 100; i++) {
+    if (typeof msal !== 'undefined') break;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  if (typeof msal === 'undefined') throw new Error('Microsoft sign-in could not load. Check your internet connection and refresh.');
   msalInstance = new msal.PublicClientApplication({
     auth: {
       clientId: MS_CLIENT_ID,
@@ -534,13 +539,16 @@ function getMsalInstance() {
     },
     cache: { cacheLocation: 'localStorage', storeAuthStateInCookie: false }
   });
+  await msalInstance.initialize();
   return msalInstance;
 }
 
 async function signInWithMicrosoft() {
   try {
     $('login-error').textContent = '';
-    const instance = getMsalInstance();
+    $('ms-login-btn').disabled = true;
+    $('ms-login-btn').textContent = 'Connecting...';
+    const instance = await getMsalInstance();
     const response = await instance.loginPopup({
       scopes: ['User.Read'],
       prompt: 'select_account'
@@ -552,51 +560,59 @@ async function signInWithMicrosoft() {
     console.error('Microsoft login error:', e);
     const msg = e.errorCode === 'user_cancelled' ? 'Sign-in cancelled.' : 'Microsoft sign-in failed: ' + (e.errorMessage || e.message || e.errorCode);
     $('login-error').textContent = msg;
-    return false;
+  } finally {
+    const btn = $('ms-login-btn');
+    if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 21 21" style="margin-right:8px"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>Sign in with Microsoft'; }
   }
+  return false;
 }
 
 async function signInWithGoogle() {
   try {
     $('login-error').textContent = '';
-    if (typeof google === 'undefined' || !google.accounts) {
-      $('login-error').textContent = 'Google sign-in not loaded. Please refresh and try again.';
-      return false;
+    $('g-login-btn').disabled = true;
+    $('g-login-btn').textContent = 'Connecting...';
+    // Wait for GIS to load
+    for (let i = 0; i < 50; i++) {
+      if (typeof google !== 'undefined' && google.accounts && google.accounts.oauth2) break;
+      await new Promise(r => setTimeout(r, 100));
     }
-    return new Promise((resolve) => {
-      google.accounts.id.initialize({
+    if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+      throw new Error('Google sign-in not loaded. Please refresh and try again.');
+    }
+    // Use token client — same approach that works for Drive
+    const token = await new Promise((resolve, reject) => {
+      const client = google.accounts.oauth2.initTokenClient({
         client_id: GOOGLE_CLIENT_ID_AUTH,
+        scope: 'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
         callback: (response) => {
-          try {
-            // Decode JWT to get email and name
-            const payload = JSON.parse(atob(response.credential.split('.')[1]));
-            const email = payload.email.toLowerCase();
-            const name = payload.name || email.split('@')[0];
-            resolve(handleOAuthLogin(email, name, 'google'));
-          } catch(e) {
-            $('login-error').textContent = 'Google sign-in failed: ' + e.message;
-            resolve(false);
-          }
+          if (response && response.access_token) resolve(response.access_token);
+          else reject(new Error(response.error || 'Google auth failed'));
         },
-        error_callback: (err) => {
-          $('login-error').textContent = 'Google sign-in error: ' + (err.type || 'unknown');
-          resolve(false);
-        }
+        error_callback: (err) => reject(new Error(err.type || 'Google auth error'))
       });
-      google.accounts.id.prompt((notification) => {
-        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-          // Fall back to popup
-          google.accounts.id.renderButton(
-            Object.assign(document.createElement('div'), {style: 'display:none'}),
-            {theme: 'outline', size: 'large'}
-          );
-          google.accounts.id.prompt();
-        }
-      });
+      client.requestAccessToken({ prompt: 'select_account' });
     });
+    // Fetch user info with token
+    const userResp = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { Authorization: 'Bearer ' + token }
+    });
+    if (!userResp.ok) throw new Error('Could not fetch Google profile');
+    const profile = await userResp.json();
+    const email = (profile.email || '').toLowerCase();
+    const name = profile.name || email.split('@')[0];
+    if (!email) throw new Error('No email returned from Google');
+    return handleOAuthLogin(email, name, 'google');
   } catch(e) {
+    console.error('Google login error:', e);
     $('login-error').textContent = 'Google sign-in failed: ' + e.message;
     return false;
+  } finally {
+    const btn = $('g-login-btn');
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 48 48" style="margin-right:8px"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>Sign in with Google';
+    }
   }
 }
 
