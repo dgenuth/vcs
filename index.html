@@ -673,7 +673,25 @@ async function completeLogin() {
     : false;
   if (!autoLoaded) {
     $('upload-screen').style.display = 'flex';
-    $('upload-user-info').innerHTML = 'Signed in as <strong>' + USER.name + '</strong> <span style="color:' + ROLE_COLORS[USER.role] + '">' + ROLES[USER.role] + '</span> — <a href="#" style="color:var(--blue)" onclick="event.preventDefault();logout();">Sign out</a>';
+    const _uploadInfoHtml = 'Signed in as <strong>' + USER.name + '</strong> <span style="color:' + ROLE_COLORS[USER.role] + '">' + ROLES[USER.role] + '</span> — <a href="#" style="color:var(--blue)" onclick="event.preventDefault();logout();">Sign out</a>';
+    $('upload-user-info').innerHTML = _uploadInfoHtml;
+    // On new device: if clientId set but no token, add a one-time "Connect Drive" prompt
+    if (S.settings.googleClientId && (!GDriveToken || Date.now() >= GDriveTokenExpiry - 5000)) {
+      const connectLink = document.createElement('div');
+      connectLink.style.cssText = 'margin-top:6px;font-size:10px';
+      connectLink.innerHTML = '<a href="#" id="drive-connect-link" style="color:var(--blue)">☁ Connect Google Drive to sync settings</a>';
+      connectLink.querySelector('#drive-connect-link').addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.target.textContent = 'Connecting...';
+        try {
+          await getGDriveToken();
+          const loaded = await loadConfigFromDrive();
+          if (loaded) { updateUserBadge(); toast('✅ Settings synced from Drive'); }
+          connectLink.remove();
+        } catch(err) { toast('Drive connect failed: '+err.message,'#ef4444'); e.target.textContent = '☁ Connect Google Drive to sync settings'; }
+      });
+      $('upload-user-info').appendChild(connectLink);
+    }
     const saved = loadSessionState();
     if (saved && saved.dirtyVendors?.length) {
       const ageMin = Math.round((Date.now() - new Date(saved.ts)) / 60000);
@@ -7181,25 +7199,30 @@ function init() {
   $('refresh-btn').addEventListener('click', async ()=>{
     toast('🔄 Refreshing...','#4f7cff');
 
-    // 1. Pull latest config from Drive (settings + users) — keeps all devices in sync
+    // 1. Ensure we have a Google token — get one silently or via popup
+    if (S.settings.googleClientId && (!GDriveToken || Date.now() >= GDriveTokenExpiry - 5000)) {
+      try { await getGDriveToken(); } catch(e) { console.warn('Token refresh:', e.message); }
+    }
+
+    // 2. Pull latest config from Drive (settings + users) — keeps all devices in sync
     try {
       const configUpdated = await loadConfigFromDrive();
-      if (configUpdated) updateUserBadge();
+      if (configUpdated) { updateUserBadge(); render(); }
     } catch(e) { console.warn('Config refresh failed:', e.message); }
 
-    // 2. Pull latest file from Drive if configured
+    // 3. Pull latest file from Drive if configured
     if (S.settings.driveFileId && S.settings.googleClientId) {
       try {
         const loaded = await tryAutoLoadFromDrive();
         if (loaded) {
           toast('✅ Refreshed — latest data and settings from Drive');
-          return; // tryAutoLoadFromDrive already calls render()
+          return;
         }
       } catch(e) { console.warn('Drive refresh failed:', e.message); }
     }
 
-    // 3. Fallback — recalculate scores/tiers on existing data
-    if (!S.loaded) { toast('No file loaded','#f59e0b'); return; }
+    // 4. Fallback — recalculate scores/tiers on existing data
+    if (!S.loaded) { toast('No file loaded — load a file first','#f59e0b'); return; }
     const today=new Date();
     S.vendors.forEach(v=>{
       v.score=calcScore(v); v.tier=getActionTier(v);
