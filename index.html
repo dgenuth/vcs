@@ -2750,11 +2750,17 @@ async function saveConfigToDrive() {
       '--'+boundary+'\r\nContent-Type: application/json\r\n\r\n'+content+'\r\n',
       '--'+boundary+'--'
     ]);
-    await fetch(
+    const saveResp = await fetch(
       'https://www.googleapis.com/upload/drive/v3/files/'+fileId+'?uploadType=multipart',
       {method:'PATCH', headers:{Authorization:'Bearer '+GDriveToken,'Content-Type':'multipart/related; boundary='+boundary}, body}
     );
-    console.log('Config saved to Drive');
+    if (saveResp.ok) {
+      console.log('Config saved to Drive');
+      // Show subtle toast — only if it was a user-triggered settings save
+      if (document.activeElement && document.activeElement.closest && document.activeElement.closest('.settings-section')) {
+        toast('✅ Settings saved','#22c55e');
+      }
+    }
   } catch(e) {
     console.warn('Could not save config to Drive:', e.message);
   }
@@ -2845,7 +2851,7 @@ const ROLE_PERMS = {
     editContract:false, editContact:false, save:false,
     viewFees:true, viewContacts:true, viewFinancials:true,
     tabs: ['today','callsheet','expiring','vendordb','network',
-           'calendar','reviews','history','settings'],
+           'itw','reviews','calendar','history','settings'],
     settingsPersonalOnly: true,
   },
   // ── Restricted Viewer: minimal access, vendor search only ─────────────────
@@ -7163,6 +7169,11 @@ function render() {
   if (S.filterLabel){fl.textContent=`[${S.filterLabel}]`;fl.style.display='inline';}else fl.style.display='none';
   // Refresh AI suggestions contextually when view changes
   if (S.aiOpen && typeof renderAISuggestions==='function') renderAISuggestions();
+  // Redirect to allowed tab if current view is not permitted for this role
+  const _allowedTabs = (ROLE_PERMS[USER.role||'viewer']||ROLE_PERMS.viewer).tabs;
+  if (_allowedTabs && !_allowedTabs.includes(S.view)) {
+    S.view = _allowedTabs[0] || 'today';
+  }
   if (!S.loaded&&S.view!=='settings'){content.appendChild(el('p',{class:'muted',style:{padding:'24px'}},'No file loaded. Upload a workbook to begin.'));return;}
   switch(S.view){
     case 'today':renderToday(content);break;case 'callsheet':renderCallSheet(content);break;case 'expiring':renderExpiring(content);break;
