@@ -2619,7 +2619,14 @@ function startAutoSave() {
   }, 30000); // every 30 seconds
 }
 const SETTINGS_STORAGE_KEY = 'vcs_user_settings_v2';
-const PERSIST_KEYS = ['theme','fontSize','compactRows','defaultView','showKPIs','showHebrew','autoSortByScore','showSnoozed','showDismissedDefault','animateBadges','emailSignature','cols','dbHiddenCols','sidebarWidth','sfClientId','sfRedirectUri','sfLoginUrl','composioKey','driveFileId','driveFileName','driveAutoSync','googleClientId'];
+// Personal settings — stored per user email, follow the user across devices
+const PERSONAL_SETTING_KEYS = ['theme','fontSize','compactRows','defaultView','showKPIs',
+  'showHebrew','autoSortByScore','showSnoozed','showDismissedDefault','animateBadges',
+  'emailSignature','cols','dbHiddenCols','sidebarWidth','closedDays','oooDays'];
+// Global settings — stored once, admin-controlled, apply to all sessions
+const GLOBAL_SETTING_KEYS = ['sfClientId','sfRedirectUri','sfLoginUrl','composioKey',
+  'driveFileId','driveFileName','driveAutoSync','googleClientId'];
+const PERSIST_KEYS = [...PERSONAL_SETTING_KEYS, ...GLOBAL_SETTING_KEYS];
 
 function saveSettings() {
   try {
@@ -2701,13 +2708,36 @@ async function saveConfigToDrive() {
   try {
     const fileId = await findOrCreateConfigFile();
     if (!fileId) return;
+    // Build personal settings for current user
+    const personalSettings = {};
+    PERSONAL_SETTING_KEYS.forEach(k => {
+      if (k === 'dbHiddenCols') {
+        if (S.dbHiddenCols instanceof Set) personalSettings[k] = [...S.dbHiddenCols];
+      } else if (S.settings[k] !== undefined) {
+        personalSettings[k] = S.settings[k];
+      }
+    });
+    // Build global settings (admin-only values)
+    const globalSettings = {};
+    GLOBAL_SETTING_KEYS.forEach(k => { if (S.settings[k] !== undefined) globalSettings[k] = S.settings[k]; });
+
+    // Load existing config first to preserve other users' personal settings
+    let existingConfig = {};
+    try {
+      const fid = await findOrCreateConfigFile();
+      if (fid) {
+        const er = await fetch('https://www.googleapis.com/drive/v3/files/'+fid+'?alt=media',
+          {headers:{Authorization:'Bearer '+GDriveToken}});
+        if (er.ok) existingConfig = await er.json();
+      }
+    } catch(e) {}
+
+    const userSettings = existingConfig.userSettings || {};
+    if (USER.email) userSettings[USER.email.toLowerCase()] = personalSettings;
+
     const config = {
-      settings: (() => {
-        const s = {};
-        PERSIST_KEYS.forEach(k => { if (S.settings[k] !== undefined) s[k] = S.settings[k]; });
-        if (S.dbHiddenCols instanceof Set) s.dbHiddenCols = [...S.dbHiddenCols];
-        return s;
-      })(),
+      globalSettings,
+      userSettings,
       users: getApprovedUsers(),
       savedBy: USER.email || 'unknown',
       savedAt: new Date().toISOString()
@@ -2741,19 +2771,34 @@ async function loadConfigFromDrive() {
     );
     if (!resp.ok) return false;
     const config = await resp.json();
-    if (config.settings) {
-      // Merge Drive settings — Drive wins over localStorage except for googleClientId
-      // (googleClientId is device-specific and should stay local)
-      const localClientId = S.settings.googleClientId;
-      if (config.settings.dbHiddenCols) {
-        S.dbHiddenCols = new Set(Array.isArray(config.settings.dbHiddenCols) ? config.settings.dbHiddenCols : []);
-        delete config.settings.dbHiddenCols;
-      }
-      Object.assign(S.settings, config.settings);
-      if (localClientId) S.settings.googleClientId = localClientId; // preserve local
+    const localClientId = S.settings.googleClientId; // preserve device-specific key
+
+    // Apply global settings (admin config values)
+    if (config.globalSettings) {
+      Object.assign(S.settings, config.globalSettings);
     }
+    // Legacy support for old config format
+    if (config.settings && !config.globalSettings) {
+      Object.assign(S.settings, config.settings);
+    }
+
+    // Apply personal settings for current user
+    if (config.userSettings && USER.email) {
+      const mySettings = config.userSettings[USER.email.toLowerCase()];
+      if (mySettings) {
+        if (mySettings.dbHiddenCols) {
+          S.dbHiddenCols = new Set(Array.isArray(mySettings.dbHiddenCols) ? mySettings.dbHiddenCols : []);
+          delete mySettings.dbHiddenCols;
+        }
+        Object.assign(S.settings, mySettings);
+      }
+    }
+
+    // Always preserve the local device's googleClientId
+    if (localClientId) S.settings.googleClientId = localClientId;
+
+    // User list — Drive is source of truth
     if (config.users && config.users.length > 0) {
-      // Merge user lists — Drive wins (it's the source of truth)
       setApprovedUsers(config.users);
     }
     console.log('Config loaded from Drive, saved by', config.savedBy, 'at', config.savedAt);
@@ -2768,10 +2813,51 @@ async function loadConfigFromDrive() {
 const ROLES = {admin:'Admin', manager:'Manager', viewer:'Viewer', restricted:'Restricted Viewer'};
 const ROLE_COLORS = {admin:'var(--green)',manager:'var(--blue)',viewer:'var(--muted)',restricted:'var(--amber)'};
 const ROLE_PERMS = {
-  admin:      {editAll:true,manageUsers:true,deleteHistory:true,configAI:true,configDrive:true,configSF:true,exportData:true,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,viewFees:true,viewContacts:true,viewFinancials:true},
-  manager:    {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:true,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,viewFees:true,viewContacts:true,viewFinancials:true},
-  viewer:     {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,viewFees:true,viewContacts:true,viewFinancials:true},
-  restricted: {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,viewFees:false,viewContacts:false,viewFinancials:false},
+  // ── Admin: full access to everything ──────────────────────────────────────
+  admin: {
+    editAll:true, manageUsers:true, deleteHistory:true,
+    configAI:true, configDrive:true, configSF:true,
+    exportData:true, addVendor:true, editNotes:true,
+    editContract:true, editContact:true, save:true,
+    viewFees:true, viewContacts:true, viewFinancials:true,
+    tabs: ['today','callsheet','expiring','vendordb','network','economics','tiers',
+           'itw','reviews','calendar','forecast','analytics','reports','summary',
+           'history','datacheck','settings'],
+  },
+  // ── Manager: edit vendors, no system config, no user management ───────────
+  manager: {
+    editAll:false, manageUsers:false, deleteHistory:false,
+    configAI:false, configDrive:false, configSF:false,
+    exportData:true, addVendor:true, editNotes:true,
+    editContract:true, editContact:true, save:true,
+    viewFees:true, viewContacts:true, viewFinancials:true,
+    tabs: ['today','callsheet','expiring','vendordb','network','economics','tiers',
+           'itw','reviews','calendar','forecast','analytics','reports','summary',
+           'history','datacheck','settings'],
+    // Settings tab visible but restricted to personal settings only
+    settingsPersonalOnly: true,
+  },
+  // ── Viewer: read-only, no editing, no export ──────────────────────────────
+  viewer: {
+    editAll:false, manageUsers:false, deleteHistory:false,
+    configAI:false, configDrive:false, configSF:false,
+    exportData:false, addVendor:false, editNotes:false,
+    editContract:false, editContact:false, save:false,
+    viewFees:true, viewContacts:true, viewFinancials:true,
+    tabs: ['today','callsheet','expiring','vendordb','network',
+           'calendar','reviews','history','settings'],
+    settingsPersonalOnly: true,
+  },
+  // ── Restricted Viewer: minimal access, vendor search only ─────────────────
+  restricted: {
+    editAll:false, manageUsers:false, deleteHistory:false,
+    configAI:false, configDrive:false, configSF:false,
+    exportData:false, addVendor:false, editNotes:false,
+    editContract:false, editContact:false, save:false,
+    viewFees:false, viewContacts:false, viewFinancials:false,
+    tabs: ['vendordb','expiring','settings'],
+    settingsPersonalOnly: true,
+  },
 };
 // Fields that restricted/viewer roles may have explicitly hidden by admin
 // hiddenFields is stored per-user in the approved users list
@@ -4520,12 +4606,17 @@ function updateSidebar() {
     dirtyInd.style.display=hasDirty?'inline':'none';
     if(hasDirty) dirtyInd.title=S.dirty.size+' vendor'+(S.dirty.size!==1?'s':'')+' with unsaved changes';
   }
+  const allowedTabs = (ROLE_PERMS[USER.role||'viewer']||ROLE_PERMS.viewer).tabs || NAV_DEFS.map(n=>n[0]);
   for (const [id,icon,label] of NAV_DEFS) {
+    if (!allowedTabs.includes(id)) continue; // hide tabs not in role
     const btn=document.createElement('button');
     btn.className='nav-btn'+(S.view===id?' active':'');
     btn.title=label;
     btn.innerHTML=`<span class="nav-icon">${icon}</span>${collapsed?'':label}`;
-    btn.addEventListener('click',()=>{S.view=id;S.search='';$('search').value='';if(id!=='today'){S.filter=null;S.filterLabel='';}updateSidebar();render();});
+    btn.addEventListener('click',()=>{
+      if (!allowedTabs.includes(id)) { toast('⚠ You do not have access to this section','#f59e0b'); return; }
+      S.view=id;S.search='';$('search').value='';if(id!=='today'){S.filter=null;S.filterLabel='';}updateSidebar();render();
+    });
     nav.appendChild(btn);
   }
   const qs=$('quick-stats'); qs.innerHTML='';
@@ -6666,6 +6757,7 @@ function renderSettings(c) {
   c.appendChild(secComposio);
     } // end composio admin block
 
+  if (hasPermission('configAI')) {
   const secAI=el('div',{class:'settings-section'});
   secAI.appendChild(el('h3',{},'🤖 AI Configuration'));
   secAI.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Configure your AI provider. Keys stored in browser localStorage only — never sent to any server except the AI provider directly.'));
@@ -6706,6 +6798,7 @@ function renderSettings(c) {
     secAI.appendChild(statusEl);
   }
   c.appendChild(secAI);
+  } // end AI config admin block
 
   // Column visibility
   const sec1=el('div',{class:'settings-section'});
