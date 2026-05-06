@@ -3538,7 +3538,7 @@ function renderVendorDB(c) {
     } else if (Array.isArray(fromSettings)) {
       S.dbHiddenCols = new Set(fromSettings);
     } else {
-      S.dbHiddenCols = new Set(['phone','notice','status','perp','subcat','days','gpo']);
+      S.dbHiddenCols = new Set(['phone','notice','status','perp','days']); // gpo+subcat now visible by default
     }
   }
 
@@ -3594,16 +3594,36 @@ function renderVendorDB(c) {
   // ── Column visibility toggles ──
   const colToggleBar=el('div',{style:{display:'flex',gap:'3px',flexWrap:'wrap',marginBottom:'6px',alignItems:'center'}});
   colToggleBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'3px'}},'Columns:'));
+  // Admin-controlled locked columns (always hidden for non-admins)
+  const ADMIN_ONLY_COLS = new Set(['fee','notice','contact','phone','email','perp']);
+  const canEditCols = hasPermission('editAll') || USER.role === 'admin' || USER.role === 'manager';
+
   COLS.forEach(col=>{
-    const hidden=S.dbHiddenCols.has(col.key);
+    // For non-managers: hide admin-only cols entirely, no toggle
+    if (!canEditCols && ADMIN_ONLY_COLS.has(col.key)) return;
+    const isHidden = () => S.dbHiddenCols.has(col.key);
     const btn=el('button',{
-      class:'col-toggle-btn'+(hidden?'':' on'),
-      style:{fontSize:'8px',padding:'1px 5px'},
-      onclick(){hidden?S.dbHiddenCols.delete(col.key):S.dbHiddenCols.add(col.key);render();}
+      class:'col-toggle-btn'+(isHidden()?'':' on'),
+      style:{fontSize:'8px',padding:'1px 5px',
+        opacity: (!canEditCols && ADMIN_ONLY_COLS.has(col.key)) ? '0.4' : '1',
+        cursor: 'pointer'
+      },
+      onclick(){
+        // Non-admins can toggle their own visible cols but can't unhide admin-only cols
+        if (!canEditCols && ADMIN_ONLY_COLS.has(col.key)) {
+          toast('⚠ This column is restricted by your administrator','#f59e0b'); return;
+        }
+        if (S.dbHiddenCols.has(col.key)) S.dbHiddenCols.delete(col.key);
+        else S.dbHiddenCols.add(col.key);
+        debouncedSaveSettings();
+        render();
+      }
     },col.label);
     colToggleBar.appendChild(btn);
   });
-  colToggleBar.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',marginLeft:'4px'},onclick(){S.dbHiddenCols=new Set();render();}},'Show All'));
+  if (canEditCols) {
+    colToggleBar.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',marginLeft:'4px'},onclick(){S.dbHiddenCols=new Set();debouncedSaveSettings();render();}},'Show All'));
+  }
   c.appendChild(colToggleBar);
 
   // Filter visible cols
