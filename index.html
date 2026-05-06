@@ -2222,7 +2222,7 @@ async function getGDriveToken() {
     try {
       const client = google.accounts.oauth2.initTokenClient({
         client_id: clientId,
-        scope: 'https://www.googleapis.com/auth/drive.file',
+        scope: 'https://www.googleapis.com/auth/drive',
         callback: (response) => {
           if (response && response.access_token) {
             GDriveToken = response.access_token;
