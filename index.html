@@ -2735,6 +2735,13 @@ async function saveConfigToDrive() {
     const userSettings = existingConfig.userSettings || {};
     if (USER.email) userSettings[USER.email.toLowerCase()] = personalSettings;
 
+    // Include history in personal settings for this user
+    if (USER.email && S.history && S.history.length > 0) {
+      const mySettings = userSettings[USER.email.toLowerCase()] || {};
+      mySettings.history = S.history.slice(-500); // keep last 500 entries
+      userSettings[USER.email.toLowerCase()] = mySettings;
+    }
+
     const config = {
       globalSettings,
       userSettings,
@@ -2795,6 +2802,13 @@ async function loadConfigFromDrive() {
         if (mySettings.dbHiddenCols) {
           S.dbHiddenCols = new Set(Array.isArray(mySettings.dbHiddenCols) ? mySettings.dbHiddenCols : []);
           delete mySettings.dbHiddenCols;
+        }
+        // Restore history — merge with current session history
+        if (mySettings.history && Array.isArray(mySettings.history)) {
+          const existingKeys = new Set(S.history.map(h => h.date+h.time+h.vendor+h.action));
+          const toAdd = mySettings.history.filter(h => !existingKeys.has(h.date+h.time+h.vendor+h.action));
+          S.history = [...S.history, ...toAdd].sort((a,b) => (b.date+b.time).localeCompare(a.date+a.time)).slice(0,500);
+          delete mySettings.history; // don't apply history as a setting
         }
         Object.assign(S.settings, mySettings);
       }
@@ -6521,7 +6535,18 @@ function renderSettings(c) {
           if(!targetUser){toast('User not found','#ef4444');return;}
           // Store impersonation payload in localStorage with a short-lived key
           const impKey='vcs_impersonate_'+Date.now();
-          localStorage.setItem(impKey,JSON.stringify({email:targetUser.email,name:targetUser.name,role:targetUser.role,hiddenFields:targetUser.hiddenFields||[],expires:Date.now()+300000})); // 5 min TTL
+          // Pass current settings so new tab can load from Drive
+          localStorage.setItem(impKey,JSON.stringify({
+            email:targetUser.email,name:targetUser.name,
+            role:targetUser.role,hiddenFields:targetUser.hiddenFields||[],
+            expires:Date.now()+300000, // 5 min TTL
+            settings:{
+              driveFileId:S.settings.driveFileId,
+              driveFileName:S.settings.driveFileName,
+              driveAutoSync:S.settings.driveAutoSync,
+              googleClientId:S.settings.googleClientId
+            }
+          }));
           const url=window.location.href.split('#')[0]+'#impersonate='+impKey;
           window.open(url,'_blank');
           toast('👁 Opening as '+targetUser.email+' — expires in 5 min');
@@ -7202,6 +7227,8 @@ function init() {
         localStorage.removeItem(impKey); // one-time use
         // Clear URL hash without reload
         history.replaceState(null,'',window.location.pathname+window.location.search);
+        // Apply passed settings so Drive load works
+        if (imp.settings) Object.assign(S.settings, imp.settings);
         loginAs({email:imp.email,name:imp.name,role:imp.role,hiddenFields:imp.hiddenFields||[]});
         // Show impersonation banner
         document.body.insertAdjacentHTML('afterbegin',
@@ -7214,6 +7241,16 @@ function init() {
         $('upload-screen').style.display='flex';
         updateUserBadge();
         $('upload-user-info').innerHTML='<span style="color:#f59e0b;font-weight:700">👁 Admin preview as '+imp.email+'</span> — load the file to test their view';
+        // Auto-load from Drive if configured
+        if (S.settings.driveFileId && S.settings.googleClientId) {
+          setTimeout(async () => {
+            try {
+              await tryAutoLoadFromDrive();
+            } catch(e) {
+              console.warn('Impersonate auto-load failed:', e.message);
+            }
+          }, 500);
+        }
         return; // skip normal auth flow
       } else {
         localStorage.removeItem(impKey);
