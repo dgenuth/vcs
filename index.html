@@ -1382,7 +1382,7 @@ async function saveFile() {
   // ── Confirmation required — user must approve before any file is written ──
   openModal(body=>{
     body.appendChild(el('h3',{},'💾 Confirm Save'));
-    body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--text)',lineHeight:'1.6',marginBottom:'10px'}},'You are about to export a modified copy of your workbook. This will download a new .xlsm file — your original file is never overwritten.'));
+    body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--text)',lineHeight:'1.6',marginBottom:'10px'}},'You are about to save your changes. If Google Drive sync is configured, the file will be pushed directly to Drive. A local download will also be triggered as a backup copy.'));
     const summary=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'5px',padding:'10px',marginBottom:'12px',fontSize:'10px'}});
     summary.appendChild(el('div',{style:{fontWeight:'700',marginBottom:'4px'}},'Changes to be saved:'));
     summary.appendChild(el('div',{},dirtyCount+' vendor record'+(dirtyCount!==1?'s':'')+' modified'));
@@ -1391,7 +1391,7 @@ async function saveFile() {
     body.appendChild(summary);
     body.appendChild(el('p',{style:{fontSize:'9px',color:'var(--amber)',lineHeight:'1.5'}},'⚠ After downloading, open in Excel and do File → Save As to preserve macros and formatting.'));
     const btns=el('div',{class:'modal-btns'});
-    btns.appendChild(el('button',{class:'btn-primary',onclick(){closeModal();executeSave();}},'✅ Confirm & Download'));
+    btns.appendChild(el('button',{class:'btn-primary',onclick(){closeModal();executeSave();}},'✅ Confirm & Save'));
     btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
     body.appendChild(btns);
   });
@@ -1518,7 +1518,7 @@ async function executeSave() {
     toast(`✓ Saved ${dirtyVendors.length} vendor(s) — open in Excel, formulas will recalculate automatically`);
 
     // If Drive sync is configured, also push to Google Drive
-    if (S.settings.driveFileId && S.settings.composioKey && S.settings.driveAutoSync) {
+    if (S.settings.driveFileId && S.settings.googleClientId && S.settings.driveAutoSync) {
       toast('☁ Syncing to Google Drive...','#4f7cff');
       const synced = await saveToDrive(uint8.buffer, outName);
       if (synced) toast('✅ Saved locally and synced to Google Drive');
