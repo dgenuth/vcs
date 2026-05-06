@@ -7241,15 +7241,21 @@ function init() {
         $('upload-screen').style.display='flex';
         updateUserBadge();
         $('upload-user-info').innerHTML='<span style="color:#f59e0b;font-weight:700">👁 Admin preview as '+imp.email+'</span> — load the file to test their view';
-        // Auto-load from Drive if configured
+        // Show load button — token needs to be obtained fresh in this tab
         if (S.settings.driveFileId && S.settings.googleClientId) {
-          setTimeout(async () => {
+          const autoLoadDiv = document.createElement('div');
+          autoLoadDiv.style.cssText = 'margin-top:10px';
+          autoLoadDiv.innerHTML = '<button id="imp-load-btn" style="background:#f59e0b;color:#000;border:none;padding:8px 20px;border-radius:5px;font-weight:700;cursor:pointer;font-size:12px">☁ Load File as '+imp.email+'</button>';
+          $('upload-user-info').appendChild(autoLoadDiv);
+          document.getElementById('imp-load-btn').addEventListener('click', async () => {
+            document.getElementById('imp-load-btn').textContent = 'Loading...';
             try {
-              await tryAutoLoadFromDrive();
+              await loadFromGoogleDrive();
             } catch(e) {
-              console.warn('Impersonate auto-load failed:', e.message);
+              toast('Load failed: '+e.message, '#ef4444');
+              document.getElementById('imp-load-btn').textContent = '☁ Load File as '+imp.email;
             }
-          }, 500);
+          });
         }
         return; // skip normal auth flow
       } else {
