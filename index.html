@@ -2543,7 +2543,7 @@ function canViewField(fieldKey){
 
 async function logout(){
   // If there are unsaved changes and Drive is configured, offer to push before logout
-  if(S.loaded && S.dirty.size>0 && S.settings.driveFileId && S.settings.composioKey && S.settings.driveAutoSync){
+  if(S.loaded && S.dirty.size>0 && S.settings.driveFileId && S.settings.googleClientId && S.settings.driveAutoSync){
     try{
       toast('☁ Syncing to Drive before sign out...','#4f7cff');
       // Build minimal save without download — push current state to Drive
@@ -6798,6 +6798,7 @@ function init() {
   // ── Auth gate ──
   if (restoreSession()) {
     $('login-screen').style.display='none';
+    $('app').style.display='flex';
     $('upload-screen').style.display='flex';
     restoreSFSession();
     updateUserBadge();
@@ -6820,6 +6821,7 @@ function init() {
     const result=attemptLogin(email, pass);
     if(result.ok){
       $('login-screen').style.display='none';
+      $('app').style.display='flex';
       updateUserBadge();
       toast('Welcome, '+USER.name+' ('+ROLES[USER.role]+')');
       // Try auto-load from Google Drive if configured
