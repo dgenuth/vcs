@@ -700,11 +700,13 @@ async function completeLogin() {
   toast('Welcome, ' + USER.name + ' (' + ROLES[USER.role] + ')');
   loadSettings();
   // Pull settings + user list from Drive — source of truth across all devices
-  // Do this BEFORE auto-loading file so Drive settings (fileId etc) are available
   try {
     const driveConfigLoaded = await loadConfigFromDrive();
-    if (driveConfigLoaded) updateUserBadge(); // refresh badge with Drive user data
+    if (driveConfigLoaded) updateUserBadge();
   } catch(e) { console.warn('Drive config load on login:', e.message); }
+
+  // Apply copy protection for non-copy roles
+  applyCopyProtection();
   const autoLoaded = S.settings.driveAutoSync && S.settings.driveFileId && S.settings.googleClientId
     ? await tryAutoLoadFromDrive()
     : false;
@@ -1598,7 +1600,7 @@ async function executeSave() {
     toast(`✓ Saved ${dirtyVendors.length} vendor(s) — open in Excel, formulas will recalculate automatically`);
 
     // If Drive sync is configured, also push to Google Drive
-    if (S.settings.driveFileId && S.settings.googleClientId && S.settings.driveAutoSync) {
+    if (S.settings.driveAutoSync) { // proxy handles auth, no clientId required
       toast('☁ Syncing to Google Drive...','#4f7cff');
       const synced = await saveToDrive(uint8.buffer, outName);
       if (synced) toast('✅ Saved locally and synced to Google Drive');
@@ -2550,11 +2552,25 @@ async function loadFromGoogleDrive() {
 }
 
 async function saveToDrive(buffer, filename) {
+  // Try proxy first — works for all users regardless of Google token
+  try {
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+    const proxyResp = await fetch(VCS_PROXY_URL, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({action:'saveFile', content:b64, name:filename})
+    });
+    if (proxyResp.ok) {
+      const data = await proxyResp.json();
+      if (data.status === 'ok') { S.driveLastSync = new Date(); return true; }
+    }
+  } catch(e) { console.warn('Proxy save failed, trying direct:', e.message); }
+
+  // Fallback: direct Drive API (requires user Google token)
   const fileId = S.settings.driveFileId;
   if (!fileId) return false;
   try {
     const token = await getGDriveToken();
-    // Multipart upload to update existing file content
     const boundary = 'vcs_boundary_'+Date.now();
     const meta = JSON.stringify({name: filename});
     const body = new Blob([
@@ -2567,10 +2583,7 @@ async function saveToDrive(buffer, filename) {
       'https://www.googleapis.com/upload/drive/v3/files/'+fileId+'?uploadType=multipart&supportsAllDrives=true',
       {method:'PATCH', headers:{Authorization:'Bearer '+token,'Content-Type':'multipart/related; boundary='+boundary}, body}
     );
-    if (!resp.ok) {
-      const err = await resp.text();
-      throw new Error('Drive save API error '+resp.status+': '+err.slice(0,200));
-    }
+    if (!resp.ok) throw new Error('Drive save API error '+resp.status);
     S.driveLastSync = new Date();
     return true;
   } catch(e) {
