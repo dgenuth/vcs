@@ -2955,11 +2955,11 @@ const ROLE_COLORS = {
   director_ops:'#06b6d4',
   ops_qc:      '#0891b2',
   finance_sr:  '#f59e0b',
-  finance_jr:  '#fbbf24',
-  ssa:         '#94a3b8',
+  finance_jr:  '#fb923c',
+  ssa:         '#64748b',
   sales_rep:   '#ef4444',
   manager:     '#4f7cff',
-  viewer:      '#94a3b8',
+  viewer:      '#10b981',
   restricted:  '#f59e0b',
 };
 const ROLE_PERMS = {
@@ -3705,28 +3705,28 @@ function renderVendorDB(c) {
     } else if (Array.isArray(fromSettings)) {
       S.dbHiddenCols = new Set(fromSettings);
     } else {
-      // Default visible columns per role — sourced from User Accounts tab in Vendor_Catalogue.xlsm
+      // Default visible columns per role — exact mapping from User Accounts tab in Vendor_Catalogue.xlsm
     const ROLE_VISIBLE_COLS = {
-      // Procurement/Admin: all columns
+      // Procurement/Admin: all columns (full access)
       admin:        new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
       procurement:  new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
-      // CRO (Ushy): financial + contract info, no contacts
-      cro:          new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status','fee','perp','score','tier']),
-      // Director of Operations: operational view, no financials or contacts
-      director_ops: new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status','score','tier']),
-      // Operations QC: same as director_ops
-      ops_qc:       new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status','score','tier']),
-      // Senior Finance: financials + contract, no contacts
-      finance_sr:   new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','fee','perp','score','tier']),
-      // Junior Finance: same as senior finance
-      finance_jr:   new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','fee','perp','score','tier']),
-      // SSA: vendor identity + basic contract, no financials, no contacts
-      ssa:          new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status']),
-      // Sales Rep: minimal — search only
+      // CRO: GPO,Vendor,Cat,SubCat,Product,Markets,Expiry,Status,AdminFee,Perp,AR,Score
+      cro:          new Set(['gpo','name','cat','subcat','product','markets','expiry','status','fee','perp','ar','score']),
+      // Director of Operations: GPO,Vendor,Cat,SubCat,Product,Markets,Expiry,Status,AR,Score
+      director_ops: new Set(['gpo','name','cat','subcat','product','markets','expiry','status','ar','score']),
+      // Operations QC: same as Director of Operations
+      ops_qc:       new Set(['gpo','name','cat','subcat','product','markets','expiry','status','ar','score']),
+      // Senior Finance: GPO,Vendor,Cat,SubCat,Product,Markets,Expiry,AdminFee,Perp,AR,Score
+      finance_sr:   new Set(['gpo','name','cat','subcat','product','markets','expiry','fee','perp','ar','score']),
+      // Junior Finance: same as Senior Finance
+      finance_jr:   new Set(['gpo','name','cat','subcat','product','markets','expiry','fee','perp','ar','score']),
+      // SSA: GPO,Vendor,Cat,SubCat,Product,Markets,Expiry,Status,AR (no financials, no contacts, no score)
+      ssa:          new Set(['gpo','name','cat','subcat','product','markets','expiry','status','ar']),
+      // Sales Rep: GPO,Vendor,Cat,SubCat,Product,Markets,Expiry,AR (search-only, no financials)
       sales_rep:    new Set(['gpo','name','cat','subcat','product','markets','expiry','ar']),
       // Legacy aliases
       manager:      new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
-      viewer:       new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status','fee','perp','score','tier']),
+      viewer:       new Set(['gpo','name','cat','subcat','product','markets','expiry','status','fee','perp','ar','score']),
       restricted:   new Set(['gpo','name','cat','subcat','product','markets','expiry','ar']),
     };
     const roleVisible = ROLE_VISIBLE_COLS[USER.role||'restricted'] || ROLE_VISIBLE_COLS.restricted;
@@ -3791,19 +3791,19 @@ function renderVendorDB(c) {
   const colToggleBar=el('div',{style:{display:'flex',gap:'3px',flexWrap:'wrap',marginBottom:'6px',alignItems:'center'}});
   colToggleBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'3px'}},'Columns:'));
   // Admin-controlled locked columns (always hidden for non-admins)
-  // Allowed columns per role — user can toggle within this set but cannot see others
+  // Allowed columns per role — exact from User Accounts tab in Vendor_Catalogue.xlsm
   const ROLE_ALLOWED_COLS = {
     admin:        new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
     procurement:  new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
-    cro:          new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status','fee','perp','score','tier']),
-    director_ops: new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status','score','tier']),
-    ops_qc:       new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status','score','tier']),
-    finance_sr:   new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','fee','perp','score','tier']),
-    finance_jr:   new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','fee','perp','score','tier']),
-    ssa:          new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status']),
+    cro:          new Set(['gpo','name','cat','subcat','product','markets','expiry','status','fee','perp','ar','score']),
+    director_ops: new Set(['gpo','name','cat','subcat','product','markets','expiry','status','ar','score']),
+    ops_qc:       new Set(['gpo','name','cat','subcat','product','markets','expiry','status','ar','score']),
+    finance_sr:   new Set(['gpo','name','cat','subcat','product','markets','expiry','fee','perp','ar','score']),
+    finance_jr:   new Set(['gpo','name','cat','subcat','product','markets','expiry','fee','perp','ar','score']),
+    ssa:          new Set(['gpo','name','cat','subcat','product','markets','expiry','status','ar']),
     sales_rep:    new Set(['gpo','name','cat','subcat','product','markets','expiry','ar']),
     manager:      new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
-    viewer:       new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status','fee','perp','score','tier']),
+    viewer:       new Set(['gpo','name','cat','subcat','product','markets','expiry','status','fee','perp','ar','score']),
     restricted:   new Set(['gpo','name','cat','subcat','product','markets','expiry','ar']),
   };
   const myAllowedCols = ROLE_ALLOWED_COLS[USER.role||'restricted'] || ROLE_ALLOWED_COLS.restricted;
@@ -6745,11 +6745,12 @@ function renderSettings(c) {
       const userInfo=el('div',{style:{flex:'1',minWidth:'180px'}});
       const nameDisplay = u.name && u.name !== u.email ? u.name : '';
       userInfo.appendChild(el('div',{style:{fontSize:'10px',fontWeight:isYou?'700':'400',color:isYou?'var(--blue)':'var(--text)'}},u.email+(isYou?' (you)':'')));
-      const metaLine=el('div',{style:{display:'flex',gap:'8px',fontSize:'8px',color:'var(--muted)',marginTop:'1px'}});
-      if(nameDisplay) metaLine.appendChild(el('span',{},nameDisplay));
-      if(u.added) metaLine.appendChild(el('span',{},'Added '+u.added.slice(0,10)));
-      if(u.lastLogin) metaLine.appendChild(el('span',{},'Last login '+u.lastLogin.slice(0,10)));
-      if(metaLine.children.length) userInfo.appendChild(metaLine);
+      const metaLine=el('div',{style:{display:'flex',gap:'8px',fontSize:'8px',color:'var(--muted)',marginTop:'1px',flexWrap:'wrap'}});
+      if(nameDisplay) metaLine.appendChild(el('span',{style:{color:'var(--text)',opacity:'0.7'}},nameDisplay));
+      if(u.added) metaLine.appendChild(el('span',{},'Added: '+u.added.slice(0,10)));
+      if(u.lastLogin) metaLine.appendChild(el('span',{style:{color:'#4f7cff'}},'Last login: '+u.lastLogin.slice(0,10)));
+      else metaLine.appendChild(el('span',{style:{opacity:'0.4'}},'Never logged in'));
+      userInfo.appendChild(metaLine);
       mainLine.appendChild(userInfo);
 
       // Role badge — always reflects current u.role (refreshes on change)
@@ -6761,8 +6762,8 @@ function renderSettings(c) {
         mainLine.appendChild(el('span',{style:{fontSize:'9px',padding:'2px 6px',borderRadius:'8px',background:'rgba(34,197,94,.1)',color:'var(--green)',border:'1px solid rgba(34,197,94,.2)'}},'🔒 locked'));
       } else {
         const sel=el('select',{class:'detail-edit-field',style:{fontSize:'9px',padding:'2px 3px',width:'130px'}});
-        const assignableRoles=['admin','procurement','cro','director_ops','ops_qc','finance_sr','finance_jr','ssa','sales_rep'];
-        for(const r of assignableRoles){const o=el('option',{value:r},ROLES[r]);if(r===u.role)o.selected=true;sel.appendChild(o);}
+        const assignableRoles=['admin','procurement','cro','director_ops','ops_qc','finance_sr','finance_jr','ssa','sales_rep','viewer','restricted','manager'];
+        for(const r of assignableRoles){const o=el('option',{value:r},ROLES[r]||r);if(r===u.role)o.selected=true;sel.appendChild(o);}
         sel.addEventListener('change',()=>{
           const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);
           if(i>=0){
