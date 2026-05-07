@@ -685,6 +685,7 @@ function loginAs(userObj) {
   USER.loggedIn = true;
   USER.loginTime = new Date();
   USER.hiddenFields = userObj.hiddenFields || [];
+  USER.tabOverrides = userObj.tabOverrides || {};
   // Persist session
   sessionStorage.setItem('vcs_session', JSON.stringify({
     email: USER.email, name: USER.name, role: USER.role,
@@ -3024,19 +3025,43 @@ const ROLE_PERMS = {
 };
 // Fields that restricted/viewer roles may have explicitly hidden by admin
 // hiddenFields is stored per-user in the approved users list
+// All 69 vendor fields — complete list from SearchTable in Vendor_Catalogue.xlsm
 const ALL_RESTRICTABLE_FIELDS = [
-  {key:'adminFee',label:'Admin Fee'},
-  {key:'tiers',label:'Tiers / Rebates'},
-  {key:'email',label:'Contact Email'},
-  {key:'bizPhone',label:'Contact Phone'},
-  {key:'mobile',label:'Mobile Phone'},
-  {key:'procContact',label:'Contact Name'},
-  {key:'title',label:'Contact Title'},
-  {key:'contractNo',label:'Contract Number'},
-  {key:'notes',label:'Notes'},
-  {key:'comments',label:'Comments'},
-  {key:'perpetuity',label:'Perpetuity Clause'},
-  {key:'tail',label:'Tail Period'},
+  {key:'gpo',label:'GPO'},{key:'name',label:'Vendor Name'},
+  {key:'category',label:'Category'},{key:'subCategory',label:'Sub-Category'},
+  {key:'product',label:'Product / Description'},{key:'classOfTrade',label:'Class of Trade'},
+  {key:'markets',label:'Markets Serviced'},{key:'addedValue',label:'Added Value'},
+  {key:'website',label:'Website'},{key:'contractName',label:'Contract Name'},
+  {key:'signatory',label:'Signatory'},{key:'assignment',label:'Assignment'},
+  {key:'assignmentConditions',label:'Assignment Conditions'},{key:'exclusivity',label:'Exclusivity'},
+  {key:'terminationWoCause',label:'Termination w/o Cause'},{key:'terminationNotice',label:'Termination Notice'},
+  {key:'pricingCommitment',label:'Pricing Commitment'},{key:'procContact',label:'Contact Name'},
+  {key:'contactType',label:'Contact Type'},{key:'title',label:'Contact Title'},
+  {key:'bizPhone',label:'Business Phone'},{key:'mobile',label:'Mobile Phone'},
+  {key:'email',label:'Email Address'},{key:'sharedContact',label:'Shared Contact'},
+  {key:'contactType2',label:'Contact Type 2'},{key:'title2',label:'Title 2'},
+  {key:'mobile2',label:'Mobile 2'},{key:'email2',label:'Email 2'},
+  {key:'inContractSince',label:'In Contract Since'},{key:'contractEffective',label:'Contract Effective'},
+  {key:'contractExpiry',label:'Contract Expiry'},{key:'autoRenewal',label:'Auto-Renewal'},
+  {key:'autoRenewalType',label:'Auto-Renewal Type'},{key:'status',label:'Status'},
+  {key:'termEffective',label:'Term Effective'},{key:'termExpiry',label:'Term Expiry'},
+  {key:'engagementReminder',label:'Engagement Reminder'},{key:'contractTerm',label:'Contract Term'},
+  {key:'currentTerm',label:'Current Term'},{key:'terminationReceived',label:'Termination Received'},
+  {key:'needsLOP',label:'Needs LOP'},{key:'coverSheet',label:'Cover Sheet'},
+  {key:'dataSheet',label:'Data Sheet'},{key:'havePricing',label:'Have Pricing'},
+  {key:'pricingLocation',label:'Pricing Location'},{key:'pricingDate',label:'Pricing Date'},
+  {key:'pricingFrequency',label:'Pricing Frequency'},{key:'whitePapers',label:'White Papers'},
+  {key:'serviceSummary',label:'Service Summary'},{key:'videoRecording',label:'Video Recording'},
+  {key:'adminFee',label:'Admin Fee'},{key:'adminFeeNotes',label:'Admin Fee Notes'},
+  {key:'tiers',label:'Tiers'},{key:'perpetuity',label:'Perpetuity'},
+  {key:'tail',label:'Tail (Years)'},{key:'minYears',label:'Min. Years/Customer'},
+  {key:'contractNo',label:'Contract No.'},{key:'reportFrequency',label:'Report Frequency'},
+  {key:'agreementType',label:'Agreement Type'},{key:'comments',label:'Comments'},
+  {key:'notes',label:'Notes'},{key:'lastComm',label:'Last Communication'},
+  {key:'about',label:'About'},{key:'followUp',label:'Follow-up Date'},
+  {key:'aka',label:'AKA'},{key:'score',label:'Score'},
+  {key:'justification',label:'Justification'},{key:'changeOfControl',label:'Change of Control'},
+  {key:'attachment',label:'Attachment'},
 ];
 
 // Default hidden detail-popup fields per role
@@ -4914,7 +4939,13 @@ function updateSidebar() {
     dirtyInd.style.display=hasDirty?'inline':'none';
     if(hasDirty) dirtyInd.title=S.dirty.size+' vendor'+(S.dirty.size!==1?'s':'')+' with unsaved changes';
   }
-  const allowedTabs = (ROLE_PERMS[USER.role||'viewer']||ROLE_PERMS.viewer).tabs || NAV_DEFS.map(n=>n[0]);
+  // Get effective tabs — role defaults + per-user overrides
+  const _roleBaseTabs = (ROLE_PERMS[USER.role||'viewer']||ROLE_PERMS.viewer).tabs || NAV_DEFS.map(n=>n[0]);
+  const _tabOverrides = USER.tabOverrides || {};
+  const allowedTabs = NAV_DEFS.map(n=>n[0]).filter(tabId => {
+    if (tabId in _tabOverrides) return _tabOverrides[tabId]; // user override
+    return _roleBaseTabs.includes(tabId); // role default
+  });
   for (const [id,icon,label] of NAV_DEFS) {
     if (!allowedTabs.includes(id)) continue; // hide tabs not in role
     const btn=document.createElement('button');
@@ -6871,20 +6902,7 @@ function renderSettings(c) {
 
           // All restrictable fields
           container.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginBottom:'4px'}},'🔒 Field Access — click to toggle:'));
-          const allFields=[
-            {key:'adminFee',label:'Admin Fee'},
-            {key:'tiers',label:'Tiers / Rebates'},
-            {key:'perpetuity',label:'Perpetuity Clause'},
-            {key:'tail',label:'Tail Period'},
-            {key:'notes',label:'Notes'},
-            {key:'comments',label:'Comments'},
-            {key:'contractNo',label:'Contract Number'},
-            {key:'procContact',label:'Contact Name'},
-            {key:'title',label:'Contact Title'},
-            {key:'email',label:'Contact Email'},
-            {key:'bizPhone',label:'Contact Phone'},
-            {key:'mobile',label:'Mobile Phone'},
-          ];
+          const allFields=ALL_RESTRICTABLE_FIELDS;
           const fieldGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'8px'}});
           allFields.forEach(f=>{
             const hidden=hf.includes(f.key);
@@ -6912,43 +6930,58 @@ function renderSettings(c) {
           container.appendChild(fieldGrid);
           container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginBottom:'8px'}},'✅ = visible to user · 🚫 = hidden from user'));
 
-          // Tab access
-          container.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginBottom:'4px'}},'📑 Tab Access:'));
+          // Tab access — toggleable per user (overrides role default)
+          container.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginBottom:'4px',marginTop:'8px'}},'📑 Tab Access (click to toggle):'));
           const rolePerms=ROLE_PERMS[cu.role]||ROLE_PERMS.restricted;
-          const allowedTabs=rolePerms.tabs||[];
+          const roleDefaultTabs=new Set(rolePerms.tabs||[]);
+          const tabOverrides=cu.tabOverrides||{}; // {tabId: true/false} overrides role default
           const allTabs=[
-            {id:'today',label:'Today'},
-            {id:'callsheet',label:'Call Sheet'},
-            {id:'expiring',label:'Expiring'},
-            {id:'vendordb',label:'Vendor DB'},
-            {id:'network',label:'Network Intel'},
-            {id:'economics',label:'Contract Economics'},
-            {id:'tiers',label:'Tier Tracker'},
-            {id:'itw',label:'In The Works'},
-            {id:'reviews',label:'Reviews'},
-            {id:'calendar',label:'Calendar'},
-            {id:'forecast',label:'Forecast'},
-            {id:'analytics',label:'Analytics'},
-            {id:'reports',label:'Reports'},
-            {id:'summary',label:'Summary'},
-            {id:'history',label:'History'},
-            {id:'datacheck',label:'Data Check'},
+            {id:'today',label:'Today'},{id:'callsheet',label:'Call Sheet'},
+            {id:'expiring',label:'Expiring'},{id:'vendordb',label:'Vendor DB'},
+            {id:'network',label:'Network Intel'},{id:'economics',label:'Contract Economics'},
+            {id:'tiers',label:'Tier Tracker'},{id:'itw',label:'In The Works'},
+            {id:'reviews',label:'Reviews'},{id:'calendar',label:'Calendar'},
+            {id:'forecast',label:'Forecast'},{id:'analytics',label:'Analytics'},
+            {id:'reports',label:'Reports'},{id:'summary',label:'Summary'},
+            {id:'history',label:'History'},{id:'datacheck',label:'Data Check'},
             {id:'settings',label:'Settings'},
           ];
-          const tabGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px'}});
+          const tabGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'4px'}});
           allTabs.forEach(t=>{
-            const hasAccess=allowedTabs.includes(t.id);
-            tabGrid.appendChild(el('span',{
+            const hasOverride=t.id in tabOverrides;
+            const hasAccess=hasOverride?tabOverrides[t.id]:roleDefaultTabs.has(t.id);
+            const isOverridden=hasOverride;
+            const btn=el('button',{
               style:{
-                fontSize:'8px',padding:'2px 6px',borderRadius:'4px',
-                border:'1px solid '+(hasAccess?'rgba(34,197,94,.3)':'rgba(239,68,68,.3)'),
-                background:hasAccess?'rgba(34,197,94,.06)':'rgba(239,68,68,.06)',
-                color:hasAccess?'#4ade80':'#f87171'
+                fontSize:'8px',padding:'2px 6px',borderRadius:'4px',cursor:'pointer',
+                border:'1px solid '+(hasAccess?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)'),
+                background:hasAccess?'rgba(34,197,94,.1)':'rgba(239,68,68,.1)',
+                color:hasAccess?'#4ade80':'#f87171',
+                outline:isOverridden?'1px dashed #f59e0b':''
+              },
+              title:(isOverridden?'⚠ Overriding role default. ':'')+(hasAccess?'Click to hide tab':'Click to show tab'),
+              onclick(){
+                const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
+                if(!all[i].tabOverrides) all[i].tabOverrides={};
+                const currentAccess=hasOverride?tabOverrides[t.id]:roleDefaultTabs.has(t.id);
+                all[i].tabOverrides[t.id]=!currentAccess;
+                localStorage.setItem(AUTH_KEY,JSON.stringify(all));
+                setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+                buildFieldAccess(container,userEmail);
               }
-            },t.label+' '+(hasAccess?'✅':'🚫')));
+            },t.label+' '+(hasAccess?'✅':'🚫')+(isOverridden?' ⚡':''));
+            tabGrid.appendChild(btn);
           });
           container.appendChild(tabGrid);
-          container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px'}},'Tab access is set by role — change role above to update tab permissions'));
+          const resetTabsBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',marginTop:'2px'},onclick(){
+            const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
+            delete all[i].tabOverrides;
+            localStorage.setItem(AUTH_KEY,JSON.stringify(all));
+            setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+            buildFieldAccess(container,userEmail);
+          }},'↺ Reset to role defaults');
+          container.appendChild(el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginTop:'4px'}},'',resetTabsBtn));
+          container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'2px'}},'⚡ = overriding role default · Click any tab to toggle access for this user only'));
         }
         const fieldAccessContainer=el('div');
         buildFieldAccess(fieldAccessContainer,u.email);
