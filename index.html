@@ -6860,26 +6860,56 @@ function renderSettings(c) {
       const restrictedRoles=['viewer','restricted','ssa','sales_rep','cro','director_ops','ops_qc','finance_sr','finance_jr'];
       if(restrictedRoles.includes(u.role)){
         const restrictWrap=el('div');
-        restrictWrap.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'3px',fontWeight:'600'}},'🔒 Hidden Fields:'));
-        const fieldGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',marginBottom:'4px'}});
         const hiddenFields=u.hiddenFields||[];
-        for(const f of ALL_RESTRICTABLE_FIELDS){
-          const isHidden=hiddenFields.includes(f.key);
-          const btn=el('button',{
-            class:'col-toggle-btn'+(isHidden?' on':''),
-            style:{fontSize:'8px',padding:'1px 5px',background:isHidden?'rgba(239,68,68,.12)':'',borderColor:isHidden?'rgba(239,68,68,.3)':'',color:isHidden?'var(--red)':''},
-            title:isHidden?'Hidden — click to show':'Visible — click to hide',
-            onclick(){
-              const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);if(i<0)return;
-              let hf=[...(all[i].hiddenFields||[])];
-              if(isHidden)hf=hf.filter(k=>k!==f.key);else hf.push(f.key);
-              all[i].hiddenFields=hf;setApprovedUsers(all);renderSettings(c);
-            }
-          },f.label);
-          fieldGrid.appendChild(btn);
+        const hiddenOnes=ALL_RESTRICTABLE_FIELDS.filter(f=>hiddenFields.includes(f.key));
+        const visibleOnes=ALL_RESTRICTABLE_FIELDS.filter(f=>!hiddenFields.includes(f.key));
+
+        // Section header
+        restrictWrap.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'4px',fontWeight:'600'}},'🔒 Field Access (click to toggle):'));
+
+        // Visible fields row
+        if(visibleOnes.length){
+          const visRow=el('div',{style:{marginBottom:'4px'}});
+          visRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--green)',fontWeight:'600',marginRight:'4px'}},'✅ Visible:'));
+          const visGrid=el('span',{style:{display:'inline-flex',flexWrap:'wrap',gap:'3px'}});
+          visibleOnes.forEach(f=>{
+            const btn=el('button',{
+              style:{fontSize:'8px',padding:'1px 6px',borderRadius:'4px',border:'1px solid rgba(34,197,94,.3)',background:'rgba(34,197,94,.08)',color:'#22c55e',cursor:'pointer'},
+              title:'Click to hide from this user',
+              onclick(){
+                const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);if(i<0)return;
+                const hf=[...(all[i].hiddenFields||[]),f.key];
+                all[i].hiddenFields=hf;all[i]._customHiddenFields=true;setApprovedUsers(all);renderSettings(c);
+              }
+            },f.label);
+            visGrid.appendChild(btn);
+          });
+          visRow.appendChild(visGrid);
+          restrictWrap.appendChild(visRow);
         }
-        restrictWrap.appendChild(fieldGrid);
-        restrictWrap.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)'}},'Red = hidden from this user'));
+
+        // Hidden fields row
+        if(hiddenOnes.length){
+          const hidRow=el('div',{style:{marginBottom:'4px'}});
+          hidRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--red)',fontWeight:'600',marginRight:'4px'}},'🚫 Hidden:'));
+          const hidGrid=el('span',{style:{display:'inline-flex',flexWrap:'wrap',gap:'3px'}});
+          hiddenOnes.forEach(f=>{
+            const btn=el('button',{
+              style:{fontSize:'8px',padding:'1px 6px',borderRadius:'4px',border:'1px solid rgba(239,68,68,.3)',background:'rgba(239,68,68,.08)',color:'var(--red)',cursor:'pointer'},
+              title:'Click to make visible to this user',
+              onclick(){
+                const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);if(i<0)return;
+                const hf=(all[i].hiddenFields||[]).filter(k=>k!==f.key);
+                all[i].hiddenFields=hf;all[i]._customHiddenFields=true;setApprovedUsers(all);renderSettings(c);
+              }
+            },f.label);
+            hidGrid.appendChild(btn);
+          });
+          hidRow.appendChild(hidGrid);
+          restrictWrap.appendChild(hidRow);
+        }
+
+        restrictWrap.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'2px'}},'Green = user can see this field · Red = hidden from user · Click to toggle'));
         details.appendChild(restrictWrap);
       }
 
