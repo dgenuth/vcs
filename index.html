@@ -1381,7 +1381,7 @@ async function loadFile(file) {
     if (rev) { const {reviews,talkingPoints} = parseReviews(rev); S.reviews=reviews; S.reviewTPs=talkingPoints; }
     else { S.reviews=[]; S.reviewTPs=[]; }
 
-    S.loaded=true; S.view=S.settings.defaultView||'today'; S.search=''; S.dirty.clear();
+    S.loaded=true; S.view=(['settings','datacheck'].includes(S.view)?S.settings.defaultView||'today':S.view)||'today'; S.search=''; S.dirty.clear();
     $('search').value = '';
     $('upload-screen').style.display='none';
     $('app').style.display='flex';
@@ -3039,30 +3039,33 @@ const ALL_RESTRICTABLE_FIELDS = [
   {key:'tail',label:'Tail Period'},
 ];
 
-// Default hidden detail-popup fields per role — from User Accounts tab in Vendor_Catalogue.xlsm
+// Default hidden detail-popup fields per role
+// Parsed exactly from Config column in User Accounts tab of Vendor_Catalogue.xlsm
 function getDefaultHiddenFields(role) {
   const ALL = ['adminFee','tiers','email','bizPhone','mobile','procContact','title','contractNo','notes','comments','perpetuity','tail'];
-  const VISIBLE = {
-    admin:        [],  // nothing hidden
-    procurement:  [],  // nothing hidden
-    manager:      [],  // nothing hidden
-    viewer:       [],  // nothing hidden — sees everything read-only
-    // CRO: sees adminFee and perpetuity; everything else hidden
-    cro:          ['tiers','email','bizPhone','mobile','procContact','title','contractNo','comments','tail'],
-    // Director of Operations: sees perpetuity only
+  const HIDDEN = {
+    // Admin/Procurement/Manager/Viewer: nothing hidden — full access
+    admin:        [],
+    procurement:  [],
+    manager:      [],
+    viewer:       [],
+    // CRO (Ushy): sees adminFee, tiers, perpetuity, tail — contacts/notes hidden
+    cro:          ['email','bizPhone','mobile','procContact','title','contractNo','notes','comments'],
+    // Director of Operations: sees perpetuity only — all financial except perp hidden
     director_ops: ['adminFee','tiers','email','bizPhone','mobile','procContact','title','contractNo','notes','comments','tail'],
-    // Operations QC: sees nothing financial
+    // Operations QC: sees nothing financial or contact-related
     ops_qc:       ['adminFee','tiers','email','bizPhone','mobile','procContact','title','contractNo','notes','comments','perpetuity','tail'],
-    // Senior/Junior Finance: sees adminFee, tiers, perpetuity, tail — no contacts
-    finance_sr:   ['email','bizPhone','mobile','procContact','title','contractNo','comments'],
-    finance_jr:   ['email','bizPhone','mobile','procContact','title','contractNo','comments'],
-    // SSA: no financials, no contacts
-    ssa:          ['adminFee','tiers','email','bizPhone','mobile','procContact','title','contractNo','comments','perpetuity','tail'],
-    // Sales Rep: everything hidden in detail popup
+    // Senior Finance: sees adminFee, tiers, perpetuity, tail — contacts hidden
+    finance_sr:   ['email','bizPhone','mobile','procContact','title','contractNo','notes','comments'],
+    // Junior Finance: same as Senior Finance
+    finance_jr:   ['email','bizPhone','mobile','procContact','title','contractNo','notes','comments'],
+    // SSA: nothing financial or contact-related
+    ssa:          ['adminFee','tiers','email','bizPhone','mobile','procContact','title','contractNo','notes','comments','perpetuity','tail'],
+    // Sales Rep / Restricted: everything hidden
     sales_rep:    ALL,
     restricted:   ALL,
   };
-  return (VISIBLE[role] !== undefined) ? VISIBLE[role] : ALL;
+  return (HIDDEN[role] !== undefined) ? HIDDEN[role] : ALL;
 }
 const USER = {email:null,name:null,role:null,loggedIn:false,loginTime:null,sfToken:null,sfInstance:null,hiddenFields:[]};
 const AUTH_KEY = 'vcs_approved_users';
@@ -3074,19 +3077,21 @@ function getApprovedUsers(){
     // (all-hidden or empty for roles that should have partial access)
     let migrated = false;
     users.forEach(u => {
-      if (u._hiddenFieldsMigrated_v19) return; // already migrated
+      if (u._hiddenFieldsMigrated_v20) return; // already migrated
       u.hiddenFields = getDefaultHiddenFields(u.role);
-      u._hiddenFieldsMigrated_v19 = true;
+      u._hiddenFieldsMigrated_v20 = true;
       migrated = true;
     });
-    if (migrated) localStorage.setItem(AUTH_KEY, JSON.stringify(users));
+    if (migrated) { localStorage.setItem(AUTH_KEY, JSON.stringify(users)); } // skip Drive sync during migration
     return users;
   }catch(e){return [];}
 }
-function setApprovedUsers(u){
+function setApprovedUsers(u, skipDriveSync){
   localStorage.setItem(AUTH_KEY,JSON.stringify(u));
-  // Push to Drive after short delay (non-blocking)
-  setTimeout(() => saveConfigToDrive().catch(e=>console.warn('Drive user save:',e.message)), 2000);
+  // Push to Drive after short delay (non-blocking) — skip during migration
+  if (!skipDriveSync) {
+    setTimeout(() => saveConfigToDrive().catch(e=>console.warn('Drive user save:',e.message)), 2000);
+  }
 }
 
 // Login attempt log — stored in localStorage, admin-viewable
