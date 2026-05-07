@@ -628,9 +628,53 @@ function handleOAuthLogin(email, name, provider) {
 
   // Bootstrap admin on first ever login (empty user list)
   if (users.length === 0) {
-    const adminUser = { email, name, role: 'admin', added: new Date().toISOString() };
-    setApprovedUsers([adminUser]);
-    loginAs({ email, name, role: 'admin', hiddenFields: [] });
+    // Pre-populate full employee directory on first ever login
+    const EMPLOYEE_DIRECTORY = [
+      {email:'dgenuth@primesourcex.com',name:'David Genuth',role:'admin'},
+      {email:'dgenuthps@gmail.com',name:'David Genuth',role:'admin'},
+      {email:'jmanguray@primesourcex.com',name:'Jane Manguray',role:'procurement'},
+      {email:'mgenuth@primesourcex.com',name:'Mark Genuth',role:'procurement'},
+      {email:'mdelora@primesourcex.com',name:'Monica DeLora',role:'procurement'},
+      {email:'aschwartz@primesourcex.com',name:'Abraham Ushy Schwartz',role:'cro'},
+      {email:'nkornfeld@primesourcex.com',name:'Nathalie Kornfeld',role:'director_ops'},
+      {email:'hkabbabe@primesourcex.com',name:'Hammurabi Rabi Kabbabe',role:'ops_qc'},
+      {email:'ewiesel@primesourcex.com',name:'Elliot Wiesel',role:'finance_sr'},
+      {email:'aalmeida@primesourcex.com',name:'Amanda Almeida',role:'finance_sr'},
+      {email:'areyes@primesourcex.com',name:'Amanda Reyes',role:'finance_sr'},
+      {email:'bflekel@primesourcex.com',name:'Ben Flekel',role:'sales_rep'},
+      {email:'swithers@primesourcex.com',name:'Shane Withers',role:'sales_rep'},
+      {email:'erock@primesourcex.com',name:'Eitan Rock',role:'sales_rep'},
+      {email:'agenuth@primesourcex.com',name:'Abe Genuth',role:'ssa'},
+      {email:'bmparagas@primesourcex.com',name:'Bridget Monica Paragas',role:'ssa'},
+      {email:'blotriet@primesourcex.com',name:'Bronwyn Lotriet',role:'ssa'},
+      {email:'cvaldez@primesourcex.com',name:'Chase Valdez',role:'ssa'},
+      {email:'dpienaar@primesourcex.com',name:'Divan Pienaar',role:'ssa'},
+      {email:'eaugustin@primesourcex.com',name:'Emer Jean Agustin',role:'ssa'},
+      {email:'gbernstein@primesourcex.com',name:'Gila Bernstein',role:'ssa'},
+      {email:'hlabustro@primesourcex.com',name:'Harvey Labustro',role:'ssa'},
+      {email:'jstrutzel@primesourcex.com',name:'Jeremy Strutzel',role:'ssa'},
+      {email:'jgeorge@primesourcex.com',name:'Jibu George',role:'ssa'},
+      {email:'jmontalvo@primesourcex.com',name:'Jordan Montalvo',role:'ssa'},
+      {email:'kweingarten@primesourcex.com',name:'Karen Weingarten',role:'ssa'},
+      {email:'kdalagan@primesourcex.com',name:'Krishna Mae Dalagan',role:'ssa'},
+      {email:'kgepiga@primesourcex.com',name:'Kyle Opel Gepiga',role:'ssa'},
+      {email:'michaelg@primesourcex.com',name:'Michael Greenfield',role:'ssa'},
+      {email:'michaelgreenfield18@gmail.com',name:'Michael Greenfield',role:'ssa'},
+      {email:'mtorres@primesourcex.com',name:'Miguel Torres',role:'ssa'},
+      {email:'rkabuya@primesourcex.com',name:'Rob Kabuya',role:'ssa'},
+      {email:'smoody@primesourcex.com',name:'Skylar Moody',role:'ssa'},
+      {email:'sgruenebaum@primesourcex.com',name:'Stephen Gruenebaum',role:'ssa'},
+      {email:'skatz@primesourcex.com',name:'Stephen Katz',role:'ssa'},
+      {email:'vbadenhorst@primesourcex.com',name:'Varuscjcka Badenhorst',role:'ssa'},
+      {email:'wgrant@primesourcex.com',name:'William Grant',role:'ssa'},
+      {email:'malkygenuth@gmail.com',name:'Malky Genuth',role:'viewer'},
+    ].map(u=>({...u,added:new Date().toISOString(),addedBy:'system',password:'',hiddenFields:[]}));
+    const loginEmail = email.toLowerCase();
+    const inDir = EMPLOYEE_DIRECTORY.some(u=>u.email===loginEmail);
+    const allUsers = inDir ? EMPLOYEE_DIRECTORY : [{email:loginEmail,name,role:'admin',added:new Date().toISOString(),addedBy:'system',password:'',hiddenFields:[]}, ...EMPLOYEE_DIRECTORY];
+    setApprovedUsers(allUsers);
+    const meUser = allUsers.find(u=>u.email===loginEmail) || {email,name,role:'admin',hiddenFields:[]};
+    loginAs({email:meUser.email,name:meUser.name,role:meUser.role,hiddenFields:meUser.hiddenFields||[]});
   } else {
     const role = found.role || 'viewer';
     const displayName = found.name || name;
@@ -2830,54 +2874,94 @@ async function loadConfigFromDrive() {
 }
 
 // ─── User Auth & Permissions ──────────────────────────────────────────────────
-const ROLES = {admin:'Admin', manager:'Manager', viewer:'Viewer', restricted:'Restricted Viewer'};
-const ROLE_COLORS = {admin:'var(--green)',manager:'var(--blue)',viewer:'var(--muted)',restricted:'var(--amber)'};
+const ROLES = {
+  admin:      'Admin',
+  procurement:'Procurement',
+  cro:        'CRO',
+  director_ops:'Director of Operations',
+  ops_qc:     'Operations QC',
+  finance_sr: 'Senior Finance',
+  finance_jr: 'Junior Finance',
+  ssa:        'SSA',
+  sales_rep:  'Sales Rep',
+  // Legacy aliases
+  manager:    'Manager',
+  viewer:     'Viewer',
+  restricted: 'Restricted Viewer',
+};
+const ROLE_COLORS = {
+  admin:       'var(--green)',
+  procurement: 'var(--blue)',
+  cro:         '#a855f7',
+  director_ops:'#06b6d4',
+  ops_qc:      '#0891b2',
+  finance_sr:  '#f59e0b',
+  finance_jr:  '#fbbf24',
+  ssa:         'var(--muted)',
+  sales_rep:   '#ef4444',
+  manager:     'var(--blue)',
+  viewer:      'var(--muted)',
+  restricted:  'var(--amber)',
+};
 const ROLE_PERMS = {
-  // ── Admin: full access to everything ──────────────────────────────────────
   admin: {
-    editAll:true, manageUsers:true, deleteHistory:true,
-    configAI:true, configDrive:true, configSF:true,
-    exportData:true, addVendor:true, editNotes:true,
-    editContract:true, editContact:true, save:true,
-    viewFees:true, viewContacts:true, viewFinancials:true,
-    tabs: ['today','callsheet','expiring','vendordb','network','economics','tiers',
-           'itw','reviews','calendar','forecast','analytics','reports','summary',
-           'history','datacheck','settings'],
+    editAll:true,manageUsers:true,deleteHistory:true,configAI:true,configDrive:true,configSF:true,
+    exportData:true,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,
+    viewFees:true,viewContacts:true,viewFinancials:true,canCopy:true,
+    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings'],
   },
-  // ── Manager: edit vendors, no system config, no user management ───────────
-  manager: {
-    editAll:false, manageUsers:false, deleteHistory:false,
-    configAI:false, configDrive:false, configSF:false,
-    exportData:true, addVendor:true, editNotes:true,
-    editContract:true, editContact:true, save:true,
-    viewFees:true, viewContacts:true, viewFinancials:true,
-    tabs: ['today','callsheet','expiring','vendordb','network','economics','tiers',
-           'itw','reviews','calendar','forecast','analytics','reports','summary',
-           'history','datacheck','settings'],
-    // Settings tab visible but restricted to personal settings only
-    settingsPersonalOnly: true,
+  procurement: {
+    editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,
+    exportData:false,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,
+    viewFees:true,viewContacts:true,viewFinancials:true,canCopy:false,
+    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings'],settingsPersonalOnly:true,
   },
-  // ── Viewer: read-only, no editing, no export ──────────────────────────────
-  viewer: {
-    editAll:false, manageUsers:false, deleteHistory:false,
-    configAI:false, configDrive:false, configSF:false,
-    exportData:false, addVendor:false, editNotes:false,
-    editContract:false, editContact:false, save:false,
-    viewFees:true, viewContacts:true, viewFinancials:true,
-    tabs: ['today','callsheet','expiring','vendordb','network',
-           'itw','reviews','calendar','history','settings'],
-    settingsPersonalOnly: true,
+  cro: {
+    editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,
+    exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,
+    viewFees:true,viewContacts:false,viewFinancials:true,canCopy:false,
+    tabs:['today', 'expiring', 'vendordb', 'network', 'economics', 'analytics', 'reports', 'summary', 'history', 'settings'],settingsPersonalOnly:true,
   },
-  // ── Restricted Viewer: minimal access, vendor search only ─────────────────
-  restricted: {
-    editAll:false, manageUsers:false, deleteHistory:false,
-    configAI:false, configDrive:false, configSF:false,
-    exportData:false, addVendor:false, editNotes:false,
-    editContract:false, editContact:false, save:false,
-    viewFees:false, viewContacts:false, viewFinancials:false,
-    tabs: ['vendordb','expiring','settings'],
-    settingsPersonalOnly: true,
+  director_ops: {
+    editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,
+    exportData:false,addVendor:false,editNotes:true,editContract:false,editContact:false,save:false,
+    viewFees:false,viewContacts:false,viewFinancials:false,canCopy:false,
+    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'itw', 'reviews', 'calendar', 'history', 'settings'],settingsPersonalOnly:true,
   },
+  ops_qc: {
+    editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,
+    exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,
+    viewFees:false,viewContacts:false,viewFinancials:false,canCopy:false,
+    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'itw', 'reviews', 'history', 'settings'],settingsPersonalOnly:true,
+  },
+  finance_sr: {
+    editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,
+    exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,
+    viewFees:true,viewContacts:false,viewFinancials:true,canCopy:false,
+    tabs:['today', 'expiring', 'vendordb', 'economics', 'reports', 'summary', 'history', 'settings'],settingsPersonalOnly:true,
+  },
+  finance_jr: {
+    editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,
+    exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,
+    viewFees:true,viewContacts:false,viewFinancials:true,canCopy:false,
+    tabs:['today', 'expiring', 'vendordb', 'economics', 'reports', 'summary', 'history', 'settings'],settingsPersonalOnly:true,
+  },
+  ssa: {
+    editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,
+    exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,
+    viewFees:false,viewContacts:false,viewFinancials:false,canCopy:false,
+    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'reviews', 'calendar', 'history', 'settings'],settingsPersonalOnly:true,
+  },
+  sales_rep: {
+    editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,
+    exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,
+    viewFees:false,viewContacts:false,viewFinancials:false,canCopy:false,
+    tabs:['vendordb', 'settings'],settingsPersonalOnly:true,
+  },
+  // Legacy aliases — map to nearest equivalent
+  manager:    {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,viewFees:true,viewContacts:true,viewFinancials:true,canCopy:false,tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings'],settingsPersonalOnly:true},
+  viewer:     {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,viewFees:true,viewContacts:false,viewFinancials:true,canCopy:false,tabs:['today', 'expiring', 'vendordb', 'network', 'economics', 'analytics', 'reports', 'summary', 'history', 'settings'],settingsPersonalOnly:true},
+  restricted: {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,viewFees:false,viewContacts:false,viewFinancials:false,canCopy:false,tabs:['vendordb', 'settings'],settingsPersonalOnly:true},
 };
 // Fields that restricted/viewer roles may have explicitly hidden by admin
 // hiddenFields is stored per-user in the approved users list
@@ -3538,18 +3622,29 @@ function renderVendorDB(c) {
     } else if (Array.isArray(fromSettings)) {
       S.dbHiddenCols = new Set(fromSettings);
     } else {
-      // Default hidden columns based on role — sourced from User Accounts tab in Vendor_Catalogue.xlsm
-    // Each role sees only their allowed columns; everything else is hidden by default
-    // Users can toggle their personal column preferences on top of this
+      // Default visible columns per role — sourced from User Accounts tab in Vendor_Catalogue.xlsm
     const ROLE_VISIBLE_COLS = {
-      // Procurement/Admin: full access — nothing hidden
-      admin:      new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
-      // Manager (Operations/Procurement): full access
-      manager:    new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
-      // Viewer (Finance/CRO): sees financials, no contacts
-      viewer:     new Set(['gpo','name','cat','subcat','product','markets','ar','expiry','days','status','tier','score','fee','perp']),
-      // Restricted (Sales Rep/SSA): vendor identity + expiry only
-      restricted: new Set(['gpo','name','cat','subcat','product','markets','expiry','ar']),
+      // Procurement/Admin: all columns
+      admin:        new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
+      procurement:  new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
+      // CRO (Ushy): financial + contract info, no contacts
+      cro:          new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status','fee','perp','score','tier']),
+      // Director of Operations: operational view, no financials or contacts
+      director_ops: new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status','score','tier']),
+      // Operations QC: same as director_ops
+      ops_qc:       new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status','score','tier']),
+      // Senior Finance: financials + contract, no contacts
+      finance_sr:   new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','fee','perp','score','tier']),
+      // Junior Finance: same as senior finance
+      finance_jr:   new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','fee','perp','score','tier']),
+      // SSA: vendor identity + basic contract, no financials, no contacts
+      ssa:          new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status']),
+      // Sales Rep: minimal — search only
+      sales_rep:    new Set(['gpo','name','cat','subcat','product','markets','expiry','ar']),
+      // Legacy aliases
+      manager:      new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
+      viewer:       new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status','fee','perp','score','tier']),
+      restricted:   new Set(['gpo','name','cat','subcat','product','markets','expiry','ar']),
     };
     const roleVisible = ROLE_VISIBLE_COLS[USER.role||'restricted'] || ROLE_VISIBLE_COLS.restricted;
     const allColKeys = ['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes'];
@@ -3613,14 +3708,20 @@ function renderVendorDB(c) {
   const colToggleBar=el('div',{style:{display:'flex',gap:'3px',flexWrap:'wrap',marginBottom:'6px',alignItems:'center'}});
   colToggleBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'3px'}},'Columns:'));
   // Admin-controlled locked columns (always hidden for non-admins)
-  // Columns restricted by role — based on User Accounts tab in Vendor_Catalogue.xlsm
-  // Admin/Manager can see everything; Viewer sees financials but no contacts;
-  // Restricted (rep) sees only identity + basic contract fields
+  // Allowed columns per role — user can toggle within this set but cannot see others
   const ROLE_ALLOWED_COLS = {
-    admin:      new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
-    manager:    new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
-    viewer:     new Set(['gpo','name','cat','subcat','product','markets','ar','expiry','days','status','tier','score','fee','perp']),
-    restricted: new Set(['gpo','name','cat','subcat','product','markets','expiry','ar']),
+    admin:        new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
+    procurement:  new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
+    cro:          new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status','fee','perp','score','tier']),
+    director_ops: new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status','score','tier']),
+    ops_qc:       new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status','score','tier']),
+    finance_sr:   new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','fee','perp','score','tier']),
+    finance_jr:   new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','fee','perp','score','tier']),
+    ssa:          new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status']),
+    sales_rep:    new Set(['gpo','name','cat','subcat','product','markets','expiry','ar']),
+    manager:      new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
+    viewer:       new Set(['gpo','name','cat','subcat','product','markets','expiry','days','ar','status','fee','perp','score','tier']),
+    restricted:   new Set(['gpo','name','cat','subcat','product','markets','expiry','ar']),
   };
   const myAllowedCols = ROLE_ALLOWED_COLS[USER.role||'restricted'] || ROLE_ALLOWED_COLS.restricted;
   const canEditCols = hasPermission('editAll') || USER.role === 'admin' || USER.role === 'manager';
@@ -3655,11 +3756,11 @@ function renderVendorDB(c) {
     if (S.search) {
       const q=S.search.toLowerCase();
       // Restricted role: require minimum 3 chars — no browsing full list
-      if (USER.role === 'restricted' && q.length < 3) {
+      if ((USER.role === 'restricted' || USER.role === 'sales_rep') && q.length < 3) {
         return []; // show nothing until 3+ chars typed
       }
       vs=vs.filter(v=>searchMatch(v,q));
-    } else if (USER.role === 'restricted') {
+    } else if (USER.role === 'restricted' || USER.role === 'sales_rep') {
       return []; // restricted users see nothing without searching
     }
     COLS.forEach(col=>{
@@ -3745,7 +3846,7 @@ function renderVendorDB(c) {
   const tbody=el('tbody');
   if (!vendors.length) {
     const tr=el('tr'); const td=el('td',{colspan:COLS.length+1,style:{textAlign:'center',padding:'20px',color:'var(--muted)'}});
-    if (USER.role === 'restricted') {
+    if (USER.role === 'restricted' || USER.role === 'sales_rep') {
         td.textContent = S.search && S.search.length < 3
           ? '🔍 Type at least 3 characters to search vendors.'
           : S.search ? 'No vendors match your search.' : '🔍 Use the search bar to find vendors (minimum 3 characters).';
@@ -4081,6 +4182,9 @@ function renderReports(c) {
 }
 
 function exportCSV(vendors, filename) {
+  if (!(ROLE_PERMS[USER.role||'restricted']||{}).canCopy) {
+    toast('⚠ Export is not permitted for your role','#ef4444'); return;
+  }
   // BOM ensures Excel opens with correct encoding (no symbol corruption)
   const BOM = '\uFEFF';
   const headers=['Vendor','Category','Sub-Category','Product','Markets','Class of Trade','Contact','Phone','Mobile','Email','Expiry','Auto-Renew','AR Type','Notice (Days)','Admin Fee','Contract No','Status','Tier','Score','Website','Notes'];
@@ -6568,7 +6672,7 @@ function renderSettings(c) {
       if(isYou && USER.role==='admin'){
         row2.appendChild(el('span',{style:{fontSize:'9px',padding:'2px 8px',borderRadius:'10px',background:'rgba(34,197,94,.12)',color:'var(--green)',border:'1px solid rgba(34,197,94,.3)',fontWeight:'600'}},'🔒 Admin (locked — cannot change own role)'));
       } else {
-        const assignableRoles=isYou?['admin']:['manager','viewer','restricted','admin'];
+        const assignableRoles=isYou?['admin']:['admin','procurement','cro','director_ops','ops_qc','finance_sr','finance_jr','ssa','sales_rep'];
         for(const r of assignableRoles){
           const o=el('option',{value:r},ROLES[r]);
           if(r===u.role)o.selected=true;
