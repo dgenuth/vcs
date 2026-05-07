@@ -3406,6 +3406,9 @@ function applyCopyProtection() {
 
   // Block Ctrl+C, Ctrl+A, Ctrl+X at document level
   window._vcsCopyHandler = function(e) {
+    // Allow all keyboard input in form fields
+    const tag = e.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) return;
     if ((e.ctrlKey || e.metaKey) && ['c','a','x'].includes(e.key.toLowerCase())) {
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -3428,7 +3431,7 @@ function applyCopyProtection() {
   // Disable text selection via CSS
   const style = document.createElement('style');
   style.id = 'vcs-copy-protection';
-  style.textContent = '* { -webkit-user-select: none !important; user-select: none !important; } input, textarea, select { -webkit-user-select: text !important; user-select: text !important; }';
+  style.textContent = '#app table, #app .vendor-link, #app td, #app th { -webkit-user-select: none !important; user-select: none !important; } input, textarea, select, [contenteditable] { -webkit-user-select: text !important; user-select: text !important; }';
   document.head.appendChild(style);
 
   // Faint diagonal watermark
@@ -5149,7 +5152,9 @@ function updateSidebar() {
     nav.appendChild(btn);
   }
   const qs=$('quick-stats'); qs.innerHTML='';
-  if (S.loaded && !collapsed) {
+  // Only show stats panel for admin and procurement — not relevant for other roles
+  const _canSeeStats = ['admin','procurement','manager'].includes(USER.role||'');
+  if (S.loaded && !collapsed && _canSeeStats) {
     const active=S.vendors.filter(isVisible);
     const calls=active.filter(v=>v.tier==='CALL').length;
     const emails=active.filter(v=>v.tier==='EMAIL').length;
