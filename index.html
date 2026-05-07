@@ -686,7 +686,7 @@ function loginAs(userObj) {
   USER.loginTime = new Date();
   USER.hiddenFields = userObj.hiddenFields || [];
   USER.tabOverrides = userObj.tabOverrides || {};
-  // Re-apply copy protection whenever role changes
+  USER._impersonating = userObj._impersonating || false;
   setTimeout(applyCopyProtection, 100);
   // Persist session
   sessionStorage.setItem('vcs_session', JSON.stringify({
@@ -2741,13 +2741,14 @@ function loadSettings() {
 let _settingsSaveTimer = null;
 let _driveConfigSaveTimer = null;
 function debouncedSaveSettings() {
+  // Don't save settings during impersonation — preview only, not the real user's prefs
+  if (USER._impersonating) return;
   clearTimeout(_settingsSaveTimer);
   clearTimeout(_driveConfigSaveTimer);
   _settingsSaveTimer = setTimeout(saveSettings, 500);
-  // Also push to Drive after a short delay (non-blocking)
   _driveConfigSaveTimer = setTimeout(() => {
     saveConfigToDrive().catch(e => console.warn('Drive config save:', e.message));
-  }, 3000); // 3 second delay to batch rapid changes
+  }, 3000);
 }
 
 // ─── Drive-backed Settings + User List ───────────────────────────────────────
@@ -3880,22 +3881,19 @@ function arBadge(v) {
 
 function searchMatch(v, q) {
   if (!q) return true;
-  // For restricted roles, only search fields the user is allowed to see
-  const hiddenFields = new Set(USER.hiddenFields || []);
-  const allSearchFields = [
-    ['name',v.name],['category',v.category],['subCategory',v.subCategory],
-    ['product',v.product],['gpo',v.gpo],['markets',v.markets],['website',v.website],
-    ['procContact',v.procContact],['bizPhone',v.bizPhone],['mobile',v.mobile],
-    ['email',v.email],['email2',v.email2],['notes',v.notes],['about',v.about],
-    ['contractNo',v.contractNo],['adminFee',v.adminFee],['classOfTrade',v.classOfTrade],
-    ['status',v.status],['termExpiry',v.termExpiry],['contractExpiry',v.contractExpiry],
+  // Core identity fields — always searchable regardless of role
+  // (reps can find a vendor by name/category/product, just can't see sensitive detail)
+  const coreFields = [v.name, v.category, v.subCategory, v.product, v.gpo, v.markets, v.website];
+  if (coreFields.some(f => f && String(f).toLowerCase().includes(q))) return true;
+  // Sensitive fields — only search if role has access
+  const canSeeFinancials = ['admin','procurement','manager','cro','finance_sr','finance_jr'].includes(USER.role);
+  const canSeeContacts = ['admin','procurement','manager'].includes(USER.role);
+  const sensitiveFields = [
+    ...(canSeeContacts ? [v.procContact,v.bizPhone,v.mobile,v.email,v.email2] : []),
+    ...(canSeeFinancials ? [v.adminFee,v.contractNo] : []),
+    v.status, v.classOfTrade, v.about,
   ];
-  const isRestricted = ['sales_rep','restricted','ssa','cro','director_ops','ops_qc','finance_sr','finance_jr'].includes(USER.role);
-  const searchFields = isRestricted
-    ? allSearchFields.filter(([key]) => !hiddenFields.has(key))
-    : allSearchFields.map(([,val]) => val);
-  const vals = isRestricted ? searchFields.map(([,val]) => val) : searchFields;
-  return vals.some(f => f && String(f).toLowerCase().includes(q));
+  return sensitiveFields.some(f => f && String(f).toLowerCase().includes(q));
 }
 
 // Highlight search term in a string — returns a span with yellow mark on match
@@ -5116,6 +5114,12 @@ const NAV_DEFS=[
 ];
 
 function updateSidebar() {
+  // Show/hide Save and Reload buttons based on role
+  const _saveBtn = $('save-btn');
+  const _reloadBtn = $('reload-btn');
+  const _canSave = (ROLE_PERMS[USER.role||'restricted']||{}).save;
+  if (_saveBtn) _saveBtn.style.display = _canSave ? '' : 'none';
+  if (_reloadBtn) _reloadBtn.style.display = ''; // always show Reload
   const nav=$('nav'); nav.innerHTML='';
   const sb=$('sidebar');
   const collapsed=sb.classList.contains('collapsed');
@@ -7058,7 +7062,7 @@ function renderSettings(c) {
         mainLine.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--amber)',fontSize:'9px'},onclick(){
           const t=getApprovedUsers().find(x=>x.email===u.email);if(!t)return;
           const k='vcs_impersonate_'+Date.now();
-          localStorage.setItem(k,JSON.stringify({email:t.email,name:t.name,role:t.role,hiddenFields:t.hiddenFields||[],expires:Date.now()+300000,settings:{driveFileId:S.settings.driveFileId,driveFileName:S.settings.driveFileName,driveAutoSync:true,googleClientId:S.settings.googleClientId}}));
+          localStorage.setItem(k,JSON.stringify({email:t.email,name:t.name,role:t.role,hiddenFields:t.hiddenFields||[],expires:Date.now()+300000,_impersonating:true,settings:{driveFileId:S.settings.driveFileId,driveFileName:S.settings.driveFileName,driveAutoSync:true,googleClientId:S.settings.googleClientId}}));
           window.open(window.location.href.split('#')[0]+'#impersonate='+k,'_blank');
         }},'👁 View As'));
         mainLine.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',fontSize:'9px'},onclick(){
@@ -7838,7 +7842,7 @@ function init() {
         history.replaceState(null,'',window.location.pathname+window.location.search);
         // Apply passed settings so Drive load works
         if (imp.settings) Object.assign(S.settings, imp.settings);
-        loginAs({email:imp.email,name:imp.name,role:imp.role,hiddenFields:imp.hiddenFields||[]});
+        loginAs({email:imp.email,name:imp.name,role:imp.role,hiddenFields:imp.hiddenFields||[],_impersonating:true});
         // Show impersonation banner
         document.body.insertAdjacentHTML('afterbegin',
           `<div id="impersonate-banner" style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#f59e0b;color:#000;font-size:11px;font-weight:700;padding:5px 12px;display:flex;align-items:center;justify-content:space-between;">
