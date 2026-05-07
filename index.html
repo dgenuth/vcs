@@ -629,45 +629,37 @@ function handleOAuthLogin(email, name, provider) {
   // Bootstrap admin on first ever login (empty user list)
   if (users.length === 0) {
     // Pre-populate full employee directory on first ever login
+    // Employee directory — only confirmed users from User Accounts tab in Vendor_Catalogue.xlsm
+    // Unconfirmed employees are NOT included — add them via User Management when ready
     const EMPLOYEE_DIRECTORY = [
+      // Admins
       {email:'dgenuth@primesourcex.com',name:'David Genuth',role:'admin'},
       {email:'dgenuthps@gmail.com',name:'David Genuth',role:'admin'},
+      // Procurement (full access)
       {email:'jmanguray@primesourcex.com',name:'Jane Manguray',role:'procurement'},
       {email:'mgenuth@primesourcex.com',name:'Mark Genuth',role:'procurement'},
       {email:'mdelora@primesourcex.com',name:'Monica DeLora',role:'procurement'},
+      // CRO
       {email:'aschwartz@primesourcex.com',name:'Abraham Ushy Schwartz',role:'cro'},
+      // Director of Operations
       {email:'nkornfeld@primesourcex.com',name:'Nathalie Kornfeld',role:'director_ops'},
+      // Operations QC
       {email:'hkabbabe@primesourcex.com',name:'Hammurabi Rabi Kabbabe',role:'ops_qc'},
+      // Senior Finance
       {email:'ewiesel@primesourcex.com',name:'Elliot Wiesel',role:'finance_sr'},
       {email:'aalmeida@primesourcex.com',name:'Amanda Almeida',role:'finance_sr'},
-      {email:'areyes@primesourcex.com',name:'Amanda Reyes',role:'finance_sr'},
+      // Junior Finance (Veruschka "thefi")
+      {email:'vbadenhorst@primesourcex.com',name:'Varuscjcka Badenhorst',role:'finance_jr'},
+      // Sales Reps
       {email:'bflekel@primesourcex.com',name:'Ben Flekel',role:'sales_rep'},
       {email:'swithers@primesourcex.com',name:'Shane Withers',role:'sales_rep'},
       {email:'erock@primesourcex.com',name:'Eitan Rock',role:'sales_rep'},
+      // SSA (confirmed from spreadsheet only)
       {email:'agenuth@primesourcex.com',name:'Abe Genuth',role:'ssa'},
       {email:'bmparagas@primesourcex.com',name:'Bridget Monica Paragas',role:'ssa'},
-      {email:'blotriet@primesourcex.com',name:'Bronwyn Lotriet',role:'ssa'},
-      {email:'cvaldez@primesourcex.com',name:'Chase Valdez',role:'ssa'},
-      {email:'dpienaar@primesourcex.com',name:'Divan Pienaar',role:'ssa'},
       {email:'eaugustin@primesourcex.com',name:'Emer Jean Agustin',role:'ssa'},
-      {email:'gbernstein@primesourcex.com',name:'Gila Bernstein',role:'ssa'},
-      {email:'hlabustro@primesourcex.com',name:'Harvey Labustro',role:'ssa'},
-      {email:'jstrutzel@primesourcex.com',name:'Jeremy Strutzel',role:'ssa'},
-      {email:'jgeorge@primesourcex.com',name:'Jibu George',role:'ssa'},
-      {email:'jmontalvo@primesourcex.com',name:'Jordan Montalvo',role:'ssa'},
-      {email:'kweingarten@primesourcex.com',name:'Karen Weingarten',role:'ssa'},
-      {email:'kdalagan@primesourcex.com',name:'Krishna Mae Dalagan',role:'ssa'},
       {email:'kgepiga@primesourcex.com',name:'Kyle Opel Gepiga',role:'ssa'},
-      {email:'michaelg@primesourcex.com',name:'Michael Greenfield',role:'ssa'},
-      {email:'michaelgreenfield18@gmail.com',name:'Michael Greenfield',role:'ssa'},
-      {email:'mtorres@primesourcex.com',name:'Miguel Torres',role:'ssa'},
       {email:'rkabuya@primesourcex.com',name:'Rob Kabuya',role:'ssa'},
-      {email:'smoody@primesourcex.com',name:'Skylar Moody',role:'ssa'},
-      {email:'sgruenebaum@primesourcex.com',name:'Stephen Gruenebaum',role:'ssa'},
-      {email:'skatz@primesourcex.com',name:'Stephen Katz',role:'ssa'},
-      {email:'vbadenhorst@primesourcex.com',name:'Varuscjcka Badenhorst',role:'ssa'},
-      {email:'wgrant@primesourcex.com',name:'William Grant',role:'ssa'},
-      {email:'malkygenuth@gmail.com',name:'Malky Genuth',role:'viewer'},
     ].map(u=>({...u,added:new Date().toISOString(),addedBy:'system',password:'',hiddenFields:[]}));
     const loginEmail = email.toLowerCase();
     const inDir = EMPLOYEE_DIRECTORY.some(u=>u.email===loginEmail);
