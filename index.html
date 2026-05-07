@@ -3067,7 +3067,22 @@ function getDefaultHiddenFields(role) {
 const USER = {email:null,name:null,role:null,loggedIn:false,loginTime:null,sfToken:null,sfInstance:null,hiddenFields:[]};
 const AUTH_KEY = 'vcs_approved_users';
 const LOGIN_LOG_KEY = 'vcs_login_log';
-function getApprovedUsers(){try{return JSON.parse(localStorage.getItem(AUTH_KEY)||'[]');}catch(e){return [];}}
+function getApprovedUsers(){
+  try{
+    const users = JSON.parse(localStorage.getItem(AUTH_KEY)||'[]');
+    // One-time migration: reset hiddenFields to role defaults if they look wrong
+    // (all-hidden or empty for roles that should have partial access)
+    let migrated = false;
+    users.forEach(u => {
+      if (u._hiddenFieldsMigrated_v19) return; // already migrated
+      u.hiddenFields = getDefaultHiddenFields(u.role);
+      u._hiddenFieldsMigrated_v19 = true;
+      migrated = true;
+    });
+    if (migrated) localStorage.setItem(AUTH_KEY, JSON.stringify(users));
+    return users;
+  }catch(e){return [];}
+}
 function setApprovedUsers(u){
   localStorage.setItem(AUTH_KEY,JSON.stringify(u));
   // Push to Drive after short delay (non-blocking)
@@ -7242,12 +7257,12 @@ function renderSettings(c) {
   // Toggles
   const toggleDefs=[
     ['Compact row height','compactRows',v=>document.body.classList.toggle('compact',v)],
-    ['Show score color gradient','showScoreColor',()=>render()],
-    ['Auto-sort Today view by score','autoSortByScore',()=>render()],
-    ['Show snoozed vendors in Today','showSnoozed',()=>render()],
-    ['Show dismissed vendors by default','showDismissedDefault',v=>{S.showDismissed=v;render();}],
-    ['Show Hebrew calendar dates','showHebrew',()=>render()],
-    ['Show KPI cards on Today page','showKPIs',()=>render()],
+    ['Show score color gradient','showScoreColor',()=>{if(S.view!=='settings')render();}],
+    ['Auto-sort Today view by score','autoSortByScore',()=>{if(S.view!=='settings')render();}],
+    ['Show snoozed vendors in Today','showSnoozed',()=>{if(S.view!=='settings')render();}],
+    ['Show dismissed vendors by default','showDismissedDefault',v=>{S.showDismissed=v;if(S.view!=='settings')render();}],
+    ['Show Hebrew calendar dates','showHebrew',()=>{if(S.view!=='settings')render();}],
+    ['Show KPI cards on Today page','showKPIs',()=>{if(S.view!=='settings')render();}],
     ['Animate badge pulsing on urgent items','animateBadges',()=>{}],
   ];
   for (const [label,key,onChangeFn] of toggleDefs) {
@@ -7623,8 +7638,14 @@ function init() {
 
     // 2. Pull latest config from Drive (settings + users) — keeps all devices in sync
     try {
+      const savedView = S.view; // preserve current view
       const configUpdated = await loadConfigFromDrive();
-      if (configUpdated) { updateUserBadge(); render(); }
+      if (configUpdated) {
+        updateUserBadge();
+        S.view = savedView; // restore view — don't let config load redirect user
+        // Only re-render if NOT on settings to avoid disrupting the settings panel
+        if (S.view !== 'settings') render();
+      }
     } catch(e) { console.warn('Config refresh failed:', e.message); }
 
     // 3. Pull latest file from Drive if configured
