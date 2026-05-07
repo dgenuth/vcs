@@ -660,7 +660,7 @@ function handleOAuthLogin(email, name, provider) {
       {email:'eaugustin@primesourcex.com',name:'Emer Jean Agustin',role:'ssa'},
       {email:'kgepiga@primesourcex.com',name:'Kyle Opel Gepiga',role:'ssa'},
       {email:'rkabuya@primesourcex.com',name:'Rob Kabuya',role:'ssa'},
-    ].map(u=>({...u,added:new Date().toISOString(),addedBy:'system',password:'',hiddenFields:[]}));
+    ].map(u=>({...u,added:new Date().toISOString(),addedBy:'system',password:'',hiddenFields:getDefaultHiddenFields(u.role)}));
     const loginEmail = email.toLowerCase();
     const inDir = EMPLOYEE_DIRECTORY.some(u=>u.email===loginEmail);
     const allUsers = inDir ? EMPLOYEE_DIRECTORY : [{email:loginEmail,name,role:'admin',added:new Date().toISOString(),addedBy:'system',password:'',hiddenFields:[]}, ...EMPLOYEE_DIRECTORY];
@@ -2909,7 +2909,7 @@ async function loadConfigFromDrive() {
           {email:'eaugustin@primesourcex.com',name:'Emer Jean Agustin',role:'ssa'},
           {email:'kgepiga@primesourcex.com',name:'Kyle Opel Gepiga',role:'ssa'},
           {email:'rkabuya@primesourcex.com',name:'Rob Kabuya',role:'ssa'},
-        ].map(u=>({...u,added:new Date().toISOString(),addedBy:'system',password:'',hiddenFields:[]}));
+        ].map(u=>({...u,added:new Date().toISOString(),addedBy:'system',password:'',hiddenFields:getDefaultHiddenFields(u.role)}));
         const merged = [...config.users];
         FRESH_DIRECTORY.forEach(d => {
           if (!existing.has(d.email.toLowerCase())) merged.push(d);
@@ -2949,18 +2949,18 @@ const ROLES = {
   restricted: 'Restricted Viewer',
 };
 const ROLE_COLORS = {
-  admin:       '#22c55e',
-  procurement: '#4f7cff',
-  cro:         '#a855f7',
-  director_ops:'#06b6d4',
-  ops_qc:      '#0891b2',
-  finance_sr:  '#f59e0b',
-  finance_jr:  '#fb923c',
-  ssa:         '#64748b',
-  sales_rep:   '#ef4444',
-  manager:     '#4f7cff',
-  viewer:      '#10b981',
-  restricted:  '#f59e0b',
+  admin:       '#22c55e',  // green
+  procurement: '#4f7cff',  // blue
+  cro:         '#a855f7',  // purple
+  director_ops:'#06b6d4',  // cyan
+  ops_qc:      '#0284c7',  // sky blue
+  finance_sr:  '#f59e0b',  // amber
+  finance_jr:  '#fb923c',  // orange
+  ssa:         '#e879f9',  // fuchsia — distinct from gray
+  sales_rep:   '#ef4444',  // red
+  manager:     '#4f7cff',  // blue
+  viewer:      '#10b981',  // emerald
+  restricted:  '#f97316',  // orange-red
 };
 const ROLE_PERMS = {
   admin: {
@@ -3038,6 +3038,32 @@ const ALL_RESTRICTABLE_FIELDS = [
   {key:'perpetuity',label:'Perpetuity Clause'},
   {key:'tail',label:'Tail Period'},
 ];
+
+// Default hidden detail-popup fields per role — from User Accounts tab in Vendor_Catalogue.xlsm
+function getDefaultHiddenFields(role) {
+  const ALL = ['adminFee','tiers','email','bizPhone','mobile','procContact','title','contractNo','notes','comments','perpetuity','tail'];
+  const VISIBLE = {
+    admin:        [],  // nothing hidden
+    procurement:  [],  // nothing hidden
+    manager:      [],  // nothing hidden
+    viewer:       [],  // nothing hidden — sees everything read-only
+    // CRO: sees adminFee and perpetuity; everything else hidden
+    cro:          ['tiers','email','bizPhone','mobile','procContact','title','contractNo','comments','tail'],
+    // Director of Operations: sees perpetuity only
+    director_ops: ['adminFee','tiers','email','bizPhone','mobile','procContact','title','contractNo','notes','comments','tail'],
+    // Operations QC: sees nothing financial
+    ops_qc:       ['adminFee','tiers','email','bizPhone','mobile','procContact','title','contractNo','notes','comments','perpetuity','tail'],
+    // Senior/Junior Finance: sees adminFee, tiers, perpetuity, tail — no contacts
+    finance_sr:   ['email','bizPhone','mobile','procContact','title','contractNo','comments'],
+    finance_jr:   ['email','bizPhone','mobile','procContact','title','contractNo','comments'],
+    // SSA: no financials, no contacts
+    ssa:          ['adminFee','tiers','email','bizPhone','mobile','procContact','title','contractNo','comments','perpetuity','tail'],
+    // Sales Rep: everything hidden in detail popup
+    sales_rep:    ALL,
+    restricted:   ALL,
+  };
+  return (VISIBLE[role] !== undefined) ? VISIBLE[role] : ALL;
+}
 const USER = {email:null,name:null,role:null,loggedIn:false,loginTime:null,sfToken:null,sfInstance:null,hiddenFields:[]};
 const AUTH_KEY = 'vcs_approved_users';
 const LOGIN_LOG_KEY = 'vcs_login_log';
@@ -3705,29 +3731,29 @@ function renderVendorDB(c) {
     } else if (Array.isArray(fromSettings)) {
       S.dbHiddenCols = new Set(fromSettings);
     } else {
-      // Default visible columns per role — exact mapping from User Accounts tab in Vendor_Catalogue.xlsm
+      // Default visible columns per role — parsed exactly from Config column in User Accounts tab
     const ROLE_VISIBLE_COLS = {
-      // Procurement/Admin: all columns (full access)
       admin:        new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
       procurement:  new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
-      // CRO: GPO,Vendor,Cat,SubCat,Product,Markets,Expiry,Status,AdminFee,Perp,AR,Score
-      cro:          new Set(['gpo','name','cat','subcat','product','markets','expiry','status','fee','perp','ar','score']),
-      // Director of Operations: GPO,Vendor,Cat,SubCat,Product,Markets,Expiry,Status,AR,Score
-      director_ops: new Set(['gpo','name','cat','subcat','product','markets','expiry','status','ar','score']),
-      // Operations QC: same as Director of Operations
-      ops_qc:       new Set(['gpo','name','cat','subcat','product','markets','expiry','status','ar','score']),
-      // Senior Finance: GPO,Vendor,Cat,SubCat,Product,Markets,Expiry,AdminFee,Perp,AR,Score
-      finance_sr:   new Set(['gpo','name','cat','subcat','product','markets','expiry','fee','perp','ar','score']),
+      // CRO: sees Admin Fee, Perpetuity, Status, Score (confirmed from spreadsheet)
+      cro:          new Set(['gpo','name','cat','subcat','product','markets','ar','expiry','status','fee','perp','score']),
+      // Director of Operations: sees Perpetuity (confirmed), no financials otherwise
+      director_ops: new Set(['gpo','name','cat','subcat','product','markets','ar','expiry','perp']),
+      // Operations QC: same columns as Director but no Perpetuity
+      ops_qc:       new Set(['gpo','name','cat','subcat','product','markets','ar','expiry']),
+      // Senior Finance: Admin Fee, Perpetuity, Tiers — confirmed from spreadsheet
+      finance_sr:   new Set(['gpo','name','cat','subcat','product','markets','ar','expiry','fee','perp']),
       // Junior Finance: same as Senior Finance
-      finance_jr:   new Set(['gpo','name','cat','subcat','product','markets','expiry','fee','perp','ar','score']),
-      // SSA: GPO,Vendor,Cat,SubCat,Product,Markets,Expiry,Status,AR (no financials, no contacts, no score)
-      ssa:          new Set(['gpo','name','cat','subcat','product','markets','expiry','status','ar']),
-      // Sales Rep: GPO,Vendor,Cat,SubCat,Product,Markets,Expiry,AR (search-only, no financials)
-      sales_rep:    new Set(['gpo','name','cat','subcat','product','markets','expiry','ar']),
-      // Legacy aliases
+      finance_jr:   new Set(['gpo','name','cat','subcat','product','markets','ar','expiry','fee','perp']),
+      // SSA: no financials, no score, no tier, no contacts
+      ssa:          new Set(['gpo','name','cat','subcat','product','markets','ar','expiry']),
+      // Sales Rep: same as SSA — search only
+      sales_rep:    new Set(['gpo','name','cat','subcat','product','markets','ar','expiry']),
+      // Viewer: sees everything (read-only)
+      viewer:       new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
+      // Restricted: custom — starts with minimal set, admin configures per-user
+      restricted:   new Set(['gpo','name','cat','subcat','product','markets','ar','expiry']),
       manager:      new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
-      viewer:       new Set(['gpo','name','cat','subcat','product','markets','expiry','status','fee','perp','ar','score']),
-      restricted:   new Set(['gpo','name','cat','subcat','product','markets','expiry','ar']),
     };
     const roleVisible = ROLE_VISIBLE_COLS[USER.role||'restricted'] || ROLE_VISIBLE_COLS.restricted;
     const allColKeys = ['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes'];
@@ -3791,20 +3817,20 @@ function renderVendorDB(c) {
   const colToggleBar=el('div',{style:{display:'flex',gap:'3px',flexWrap:'wrap',marginBottom:'6px',alignItems:'center'}});
   colToggleBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'3px'}},'Columns:'));
   // Admin-controlled locked columns (always hidden for non-admins)
-  // Allowed columns per role — exact from User Accounts tab in Vendor_Catalogue.xlsm
+  // Max allowed columns per role — user can only toggle within this set
   const ROLE_ALLOWED_COLS = {
     admin:        new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
     procurement:  new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
-    cro:          new Set(['gpo','name','cat','subcat','product','markets','expiry','status','fee','perp','ar','score']),
-    director_ops: new Set(['gpo','name','cat','subcat','product','markets','expiry','status','ar','score']),
-    ops_qc:       new Set(['gpo','name','cat','subcat','product','markets','expiry','status','ar','score']),
-    finance_sr:   new Set(['gpo','name','cat','subcat','product','markets','expiry','fee','perp','ar','score']),
-    finance_jr:   new Set(['gpo','name','cat','subcat','product','markets','expiry','fee','perp','ar','score']),
-    ssa:          new Set(['gpo','name','cat','subcat','product','markets','expiry','status','ar']),
-    sales_rep:    new Set(['gpo','name','cat','subcat','product','markets','expiry','ar']),
+    cro:          new Set(['gpo','name','cat','subcat','product','markets','ar','expiry','status','fee','perp','score']),
+    director_ops: new Set(['gpo','name','cat','subcat','product','markets','ar','expiry','perp']),
+    ops_qc:       new Set(['gpo','name','cat','subcat','product','markets','ar','expiry']),
+    finance_sr:   new Set(['gpo','name','cat','subcat','product','markets','ar','expiry','fee','perp']),
+    finance_jr:   new Set(['gpo','name','cat','subcat','product','markets','ar','expiry','fee','perp']),
+    ssa:          new Set(['gpo','name','cat','subcat','product','markets','ar','expiry']),
+    sales_rep:    new Set(['gpo','name','cat','subcat','product','markets','ar','expiry']),
+    viewer:       new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
+    restricted:   new Set(['gpo','name','cat','subcat','product','markets','ar','expiry']),
     manager:      new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
-    viewer:       new Set(['gpo','name','cat','subcat','product','markets','expiry','status','fee','perp','ar','score']),
-    restricted:   new Set(['gpo','name','cat','subcat','product','markets','expiry','ar']),
   };
   const myAllowedCols = ROLE_ALLOWED_COLS[USER.role||'restricted'] || ROLE_ALLOWED_COLS.restricted;
   const canEditCols = hasPermission('editAll') || USER.role === 'admin' || USER.role === 'manager';
@@ -6767,12 +6793,15 @@ function renderSettings(c) {
         sel.addEventListener('change',()=>{
           const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);
           if(i>=0){
-            all[i].role=sel.value;setApprovedUsers(all);
+            all[i].role=sel.value;
+            // Auto-apply default hidden fields for new role (only if not manually customized)
+            if(!all[i]._customHiddenFields) all[i].hiddenFields = getDefaultHiddenFields(sel.value);
+            setApprovedUsers(all);
             if(isYou){USER.role=sel.value;updateUserBadge();}
-            // Update badge immediately without full re-render
             roleBadge.textContent=ROLES[sel.value]||sel.value;
             roleBadge.style.color=ROLE_COLORS[sel.value]||'#94a3b8';
             roleBadge.style.borderColor=ROLE_COLORS[sel.value]||'#475569';
+            renderSettings(c); // re-render to show updated field restrictions
           }
         });
         mainLine.appendChild(sel);
