@@ -4097,6 +4097,10 @@ function renderVendorDB(c) {
   sourceBar.appendChild(desc);
   c.appendChild(sourceBar);
 
+  // Force restricted roles to 'all' source — they need to search across all GPOs
+  if (['sales_rep','restricted','ssa'].includes(USER.role) && S.dbSource === 'direct') {
+    S.dbSource = 'all';
+  }
   const VENDOR_POOL = sourcePool[S.dbSource].data;
 
   // ── Column definitions ──
@@ -7242,9 +7246,9 @@ function renderSettings(c) {
           const tabGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'4px'}});
           allTabs.forEach(t=>{
             const hasOverride=t.id in tabOverrides;
-            const roleDefault=roleDefaultTabs.has(t.id);
+            const isVirtual = t.id.startsWith('_');
+            const roleDefault=isVirtual ? (virtualTabDefaults[t.id]||false) : roleDefaultTabs.has(t.id);
             const hasAccess=hasOverride?tabOverrides[t.id]:roleDefault;
-            // Only show override indicator if state actually differs from role default
             const isOverridden=hasOverride && (tabOverrides[t.id] !== roleDefault);
             const btn=el('button',{
               style:{
@@ -7928,6 +7932,9 @@ function init() {
         // Apply passed settings so Drive load works
         if (imp.settings) Object.assign(S.settings, imp.settings);
         loginAs({email:imp.email,name:imp.name,role:imp.role,hiddenFields:imp.hiddenFields||[],_impersonating:true});
+        // Apply copy protection immediately and again after async loads settle
+        setTimeout(applyCopyProtection, 100);
+        setTimeout(applyCopyProtection, 1500);
         // Show impersonation banner
         document.body.insertAdjacentHTML('afterbegin',
           `<div id="impersonate-banner" style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#f59e0b;color:#000;font-size:11px;font-weight:700;padding:5px 12px;display:flex;align-items:center;justify-content:space-between;">
