@@ -3382,6 +3382,60 @@ function hasPermission(p){
   if(p==='configDrive') return USER.role==='admin';
   return !!(ROLE_PERMS[USER.role]||{})[p];
 }
+function applyCopyProtection() {
+  const canCopy = (ROLE_PERMS[USER.role||'restricted']||{}).canCopy;
+
+  // Remove any previous protection
+  if (window._vcsCopyHandler) {
+    document.removeEventListener('keydown', window._vcsCopyHandler, true);
+    window._vcsCopyHandler = null;
+  }
+  if (window._vcsContextHandler) {
+    document.removeEventListener('contextmenu', window._vcsContextHandler, true);
+    window._vcsContextHandler = null;
+  }
+  const oldStyle = document.getElementById('vcs-copy-protection');
+  if (oldStyle) oldStyle.remove();
+  const oldWm = document.getElementById('vcs-watermark');
+  if (oldWm) oldWm.remove();
+
+  if (canCopy) return; // admin/procurement/manager — unrestricted
+
+  // Block Ctrl+C, Ctrl+A, Ctrl+X at document level
+  window._vcsCopyHandler = function(e) {
+    if ((e.ctrlKey || e.metaKey) && ['c','a','x'].includes(e.key.toLowerCase())) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      toast('\u26a0 Copy/export is not permitted for your role','#f59e0b');
+      return false;
+    }
+  };
+  document.addEventListener('keydown', window._vcsCopyHandler, true);
+
+  // Block right-click (allow in input fields so users can paste)
+  window._vcsContextHandler = function(e) {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    toast('\u26a0 Copy/export is not permitted for your role','#f59e0b');
+    return false;
+  };
+  document.addEventListener('contextmenu', window._vcsContextHandler, true);
+
+  // Disable text selection via CSS
+  const style = document.createElement('style');
+  style.id = 'vcs-copy-protection';
+  style.textContent = '* { -webkit-user-select: none !important; user-select: none !important; } input, textarea, select { -webkit-user-select: text !important; user-select: text !important; }';
+  document.head.appendChild(style);
+
+  // Faint diagonal watermark
+  const wm = document.createElement('div');
+  wm.id = 'vcs-watermark';
+  wm.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-25deg);font-size:28px;color:rgba(255,255,255,.04);pointer-events:none;z-index:9998;font-family:monospace;user-select:none;white-space:nowrap;letter-spacing:2px;font-weight:700';
+  wm.textContent = (USER.email||'user') + ' \u00b7 ' + new Date().toLocaleDateString();
+  document.body.appendChild(wm);
+}
+
 function updateUserBadge(){
   const b=$('user-badge');if(!USER.loggedIn){b.style.display='none';return;}
   const roleC={admin:'var(--green)',manager:'var(--blue)',viewer:'var(--muted)'};
