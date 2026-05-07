@@ -7245,6 +7245,11 @@ function renderSettings(c) {
             {id:'_statsbar',label:'Stats Panel'},{id:'_savebtn',label:'Save Button'},
           ];
           const tabGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'4px'}});
+          // Virtual tab defaults — these aren't in ROLE_PERMS.tabs, they use their own logic
+          const virtualTabDefaults = {
+            '_statsbar': ['admin','procurement','manager'].includes(cu.role),
+            '_savebtn': (ROLE_PERMS[cu.role]||{}).save || false,
+          };
           allTabs.forEach(t=>{
             const hasOverride=t.id in tabOverrides;
             const isVirtual = t.id.startsWith('_');
