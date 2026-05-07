@@ -3538,7 +3538,22 @@ function renderVendorDB(c) {
     } else if (Array.isArray(fromSettings)) {
       S.dbHiddenCols = new Set(fromSettings);
     } else {
-      S.dbHiddenCols = new Set(['phone','notice','status','perp','days']); // gpo+subcat now visible by default
+      // Default hidden columns based on role — sourced from User Accounts tab in Vendor_Catalogue.xlsm
+    // Each role sees only their allowed columns; everything else is hidden by default
+    // Users can toggle their personal column preferences on top of this
+    const ROLE_VISIBLE_COLS = {
+      // Procurement/Admin: full access — nothing hidden
+      admin:      new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
+      // Manager (Operations/Procurement): full access
+      manager:    new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
+      // Viewer (Finance/CRO): sees financials, no contacts
+      viewer:     new Set(['gpo','name','cat','subcat','product','markets','ar','expiry','days','status','tier','score','fee','perp']),
+      // Restricted (Sales Rep/SSA): vendor identity + expiry only
+      restricted: new Set(['gpo','name','cat','subcat','product','markets','expiry','ar']),
+    };
+    const roleVisible = ROLE_VISIBLE_COLS[USER.role||'restricted'] || ROLE_VISIBLE_COLS.restricted;
+    const allColKeys = ['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes'];
+    S.dbHiddenCols = new Set(allColKeys.filter(k => !roleVisible.has(k)));
     }
   }
 
@@ -3565,26 +3580,29 @@ function renderVendorDB(c) {
   const q=S.search?S.search.toLowerCase():'';
   const hl=(text)=>q&&text&&String(text).toLowerCase().includes(q)?highlightText(text,q):document.createTextNode(String(text||''));
   const hlEl=(text)=>{const s=el('span',{});s.appendChild(hl(String(text||'')));return s;};
+  // COLS ordered per Setup tab in Vendor_Catalogue.xlsm
+  // Order: GPO(1), Vendor(3), Category(4), Sub-Category(5), Product/Desc(6),
+  //        Class of Trade(7), Markets(8), then contract/contact/financial fields
   const COLS=[
+    {key:'gpo',     label:'GPO',             sortable:true,  get:v=>v.gpo||'',                fmt:v=>hlEl(v.gpo), sk:v=>v.gpo||''},
     {key:'name',    label:'Vendor',          sortable:true,  get:v=>v.name||'',               fmt:v=>{const n=el('span',{class:'vendor-link',onclick(e){e.stopPropagation();openDetail(v);}});n.appendChild(hl(v.name));n.style.color=v.tier==='CALL'?'var(--red)':v.tier==='EMAIL'?'var(--amber)':'';n.style.fontWeight='600';return n;}, sk:v=>v.name.toLowerCase()},
     {key:'cat',     label:'Category',        sortable:true,  get:v=>v.category||'',           fmt:v=>hlEl(v.category), sk:v=>v.category||''},
-    {key:'product', label:'Product/Desc',    sortable:false, get:v=>v.product||v.about||'',   fmt:v=>{const txt=(v.product||v.about||'').slice(0,60);const s=el('span',{title:v.product||v.about||'',style:{maxWidth:'180px',display:'inline-block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}});s.appendChild(hl(txt));return s;}, sk:v=>v.product||''},
-    {key:'markets', label:'Markets',         sortable:true,  get:v=>v.markets||'',            fmt:v=>hlEl(v.markets), sk:v=>v.markets||''},
-    {key:'cot',     label:'Class of Trade',  sortable:true,  get:v=>v.classOfTrade||'',       fmt:v=>hlEl(v.classOfTrade), sk:v=>v.classOfTrade||''},
     {key:'subcat',  label:'Sub-Category',    sortable:true,  get:v=>v.subCategory||'',        fmt:v=>hlEl(v.subCategory), sk:v=>v.subCategory||''},
-    {key:'gpo',     label:'GPO',             sortable:true,  get:v=>v.gpo||'',                fmt:v=>hlEl(v.gpo), sk:v=>v.gpo||''},
+    {key:'product', label:'Product/Desc',    sortable:false, get:v=>v.product||v.about||'',   fmt:v=>{const txt=(v.product||v.about||'').slice(0,60);const s=el('span',{title:v.product||v.about||'',style:{maxWidth:'180px',display:'inline-block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}});s.appendChild(hl(txt));return s;}, sk:v=>v.product||''},
+    {key:'cot',     label:'Class of Trade',  sortable:true,  get:v=>v.classOfTrade||'',       fmt:v=>hlEl(v.classOfTrade), sk:v=>v.classOfTrade||''},
+    {key:'markets', label:'Markets',         sortable:true,  get:v=>v.markets||'',            fmt:v=>hlEl(v.markets), sk:v=>v.markets||''},
     {key:'ar',      label:'Auto-Renew',      sortable:true,  get:v=>isAutoRenew(v)?'Yes':'No',fmt:v=>arBadge(v), sk:v=>isAutoRenew(v)?0:1},
     {key:'expiry',  label:'Expiry',          sortable:true,  get:v=>{const e=getCurrentExpiry(v);return e?isoDate(e):'';}, fmt:v=>{const e=getCurrentExpiry(v);if(!e)return '—';const d=dayDiff(e,today);return el('span',{style:{color:d<0?'var(--red)':d<=30?'var(--amber)':''},title:fmtDate(e)},(d<0?'⚠ '+Math.abs(d)+'d ago':d<=30?'⚡ '+d+'d':fmtDate(e)));}, sk:v=>getCurrentExpiry(v)||new Date(9e12)},
     {key:'days',    label:'Days',            sortable:true,  get:v=>{const e=getCurrentExpiry(v);return e?String(dayDiff(e,today)):'';}, fmt:v=>{const e=getCurrentExpiry(v);if(!e)return '';const d=dayDiff(e,today);return String(Math.abs(d))+(d<0?' ago':'d');}, sk:v=>{const e=getCurrentExpiry(v);return e?dayDiff(e,today):99999;}},
+    {key:'status',  label:'Status',          sortable:true,  get:v=>(v.status||'').slice(0,40), fmt:v=>(v.status||'').slice(0,35)||'', sk:v=>v.status||''},
     {key:'tier',    label:'Tier',            sortable:true,  get:v=>v.tier||'',               fmt:v=>v.tier?tierTag(v.tier):'', sk:v=>({CALL:0,EMAIL:1,REVIEW:2,MONITOR:3}[v.tier]||4)},
     {key:'score',   label:'Score',           sortable:true,  get:v=>String((v.score||0).toFixed(1)), fmt:v=>scorePill(v.score), sk:v=>v.score||0},
     {key:'fee',     label:'Admin Fee',       sortable:true,  get:v=>{const f=parseFee(v.adminFee);return f?f+'%':'';}, fmt:v=>{const f=parseFee(v.adminFee);return f?el('span',{style:{color:f>=5?'var(--green)':f>=3?'var(--amber)':'var(--red)',fontWeight:'600'}},f+'%'):(v.adminFee||'—');}, sk:v=>parseFee(v.adminFee)||0},
+    {key:'perp',    label:'Perpetuity',      sortable:true,  get:v=>v.perpetuity||'',         fmt:v=>v.perpetuity||'', sk:v=>v.perpetuity||''},
     {key:'notice',  label:'Notice',          sortable:true,  get:v=>v.terminationNotice||'',  fmt:v=>v.terminationNotice||'', sk:v=>v.terminationNotice||''},
     {key:'contact', label:'Contact',         sortable:true,  get:v=>v.procContact||'',        fmt:v=>hlEl(v.procContact), sk:v=>v.procContact||''},
     {key:'phone',   label:'Phone',           sortable:false, get:v=>v.bizPhone||v.mobile||'', fmt:v=>v.bizPhone||v.mobile||'', sk:v=>v.bizPhone||''},
     {key:'email',   label:'Email',           sortable:false, get:v=>v.email||'',              fmt:v=>hlEl(v.email), sk:v=>v.email||''},
-    {key:'status',  label:'Status',          sortable:true,  get:v=>(v.status||'').slice(0,40), fmt:v=>(v.status||'').slice(0,35)||'', sk:v=>v.status||''},
-    {key:'perp',    label:'Perpetuity',      sortable:true,  get:v=>v.perpetuity||'',         fmt:v=>v.perpetuity||'', sk:v=>v.perpetuity||''},
     {key:'notes',   label:'Notes',           sortable:false, get:v=>v.notes?'yes':'',         fmt:v=>v.notes?el('span',{class:'note-preview clickable',title:String(v.notes).slice(0,200),onclick(e){e.stopPropagation();showNotePopup(v.name,v.notes,v);}},String(v.notes).split('|')[0].slice(0,40)+'…'):'', sk:v=>v.notes?0:1},
   ];
 
@@ -3595,24 +3613,26 @@ function renderVendorDB(c) {
   const colToggleBar=el('div',{style:{display:'flex',gap:'3px',flexWrap:'wrap',marginBottom:'6px',alignItems:'center'}});
   colToggleBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'3px'}},'Columns:'));
   // Admin-controlled locked columns (always hidden for non-admins)
-  const ADMIN_ONLY_COLS = new Set(['fee','notice','contact','phone','email','perp']);
+  // Columns restricted by role — based on User Accounts tab in Vendor_Catalogue.xlsm
+  // Admin/Manager can see everything; Viewer sees financials but no contacts;
+  // Restricted (rep) sees only identity + basic contract fields
+  const ROLE_ALLOWED_COLS = {
+    admin:      new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
+    manager:    new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
+    viewer:     new Set(['gpo','name','cat','subcat','product','markets','ar','expiry','days','status','tier','score','fee','perp']),
+    restricted: new Set(['gpo','name','cat','subcat','product','markets','expiry','ar']),
+  };
+  const myAllowedCols = ROLE_ALLOWED_COLS[USER.role||'restricted'] || ROLE_ALLOWED_COLS.restricted;
   const canEditCols = hasPermission('editAll') || USER.role === 'admin' || USER.role === 'manager';
 
   COLS.forEach(col=>{
-    // For non-managers: hide admin-only cols entirely, no toggle
-    if (!canEditCols && ADMIN_ONLY_COLS.has(col.key)) return;
+    // Hide cols not in this role's allowed set — no toggle shown
+    if (!myAllowedCols.has(col.key)) return;
     const isHidden = () => S.dbHiddenCols.has(col.key);
     const btn=el('button',{
       class:'col-toggle-btn'+(isHidden()?'':' on'),
-      style:{fontSize:'8px',padding:'1px 5px',
-        opacity: (!canEditCols && ADMIN_ONLY_COLS.has(col.key)) ? '0.4' : '1',
-        cursor: 'pointer'
-      },
+      style:{fontSize:'8px',padding:'1px 5px', cursor: 'pointer'},
       onclick(){
-        // Non-admins can toggle their own visible cols but can't unhide admin-only cols
-        if (!canEditCols && ADMIN_ONLY_COLS.has(col.key)) {
-          toast('⚠ This column is restricted by your administrator','#f59e0b'); return;
-        }
         if (S.dbHiddenCols.has(col.key)) S.dbHiddenCols.delete(col.key);
         else S.dbHiddenCols.add(col.key);
         debouncedSaveSettings();
@@ -3632,7 +3652,16 @@ function renderVendorDB(c) {
   // ── Filter + sort function ──
   function getFiltered() {
     let vs = VENDOR_POOL.slice();
-    if (S.search) { const q=S.search.toLowerCase(); vs=vs.filter(v=>searchMatch(v,q)); }
+    if (S.search) {
+      const q=S.search.toLowerCase();
+      // Restricted role: require minimum 3 chars — no browsing full list
+      if (USER.role === 'restricted' && q.length < 3) {
+        return []; // show nothing until 3+ chars typed
+      }
+      vs=vs.filter(v=>searchMatch(v,q));
+    } else if (USER.role === 'restricted') {
+      return []; // restricted users see nothing without searching
+    }
     COLS.forEach(col=>{
       const vals = S.dbFilters[col.key];
       if (vals && vals.size > 0) vs = vs.filter(v => vals.has(col.get(v)));
@@ -3716,7 +3745,13 @@ function renderVendorDB(c) {
   const tbody=el('tbody');
   if (!vendors.length) {
     const tr=el('tr'); const td=el('td',{colspan:COLS.length+1,style:{textAlign:'center',padding:'20px',color:'var(--muted)'}});
-    td.textContent=S.vendors.length?'No vendors match the current filters — clear filters to see all':'No vendor data loaded';
+    if (USER.role === 'restricted') {
+        td.textContent = S.search && S.search.length < 3
+          ? '🔍 Type at least 3 characters to search vendors.'
+          : S.search ? 'No vendors match your search.' : '🔍 Use the search bar to find vendors (minimum 3 characters).';
+      } else {
+        td.textContent=S.vendors.length?'No vendors match the current filters — clear filters to see all':'No vendor data loaded';
+      }
     tr.appendChild(td); tbody.appendChild(tr);
   } else {
     vendors.forEach(v=>{
