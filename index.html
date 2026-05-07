@@ -1388,8 +1388,8 @@ async function loadFile(file) {
     else { S.reviews=[]; S.reviewTPs=[]; }
 
     S.loaded=true; S.view=(['settings','datacheck'].includes(S.view)?S.settings.defaultView||'today':S.view)||'today'; S.search=''; S.dirty.clear();
+    // Start polling if Drive is configured
     if (S.settings.driveAutoSync) setTimeout(startLiveUpdatePolling, 5000);
-    setTimeout(applyCopyProtection, 300); // re-apply after every file load
     $('search').value = '';
     $('upload-screen').style.display='none';
     $('app').style.display='flex';
@@ -1604,14 +1604,99 @@ async function executeSave() {
     logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:'System',action:'File exported: '+outName+' ('+dirtyVendors.length+' vendors updated)'});
     toast(`✓ Saved ${dirtyVendors.length} vendor(s) — open in Excel, formulas will recalculate automatically`);
 
+    // Write VCS_History sheet to Excel
+    await writeHistoryToExcel(zip);
+    // Rebuild zip after history write
+    const uint8WithHistory = await zip.generateAsync({type:'uint8array',compression:'DEFLATE',compressionOptions:{level:4}});
+    const finalBuffer = uint8WithHistory.buffer;
+
     // If Drive sync is configured, also push to Google Drive
     if (S.settings.driveAutoSync) { // proxy handles auth, no clientId required
       toast('☁ Syncing to Google Drive...','#4f7cff');
-      const synced = await saveToDrive(uint8.buffer, outName);
+      const synced = await saveToDrive(typeof finalBuffer !== 'undefined' ? finalBuffer : uint8.buffer, outName);
       if (synced) toast('✅ Saved locally and synced to Google Drive');
       else toast('⚠ Saved locally — Drive sync failed (check Settings)','#f59e0b');
     }
   } catch(err) { toast('Save failed: '+err.message, '#ef4444'); console.error(err); }
+}
+
+// ─── History Sheet Writer ─────────────────────────────────────────────────────
+async function writeHistoryToExcel(zip) {
+  try {
+    if (!S.history || S.history.length === 0) return;
+    // Build a simple CSV-format XML worksheet
+    const rows = S.history.slice(0, 500); // cap at 500 rows
+    let sheetXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+    sheetXml += '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">';
+    sheetXml += '<sheetData>';
+    // Header row
+    sheetXml += '<row r="1">';
+    ['Date','Time','User','Vendor','Action','Note'].forEach((h,i) => {
+      const col = String.fromCharCode(65+i);
+      sheetXml += `<c r="${col}1" t="inlineStr"><is><t>${h}</t></is></c>`;
+    });
+    sheetXml += '</row>';
+    // Data rows
+    rows.forEach((entry, idx) => {
+      const r = idx + 2;
+      const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
+      const vals = [entry.date||'', entry.time||'', entry.user||USER.email||'', entry.vendor||'', entry.action||'', entry.note||''];
+      sheetXml += `<row r="${r}">`;
+      vals.forEach((v,i) => {
+        const col = String.fromCharCode(65+i);
+        sheetXml += `<c r="${col}${r}" t="inlineStr"><is><t>${esc(v)}</t></is></c>`;
+      });
+      sheetXml += '</row>';
+    });
+    sheetXml += '</sheetData></worksheet>';
+
+    // Find next available sheet number
+    const existingSheets = Object.keys(zip.files).filter(f => f.startsWith('xl/worksheets/sheet'));
+    const sheetNums = existingSheets.map(f => parseInt(f.match(/sheet(\d+)/)?.[1]||'0')).filter(Boolean);
+    const nextSheet = Math.max(...sheetNums, 0) + 1;
+    const sheetPath = `xl/worksheets/sheet${nextSheet}.xml`;
+
+    // Check if VCS_History sheet already exists — if so, reuse its path
+    let historySheetPath = sheetPath;
+    try {
+      const wbRel = await zip.file('xl/workbook.xml').async('string');
+      const histMatch = wbRel.match(/name="VCS_History"[^>]*r:id="([^"]+)"/);
+      if (histMatch) {
+        const rId = histMatch[1];
+        const relXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+        const relMatch = relXml.match(new RegExp(`Id="${rId}"[^>]*Target="([^"]+)"`));
+        if (relMatch) historySheetPath = 'xl/' + relMatch[1].replace(/^.*\//, 'worksheets/');
+      }
+    } catch(e) {}
+
+    zip.file(historySheetPath, sheetXml);
+
+    // Register sheet in workbook.xml if new
+    if (historySheetPath === sheetPath) {
+      const wbXml = await zip.file('xl/workbook.xml').async('string');
+      const sheetsEnd = wbXml.lastIndexOf('</sheets>');
+      const rId = `rId${nextSheet + 10}`;
+      const newSheet = `<sheet name="VCS_History" sheetId="${nextSheet + 10}" r:id="${rId}"/>`;
+      const newWbXml = wbXml.slice(0, sheetsEnd) + newSheet + wbXml.slice(sheetsEnd);
+      zip.file('xl/workbook.xml', newWbXml);
+
+      // Add relationship
+      const relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+      const relsEnd = relsXml.lastIndexOf('</Relationships>');
+      const newRel = `<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${nextSheet}.xml"/>`;
+      zip.file('xl/_rels/workbook.xml.rels', relsXml.slice(0, relsEnd) + newRel + relsXml.slice(relsEnd));
+
+      // Add to [Content_Types].xml
+      const ctXml = await zip.file('[Content_Types].xml').async('string');
+      const ctEnd = ctXml.lastIndexOf('</Types>');
+      const newCt = `<Override PartName="/xl/worksheets/sheet${nextSheet}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`;
+      zip.file('[Content_Types].xml', ctXml.slice(0, ctEnd) + newCt + ctXml.slice(ctEnd));
+    }
+    console.log(`VCS_History sheet written: ${rows.length} entries`);
+  } catch(e) {
+    console.warn('Could not write history sheet:', e.message);
+    // Non-fatal — don't block the save
+  }
 }
 
 // ─── XML Cell Upsert — preserves existing cell styles ─────────────────────────
@@ -2549,10 +2634,9 @@ async function loadFromGoogleDrive() {
     });
     await loadFile(file);
     S.driveLastSync = new Date();
-    _lastKnownDriveModified = new Date();
+    _lastKnownDriveModified = new Date(); // baseline for update detection
     toast('✅ Loaded from Google Drive');
     startLiveUpdatePolling();
-    setTimeout(applyCopyProtection, 200); // re-apply after file load
   } catch(e) {
     console.error('Drive load error:', e);
     toast('❌ Drive load failed: '+e.message.slice(0,100),'#ef4444');
@@ -3953,7 +4037,7 @@ function renderVendorDB(c) {
   if (!S.loaded) { c.appendChild(el('p',{class:'muted',style:{padding:'16px'}},'Load a file first — upload your XLSM to see all contracts here.')); return; }
   if (!S.dbFilters) S.dbFilters = {};
   if (!S.dbSort) S.dbSort = {col:'Expiry', dir:1};
-  if (!S.dbSource) S.dbSource = ['sales_rep','restricted','ssa'].includes(USER.role) ? 'all' : 'direct';
+  if (!S.dbSource) S.dbSource = 'direct';
   if (!S.channelVendors) S.channelVendors = [];
   if (!S.allVendors || !S.allVendors.length) S.allVendors = [...S.vendors, ...S.channelVendors];
 
@@ -5118,9 +5202,7 @@ function updateSidebar() {
   // Show/hide Save and Reload buttons based on role
   const _saveBtn = $('save-btn');
   const _reloadBtn = $('reload-btn');
-  const _roleCanSave = (ROLE_PERMS[USER.role||'restricted']||{}).save;
-  const _tabOvrSave = USER.tabOverrides || {};
-  const _canSave = '_savebtn' in _tabOvrSave ? _tabOvrSave['_savebtn'] : _roleCanSave;
+  const _canSave = (ROLE_PERMS[USER.role||'restricted']||{}).save;
   if (_saveBtn) _saveBtn.style.display = _canSave ? '' : 'none';
   if (_reloadBtn) _reloadBtn.style.display = ''; // always show Reload
   const nav=$('nav'); nav.innerHTML='';
@@ -5160,10 +5242,7 @@ function updateSidebar() {
   }
   const qs=$('quick-stats'); qs.innerHTML='';
   // Only show stats panel for admin and procurement — not relevant for other roles
-  // Check tab overrides for stats panel
-  const _tabOvr = USER.tabOverrides || {};
-  const _roleCanStats = ['admin','procurement','manager'].includes(USER.role||'');
-  const _canSeeStats = '_statsbar' in _tabOvr ? _tabOvr['_statsbar'] : _roleCanStats;
+  const _canSeeStats = ['admin','procurement','manager'].includes(USER.role||'');
   if (S.loaded && !collapsed && _canSeeStats) {
     const active=S.vendors.filter(isVisible);
     const calls=active.filter(v=>v.tier==='CALL').length;
@@ -7159,7 +7238,6 @@ function renderSettings(c) {
             {id:'reports',label:'Reports'},{id:'summary',label:'Summary'},
             {id:'history',label:'History'},{id:'datacheck',label:'Data Check'},
             {id:'settings',label:'Settings'},
-            {id:'_statsbar',label:'Stats Panel'},{id:'_savebtn',label:'Save Button'},
           ];
           const tabGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'4px'}});
           allTabs.forEach(t=>{
