@@ -738,6 +738,9 @@ async function completeLogin() {
   }
 }
 
+// VCS Data Proxy — Google Apps Script URL (serves file to any authenticated user)
+const VCS_PROXY_URL = 'https://script.google.com/macros/s/AKfycbzjSZX_QmdQ9voaWbOOSYpAE39y9S7SwNstCPJTjjKrcZyzA7fS1jQR6ORryQoAuVxJ/exec';
+
 // Google Drive OAuth token (set after user authorizes)
 let GDriveToken = null;
 let GDriveTokenExpiry = 0;
@@ -2502,19 +2505,36 @@ async function getGDriveToken() {
 
 
 async function loadFromGoogleDrive() {
+  toast('📂 Loading from Google Drive...','#4f7cff');
+  try {
+    // Try proxy first — works for ALL users regardless of Google account
+    const proxyResp = await fetch(VCS_PROXY_URL + '?action=getFile', {method:'GET'});
+    if (proxyResp.ok) {
+      const data = await proxyResp.json();
+      if (data.status === 'ok' && data.content) {
+        const bytes = Uint8Array.from(atob(data.content), c => c.charCodeAt(0));
+        const file = new File([bytes], data.name || 'Vendor_Catalogue.xlsm', {
+          type:'application/vnd.ms-excel.sheet.macroEnabled.12'
+        });
+        await loadFile(file);
+        S.driveLastSync = new Date();
+        toast('✅ Loaded from Google Drive');
+        return;
+      }
+    }
+  } catch(e) {
+    console.warn('Proxy load failed, trying direct:', e.message);
+  }
+  // Fallback: direct Drive API (requires user's Google token)
   const fileId = S.settings.driveFileId;
   if (!fileId) { toast('⚠ Add your Google Drive File ID in Settings first','#f59e0b'); return; }
   try {
     const token = await getGDriveToken();
-    toast('📂 Loading from Google Drive...','#4f7cff');
     const resp = await fetch(
       'https://www.googleapis.com/drive/v3/files/'+fileId+'?alt=media',
       {headers:{Authorization:'Bearer '+token}}
     );
-    if (!resp.ok) {
-      const err = await resp.text();
-      throw new Error('Drive API error '+resp.status+': '+err.slice(0,200));
-    }
+    if (!resp.ok) throw new Error('Drive API error '+resp.status);
     const arrayBuffer = await resp.arrayBuffer();
     const file = new File([arrayBuffer], S.settings.driveFileName||'Vendor_Catalogue.xlsm', {
       type:'application/vnd.ms-excel.sheet.macroEnabled.12'
@@ -2853,9 +2873,49 @@ async function loadConfigFromDrive() {
     // Always preserve the local device's googleClientId
     if (localClientId) S.settings.googleClientId = localClientId;
 
-    // User list — Drive is source of truth
+    // User list — Drive is source of truth, but merge with fresh directory if needed
     if (config.users && config.users.length > 0) {
-      setApprovedUsers(config.users);
+      // Check if Drive config has the new role system (v2+)
+      const hasNewRoles = config.users.some(u => ['procurement','cro','director_ops','ops_qc','finance_sr','finance_jr','ssa','sales_rep'].includes(u.role));
+      if (hasNewRoles || (config.configVersion && config.configVersion >= 2)) {
+        setApprovedUsers(config.users);
+      } else {
+        // Old config — keep Drive users but add new directory users not already present
+        const existing = new Set(config.users.map(u => u.email.toLowerCase()));
+        const FRESH_DIRECTORY = [
+          {email:'dgenuth@primesourcex.com',name:'David Genuth',role:'admin'},
+          {email:'dgenuthps@gmail.com',name:'David Genuth',role:'admin'},
+          {email:'jmanguray@primesourcex.com',name:'Jane Manguray',role:'procurement'},
+          {email:'mgenuth@primesourcex.com',name:'Mark Genuth',role:'procurement'},
+          {email:'mdelora@primesourcex.com',name:'Monica DeLora',role:'procurement'},
+          {email:'aschwartz@primesourcex.com',name:'Abraham Ushy Schwartz',role:'cro'},
+          {email:'nkornfeld@primesourcex.com',name:'Nathalie Kornfeld',role:'director_ops'},
+          {email:'hkabbabe@primesourcex.com',name:'Hammurabi Rabi Kabbabe',role:'ops_qc'},
+          {email:'ewiesel@primesourcex.com',name:'Elliot Wiesel',role:'finance_sr'},
+          {email:'aalmeida@primesourcex.com',name:'Amanda Almeida',role:'finance_sr'},
+          {email:'vbadenhorst@primesourcex.com',name:'Varuscjcka Badenhorst',role:'finance_jr'},
+          {email:'bflekel@primesourcex.com',name:'Ben Flekel',role:'sales_rep'},
+          {email:'swithers@primesourcex.com',name:'Shane Withers',role:'sales_rep'},
+          {email:'erock@primesourcex.com',name:'Eitan Rock',role:'sales_rep'},
+          {email:'agenuth@primesourcex.com',name:'Abe Genuth',role:'ssa'},
+          {email:'bmparagas@primesourcex.com',name:'Bridget Monica Paragas',role:'ssa'},
+          {email:'eaugustin@primesourcex.com',name:'Emer Jean Agustin',role:'ssa'},
+          {email:'kgepiga@primesourcex.com',name:'Kyle Opel Gepiga',role:'ssa'},
+          {email:'rkabuya@primesourcex.com',name:'Rob Kabuya',role:'ssa'},
+        ].map(u=>({...u,added:new Date().toISOString(),addedBy:'system',password:'',hiddenFields:[]}));
+        const merged = [...config.users];
+        FRESH_DIRECTORY.forEach(d => {
+          if (!existing.has(d.email.toLowerCase())) merged.push(d);
+          else {
+            // Update role if still on old system
+            const idx = merged.findIndex(u => u.email.toLowerCase() === d.email.toLowerCase());
+            if (idx >= 0 && ['manager','viewer','restricted'].includes(merged[idx].role)) {
+              merged[idx].role = d.role;
+            }
+          }
+        });
+        setApprovedUsers(merged);
+      }
     }
     console.log('Config loaded from Drive, saved by', config.savedBy, 'at', config.savedAt);
     return true;
@@ -3061,9 +3121,27 @@ async function logout(){
 
 // Auto-load from Google Drive after login (requires HTTPS hosting)
 async function tryAutoLoadFromDrive(){
-  if(!S.settings.driveFileId||!S.settings.driveAutoSync) return false;
+  if(!S.settings.driveAutoSync) return false;
   try{
     toast('☁ Loading Vendor Catalogue from Google Drive...','#4f7cff');
+    // Try proxy first — no auth needed, works for all users
+    const proxyResp = await fetch(VCS_PROXY_URL + '?action=getFile', {method:'GET'});
+    if (proxyResp.ok) {
+      const data = await proxyResp.json();
+      if (data.status === 'ok' && data.content) {
+        const bytes = Uint8Array.from(atob(data.content), c => c.charCodeAt(0));
+        const fileName = data.name || S.settings.driveFileName || 'Vendor_Catalogue.xlsm';
+        const file = new File([bytes], fileName, {type:'application/vnd.ms-excel.sheet.macroEnabled.12'});
+        await loadFile(file);
+        return true;
+      }
+    }
+  } catch(e){
+    console.warn('Proxy auto-load failed, trying direct:', e.message);
+  }
+  // Fallback: direct Drive API
+  if(!S.settings.driveFileId) return false;
+  try{
     const token = await getGDriveToken();
     const resp=await fetch(
       'https://www.googleapis.com/drive/v3/files/'+S.settings.driveFileId+'?alt=media',
@@ -3077,7 +3155,7 @@ async function tryAutoLoadFromDrive(){
     return true;
   }catch(e){
     console.warn('Auto-load from Drive failed:',e.message);
-    toast('⚠ Could not auto-load from Drive — click Load from Google Drive to authorize','#f59e0b');
+    toast('⚠ Could not auto-load — click Load from Google Drive','#f59e0b');
     return false;
   }
 }
@@ -6637,33 +6715,33 @@ function renderSettings(c) {
 
     // User table
     const users=getApprovedUsers();
-    const tblWrap=el('div',{style:{marginBottom:'12px'}});
+    // ── Compact table layout ──────────────────────────────────────────────────
+    const tblWrap=el('div',{style:{marginBottom:'12px',overflowX:'auto'}});
+    const tbl=el('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:'10px'}});
+    // Header
+    const thead=el('thead');
+    const hrow=el('tr',{style:{borderBottom:'1px solid var(--border)',color:'var(--muted)',fontSize:'9px'}});
+    ['User','Role','','Password','Actions'].forEach(h=>hrow.appendChild(el('th',{style:{padding:'4px 6px',textAlign:'left',fontWeight:'600',whiteSpace:'nowrap'}},h)));
+    thead.appendChild(hrow);
+    tbl.appendChild(thead);
+    const tbody=el('tbody');
     users.forEach((u)=>{
       const isYou=u.email===USER.email;
-      const card=el('div',{style:{background:'rgba(255,255,255,.02)',border:'1px solid var(--border)',borderRadius:'5px',padding:'8px 10px',marginBottom:'6px'}});
+      const tr=el('tr',{style:{borderBottom:'1px solid rgba(255,255,255,.04)',background:isYou?'rgba(79,124,255,.05)':''}});
 
-      // Row 1: email + role badge + remove
-      const row1=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'6px'}});
-      row1.appendChild(el('span',{style:{flex:'1',fontSize:'10px',fontWeight:isYou?'700':'400',color:isYou?'var(--blue)':'var(--text)'}},u.email+(isYou?' (you)':'')));
-      row1.appendChild(el('span',{style:{fontSize:'9px',padding:'1px 6px',borderRadius:'10px',background:'rgba(255,255,255,.06)',color:ROLE_COLORS[u.role]||'var(--muted)',fontWeight:'600',border:'1px solid var(--border)'}},ROLES[u.role]||u.role));
-      if(!isYou){
-        row1.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',fontSize:'9px'},title:'Remove user',onclick(){
-          if(!confirm('Remove '+u.email+' from VCS? They will no longer be able to log in.'))return;
-          const updated=getApprovedUsers().filter(x=>x.email!==u.email);
-          setApprovedUsers(updated);renderSettings(c);toast(u.email+' removed');
-        }},'✕ Remove'));
-      }
-      card.appendChild(row1);
+      // Col 1: email + role badge
+      const tdEmail=el('td',{style:{padding:'5px 6px',minWidth:'160px'}});
+      const emailSpan=el('span',{style:{fontWeight:isYou?'700':'400',color:isYou?'var(--blue)':'var(--text)'}},u.email+(isYou?' (you)':''));
+      if(u.added){emailSpan.title='Added '+u.added.slice(0,10);}
+      tdEmail.appendChild(emailSpan);
+      tr.appendChild(tdEmail);
 
-      // Row 2: role selector + password
-      const row2=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',marginBottom:'6px'}});
-      row2.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'36px'}},'Role:'));
-      const sel=el('select',{class:'detail-edit-field',style:{fontSize:'9px',width:'140px'}});
-      // Only admin can assign admin role; non-admins see all 4 roles except can't elevate to admin
-      // If this is YOU and you're admin — show locked badge, no dropdown (can never demote yourself)
+      // Col 2: role selector or locked badge
+      const tdRole=el('td',{style:{padding:'5px 6px',whiteSpace:'nowrap'}});
       if(isYou && USER.role==='admin'){
-        row2.appendChild(el('span',{style:{fontSize:'9px',padding:'2px 8px',borderRadius:'10px',background:'rgba(34,197,94,.12)',color:'var(--green)',border:'1px solid rgba(34,197,94,.3)',fontWeight:'600'}},'🔒 Admin (locked — cannot change own role)'));
+        tdRole.appendChild(el('span',{style:{fontSize:'9px',padding:'2px 8px',borderRadius:'10px',background:'rgba(34,197,94,.15)',color:'var(--green)',border:'1px solid rgba(34,197,94,.3)'}},'🔒 Admin'));
       } else {
+        const sel=el('select',{class:'detail-edit-field',style:{fontSize:'9px',padding:'2px 4px',width:'140px'}});
         const assignableRoles=isYou?['admin']:['admin','procurement','cro','director_ops','ops_qc','finance_sr','finance_jr','ssa','sales_rep'];
         for(const r of assignableRoles){
           const o=el('option',{value:r},ROLES[r]);
@@ -6673,88 +6751,53 @@ function renderSettings(c) {
         sel.addEventListener('change',()=>{
           const all=getApprovedUsers();
           const idx=all.findIndex(x=>x.email===u.email);
-          if(idx>=0){all[idx].role=sel.value;setApprovedUsers(all);if(isYou){USER.role=sel.value;updateUserBadge();}renderSettings(c);toast('✓ '+u.email+' → '+ROLES[sel.value]);}
+          if(idx>=0){all[idx].role=sel.value;setApprovedUsers(all);if(isYou){USER.role=sel.value;updateUserBadge();}renderSettings(c);}
         });
-        row2.appendChild(sel);
+        tdRole.appendChild(sel);
       }
-      // Login As — admin can impersonate any other user in a new tab to test their experience
+      tr.appendChild(tdRole);
+
+      // Col 3: role color badge
+      const tdBadge=el('td',{style:{padding:'5px 4px',whiteSpace:'nowrap'}});
+      tdBadge.appendChild(el('span',{style:{fontSize:'8px',padding:'1px 5px',borderRadius:'8px',background:'rgba(255,255,255,.06)',color:ROLE_COLORS[u.role]||'var(--muted)',border:'1px solid '+(ROLE_COLORS[u.role]||'var(--border)')}},ROLES[u.role]||u.role));
+      tr.appendChild(tdBadge);
+
+      // Col 4: password
+      const tdPw=el('td',{style:{padding:'5px 6px',whiteSpace:'nowrap'}});
+      const pwRow=el('div',{style:{display:'flex',gap:'4px',alignItems:'center'}});
+      const pwIn=el('input',{type:'password',class:'detail-edit-field',placeholder:'(none)',style:{width:'90px',fontSize:'9px',padding:'2px 4px'},value:u.password||''});
+      const pwBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(){
+        const all=getApprovedUsers();const idx=all.findIndex(x=>x.email===u.email);
+        if(idx>=0){all[idx].password=pwIn.value.trim();setApprovedUsers(all);toast('✓ Password updated');}
+      }},'Set');
+      pwRow.appendChild(pwIn); pwRow.appendChild(pwBtn);
+      tdPw.appendChild(pwRow);
+      tr.appendChild(tdPw);
+
+      // Col 5: actions
+      const tdAct=el('td',{style:{padding:'5px 6px',whiteSpace:'nowrap'}});
       if(!isYou){
-        row2.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'4px',color:'var(--amber)',fontSize:'9px'},title:'Open a new tab logged in as this user to test their view',onclick(){
-          // Build a self-contained URL with a temporary impersonation token stored in sessionStorage
-          // We encode the target user info into the URL hash so the new tab can auto-login
+        const loginAsBtn=el('button',{class:'btn-xs btn-ghost',style:{color:'var(--amber)',fontSize:'9px',marginRight:'4px'},onclick(){
           const targetUser=getApprovedUsers().find(x=>x.email===u.email);
           if(!targetUser){toast('User not found','#ef4444');return;}
-          // Store impersonation payload in localStorage with a short-lived key
           const impKey='vcs_impersonate_'+Date.now();
-          // Pass current settings so new tab can load from Drive
-          localStorage.setItem(impKey,JSON.stringify({
-            email:targetUser.email,name:targetUser.name,
-            role:targetUser.role,hiddenFields:targetUser.hiddenFields||[],
-            expires:Date.now()+300000, // 5 min TTL
-            settings:{
-              driveFileId:S.settings.driveFileId,
-              driveFileName:S.settings.driveFileName,
-              driveAutoSync:S.settings.driveAutoSync,
-              googleClientId:S.settings.googleClientId
-            }
-          }));
-          const url=window.location.href.split('#')[0]+'#impersonate='+impKey;
-          window.open(url,'_blank');
-          toast('👁 Opening as '+targetUser.email+' — expires in 5 min');
-        }},'👁 Login As'));
+          localStorage.setItem(impKey,JSON.stringify({email:targetUser.email,name:targetUser.name,role:targetUser.role,hiddenFields:targetUser.hiddenFields||[],expires:Date.now()+300000,settings:{driveFileId:S.settings.driveFileId,driveFileName:S.settings.driveFileName,driveAutoSync:S.settings.driveAutoSync,googleClientId:S.settings.googleClientId}}));
+          window.open(window.location.href.split('#')[0]+'#impersonate='+impKey,'_blank');
+          toast('👁 Opening as '+targetUser.email);
+        }},'👁');
+        const removeBtn=el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',fontSize:'9px'},onclick(){
+          if(!confirm('Remove '+u.email+'?'))return;
+          const updated=getApprovedUsers().filter(x=>x.email!==u.email);
+          setApprovedUsers(updated);renderSettings(c);toast(u.email+' removed');
+        }},'✕');
+        tdAct.appendChild(loginAsBtn);
+        tdAct.appendChild(removeBtn);
       }
-
-      // Password field (optional)
-      row2.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'8px'}},'Password:'));
-      const pwIn=el('input',{type:'password',class:'detail-edit-field',placeholder:'(none set)',style:{width:'110px',fontSize:'9px'},value:u.password||''});
-      const pwSaveBtn=el('button',{class:'btn-xs btn-ghost',onclick(){
-        const all=getApprovedUsers();
-        const idx=all.findIndex(x=>x.email===u.email);
-        if(idx>=0){all[idx].password=pwIn.value.trim();setApprovedUsers(all);toast('✓ Password updated for '+u.email);}
-      }},'Set');
-      row2.appendChild(pwIn);
-      row2.appendChild(pwSaveBtn);
-      card.appendChild(row2);
-
-      // Row 3: field restrictions (only for viewer / restricted roles)
-      if(u.role==='viewer'||u.role==='restricted'){
-        const restrictWrap=el('div',{style:{borderTop:'1px solid var(--border)',paddingTop:'6px',marginTop:'4px'}});
-        restrictWrap.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'4px',fontWeight:'600'}},'🔒 Hidden Fields (this user cannot see):'));
-        const fieldGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px'}});
-        const hiddenFields=u.hiddenFields||[];
-        for(const f of ALL_RESTRICTABLE_FIELDS){
-          const isHidden=hiddenFields.includes(f.key);
-          const btn=el('button',{
-            class:'col-toggle-btn'+(isHidden?' on':''),
-            style:{fontSize:'8px',padding:'1px 5px',background:isHidden?'rgba(239,68,68,.15)':'',borderColor:isHidden?'rgba(239,68,68,.4)':'',color:isHidden?'var(--red)':''},
-            title:isHidden?'Click to show this field':'Click to hide this field from user',
-            onclick(){
-              const all=getApprovedUsers();
-              const idx=all.findIndex(x=>x.email===u.email);
-              if(idx<0)return;
-              let hf=[...(all[idx].hiddenFields||[])];
-              if(isHidden) hf=hf.filter(k=>k!==f.key);
-              else hf.push(f.key);
-              all[idx].hiddenFields=hf;
-              setApprovedUsers(all);
-              renderSettings(c);
-            }
-          }, (isHidden?'🚫 ':'')+f.label);
-          fieldGrid.appendChild(btn);
-        }
-        restrictWrap.appendChild(fieldGrid);
-        restrictWrap.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px'}},'Red = hidden from this user. Click to toggle.'));
-        card.appendChild(restrictWrap);
-      }
-
-      // Added by / date footer
-      if(u.added){
-        const footer=el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'6px',borderTop:'1px solid var(--border)',paddingTop:'4px'}});
-        footer.textContent='Added '+u.added+(u.addedBy&&u.addedBy!=='system (bootstrap)'?' by '+u.addedBy:'');
-        card.appendChild(footer);
-      }
-      tblWrap.appendChild(card);
+      tr.appendChild(tdAct);
+      tbody.appendChild(tr);
     });
+    tbl.appendChild(tbody);
+    tblWrap.appendChild(tbl);
     secUsers.appendChild(tblWrap);
 
     // Add new user form
