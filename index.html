@@ -1388,8 +1388,8 @@ async function loadFile(file) {
     else { S.reviews=[]; S.reviewTPs=[]; }
 
     S.loaded=true; S.view=(['settings','datacheck'].includes(S.view)?S.settings.defaultView||'today':S.view)||'today'; S.search=''; S.dirty.clear();
-    // Start polling if Drive is configured
     if (S.settings.driveAutoSync) setTimeout(startLiveUpdatePolling, 5000);
+    setTimeout(applyCopyProtection, 300); // re-apply after every file load
     $('search').value = '';
     $('upload-screen').style.display='none';
     $('app').style.display='flex';
@@ -2549,9 +2549,10 @@ async function loadFromGoogleDrive() {
     });
     await loadFile(file);
     S.driveLastSync = new Date();
-    _lastKnownDriveModified = new Date(); // baseline for update detection
+    _lastKnownDriveModified = new Date();
     toast('✅ Loaded from Google Drive');
     startLiveUpdatePolling();
+    setTimeout(applyCopyProtection, 200); // re-apply after file load
   } catch(e) {
     console.error('Drive load error:', e);
     toast('❌ Drive load failed: '+e.message.slice(0,100),'#ef4444');
@@ -3952,7 +3953,7 @@ function renderVendorDB(c) {
   if (!S.loaded) { c.appendChild(el('p',{class:'muted',style:{padding:'16px'}},'Load a file first — upload your XLSM to see all contracts here.')); return; }
   if (!S.dbFilters) S.dbFilters = {};
   if (!S.dbSort) S.dbSort = {col:'Expiry', dir:1};
-  if (!S.dbSource) S.dbSource = 'direct';
+  if (!S.dbSource) S.dbSource = ['sales_rep','restricted','ssa'].includes(USER.role) ? 'all' : 'direct';
   if (!S.channelVendors) S.channelVendors = [];
   if (!S.allVendors || !S.allVendors.length) S.allVendors = [...S.vendors, ...S.channelVendors];
 
@@ -5117,7 +5118,9 @@ function updateSidebar() {
   // Show/hide Save and Reload buttons based on role
   const _saveBtn = $('save-btn');
   const _reloadBtn = $('reload-btn');
-  const _canSave = (ROLE_PERMS[USER.role||'restricted']||{}).save;
+  const _roleCanSave = (ROLE_PERMS[USER.role||'restricted']||{}).save;
+  const _tabOvrSave = USER.tabOverrides || {};
+  const _canSave = '_savebtn' in _tabOvrSave ? _tabOvrSave['_savebtn'] : _roleCanSave;
   if (_saveBtn) _saveBtn.style.display = _canSave ? '' : 'none';
   if (_reloadBtn) _reloadBtn.style.display = ''; // always show Reload
   const nav=$('nav'); nav.innerHTML='';
@@ -5157,7 +5160,10 @@ function updateSidebar() {
   }
   const qs=$('quick-stats'); qs.innerHTML='';
   // Only show stats panel for admin and procurement — not relevant for other roles
-  const _canSeeStats = ['admin','procurement','manager'].includes(USER.role||'');
+  // Check tab overrides for stats panel
+  const _tabOvr = USER.tabOverrides || {};
+  const _roleCanStats = ['admin','procurement','manager'].includes(USER.role||'');
+  const _canSeeStats = '_statsbar' in _tabOvr ? _tabOvr['_statsbar'] : _roleCanStats;
   if (S.loaded && !collapsed && _canSeeStats) {
     const active=S.vendors.filter(isVisible);
     const calls=active.filter(v=>v.tier==='CALL').length;
@@ -7153,6 +7159,7 @@ function renderSettings(c) {
             {id:'reports',label:'Reports'},{id:'summary',label:'Summary'},
             {id:'history',label:'History'},{id:'datacheck',label:'Data Check'},
             {id:'settings',label:'Settings'},
+            {id:'_statsbar',label:'Stats Panel'},{id:'_savebtn',label:'Save Button'},
           ];
           const tabGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'4px'}});
           allTabs.forEach(t=>{
