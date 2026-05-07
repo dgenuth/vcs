@@ -2691,6 +2691,8 @@ function saveSettings() {
       if (k === 'dbHiddenCols') return; // handled separately below
       if (S.settings[k] !== undefined) toSave[k] = S.settings[k];
     });
+    // Also persist googleClientId in sessionStorage as backup (survives localStorage.clear())
+    if (S.settings.googleClientId) sessionStorage.setItem('vcs_gClientId_bk', S.settings.googleClientId);
     // Save dbHiddenCols from S (not S.settings) — it lives on the main state
     if (S.dbHiddenCols instanceof Set) toSave.dbHiddenCols = [...S.dbHiddenCols];
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(toSave));
@@ -2706,6 +2708,11 @@ function loadSettings() {
       delete saved.dbHiddenCols;
     }
     Object.assign(S.settings, saved);
+    // Restore googleClientId from sessionStorage backup if missing
+    if (!S.settings.googleClientId) {
+      const bk = sessionStorage.getItem('vcs_gClientId_bk');
+      if (bk) S.settings.googleClientId = bk;
+    }
   } catch(e) { console.warn('Could not load settings:', e); }
 }
 
@@ -6715,89 +6722,103 @@ function renderSettings(c) {
 
     // User table
     const users=getApprovedUsers();
-    // ── Compact table layout ──────────────────────────────────────────────────
-    const tblWrap=el('div',{style:{marginBottom:'12px',overflowX:'auto'}});
-    const tbl=el('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:'10px'}});
-    // Header
-    const thead=el('thead');
-    const hrow=el('tr',{style:{borderBottom:'1px solid var(--border)',color:'var(--muted)',fontSize:'9px'}});
-    ['User','Role','','Password','Actions'].forEach(h=>hrow.appendChild(el('th',{style:{padding:'4px 6px',textAlign:'left',fontWeight:'600',whiteSpace:'nowrap'}},h)));
-    thead.appendChild(hrow);
-    tbl.appendChild(thead);
-    const tbody=el('tbody');
-    users.forEach((u)=>{
+    // ── Compact rows with expandable details ─────────────────────────────────
+    const tblWrap=el('div',{style:{marginBottom:'12px'}});
+    users.forEach((u,uidx)=>{
       const isYou=u.email===USER.email;
-      const tr=el('tr',{style:{borderBottom:'1px solid rgba(255,255,255,.04)',background:isYou?'rgba(79,124,255,.05)':''}});
+      const row=el('div',{style:{borderBottom:'1px solid var(--border)',padding:'5px 0',background:isYou?'rgba(79,124,255,.04)':''}});
 
-      // Col 1: email + role badge
-      const tdEmail=el('td',{style:{padding:'5px 6px',minWidth:'160px'}});
-      const emailSpan=el('span',{style:{fontWeight:isYou?'700':'400',color:isYou?'var(--blue)':'var(--text)'}},u.email+(isYou?' (you)':''));
-      if(u.added){emailSpan.title='Added '+u.added.slice(0,10);}
-      tdEmail.appendChild(emailSpan);
-      tr.appendChild(tdEmail);
+      // ── Main line: always visible ─────────────────────────────────────────
+      const mainLine=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap'}});
 
-      // Col 2: role selector or locked badge
-      const tdRole=el('td',{style:{padding:'5px 6px',whiteSpace:'nowrap'}});
+      // Expand toggle
+      const expBtn=el('button',{style:{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:'9px',padding:'0 2px',flexShrink:'0'}},'+');
+      mainLine.appendChild(expBtn);
+
+      // Email
+      mainLine.appendChild(el('span',{style:{flex:'1',minWidth:'160px',fontSize:'10px',fontWeight:isYou?'700':'400',color:isYou?'var(--blue)':'var(--text)',cursor:'default'},title:'Added '+(u.added||'').slice(0,10)+(u.addedBy?' by '+u.addedBy:'')},u.email+(isYou?' (you)':'')));
+
+      // Role badge
+      mainLine.appendChild(el('span',{style:{fontSize:'8px',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)',color:ROLE_COLORS[u.role]||'var(--muted)',border:'1px solid '+(ROLE_COLORS[u.role]||'var(--border)'),whiteSpace:'nowrap'}},ROLES[u.role]||u.role));
+
+      // Role selector
       if(isYou && USER.role==='admin'){
-        tdRole.appendChild(el('span',{style:{fontSize:'9px',padding:'2px 8px',borderRadius:'10px',background:'rgba(34,197,94,.15)',color:'var(--green)',border:'1px solid rgba(34,197,94,.3)'}},'🔒 Admin'));
+        mainLine.appendChild(el('span',{style:{fontSize:'9px',padding:'2px 6px',borderRadius:'8px',background:'rgba(34,197,94,.1)',color:'var(--green)',border:'1px solid rgba(34,197,94,.2)'}},'🔒 locked'));
       } else {
-        const sel=el('select',{class:'detail-edit-field',style:{fontSize:'9px',padding:'2px 4px',width:'140px'}});
-        const assignableRoles=isYou?['admin']:['admin','procurement','cro','director_ops','ops_qc','finance_sr','finance_jr','ssa','sales_rep'];
-        for(const r of assignableRoles){
-          const o=el('option',{value:r},ROLES[r]);
-          if(r===u.role)o.selected=true;
-          sel.appendChild(o);
-        }
-        sel.addEventListener('change',()=>{
-          const all=getApprovedUsers();
-          const idx=all.findIndex(x=>x.email===u.email);
-          if(idx>=0){all[idx].role=sel.value;setApprovedUsers(all);if(isYou){USER.role=sel.value;updateUserBadge();}renderSettings(c);}
-        });
-        tdRole.appendChild(sel);
+        const sel=el('select',{class:'detail-edit-field',style:{fontSize:'9px',padding:'2px 3px',width:'130px'}});
+        const assignableRoles=['admin','procurement','cro','director_ops','ops_qc','finance_sr','finance_jr','ssa','sales_rep'];
+        for(const r of assignableRoles){const o=el('option',{value:r},ROLES[r]);if(r===u.role)o.selected=true;sel.appendChild(o);}
+        sel.addEventListener('change',()=>{const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);if(i>=0){all[i].role=sel.value;setApprovedUsers(all);if(isYou){USER.role=sel.value;updateUserBadge();}renderSettings(c);}});
+        mainLine.appendChild(sel);
       }
-      tr.appendChild(tdRole);
 
-      // Col 3: role color badge
-      const tdBadge=el('td',{style:{padding:'5px 4px',whiteSpace:'nowrap'}});
-      tdBadge.appendChild(el('span',{style:{fontSize:'8px',padding:'1px 5px',borderRadius:'8px',background:'rgba(255,255,255,.06)',color:ROLE_COLORS[u.role]||'var(--muted)',border:'1px solid '+(ROLE_COLORS[u.role]||'var(--border)')}},ROLES[u.role]||u.role));
-      tr.appendChild(tdBadge);
-
-      // Col 4: password
-      const tdPw=el('td',{style:{padding:'5px 6px',whiteSpace:'nowrap'}});
-      const pwRow=el('div',{style:{display:'flex',gap:'4px',alignItems:'center'}});
-      const pwIn=el('input',{type:'password',class:'detail-edit-field',placeholder:'(none)',style:{width:'90px',fontSize:'9px',padding:'2px 4px'},value:u.password||''});
-      const pwBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(){
-        const all=getApprovedUsers();const idx=all.findIndex(x=>x.email===u.email);
-        if(idx>=0){all[idx].password=pwIn.value.trim();setApprovedUsers(all);toast('✓ Password updated');}
-      }},'Set');
-      pwRow.appendChild(pwIn); pwRow.appendChild(pwBtn);
-      tdPw.appendChild(pwRow);
-      tr.appendChild(tdPw);
-
-      // Col 5: actions
-      const tdAct=el('td',{style:{padding:'5px 6px',whiteSpace:'nowrap'}});
+      // Actions
       if(!isYou){
-        const loginAsBtn=el('button',{class:'btn-xs btn-ghost',style:{color:'var(--amber)',fontSize:'9px',marginRight:'4px'},onclick(){
-          const targetUser=getApprovedUsers().find(x=>x.email===u.email);
-          if(!targetUser){toast('User not found','#ef4444');return;}
-          const impKey='vcs_impersonate_'+Date.now();
-          localStorage.setItem(impKey,JSON.stringify({email:targetUser.email,name:targetUser.name,role:targetUser.role,hiddenFields:targetUser.hiddenFields||[],expires:Date.now()+300000,settings:{driveFileId:S.settings.driveFileId,driveFileName:S.settings.driveFileName,driveAutoSync:S.settings.driveAutoSync,googleClientId:S.settings.googleClientId}}));
-          window.open(window.location.href.split('#')[0]+'#impersonate='+impKey,'_blank');
-          toast('👁 Opening as '+targetUser.email);
-        }},'👁');
-        const removeBtn=el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',fontSize:'9px'},onclick(){
+        mainLine.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--amber)',fontSize:'9px'},onclick(){
+          const t=getApprovedUsers().find(x=>x.email===u.email);if(!t)return;
+          const k='vcs_impersonate_'+Date.now();
+          localStorage.setItem(k,JSON.stringify({email:t.email,name:t.name,role:t.role,hiddenFields:t.hiddenFields||[],expires:Date.now()+300000,settings:{driveFileId:S.settings.driveFileId,driveFileName:S.settings.driveFileName,driveAutoSync:true,googleClientId:S.settings.googleClientId}}));
+          window.open(window.location.href.split('#')[0]+'#impersonate='+k,'_blank');
+        }},'👁 View As'));
+        mainLine.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',fontSize:'9px'},onclick(){
           if(!confirm('Remove '+u.email+'?'))return;
-          const updated=getApprovedUsers().filter(x=>x.email!==u.email);
-          setApprovedUsers(updated);renderSettings(c);toast(u.email+' removed');
-        }},'✕');
-        tdAct.appendChild(loginAsBtn);
-        tdAct.appendChild(removeBtn);
+          setApprovedUsers(getApprovedUsers().filter(x=>x.email!==u.email));renderSettings(c);
+        }},'✕'));
       }
-      tr.appendChild(tdAct);
-      tbody.appendChild(tr);
+      row.appendChild(mainLine);
+
+      // ── Expanded details: hidden by default ───────────────────────────────
+      const details=el('div',{style:{display:'none',marginTop:'6px',paddingLeft:'16px',borderTop:'1px dashed rgba(255,255,255,.06)',paddingTop:'6px'}});
+
+      // Added date
+      if(u.added) details.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'4px'}},'Added: '+u.added.slice(0,10)+(u.addedBy?' by '+u.addedBy:'')));
+
+      // Password
+      const pwRow=el('div',{style:{display:'flex',gap:'4px',alignItems:'center',marginBottom:'6px'}});
+      pwRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'60px'}},'Password:'));
+      const pwIn=el('input',{type:'password',class:'detail-edit-field',placeholder:'(none set)',style:{width:'120px',fontSize:'9px'},value:u.password||''});
+      const pwBtn=el('button',{class:'btn-xs btn-ghost',onclick(){const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);if(i>=0){all[i].password=pwIn.value.trim();setApprovedUsers(all);toast('✓ Password updated');}}}, 'Set');
+      pwRow.appendChild(pwIn);pwRow.appendChild(pwBtn);
+      details.appendChild(pwRow);
+
+      // Field restrictions (viewer/restricted/ssa/sales_rep roles)
+      const restrictedRoles=['viewer','restricted','ssa','sales_rep','cro','director_ops','ops_qc','finance_sr','finance_jr'];
+      if(restrictedRoles.includes(u.role)){
+        const restrictWrap=el('div');
+        restrictWrap.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'3px',fontWeight:'600'}},'🔒 Hidden Fields:'));
+        const fieldGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',marginBottom:'4px'}});
+        const hiddenFields=u.hiddenFields||[];
+        for(const f of ALL_RESTRICTABLE_FIELDS){
+          const isHidden=hiddenFields.includes(f.key);
+          const btn=el('button',{
+            class:'col-toggle-btn'+(isHidden?' on':''),
+            style:{fontSize:'8px',padding:'1px 5px',background:isHidden?'rgba(239,68,68,.12)':'',borderColor:isHidden?'rgba(239,68,68,.3)':'',color:isHidden?'var(--red)':''},
+            title:isHidden?'Hidden — click to show':'Visible — click to hide',
+            onclick(){
+              const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);if(i<0)return;
+              let hf=[...(all[i].hiddenFields||[])];
+              if(isHidden)hf=hf.filter(k=>k!==f.key);else hf.push(f.key);
+              all[i].hiddenFields=hf;setApprovedUsers(all);renderSettings(c);
+            }
+          },f.label);
+          fieldGrid.appendChild(btn);
+        }
+        restrictWrap.appendChild(fieldGrid);
+        restrictWrap.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)'}},'Red = hidden from this user'));
+        details.appendChild(restrictWrap);
+      }
+
+      row.appendChild(details);
+
+      // Toggle expand
+      expBtn.addEventListener('click',()=>{
+        const open=details.style.display==='block';
+        details.style.display=open?'none':'block';
+        expBtn.textContent=open?'+':'−';
+      });
+
+      tblWrap.appendChild(row);
     });
-    tbl.appendChild(tbody);
-    tblWrap.appendChild(tbl);
     secUsers.appendChild(tblWrap);
 
     // Add new user form
