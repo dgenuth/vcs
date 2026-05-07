@@ -686,6 +686,8 @@ function loginAs(userObj) {
   USER.loginTime = new Date();
   USER.hiddenFields = userObj.hiddenFields || [];
   USER.tabOverrides = userObj.tabOverrides || {};
+  // Re-apply copy protection whenever role changes
+  setTimeout(applyCopyProtection, 100);
   // Persist session
   sessionStorage.setItem('vcs_session', JSON.stringify({
     email: USER.email, name: USER.name, role: USER.role,
@@ -705,11 +707,12 @@ async function completeLogin() {
     if (driveConfigLoaded) updateUserBadge();
   } catch(e) { console.warn('Drive config load on login:', e.message); }
 
-  // Apply copy protection for non-copy roles
-  applyCopyProtection();
   const autoLoaded = S.settings.driveAutoSync && S.settings.driveFileId && S.settings.googleClientId
     ? await tryAutoLoadFromDrive()
     : false;
+  // Apply copy protection after role is fully established
+  setTimeout(applyCopyProtection, 300);
+
   if (!autoLoaded) {
     $('upload-screen').style.display = 'flex';
     const _uploadInfoHtml = 'Signed in as <strong>' + USER.name + '</strong> <span style="color:' + ROLE_COLORS[USER.role] + '">' + ROLES[USER.role] + '</span> — <a href="#" style="color:var(--blue)" onclick="event.preventDefault();logout();">Sign out</a>';
