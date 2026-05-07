@@ -6845,77 +6845,119 @@ function renderSettings(c) {
       // ── Expanded details: hidden by default ───────────────────────────────
       const details=el('div',{style:{display:'none',marginTop:'6px',paddingLeft:'16px',borderTop:'1px dashed rgba(255,255,255,.06)',paddingTop:'6px'}});
 
-      // Added date
-      if(u.added) details.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'4px'}},'Added: '+u.added.slice(0,10)+(u.addedBy?' by '+u.addedBy:'')));
-
-      // Password
-      const pwRow=el('div',{style:{display:'flex',gap:'4px',alignItems:'center',marginBottom:'6px'}});
-      pwRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'60px'}},'Password:'));
-      const pwIn=el('input',{type:'password',class:'detail-edit-field',placeholder:'(none set)',style:{width:'120px',fontSize:'9px'},value:u.password||''});
-      const pwBtn=el('button',{class:'btn-xs btn-ghost',onclick(){const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);if(i>=0){all[i].password=pwIn.value.trim();setApprovedUsers(all);toast('✓ Password updated');}}}, 'Set');
+      // Added date + password in one line
+      const detailsMeta=el('div',{style:{display:'flex',gap:'12px',alignItems:'center',marginBottom:'8px',flexWrap:'wrap'}});
+      if(u.added) detailsMeta.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Added: '+u.added.slice(0,10)+(u.addedBy?' by '+u.addedBy:'')));
+      const pwRow=el('div',{style:{display:'flex',gap:'4px',alignItems:'center'}});
+      pwRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Password:'));
+      const pwIn=el('input',{type:'password',class:'detail-edit-field',placeholder:'(none)',style:{width:'100px',fontSize:'9px'},value:u.password||''});
+      const pwBtn=el('button',{class:'btn-xs btn-ghost',onclick(){
+        const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);
+        if(i>=0){all[i].password=pwIn.value.trim();setApprovedUsers(all,true);toast('✓ Password updated');}
+      }},'Set');
       pwRow.appendChild(pwIn);pwRow.appendChild(pwBtn);
-      details.appendChild(pwRow);
+      detailsMeta.appendChild(pwRow);
+      details.appendChild(detailsMeta);
 
-      // Field restrictions (viewer/restricted/ssa/sales_rep roles)
-      const restrictedRoles=['viewer','restricted','ssa','sales_rep','cro','director_ops','ops_qc','finance_sr','finance_jr'];
-      if(restrictedRoles.includes(u.role)){
-        const restrictWrap=el('div');
-        const hiddenFields=u.hiddenFields||[];
-        const hiddenOnes=ALL_RESTRICTABLE_FIELDS.filter(f=>hiddenFields.includes(f.key));
-        const visibleOnes=ALL_RESTRICTABLE_FIELDS.filter(f=>!hiddenFields.includes(f.key));
+      // ── Field Access (all roles except admin/procurement) ──────────────────
+      if(!['admin','procurement','manager'].includes(u.role)){
+        // Function to rebuild field access section in place (no full re-render)
+        function buildFieldAccess(container, userEmail) {
+          container.innerHTML='';
+          const currentUsers=getApprovedUsers();
+          const cu=currentUsers.find(x=>x.email===userEmail);
+          if(!cu) return;
+          const hf=cu.hiddenFields||[];
 
-        // Section header
-        restrictWrap.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'4px',fontWeight:'600'}},'🔒 Field Access (click to toggle):'));
-
-        // Visible fields row
-        if(visibleOnes.length){
-          const visRow=el('div',{style:{marginBottom:'4px'}});
-          visRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--green)',fontWeight:'600',marginRight:'4px'}},'✅ Visible:'));
-          const visGrid=el('span',{style:{display:'inline-flex',flexWrap:'wrap',gap:'3px'}});
-          visibleOnes.forEach(f=>{
+          // All restrictable fields
+          container.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginBottom:'4px'}},'🔒 Field Access — click to toggle:'));
+          const allFields=[
+            {key:'adminFee',label:'Admin Fee'},
+            {key:'tiers',label:'Tiers / Rebates'},
+            {key:'perpetuity',label:'Perpetuity Clause'},
+            {key:'tail',label:'Tail Period'},
+            {key:'notes',label:'Notes'},
+            {key:'comments',label:'Comments'},
+            {key:'contractNo',label:'Contract Number'},
+            {key:'procContact',label:'Contact Name'},
+            {key:'title',label:'Contact Title'},
+            {key:'email',label:'Contact Email'},
+            {key:'bizPhone',label:'Contact Phone'},
+            {key:'mobile',label:'Mobile Phone'},
+          ];
+          const fieldGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'8px'}});
+          allFields.forEach(f=>{
+            const hidden=hf.includes(f.key);
             const btn=el('button',{
-              style:{fontSize:'8px',padding:'1px 6px',borderRadius:'4px',border:'1px solid rgba(34,197,94,.3)',background:'rgba(34,197,94,.08)',color:'#22c55e',cursor:'pointer'},
-              title:'Click to hide from this user',
+              'data-fkey':f.key,
+              style:{
+                fontSize:'8px',padding:'2px 8px',borderRadius:'4px',cursor:'pointer',
+                border:'1px solid '+(hidden?'rgba(239,68,68,.4)':'rgba(34,197,94,.4)'),
+                background:hidden?'rgba(239,68,68,.1)':'rgba(34,197,94,.1)',
+                color:hidden?'#f87171':'#4ade80',
+                fontWeight:'500'
+              },
               onclick(){
-                const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);if(i<0)return;
-                const hf=[...(all[i].hiddenFields||[]),f.key];
-                all[i].hiddenFields=hf;all[i]._customHiddenFields=true;setApprovedUsers(all);renderSettings(c);
+                const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
+                let newHf=[...(all[i].hiddenFields||[])];
+                if(hidden){newHf=newHf.filter(k=>k!==f.key);}else{newHf.push(f.key);}
+                all[i].hiddenFields=newHf;all[i]._customHiddenFields=true;
+                localStorage.setItem(AUTH_KEY,JSON.stringify(all)); // direct save, skip Drive timer
+                setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+                buildFieldAccess(container,userEmail); // rebuild just this section
               }
-            },f.label);
-            visGrid.appendChild(btn);
+            },f.label+' '+(hidden?'🚫':'✅'));
+            fieldGrid.appendChild(btn);
           });
-          visRow.appendChild(visGrid);
-          restrictWrap.appendChild(visRow);
-        }
+          container.appendChild(fieldGrid);
+          container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginBottom:'8px'}},'✅ = visible to user · 🚫 = hidden from user'));
 
-        // Hidden fields row
-        if(hiddenOnes.length){
-          const hidRow=el('div',{style:{marginBottom:'4px'}});
-          hidRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--red)',fontWeight:'600',marginRight:'4px'}},'🚫 Hidden:'));
-          const hidGrid=el('span',{style:{display:'inline-flex',flexWrap:'wrap',gap:'3px'}});
-          hiddenOnes.forEach(f=>{
-            const btn=el('button',{
-              style:{fontSize:'8px',padding:'1px 6px',borderRadius:'4px',border:'1px solid rgba(239,68,68,.3)',background:'rgba(239,68,68,.08)',color:'var(--red)',cursor:'pointer'},
-              title:'Click to make visible to this user',
-              onclick(){
-                const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);if(i<0)return;
-                const hf=(all[i].hiddenFields||[]).filter(k=>k!==f.key);
-                all[i].hiddenFields=hf;all[i]._customHiddenFields=true;setApprovedUsers(all);renderSettings(c);
+          // Tab access
+          container.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginBottom:'4px'}},'📑 Tab Access:'));
+          const rolePerms=ROLE_PERMS[cu.role]||ROLE_PERMS.restricted;
+          const allowedTabs=rolePerms.tabs||[];
+          const allTabs=[
+            {id:'today',label:'Today'},
+            {id:'callsheet',label:'Call Sheet'},
+            {id:'expiring',label:'Expiring'},
+            {id:'vendordb',label:'Vendor DB'},
+            {id:'network',label:'Network Intel'},
+            {id:'economics',label:'Contract Economics'},
+            {id:'tiers',label:'Tier Tracker'},
+            {id:'itw',label:'In The Works'},
+            {id:'reviews',label:'Reviews'},
+            {id:'calendar',label:'Calendar'},
+            {id:'forecast',label:'Forecast'},
+            {id:'analytics',label:'Analytics'},
+            {id:'reports',label:'Reports'},
+            {id:'summary',label:'Summary'},
+            {id:'history',label:'History'},
+            {id:'datacheck',label:'Data Check'},
+            {id:'settings',label:'Settings'},
+          ];
+          const tabGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px'}});
+          allTabs.forEach(t=>{
+            const hasAccess=allowedTabs.includes(t.id);
+            tabGrid.appendChild(el('span',{
+              style:{
+                fontSize:'8px',padding:'2px 6px',borderRadius:'4px',
+                border:'1px solid '+(hasAccess?'rgba(34,197,94,.3)':'rgba(239,68,68,.3)'),
+                background:hasAccess?'rgba(34,197,94,.06)':'rgba(239,68,68,.06)',
+                color:hasAccess?'#4ade80':'#f87171'
               }
-            },f.label);
-            hidGrid.appendChild(btn);
+            },t.label+' '+(hasAccess?'✅':'🚫')));
           });
-          hidRow.appendChild(hidGrid);
-          restrictWrap.appendChild(hidRow);
+          container.appendChild(tabGrid);
+          container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px'}},'Tab access is set by role — change role above to update tab permissions'));
         }
-
-        restrictWrap.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'2px'}},'Green = user can see this field · Red = hidden from user · Click to toggle'));
-        details.appendChild(restrictWrap);
+        const fieldAccessContainer=el('div');
+        buildFieldAccess(fieldAccessContainer,u.email);
+        details.appendChild(fieldAccessContainer);
       }
 
       row.appendChild(details);
 
-      // Toggle expand
+      // Toggle expand — stays open on internal clicks
       expBtn.addEventListener('click',()=>{
         const open=details.style.display==='block';
         details.style.display=open?'none':'block';
