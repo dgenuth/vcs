@@ -4229,7 +4229,7 @@ function renderVendorDB(c) {
 
   // ── Action bar ──
   const actionBar=el('div',{style:{display:'flex',gap:'6px',marginBottom:'8px',alignItems:'center',flexWrap:'wrap'}});
-  actionBar.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'600'}},`${vendors.length} of ${S.vendors.length} vendors`+(activeFilters.length?` (filtered)`:'') ));
+  actionBar.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'600'}},`${vendors.length} of ${VENDOR_POOL.length} vendors`+(activeFilters.length?` (filtered)`:'') ));
   actionBar.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){
     const checked=[...document.querySelectorAll('#vdb-table input[data-name]:checked')].map(cb=>cb.dataset.name);
     const sel=checked.length>0 ? S.vendors.filter(v=>checked.includes(v.name)) : vendors;
@@ -7242,6 +7242,7 @@ function renderSettings(c) {
             {id:'reports',label:'Reports'},{id:'summary',label:'Summary'},
             {id:'history',label:'History'},{id:'datacheck',label:'Data Check'},
             {id:'settings',label:'Settings'},
+            {id:'_statsbar',label:'Stats Panel'},{id:'_savebtn',label:'Save Button'},
           ];
           const tabGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'4px'}});
           allTabs.forEach(t=>{
