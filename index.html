@@ -1624,23 +1624,20 @@ async function executeSave() {
 async function writeHistoryToExcel(zip) {
   try {
     if (!S.history || S.history.length === 0) return;
-    // Build a simple CSV-format XML worksheet
-    const rows = S.history.slice(0, 500); // cap at 500 rows
+    const rows = S.history.slice(0, 500);
     let sheetXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
     sheetXml += '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">';
     sheetXml += '<sheetData>';
-    // Header row
     sheetXml += '<row r="1">';
     ['Date','Time','User','Vendor','Action','Note'].forEach((h,i) => {
       const col = String.fromCharCode(65+i);
       sheetXml += `<c r="${col}1" t="inlineStr"><is><t>${h}</t></is></c>`;
     });
     sheetXml += '</row>';
-    // Data rows
     rows.forEach((entry, idx) => {
       const r = idx + 2;
-      const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
-      const vals = [entry.date||'', entry.time||'', entry.user||USER.email||'', entry.vendor||'', entry.action||'', entry.note||''];
+      const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      const vals = [entry.date||'', entry.time||'', entry.user||'', entry.vendor||'', entry.action||'', entry.note||''];
       sheetXml += `<row r="${r}">`;
       vals.forEach((v,i) => {
         const col = String.fromCharCode(65+i);
@@ -1650,54 +1647,49 @@ async function writeHistoryToExcel(zip) {
     });
     sheetXml += '</sheetData></worksheet>';
 
-    // Find next available sheet number
-    const existingSheets = Object.keys(zip.files).filter(f => f.startsWith('xl/worksheets/sheet'));
-    const sheetNums = existingSheets.map(f => parseInt(f.match(/sheet(\d+)/)?.[1]||'0')).filter(Boolean);
-    const nextSheet = Math.max(...sheetNums, 0) + 1;
-    const sheetPath = `xl/worksheets/sheet${nextSheet}.xml`;
+    // Find existing VCS_History sheet or create new one
+    const wbXml = await zip.file('xl/workbook.xml').async('string');
+    const existingMatch = wbXml.match(/name="VCS_History"[^/]*r:id="([^"]+)"/);
 
-    // Check if VCS_History sheet already exists — if so, reuse its path
-    let historySheetPath = sheetPath;
-    try {
-      const wbRel = await zip.file('xl/workbook.xml').async('string');
-      const histMatch = wbRel.match(/name="VCS_History"[^>]*r:id="([^"]+)"/);
-      if (histMatch) {
-        const rId = histMatch[1];
-        const relXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
-        const relMatch = relXml.match(new RegExp(`Id="${rId}"[^>]*Target="([^"]+)"`));
-        if (relMatch) historySheetPath = 'xl/' + relMatch[1].replace(/^.*\//, 'worksheets/');
-      }
-    } catch(e) {}
-
-    zip.file(historySheetPath, sheetXml);
-
-    // Register sheet in workbook.xml if new
-    if (historySheetPath === sheetPath) {
-      const wbXml = await zip.file('xl/workbook.xml').async('string');
-      const sheetsEnd = wbXml.lastIndexOf('</sheets>');
-      const rId = `rId${nextSheet + 10}`;
-      const newSheet = `<sheet name="VCS_History" sheetId="${nextSheet + 10}" r:id="${rId}"/>`;
-      const newWbXml = wbXml.slice(0, sheetsEnd) + newSheet + wbXml.slice(sheetsEnd);
-      zip.file('xl/workbook.xml', newWbXml);
-
-      // Add relationship
+    if (existingMatch) {
+      // Update existing sheet — find its path from relationships
+      const rId = existingMatch[1];
       const relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
-      const relsEnd = relsXml.lastIndexOf('</Relationships>');
-      const newRel = `<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${nextSheet}.xml"/>`;
-      zip.file('xl/_rels/workbook.xml.rels', relsXml.slice(0, relsEnd) + newRel + relsXml.slice(relsEnd));
-
-      // Add to [Content_Types].xml
-      const ctXml = await zip.file('[Content_Types].xml').async('string');
-      const ctEnd = ctXml.lastIndexOf('</Types>');
-      const newCt = `<Override PartName="/xl/worksheets/sheet${nextSheet}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`;
-      zip.file('[Content_Types].xml', ctXml.slice(0, ctEnd) + newCt + ctXml.slice(ctEnd));
+      const relMatch = relsXml.match(new RegExp('Id="' + rId + '"[^T]*Target="([^"]+)"'));
+      if (relMatch) {
+        const target = relMatch[1].replace(/^\.\//,'');
+        const sheetPath = target.startsWith('worksheets/') ? 'xl/'+target : 'xl/worksheets/'+target.split('/').pop();
+        zip.file(sheetPath, sheetXml);
+        console.log('VCS_History sheet updated:', sheetPath);
+        return;
+      }
     }
-    console.log(`VCS_History sheet written: ${rows.length} entries`);
+
+    // Create new sheet
+    const existingSheets = Object.keys(zip.files).filter(f => /xl\/worksheets\/sheet\d+\.xml/.test(f));
+    const sheetNums = existingSheets.map(f => parseInt((f.match(/sheet(\d+)/) ||[])[1]||'0'));
+    const nextNum = Math.max(0, ...sheetNums) + 1;
+    const sheetPath = `xl/worksheets/sheet${nextNum}.xml`;
+    const rId = `rId${nextNum + 20}`;
+    zip.file(sheetPath, sheetXml);
+
+    const sheetsEnd = wbXml.lastIndexOf('</sheets>');
+    zip.file('xl/workbook.xml', wbXml.slice(0,sheetsEnd) + `<sheet name="VCS_History" sheetId="${nextNum+20}" r:id="${rId}"/>` + wbXml.slice(sheetsEnd));
+
+    const relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+    const relsEnd = relsXml.lastIndexOf('</Relationships>');
+    zip.file('xl/_rels/workbook.xml.rels', relsXml.slice(0,relsEnd) + `<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${nextNum}.xml"/>` + relsXml.slice(relsEnd));
+
+    const ctXml = await zip.file('[Content_Types].xml').async('string');
+    const ctEnd = ctXml.lastIndexOf('</Types>');
+    zip.file('[Content_Types].xml', ctXml.slice(0,ctEnd) + `<Override PartName="/xl/worksheets/sheet${nextNum}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>` + ctXml.slice(ctEnd));
+
+    console.log('VCS_History sheet created:', sheetPath);
   } catch(e) {
     console.warn('Could not write history sheet:', e.message);
-    // Non-fatal — don't block the save
   }
 }
+
 
 // ─── XML Cell Upsert — preserves existing cell styles ─────────────────────────
 function xmlEsc(s) {
@@ -2644,9 +2636,38 @@ async function loadFromGoogleDrive() {
 }
 
 async function saveToDrive(buffer, filename) {
-  // Try proxy first — works for all users regardless of Google token
+  const fileId = S.settings.driveFileId;
+
+  // Primary: direct Drive API PATCH — updates by file ID, no duplicate files
+  if (fileId && ['admin','procurement','manager'].includes(USER.role||'')) {
+    try {
+      const token = await getGDriveToken();
+      const boundary = 'vcs_boundary_'+Date.now();
+      const meta = JSON.stringify({name: filename});
+      const body = new Blob([
+        '--'+boundary+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+meta+'\r\n',
+        '--'+boundary+'\r\nContent-Type: application/vnd.ms-excel.sheet.macroEnabled.12\r\n\r\n',
+        new Blob([buffer]),
+        '\r\n--'+boundary+'--'
+      ]);
+      const resp = await fetch(
+        'https://www.googleapis.com/upload/drive/v3/files/'+fileId+'?uploadType=multipart',
+        {method:'PATCH', headers:{Authorization:'Bearer '+token,'Content-Type':'multipart/related; boundary='+boundary}, body}
+      );
+      if (resp.ok) { S.driveLastSync = new Date(); return true; }
+      const errText = await resp.text().catch(()=>'');
+      console.warn('Direct Drive PATCH failed:', resp.status, errText.slice(0,200));
+    } catch(e) { console.warn('Direct Drive save error:', e.message); }
+  }
+
+  // Fallback: proxy — for non-admin or if direct fails
   try {
-    const b64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+    const uint8 = new Uint8Array(buffer);
+    const CHUNK = 32768;
+    let b64 = '';
+    for (let i = 0; i < uint8.length; i += CHUNK) {
+      b64 += btoa(String.fromCharCode(...uint8.subarray(i, Math.min(i+CHUNK, uint8.length))));
+    }
     const proxyResp = await fetch(VCS_PROXY_URL, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
@@ -2656,201 +2677,11 @@ async function saveToDrive(buffer, filename) {
       const data = await proxyResp.json();
       if (data.status === 'ok') { S.driveLastSync = new Date(); return true; }
     }
-  } catch(e) { console.warn('Proxy save failed, trying direct:', e.message); }
+  } catch(e) { console.warn('Proxy save failed:', e.message); }
 
-  // Fallback: direct Drive API (requires user Google token)
-  const fileId = S.settings.driveFileId;
-  if (!fileId) return false;
-  try {
-    const token = await getGDriveToken();
-    const boundary = 'vcs_boundary_'+Date.now();
-    const meta = JSON.stringify({name: filename});
-    const body = new Blob([
-      '--'+boundary+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+meta+'\r\n',
-      '--'+boundary+'\r\nContent-Type: application/vnd.ms-excel.sheet.macroEnabled.12\r\n\r\n',
-      new Blob([buffer]),
-      '\r\n--'+boundary+'--'
-    ]);
-    const resp = await fetch(
-      'https://www.googleapis.com/upload/drive/v3/files/'+fileId+'?uploadType=multipart&supportsAllDrives=true',
-      {method:'PATCH', headers:{Authorization:'Bearer '+token,'Content-Type':'multipart/related; boundary='+boundary}, body}
-    );
-    if (!resp.ok) throw new Error('Drive save API error '+resp.status);
-    S.driveLastSync = new Date();
-    return true;
-  } catch(e) {
-    console.warn('Drive save error:', e);
-    return false;
-  }
-}
-const SESSION_KEY = 'vcs_session_state';
-
-function saveSessionState() {
-  if (!S.loaded) return;
-  try {
-    const toSave = {
-      ts: new Date().toISOString(),
-      fileName: S.fileName,
-      dirtyVendors: S.vendors.filter(v=>S.dirty.has(v.name)).map(v=>({
-        name: v.name,
-        fields: Object.fromEntries(
-          Object.entries(v).filter(([k])=>!k.startsWith('_')&&k!=='score'&&k!=='tier')
-            .map(([k,val])=>[k, val instanceof Date ? val.toISOString() : val])
-        )
-      })),
-      history: S.history.slice(-200), // last 200 entries
-      calEvents: S.calEvents,
-      itw: S.itw.map(v=>({...v})),
-      snoozed: Object.fromEntries(Object.entries(S.snoozed).map(([k,v])=>[k,v instanceof Date?v.toISOString():v])),
-      dismissed: [...S.dismissed],
-    };
-    localStorage.setItem(SESSION_KEY, JSON.stringify(toSave));
-  } catch(e) { console.warn('Session save failed:', e); }
+  return false;
 }
 
-function loadSessionState() {
-  try {
-    return JSON.parse(localStorage.getItem(SESSION_KEY)||'null');
-  } catch(e) { return null; }
-}
-
-function clearSessionState() {
-  localStorage.removeItem(SESSION_KEY);
-}
-
-function offerSessionRestore() {
-  const saved = loadSessionState();
-  if (!saved || !saved.dirtyVendors?.length) return false;
-  const savedTs = new Date(saved.ts);
-  const ageMin = Math.round((Date.now()-savedTs)/60000);
-  if (ageMin > 24*60) { clearSessionState(); return false; } // Don't restore sessions older than 24h
-
-  openModal(body=>{
-    body.appendChild(el('h3',{},'💾 Unsaved Session Found'));
-    body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--text)',lineHeight:'1.6',marginBottom:'8px'}},'VCS found an unsaved session from '+ageMin+' minute'+(ageMin!==1?'s':'')+' ago. Would you like to restore your unsaved changes?'));
-    const details=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'4px',padding:'8px',marginBottom:'10px',fontSize:'10px'}});
-    details.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'3px'}},'Session details:'));
-    details.appendChild(el('div',{},'File: '+(saved.fileName||'—')));
-    details.appendChild(el('div',{},saved.dirtyVendors.length+' vendor record'+(saved.dirtyVendors.length!==1?'s':'')+' with unsaved changes'));
-    details.appendChild(el('div',{},(saved.history||[]).length+' history entries'));
-    details.appendChild(el('div',{},'Saved: '+savedTs.toLocaleString()));
-    body.appendChild(details);
-    const btns=el('div',{class:'modal-btns'});
-    btns.appendChild(el('button',{class:'btn-primary',onclick(){
-      // Restore dirty vendor fields
-      for (const saved_v of saved.dirtyVendors) {
-        const live = S.vendors.find(v=>v.name===saved_v.name);
-        if (!live) continue;
-        for (const [k,val] of Object.entries(saved_v.fields)) {
-          if (k==='name'||k.startsWith('_')) continue;
-          // Re-parse date strings
-          if (typeof val==='string'&&val.match(/^\d{4}-\d{2}-\d{2}T/)) live[k]=new Date(val);
-          else live[k]=val;
-        }
-        live.score=calcScore(live); live.tier=getActionTier(live);
-        S.dirty.add(live.name);
-      }
-      if (saved.history) S.history=[...saved.history];
-      if (saved.calEvents) S.calEvents={...saved.calEvents};
-      // Restore snoozed/dismissed
-      if (saved.snoozed) Object.entries(saved.snoozed).forEach(([k,v])=>{S.snoozed[k]=new Date(v);});
-      if (saved.dismissed) saved.dismissed.forEach(n=>S.dismissed.add(n));
-      closeModal(); render(); updateSidebar();
-      toast('✓ Session restored — '+saved.dirtyVendors.length+' vendor'+(saved.dirtyVendors.length!==1?'s':'')+' with changes');
-    }},'✅ Restore Session'));
-    btns.appendChild(el('button',{class:'btn-secondary',onclick(){clearSessionState();closeModal();}},'Start Fresh'));
-    body.appendChild(btns);
-  });
-  return true;
-}
-
-// Auto-save every 60 seconds while working
-let _autoSaveInterval = null;
-function startAutoSave() {
-  if (_autoSaveInterval) clearInterval(_autoSaveInterval);
-  _autoSaveInterval = setInterval(()=>{
-    if (S.loaded && S.dirty.size > 0) {
-      saveSessionState();
-      const ind=$('dirty-indicator');
-      if(ind){
-        const orig=ind.textContent;
-        ind.textContent='💾 Auto-saved';ind.style.color='var(--green)';
-        setTimeout(()=>{ind.textContent='● Unsaved';ind.style.color='var(--amber)';},2000);
-      }
-    }
-  }, 30000); // every 30 seconds
-}
-const SETTINGS_STORAGE_KEY = 'vcs_user_settings_v2';
-// Personal settings — stored per user email, follow the user across devices
-const PERSONAL_SETTING_KEYS = ['theme','fontSize','compactRows','defaultView','showKPIs',
-  'showHebrew','autoSortByScore','showSnoozed','showDismissedDefault','animateBadges',
-  'emailSignature','cols','dbHiddenCols','sidebarWidth','closedDays','oooDays'];
-// Global settings — stored once, admin-controlled, apply to all sessions
-const GLOBAL_SETTING_KEYS = ['sfClientId','sfRedirectUri','sfLoginUrl','composioKey',
-  'driveFileId','driveFileName','driveAutoSync','googleClientId'];
-const PERSIST_KEYS = [...PERSONAL_SETTING_KEYS, ...GLOBAL_SETTING_KEYS];
-
-function saveSettings() {
-  try {
-    const toSave = {};
-    PERSIST_KEYS.forEach(k => {
-      if (k === 'dbHiddenCols') return; // handled separately below
-      if (S.settings[k] !== undefined) toSave[k] = S.settings[k];
-    });
-    // Also persist googleClientId in sessionStorage as backup (survives localStorage.clear())
-    if (S.settings.googleClientId) sessionStorage.setItem('vcs_gClientId_bk', S.settings.googleClientId);
-    // Save dbHiddenCols from S (not S.settings) — it lives on the main state
-    if (S.dbHiddenCols instanceof Set) toSave.dbHiddenCols = [...S.dbHiddenCols];
-    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(toSave));
-  } catch(e) { console.warn('Could not save settings:', e); }
-}
-
-function loadSettings() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY)||'{}');
-    // Restore dbHiddenCols to S directly (not S.settings)
-    if (saved.dbHiddenCols) {
-      S.dbHiddenCols = new Set(Array.isArray(saved.dbHiddenCols) ? saved.dbHiddenCols : []);
-      delete saved.dbHiddenCols;
-    }
-    Object.assign(S.settings, saved);
-    // Restore googleClientId from sessionStorage backup if missing
-    if (!S.settings.googleClientId) {
-      const bk = sessionStorage.getItem('vcs_gClientId_bk');
-      if (bk) S.settings.googleClientId = bk;
-    }
-  } catch(e) { console.warn('Could not load settings:', e); }
-}
-
-// Auto-save settings when they change — debounced
-let _settingsSaveTimer = null;
-let _driveConfigSaveTimer = null;
-function debouncedSaveSettings() {
-  // Don't save settings during impersonation — preview only, not the real user's prefs
-  if (USER._impersonating) return;
-  clearTimeout(_settingsSaveTimer);
-  clearTimeout(_driveConfigSaveTimer);
-  _settingsSaveTimer = setTimeout(saveSettings, 500);
-  _driveConfigSaveTimer = setTimeout(() => {
-    saveConfigToDrive().catch(e => console.warn('Drive config save:', e.message));
-  }, 3000);
-}
-
-// ─── Drive-backed Settings + User List ───────────────────────────────────────
-// Stores vcs_config.json in same Drive folder as the catalogue
-// Contains: settings + approved user list
-// Loaded on login, saved whenever settings or users change
-
-const VCS_CONFIG_FILENAME = 'vcs_config.json';
-let vcsConfigFileId = null; // cached Drive file ID for vcs_config.json
-
-// ─── Live Update Polling ─────────────────────────────────────────────────────
-// Checks Drive file modified time every 3 minutes
-// Shows a non-intrusive banner when a newer version is available
-
-let _liveUpdateTimer = null;
-let _lastKnownDriveModified = null;
-let _updateBannerShown = false;
 
 async function checkForUpdates() {
   if (!S.loaded) return;
@@ -4313,8 +4144,16 @@ function renderVendorDB(c) {
 }
 
 function openColumnFilterModal(col) {
-  const pool = (S.dbSource==='channel' ? S.channelVendors : S.dbSource==='all' ? S.allVendors : S.vendors);
-  const allVals=[...new Set(pool.map(v=>{ try{return col.get(v);}catch(e){return '';} }).filter(v=>v!=null&&String(v).trim()!==''))].sort((a,b)=>String(a).localeCompare(String(b)));
+  // IMPORTANT: Only show values from vendors the user can actually see
+  // This prevents restricted users from inferring hidden data via the filter dropdown
+  // Use the current vendor pool filtered by role permissions (same as what's displayed)
+  const sourcePool = (S.dbSource==='channel' ? S.channelVendors : S.dbSource==='all' ? S.allVendors : S.vendors);
+  // Apply role-based search restriction: restricted roles only see search results
+  const isRestricted = ['sales_rep','restricted','ssa'].includes(USER.role);
+  const visiblePool = isRestricted && S.search && S.search.length >= 3
+    ? sourcePool.filter(v => searchMatch(v, S.search.toLowerCase()))
+    : isRestricted ? [] : sourcePool;
+  const allVals=[...new Set(visiblePool.map(v=>{ try{return col.get(v);}catch(e){return '';} }).filter(v=>v!=null&&String(v).trim()!==''))].sort((a,b)=>String(a).localeCompare(String(b)));
   const current=new Set(S.dbFilters[col.key]||[]);
   const tempSelected=new Set(current);
   openModal(body=>{
