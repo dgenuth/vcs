@@ -3693,8 +3693,22 @@ function arBadge(v) {
 
 function searchMatch(v, q) {
   if (!q) return true;
-  const fields = [v.name,v.category,v.procContact,v.bizPhone,v.mobile,v.email,v.email2,v.shared2,v.notes,v.about,v.contractNo,v.website,v.adminFee,v.product,v.subCategory,v.classOfTrade,v.status,v.gpo];
-  return fields.some(f => f && String(f).toLowerCase().includes(q));
+  // For restricted roles, only search fields the user is allowed to see
+  const hiddenFields = new Set(USER.hiddenFields || []);
+  const allSearchFields = [
+    ['name',v.name],['category',v.category],['subCategory',v.subCategory],
+    ['product',v.product],['gpo',v.gpo],['markets',v.markets],['website',v.website],
+    ['procContact',v.procContact],['bizPhone',v.bizPhone],['mobile',v.mobile],
+    ['email',v.email],['email2',v.email2],['notes',v.notes],['about',v.about],
+    ['contractNo',v.contractNo],['adminFee',v.adminFee],['classOfTrade',v.classOfTrade],
+    ['status',v.status],['termExpiry',v.termExpiry],['contractExpiry',v.contractExpiry],
+  ];
+  const isRestricted = ['sales_rep','restricted','ssa','cro','director_ops','ops_qc','finance_sr','finance_jr'].includes(USER.role);
+  const searchFields = isRestricted
+    ? allSearchFields.filter(([key]) => !hiddenFields.has(key))
+    : allSearchFields.map(([,val]) => val);
+  const vals = isRestricted ? searchFields.map(([,val]) => val) : searchFields;
+  return vals.some(f => f && String(f).toLowerCase().includes(q));
 }
 
 // Highlight search term in a string — returns a span with yellow mark on match
@@ -3990,10 +4004,12 @@ function renderVendorDB(c) {
   const tbody=el('tbody');
   if (!vendors.length) {
     const tr=el('tr'); const td=el('td',{colspan:COLS.length+1,style:{textAlign:'center',padding:'20px',color:'var(--muted)'}});
-    if (USER.role === 'restricted' || USER.role === 'sales_rep') {
-        td.textContent = S.search && S.search.length < 3
-          ? '🔍 Type at least 3 characters to search vendors.'
-          : S.search ? 'No vendors match your search.' : '🔍 Use the search bar to find vendors (minimum 3 characters).';
+    const isRestrictedRole=['sales_rep','restricted'].includes(USER.role);
+    if (isRestrictedRole) {
+        td.textContent = !S.loaded ? '🔍 Load the vendor catalogue to begin searching.' :
+          S.search && S.search.length < 3 ? '🔍 Type at least 3 characters to search.' :
+          S.search ? 'No vendors match your search.' :
+          '🔍 Use the search bar above to find vendors (minimum 3 characters).';
       } else {
         td.textContent=S.vendors.length?'No vendors match the current filters — clear filters to see all':'No vendor data loaded';
       }
