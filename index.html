@@ -2759,45 +2759,13 @@ async function saveToDrive(buffer, filename) {
   const fileId = S.settings.driveFileId;
   console.log('[saveToDrive] Starting. fileId:', fileId, 'bufferSize:', buffer?.byteLength);
 
-  // Step 1: Try proxy save first — works for everyone
-  try {
-    toast('☁ Uploading to Drive via proxy...', '#4f7cff');
-    const uint8 = new Uint8Array(buffer);
-    // Encode to base64 safely — small chunks to avoid stack overflow
-    const CHUNK = 1024;
-    let binaryStr = '';
-    for (let i = 0; i < uint8.length; i += CHUNK) {
-      const end = Math.min(i + CHUNK, uint8.length);
-      for (let j = i; j < end; j++) binaryStr += String.fromCharCode(uint8[j]);
-    }
-    const b64 = btoa(binaryStr);
-    console.log('[saveToDrive] Base64 encoded:', b64.length, 'chars');
-    const proxyResp = await fetch(VCS_PROXY_URL, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({action: 'saveFile', content: b64, name: filename})
-    });
-    console.log('[saveToDrive] Proxy response status:', proxyResp.status);
-    if (proxyResp.ok) {
-      const data = await proxyResp.json();
-      console.log('[saveToDrive] Proxy response:', JSON.stringify(data));
-      if (data.status === 'ok') {
-        S.driveLastSync = new Date();
-        return true;
-      }
-      console.warn('[saveToDrive] Proxy returned error:', data.message);
-    }
-  } catch(proxyErr) {
-    console.warn('[saveToDrive] Proxy save failed:', proxyErr.message);
-  }
-
-  // Step 2: Fall back to direct Drive API
-  if (!fileId) { console.warn('[saveToDrive] No fileId, cannot use direct API'); return false; }
-  try {
-    toast('☁ Trying direct Drive API...', '#4f7cff');
-    const token = await getGDriveToken();
-    console.log('[saveToDrive] Got token, length:', token?.length);
-    const boundary = 'vcs_boundary_'+Date.now();
+  // Step 1: Try direct Drive API FIRST — handles binary natively, no base64 needed
+  if (fileId) {
+    try {
+      toast('☁ Saving to Google Drive...', '#4f7cff');
+      const token = await getGDriveToken();
+      console.log('[saveToDrive] Got Google token, length:', token?.length);
+      const boundary = 'vcs_boundary_'+Date.now();
     const meta = JSON.stringify({name: filename});
     const body = new Blob([
       '--'+boundary+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+meta+'\r\n',
@@ -2811,15 +2779,51 @@ async function saveToDrive(buffer, filename) {
     );
     if (!resp.ok) {
       const err = await resp.text();
-      throw new Error('Drive save API error '+resp.status+': '+err.slice(0,200));
+      console.warn('[saveToDrive] Direct API failed:', resp.status, err.slice(0,200));
+      throw new Error('Drive API error '+resp.status);
     }
     S.driveLastSync = new Date();
+    console.log('[saveToDrive] Direct API save succeeded');
     return true;
-  } catch(e) {
-    console.error('saveToDrive FAILED:', e);
-    toast('⚠ saveToDrive error: ' + (e.message||'unknown').slice(0,80), '#ef4444');
-    return false;
+  } catch(directErr) {
+    console.warn('[saveToDrive] Direct API failed, trying proxy...', directErr.message);
   }
+  }
+
+  // Step 2: Fallback — proxy save (slower, requires base64 encoding of large file)
+  try {
+    toast('☁ Trying proxy save...', '#4f7cff');
+    const uint8 = new Uint8Array(buffer);
+    // Build base64 using FileReader — browser-native, handles large files
+    const blob = new Blob([uint8]);
+    const b64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        // result is "data:application/octet-stream;base64,XXXX..."
+        const dataUrl = reader.result;
+        resolve(dataUrl.split(',')[1]); // extract base64 part
+      };
+      reader.onerror = () => reject(new Error('FileReader failed'));
+      reader.readAsDataURL(blob);
+    });
+    console.log('[saveToDrive] Base64 via FileReader:', b64.length, 'chars');
+    const proxyResp = await fetch(VCS_PROXY_URL, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: 'saveFile', content: b64, name: filename})
+    });
+    if (proxyResp.ok) {
+      const data = await proxyResp.json();
+      console.log('[saveToDrive] Proxy response:', JSON.stringify(data).slice(0,200));
+      if (data.status === 'ok') { S.driveLastSync = new Date(); return true; }
+      console.warn('[saveToDrive] Proxy error:', data.message);
+    }
+  } catch(proxyErr) {
+    console.error('[saveToDrive] Proxy save also failed:', proxyErr.message);
+  }
+
+  toast('⚠ Could not save to Drive — both direct API and proxy failed', '#ef4444');
+  return false;
 }
 const SESSION_KEY = 'vcs_session_state';
 
