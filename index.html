@@ -1643,8 +1643,10 @@ async function executeSave() {
     // Rebuild buffer after adding history sheet
     const histBuffer = (await zip.generateAsync({type:'uint8array',compression:'DEFLATE',compressionOptions:{level:4}})).buffer;
 
-    // If Drive sync is configured, also push to Google Drive
-    if (S.settings.driveFileId && S.settings.googleClientId && S.settings.driveAutoSync) {
+    // Push to Google Drive — proxy works without googleClientId or driveFileId
+    // Only skip if user explicitly turned off auto-sync
+    const shouldSync = S.settings.driveAutoSync !== false; // default ON
+    if (shouldSync) {
       toast('☁ Syncing to Google Drive...','#4f7cff');
       const synced = await saveToDrive(typeof histBuffer !== 'undefined' ? histBuffer : uint8.buffer, outName);
       if (synced) toast('✅ Saved locally and synced to Google Drive');
