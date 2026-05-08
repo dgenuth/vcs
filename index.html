@@ -2691,7 +2691,23 @@ async function getGDriveToken() {
 
 
 async function loadFromGoogleDrive() {
-  toast('📂 Loading from Google Drive...','#4f7cff');
+  // Show persistent loading banner with spinner until load completes
+  let loadBanner = document.getElementById('vcs-load-banner');
+  if (!loadBanner) {
+    loadBanner = document.createElement('div');
+    loadBanner.id = 'vcs-load-banner';
+    loadBanner.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(15,23,42,.95);border:1px solid var(--blue,#4f7cff);border-radius:12px;padding:24px 40px;z-index:10001;display:flex;align-items:center;gap:14px;box-shadow:0 8px 32px rgba(0,0,0,.5);font-family:var(--font)';
+    loadBanner.innerHTML = '<div style="width:28px;height:28px;border:3px solid rgba(79,124,255,.3);border-top-color:#4f7cff;border-radius:50%;animation:spin 1s linear infinite"></div><div><div style="color:#fff;font-size:13px;font-weight:600">Loading from Google Drive...</div><div style="color:#94a3b8;font-size:10px;margin-top:4px">Downloading vendor catalogue — this may take a few seconds</div></div>';
+    // Add spin animation if not already present
+    if (!document.getElementById('vcs-spin-style')) {
+      const spinStyle = document.createElement('style');
+      spinStyle.id = 'vcs-spin-style';
+      spinStyle.textContent = '@keyframes spin{to{transform:rotate(360deg)}}';
+      document.head.appendChild(spinStyle);
+    }
+    document.body.appendChild(loadBanner);
+  }
+  loadBanner.style.display = 'flex';
   try {
     // Try proxy first — works for ALL users regardless of Google account
     const proxyResp = await fetch(VCS_PROXY_URL + '?action=getFile', {method:'GET'});
@@ -2704,6 +2720,8 @@ async function loadFromGoogleDrive() {
         });
         await loadFile(file);
         S.driveLastSync = new Date();
+        const lb = document.getElementById('vcs-load-banner');
+        if (lb) lb.style.display = 'none';
         toast('✅ Loaded from Google Drive');
         return;
       }
@@ -2729,6 +2747,8 @@ async function loadFromGoogleDrive() {
     S.driveLastSync = new Date();
     toast('✅ Loaded from Google Drive');
   } catch(e) {
+    const lb = document.getElementById('vcs-load-banner');
+    if (lb) lb.style.display = 'none';
     console.error('Drive load error:', e);
     toast('❌ Drive load failed: '+e.message.slice(0,100),'#ef4444');
   }
