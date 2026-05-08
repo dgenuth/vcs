@@ -7732,20 +7732,8 @@ function init() {
 
   $('upload-btn').addEventListener('click',()=>$('file-input').click());
   $('drive-load-btn').addEventListener('click',()=>{
-    if (!S.settings.googleClientId || !S.settings.driveFileId) {
-      openModal(body=>{
-        body.appendChild(el('h3',{},'☁ Connect Google Drive'));
-        body.appendChild(el('p',{style:{fontSize:'11px',lineHeight:'1.6',color:'var(--text)',marginBottom:'12px'}},'To load your Vendor Catalogue directly from Google Drive, configure two things in Settings:'));
-        body.appendChild(el('div',{style:{fontSize:'10px',lineHeight:'1.8',marginBottom:'12px'}},'1. Your Google Client ID (from Google Cloud Console → APIs & Services → Credentials)\n2. Your Google Drive File ID (from the file\'s URL in Drive)'));
-        body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'12px'}},'File ID example: in https://drive.google.com/file/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms/view — the File ID is the long string between /d/ and /view.'));
-        const btns=el('div',{class:'modal-btns'});
-        btns.appendChild(el('button',{class:'btn-primary',onclick(){S.view='settings';closeModal();$('upload-screen').style.display='none';$('app').style.display='flex';render();}},'Go to Settings'));
-        btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
-        body.appendChild(btns);
-      });
-    } else {
-      loadFromGoogleDrive();
-    }
+    // Always try proxy first — works for all users without any settings
+    loadFromGoogleDrive();
   });
   $('file-input').addEventListener('change',e=>{const f=e.target.files[0];if(f)loadFile(f);e.target.value='';});
   $('reload-btn').addEventListener('click',()=>{const inp=document.createElement('input');inp.type='file';inp.accept='.xlsm,.xlsx';inp.addEventListener('change',e=>{if(e.target.files[0])loadFile(e.target.files[0]);});inp.click();});
