@@ -1487,14 +1487,22 @@ async function executeSave() {
       if (proxyFetchResp.ok) {
         const proxyData = await proxyFetchResp.json();
         if (proxyData.status === 'ok' && proxyData.content) {
-          // Decode base64 to ArrayBuffer
-          const b64 = proxyData.content;
-          const binary = atob(b64);
-          const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-          sourceBuffer = bytes.buffer;
+          // Decode base64 to ArrayBuffer efficiently
+          // atob+charCodeAt loop is very slow for large files — use Blob instead
+          const b64str = proxyData.content;
+          const byteCharacters = atob(b64str);
+          const CHUNK = 8192;
+          const byteArrays = [];
+          for (let offset = 0; offset < byteCharacters.length; offset += CHUNK) {
+            const slice = byteCharacters.slice(offset, offset + CHUNK);
+            const byteNumbers = new Array(slice.length);
+            for (let i = 0; i < slice.length; i++) byteNumbers[i] = slice.charCodeAt(i);
+            byteArrays.push(new Uint8Array(byteNumbers));
+          }
+          const blob = new Blob(byteArrays);
+          sourceBuffer = await blob.arrayBuffer();
           fetchedFresh = true;
-          toast('☁ Got latest from Drive — applying your changes...', '#4f7cff');
+          toast('☁ Got latest from Drive (' + (proxyData.content.length / 1024 / 1024 * 0.75).toFixed(1) + 'MB) — merging your changes...', '#4f7cff');
         }
       }
     } catch(e) {
