@@ -1476,7 +1476,33 @@ async function executeSave() {
     toast('Saving…', '#4f7cff');
     // Fetch fresh copy from Drive before applying changes (prevents overwriting concurrent edits)
     let sourceBuffer = S.originalBuffer;
-    if (S.settings.driveFileId && S.settings.googleClientId && GDriveToken && Date.now() < GDriveTokenExpiry - 5000) {
+    // DIRTY-CELLS MERGE: Always fetch the freshest Drive copy before applying changes.
+    // This prevents last-write-wins conflicts when multiple users edit simultaneously.
+    // User A edits vendor X, User B edits vendor Y — both fetch fresh, apply only their
+    // dirty cells on top, and push back. Neither overwrites the other's changes.
+    let fetchedFresh = false;
+    try {
+      // Try proxy first — works for all users without needing a Google token
+      const proxyFetchResp = await fetch(VCS_PROXY_URL + '?action=getFile', {method: 'GET'});
+      if (proxyFetchResp.ok) {
+        const proxyData = await proxyFetchResp.json();
+        if (proxyData.status === 'ok' && proxyData.content) {
+          // Decode base64 to ArrayBuffer
+          const b64 = proxyData.content;
+          const binary = atob(b64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          sourceBuffer = bytes.buffer;
+          fetchedFresh = true;
+          toast('☁ Got latest from Drive — applying your changes...', '#4f7cff');
+        }
+      }
+    } catch(e) {
+      console.warn('Proxy fetch failed, trying direct Drive API:', e.message);
+    }
+
+    // Fallback: direct Drive API if proxy failed and we have a token
+    if (!fetchedFresh && S.settings.driveFileId && GDriveToken && Date.now() < GDriveTokenExpiry - 5000) {
       try {
         const freshResp = await fetch(
           'https://www.googleapis.com/drive/v3/files/'+S.settings.driveFileId+'?alt=media',
@@ -1484,11 +1510,16 @@ async function executeSave() {
         );
         if (freshResp.ok) {
           sourceBuffer = await freshResp.arrayBuffer();
-          toast('☁ Got latest from Drive — applying your changes...','#4f7cff');
+          fetchedFresh = true;
+          toast('☁ Got latest from Drive (direct) — applying your changes...','#4f7cff');
         }
       } catch(e) {
-        console.warn('Could not fetch fresh copy from Drive, using local buffer:', e.message);
+        console.warn('Direct Drive fetch also failed, using local buffer:', e.message);
       }
+    }
+
+    if (!fetchedFresh) {
+      console.warn('Could not fetch fresh Drive copy — using local buffer. Risk of overwriting concurrent changes.');
     }
     const zip = await JSZip.loadAsync(sourceBuffer);
     const sheetFile = S.psdSheetFile || 'xl/worksheets/sheet7.xml';
@@ -1593,9 +1624,11 @@ async function executeSave() {
     const a = document.createElement('a'); a.href=url; a.download=outName; a.click();
     URL.revokeObjectURL(url);
     S.dirty.clear();
+    if (S.dirtyRows) S.dirtyRows.clear();
     updateSidebar();
     logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:'System',action:'File exported: '+outName+' ('+dirtyVendors.length+' vendors updated)'});
-    toast(`✓ Saved ${dirtyVendors.length} vendor(s) — open in Excel, formulas will recalculate automatically`);
+    const mergeMsg = fetchedFresh ? '☁ Merged & saved' : '⚠ Saved (local only — Drive fetch failed)';
+    toast(`✓ ${mergeMsg} — ${dirtyVendors.length} vendor(s) updated`);
 
     // Write VCS_History sheet to Excel zip
     await writeHistoryToExcel(zip);
@@ -1791,7 +1824,13 @@ function insertCellSorted(rowContent, newRef, newCell, colLetter) {
 }
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
-function markDirty(vendor) { S.dirty.add(vendor.name); vendor._dirty = true; }
+function markDirty(vendor) {
+  S.dirty.add(vendor.name);
+  vendor._dirty = true;
+  // Track by row number too — used by dirty-cells merge
+  if (!S.dirtyRows) S.dirtyRows = new Map();
+  if (vendor._row) S.dirtyRows.set(vendor._row, vendor.name);
+}
 
 function prependNote(vendor, text) {
   const entry = `${isoDate(new Date())}: ${text}`;
