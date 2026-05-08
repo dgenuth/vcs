@@ -1666,8 +1666,8 @@ async function writeHistoryToExcel(zip) {
     }
 
     // Create new sheet
-    const existingSheets = Object.keys(zip.files).filter(f => /xl\/worksheets\/sheet\d+\.xml/.test(f));
-    const sheetNums = existingSheets.map(f => parseInt((f.match(/sheet(\d+)/) ||[])[1]||'0'));
+    const existingSheets = Object.keys(zip.files).filter(f => f.startsWith('xl/worksheets/sheet') && f.endsWith('.xml'));
+    const sheetNums = existingSheets.map(f => { const m=f.match(/sheet(\d+)/); return m?parseInt(m[1]):0; });
     const nextNum = Math.max(0, ...sheetNums) + 1;
     const sheetPath = `xl/worksheets/sheet${nextNum}.xml`;
     const rId = `rId${nextNum + 20}`;
