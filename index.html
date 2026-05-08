@@ -2807,9 +2807,10 @@ async function saveToDrive(buffer, filename) {
       reader.readAsDataURL(blob);
     });
     console.log('[saveToDrive] Base64 via FileReader:', b64.length, 'chars');
+    // text/plain avoids CORS preflight — Apps Script still reads e.postData.contents
     const proxyResp = await fetch(VCS_PROXY_URL, {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'text/plain'},
       body: JSON.stringify({action: 'saveFile', content: b64, name: filename})
     });
     if (proxyResp.ok) {
@@ -3002,7 +3003,7 @@ async function findOrCreateConfigFile() {
     // Create new config file
     const createResp = await fetch('https://www.googleapis.com/drive/v3/files', {
       method: 'POST',
-      headers: {Authorization:'Bearer '+GDriveToken, 'Content-Type':'application/json'},
+      headers: {Authorization:'Bearer '+GDriveToken, 'Content-Type':'text/plain'},
       body: JSON.stringify({name: VCS_CONFIG_FILENAME, mimeType: 'application/json'})
     });
     const created = await createResp.json();
@@ -6217,7 +6218,7 @@ function sendEventToOutlook(event) {
         // Call Composio REST API directly — no Anthropic key, no tokens
         const resp=await fetch('https://backend.composio.dev/api/v2/actions/OUTLOOK_CALENDAR_CREATE_EVENT/execute',{
           method:'POST',
-          headers:{'Content-Type':'application/json','x-api-key':composioKey},
+          headers:{'Content-Type':'text/plain','x-api-key':composioKey},
           body:JSON.stringify({
             input:{
               subject,
@@ -7819,7 +7820,7 @@ async function sendAIMessage(userMsg) {
       // Grok uses OpenAI-compatible API
       resp = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
-        headers: {'Content-Type':'application/json','Authorization':`Bearer ${apiKey}`},
+        headers: {'Content-Type':'text/plain','Authorization':`Bearer ${apiKey}`},
         body: JSON.stringify({
           model: 'grok-beta', max_tokens: 1000,
           messages: [{role:'system',content:systemPrompt},...aiHistory],
@@ -7832,7 +7833,7 @@ async function sendAIMessage(userMsg) {
       // Anthropic API
       resp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: {'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+        headers: {'Content-Type':'text/plain','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
         body: JSON.stringify({model:'claude-sonnet-4-20250514', max_tokens:1000, system:systemPrompt, messages:aiHistory})
       });
       if (!resp.ok) { const err=await resp.json().catch(()=>({})); throw new Error(err.error?.message||`HTTP ${resp.status}`); }
