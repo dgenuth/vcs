@@ -1679,7 +1679,9 @@ async function writeHistoryToExcel(zip) {
 
     // Find existing VCS_History sheet or create new one
     var wbXml = await zip.file('xl/workbook.xml').async('string');
-    var histIdx = wbXml.indexOf('name="VCS_History"');
+    // Check for both naming variants (space and underscore)
+    var histIdx = wbXml.indexOf('name="VCS History"');
+    if (histIdx < 0) histIdx = wbXml.indexOf('name="VCS_History"');
 
     if (histIdx >= 0) {
       // Update existing — find its path
@@ -1713,7 +1715,7 @@ async function writeHistoryToExcel(zip) {
     zip.file(newPath, xml);
 
     var sheetsEnd = wbXml.lastIndexOf('</sheets>');
-    var newSheet = '<sheet name="VCS_History" sheetId="' + (nextNum + 20) + '" r:id="' + newRid + '"/>';
+    var newSheet = '<sheet name="VCS History" sheetId="' + (nextNum + 20) + '" r:id="' + newRid + '"/>';
     zip.file('xl/workbook.xml', wbXml.slice(0, sheetsEnd) + newSheet + wbXml.slice(sheetsEnd));
 
     var relsXml2 = await zip.file('xl/_rels/workbook.xml.rels').async('string');
@@ -1854,7 +1856,7 @@ function updateVendorField(vendor, field, value) {
   const newDisplay = value instanceof Date ? fmtDate(value) : String(value||'—');
   const LABELS = {procContact:'Contact',bizPhone:'Business Phone',mobile:'Mobile',email:'Email',expiry:'Expiry Date',autoRenew:'Auto-Renew',autoRenewType:'AR Type',adminFee:'Admin Fee',contractNo:'Contract No.',status:'Status',terminationNotice:'Notice Period',contractTerm:'Contract Term',currentTerm:'Current Term',followUp:'Follow-Up Date',notes:'Notes',lastComm:'Last Comm',about:'About',agreementType:'Agreement Type'};
   const fieldLabel = LABELS[field] || field;
-  logHistory({date:isoDate(new Date()), time:new Date().toLocaleTimeString(), vendor:vendor.name, action:`Updated ${fieldLabel}`, from:oldDisplay.slice(0,80), to:newDisplay.slice(0,80)});
+  logHistory({date:isoDate(new Date()), time:new Date().toLocaleTimeString(), vendor:vendor.name, action:'Updated '+fieldLabel, from:oldDisplay.slice(0,80), to:newDisplay.slice(0,80), source:'VCS'});
   // Re-render immediately so the current view reflects the change
   updateSidebar();
   render(); // ensures Today/Expiring filters update without needing to switch pages
