@@ -190,7 +190,7 @@ body.light-theme #login-screen{background:#f0f2f7}
 .detail-about{font-size:10px;color:var(--muted);margin-top:3px;line-height:1.5;white-space:normal}
 .detail-actions{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:10px}
 .detail-section{margin-bottom:10px}
-.detail-sec-title{font-size:9px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;padding-bottom:2px;border-bottom:1px solid var(--border)}
+.detail-sec-title{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;padding:5px 8px 5px 10px;border-radius:3px;display:flex;align-items:center;gap:6px}
 .detail-sec-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px}
 .detail-grid{display:grid;grid-template-columns:110px 1fr;gap:2px 6px}
 .detail-label{color:var(--muted);font-size:10px;padding:1px 0}
@@ -1597,14 +1597,121 @@ async function executeSave() {
     logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:'System',action:'File exported: '+outName+' ('+dirtyVendors.length+' vendors updated)'});
     toast(`✓ Saved ${dirtyVendors.length} vendor(s) — open in Excel, formulas will recalculate automatically`);
 
+    // Write VCS_History sheet to Excel zip
+    await writeHistoryToExcel(zip);
+    // Rebuild buffer after adding history sheet
+    const histBuffer = (await zip.generateAsync({type:'uint8array',compression:'DEFLATE',compressionOptions:{level:4}})).buffer;
+
     // If Drive sync is configured, also push to Google Drive
     if (S.settings.driveFileId && S.settings.googleClientId && S.settings.driveAutoSync) {
       toast('☁ Syncing to Google Drive...','#4f7cff');
-      const synced = await saveToDrive(uint8.buffer, outName);
+      const synced = await saveToDrive(typeof histBuffer !== 'undefined' ? histBuffer : uint8.buffer, outName);
       if (synced) toast('✅ Saved locally and synced to Google Drive');
       else toast('⚠ Saved locally — Drive sync failed (check Settings)','#f59e0b');
     }
   } catch(err) { toast('Save failed: '+err.message, '#ef4444'); console.error(err); }
+}
+
+// ─── VCS History Sheet Writer ─────────────────────────────────────────────────
+async function writeHistoryToExcel(zip) {
+  try {
+    if (!S.history || !S.history.length) return;
+    const rows = S.history.slice(0, 500);
+    const esc = function(s) {
+      return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    };
+
+    // Build sheet XML with column widths for readability
+    let xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+    xml += '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">';
+    xml += '<cols>';
+    xml += '<col min="1" max="1" width="12" customWidth="1"/>';   // Date
+    xml += '<col min="2" max="2" width="10" customWidth="1"/>';   // Time
+    xml += '<col min="3" max="3" width="28" customWidth="1"/>';   // User
+    xml += '<col min="4" max="4" width="28" customWidth="1"/>';   // Vendor
+    xml += '<col min="5" max="5" width="40" customWidth="1"/>';   // Action
+    xml += '<col min="6" max="6" width="60" customWidth="1"/>';   // Note
+    xml += '</cols>';
+    xml += '<sheetData>';
+
+    // Header row
+    xml += '<row r="1">';
+    var headers = ['Date','Time','User','Vendor','Action','Note'];
+    for (var hi = 0; hi < headers.length; hi++) {
+      var hCol = String.fromCharCode(65 + hi);
+      xml += '<c r="' + hCol + '1" t="inlineStr"><is><t>' + headers[hi] + '</t></is></c>';
+    }
+    xml += '</row>';
+
+    // Data rows
+    for (var ri = 0; ri < rows.length; ri++) {
+      var entry = rows[ri];
+      var r = ri + 2;
+      var vals = [
+        entry.date||'', entry.time||'', entry.user||'',
+        entry.vendor||'', entry.action||'', entry.note||''
+      ];
+      xml += '<row r="' + r + '">';
+      for (var ci = 0; ci < vals.length; ci++) {
+        var col = String.fromCharCode(65 + ci);
+        xml += '<c r="' + col + r + '" t="inlineStr"><is><t>' + esc(vals[ci]) + '</t></is></c>';
+      }
+      xml += '</row>';
+    }
+    xml += '</sheetData></worksheet>';
+
+    // Find existing VCS_History sheet or create new one
+    var wbXml = await zip.file('xl/workbook.xml').async('string');
+    var histIdx = wbXml.indexOf('name="VCS_History"');
+
+    if (histIdx >= 0) {
+      // Update existing — find its path
+      var ridStart = wbXml.indexOf('r:id="', histIdx) + 6;
+      var ridEnd = wbXml.indexOf('"', ridStart);
+      var rId = wbXml.slice(ridStart, ridEnd);
+      var relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+      var ridPat = 'Id="' + rId + '"';
+      var ridPos = relsXml.indexOf(ridPat);
+      if (ridPos >= 0) {
+        var tStart = relsXml.indexOf('Target="', ridPos) + 8;
+        var tEnd = relsXml.indexOf('"', tStart);
+        var target = relsXml.slice(tStart, tEnd);
+        var sheetPath = target.startsWith('worksheets/') ? 'xl/' + target : 'xl/worksheets/' + target.split('/').pop();
+        zip.file(sheetPath, xml);
+        return;
+      }
+    }
+
+    // Create new sheet
+    var existing = Object.keys(zip.files).filter(function(f) {
+      return f.startsWith('xl/worksheets/sheet') && f.endsWith('.xml');
+    });
+    var nums = existing.map(function(f) {
+      var m = f.match(/sheet([0-9]+)/);
+      return m ? parseInt(m[1]) : 0;
+    });
+    var nextNum = Math.max.apply(null, [0].concat(nums)) + 1;
+    var newPath = 'xl/worksheets/sheet' + nextNum + '.xml';
+    var newRid = 'rIdVCSH' + nextNum;
+    zip.file(newPath, xml);
+
+    var sheetsEnd = wbXml.lastIndexOf('</sheets>');
+    var newSheet = '<sheet name="VCS_History" sheetId="' + (nextNum + 20) + '" r:id="' + newRid + '"/>';
+    zip.file('xl/workbook.xml', wbXml.slice(0, sheetsEnd) + newSheet + wbXml.slice(sheetsEnd));
+
+    var relsXml2 = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+    var relsEnd = relsXml2.lastIndexOf('</Relationships>');
+    var newRel = '<Relationship Id="' + newRid + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + nextNum + '.xml"/>';
+    zip.file('xl/_rels/workbook.xml.rels', relsXml2.slice(0, relsEnd) + newRel + relsXml2.slice(relsEnd));
+
+    var ctXml = await zip.file('[Content_Types].xml').async('string');
+    var ctEnd = ctXml.lastIndexOf('</Types>');
+    var newCt = '<Override PartName="/xl/worksheets/sheet' + nextNum + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';
+    zip.file('[Content_Types].xml', ctXml.slice(0, ctEnd) + newCt + ctXml.slice(ctEnd));
+
+  } catch(e) {
+    console.warn('writeHistoryToExcel failed:', e.message);
+  }
 }
 
 // ─── XML Cell Upsert — preserves existing cell styles ─────────────────────────
@@ -2281,15 +2388,15 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     body.appendChild(qcSec);
   }
 
-  // Details first — vendor identity and categorization
+  // Relationship first — GPO/Channel and Status are the first things you check
+  addEditableSection(body,'Relationship',vendor,[
+    ['GPO / Channel','gpo'],['Status','status'],
+  ]);
+  // Details — vendor identity and categorization
   addEditableSection(body,'Details',vendor,[
     ['Category','category'],['Sub-Category','subCategory'],
     ['Product','product'],['Class of Trade','classOfTrade'],
     ['Markets','markets'],['Previously Named','aka'],['Contract Name','contractName'],
-  ]);
-  // Relationship — GPO belongs here, not in Contract
-  addEditableSection(body,'Relationship',vendor,[
-    ['GPO / Channel','gpo'],['Status','status'],
   ]);
   // Contacts second
   addEditableSection(body,'Contacts',vendor,[
@@ -3403,7 +3510,13 @@ function addEditableSection(body, title, vendor, fields) {
   const allFields = [...nonEmpty, ...withPicklist];
   if (!allFields.length) return;
   const sec=el('div',{class:'detail-section'});
-  if (title) sec.appendChild(el('h4',{class:'detail-sec-title'},title));
+  const _SCOL={'Relationship':'#4f7cff','Details':'#22c55e','Contacts':'#f59e0b','Contract':'#a855f7'};
+  if (title) {
+    const _c=_SCOL[title]||'#94a3b8';
+    const hdr=el('h4',{class:'detail-sec-title',style:{background:_c+'18',color:_c,borderLeft:'3px solid '+_c}});
+    hdr.appendChild(document.createTextNode(title));
+    sec.appendChild(hdr);
+  }
   const grid=el('div',{class:'detail-grid'});
   for (const [label, field, isDate] of allFields) {
     const val = vendor[field];
