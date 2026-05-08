@@ -1586,47 +1586,7 @@ async function executeSave() {
 
     zip.file(sheetFile, sheetXml);
 
-    // ── VCS History sheet — register properly so Excel shows it as a tab ──
-    if (S.history.length > 0) {
-      try {
-        const histRows=[
-          ['Date','Time','User','Vendor','Action','Changed From','Changed To','Note'],
-          ...S.history.slice().reverse().map(h=>[
-            h.date||'', h.time||'', h.userName||h.user||'',
-            h.vendor||'', h.action||'', h.from||'', h.to||'', h.note||''
-          ])
-        ];
-        const histXml=buildSimpleSheetXml(histRows);
-        const histSheetName='xl/worksheets/sheet_vcs_history.xml';
-        const histRelId='rIdVCSHistory';
-        const histSheetId='9999';
-        zip.file(histSheetName, histXml);
-
-        // Register in [Content_Types].xml
-        let ctXml=await zip.file('[Content_Types].xml').async('text');
-        if(!ctXml.includes('sheet_vcs_history')){
-          ctXml=ctXml.replace('</Types>',
-            '<Override PartName="/xl/worksheets/sheet_vcs_history.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>');
-          zip.file('[Content_Types].xml',ctXml);
-        }
-
-        // Register in xl/_rels/workbook.xml.rels
-        let relsXml=await zip.file('xl/_rels/workbook.xml.rels').async('text');
-        if(!relsXml.includes('sheet_vcs_history')){
-          relsXml=relsXml.replace('</Relationships>',
-            `<Relationship Id="${histRelId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet_vcs_history.xml"/></Relationships>`);
-          zip.file('xl/_rels/workbook.xml.rels',relsXml);
-        }
-
-        // Register in xl/workbook.xml as a sheet tab
-        let wbXml=await zip.file('xl/workbook.xml').async('text');
-        if(!wbXml.includes('VCS History')){
-          wbXml=wbXml.replace('</sheets>',
-            `<sheet name="VCS History" sheetId="${histSheetId}" r:id="${histRelId}"/></sheets>`);
-          zip.file('xl/workbook.xml',wbXml);
-        }
-      } catch(e) { console.warn('History sheet registration error:', e); }
-    }
+    // Old VCS History writer removed — using writeHistoryToExcel instead
 
     const uint8 = await zip.generateAsync({
       type: 'uint8array',
@@ -1682,14 +1642,17 @@ async function writeHistoryToExcel(zip) {
     xml += '<col min="2" max="2" width="10" customWidth="1"/>';   // Time
     xml += '<col min="3" max="3" width="28" customWidth="1"/>';   // User
     xml += '<col min="4" max="4" width="28" customWidth="1"/>';   // Vendor
-    xml += '<col min="5" max="5" width="40" customWidth="1"/>';   // Action
-    xml += '<col min="6" max="6" width="60" customWidth="1"/>';   // Note
+    xml += '<col min="5" max="5" width="35" customWidth="1"/>';   // Action
+    xml += '<col min="6" max="6" width="25" customWidth="1"/>';   // Changed From
+    xml += '<col min="7" max="7" width="25" customWidth="1"/>';   // Changed To
+    xml += '<col min="8" max="8" width="12" customWidth="1"/>';   // Source
+    xml += '<col min="9" max="9" width="50" customWidth="1"/>';   // Note
     xml += '</cols>';
     xml += '<sheetData>';
 
     // Header row
     xml += '<row r="1">';
-    var headers = ['Date','Time','User','Vendor','Action','Note'];
+    var headers = ['Date','Time','User','Vendor','Action','Changed From','Changed To','Source','Note'];
     for (var hi = 0; hi < headers.length; hi++) {
       var hCol = String.fromCharCode(65 + hi);
       xml += '<c r="' + hCol + '1" t="inlineStr"><is><t>' + headers[hi] + '</t></is></c>';
@@ -1702,7 +1665,8 @@ async function writeHistoryToExcel(zip) {
       var r = ri + 2;
       var vals = [
         entry.date||'', entry.time||'', entry.user||'',
-        entry.vendor||'', entry.action||'', entry.note||''
+        entry.vendor||'', entry.action||'', entry.from||'',
+        entry.to||'', entry.source||'VCS', entry.note||''
       ];
       xml += '<row r="' + r + '">';
       for (var ci = 0; ci < vals.length; ci++) {
@@ -3494,6 +3458,9 @@ async function pushSessionToDrive(){
 function logHistory(entry) {
   entry.user = USER.loggedIn ? USER.email : 'system';
   entry.userName = USER.loggedIn ? USER.name : 'system';
+  if (!entry.source) entry.source = 'VCS';
+  if (!entry.from) entry.from = '';
+  if (!entry.to) entry.to = '';
   S.history.push(entry);
 }
 function hasPermission(p){
