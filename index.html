@@ -1649,13 +1649,24 @@ async function writeHistoryToExcel(zip) {
 
     // Find existing VCS_History sheet or create new one
     const wbXml = await zip.file('xl/workbook.xml').async('string');
-    const existingMatch = wbXml.match(/name="VCS_History"[^/]*r:id="([^"]+)"/);
+    // Find VCS_History sheet using string search (avoids regex slash issues)
+    const histIdx = wbXml.indexOf('name="VCS_History"');
+    const existingMatch = histIdx >= 0 ? [null, (()=>{
+      const ridStart = wbXml.indexOf('r:id="', histIdx) + 6;
+      const ridEnd = wbXml.indexOf('"', ridStart);
+      return wbXml.slice(ridStart, ridEnd);
+    })()] : null;
 
     if (existingMatch) {
       // Update existing sheet — find its path from relationships
       const rId = existingMatch[1];
       const relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
-      const relMatch = relsXml.match(new RegExp('Id="' + rId + '"[^T]*Target="([^"]+)"'));
+      // Find relationship target using string search
+      const ridPattern = 'Id="' + rId + '"';
+      const ridIdx = relsXml.indexOf(ridPattern);
+      const targetIdx = relsXml.indexOf('Target="', ridIdx) + 8;
+      const targetEnd = relsXml.indexOf('"', targetIdx);
+      const relMatch = ridIdx >= 0 ? [null, relsXml.slice(targetIdx, targetEnd)] : null;
       if (relMatch) {
         const target = relMatch[1].replace(/^\.\//,'');
         const sheetPath = target.startsWith('worksheets/') ? 'xl/'+target : 'xl/worksheets/'+target.split('/').pop();
