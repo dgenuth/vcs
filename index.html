@@ -2807,7 +2807,6 @@ async function saveToDrive(buffer, filename) {
       reader.readAsDataURL(blob);
     });
     console.log('[saveToDrive] Base64 via FileReader:', b64.length, 'chars');
-    // text/plain avoids CORS preflight — Apps Script still reads e.postData.contents
     const proxyResp = await fetch(VCS_PROXY_URL, {
       method: 'POST',
       headers: {'Content-Type': 'text/plain'},
