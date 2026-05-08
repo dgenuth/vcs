@@ -1547,18 +1547,19 @@ async function executeSave() {
     let sheetXml = sheetXmlOrig;
 
     // Only update vendors that were marked dirty
-    const dirtyVendors = S.vendors.filter(v => S.dirty.has(v.name));
+    const dirtyVendors = S.vendors.filter(v => S.dirty.has(v.name) || v._dirty);
 
     // Full column map — mirrors parsePSD column indices (0-based array → Excel column letter)
     const COL_MAP = {
-      notes:'BJ', lastComm:'BK', followUp:'BM',
+      name:'C', gpo:'B', category:'D', subCategory:'E', product:'F',
+      classOfTrade:'G', markets:'H', website:'J', contractName:'K',
       procContact:'S', title:'U', bizPhone:'V', mobile:'W', email:'X',
+      shared2:'Y', title2:'AA', mobile2:'AB', email2:'AC',
       expiry:'AF', autoRenew:'AG', autoRenewType:'AH', status:'AI',
-      contractTerm:'AM', currentTerm:'AN', adminFee:'AZ', adminFeeNotes:'BA',
-      tiers:'BB', perpetuity:'BC', tail:'BD', contractNo:'BF',
-      agreementType:'BH', comments:'BI', about:'BL', aka:'BN',
-      terminationNotice:'AO', website:'J', contractName:'K',
-      category:'D', subCategory:'E', product:'F', markets:'H',
+      contractTerm:'AM', currentTerm:'AN', terminationNotice:'AO',
+      adminFee:'AZ', adminFeeNotes:'BA', tiers:'BB', perpetuity:'BC',
+      tail:'BD', contractNo:'BF', agreementType:'BH', comments:'BI',
+      notes:'BJ', lastComm:'BK', about:'BL', followUp:'BM', aka:'BN',
       priority:'BO',
     };
 
@@ -2243,9 +2244,12 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       if (!nameIn.value.trim()) { nameIn.value = vendor.name; return; }
       const oldName = vendor.name;
       vendor.name = nameIn.value.trim();
-      S.dirty.add(vendor._row);
+      S.dirty.add(oldName); // track by old name
+      S.dirty.add(vendor.name); // also track by new name
+      vendor._dirty = true; // backup flag
+      markDirty(vendor);
       updateSidebar();
-      logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendor.name,action:'Renamed from "'+oldName+'" to "'+vendor.name+'"'});
+      logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendor.name,action:'Renamed vendor',from:oldName,to:vendor.name,source:'VCS'});
     });
     nameRow.appendChild(nameIn);
   } else {
