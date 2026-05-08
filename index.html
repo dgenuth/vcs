@@ -686,8 +686,6 @@ function loginAs(userObj) {
   USER.loginTime = new Date();
   USER.hiddenFields = userObj.hiddenFields || [];
   USER.tabOverrides = userObj.tabOverrides || {};
-  USER._impersonating = userObj._impersonating || false;
-  setTimeout(applyCopyProtection, 100);
   // Persist session
   sessionStorage.setItem('vcs_session', JSON.stringify({
     email: USER.email, name: USER.name, role: USER.role,
@@ -702,17 +700,14 @@ async function completeLogin() {
   toast('Welcome, ' + USER.name + ' (' + ROLES[USER.role] + ')');
   loadSettings();
   // Pull settings + user list from Drive — source of truth across all devices
+  // Do this BEFORE auto-loading file so Drive settings (fileId etc) are available
   try {
     const driveConfigLoaded = await loadConfigFromDrive();
-    if (driveConfigLoaded) updateUserBadge();
+    if (driveConfigLoaded) updateUserBadge(); // refresh badge with Drive user data
   } catch(e) { console.warn('Drive config load on login:', e.message); }
-
   const autoLoaded = S.settings.driveAutoSync && S.settings.driveFileId && S.settings.googleClientId
     ? await tryAutoLoadFromDrive()
     : false;
-  // Apply copy protection after role is fully established
-  setTimeout(applyCopyProtection, 300);
-
   if (!autoLoaded) {
     $('upload-screen').style.display = 'flex';
     const _uploadInfoHtml = 'Signed in as <strong>' + USER.name + '</strong> <span style="color:' + ROLE_COLORS[USER.role] + '">' + ROLES[USER.role] + '</span> — <a href="#" style="color:var(--blue)" onclick="event.preventDefault();logout();">Sign out</a>';
@@ -1388,8 +1383,6 @@ async function loadFile(file) {
     else { S.reviews=[]; S.reviewTPs=[]; }
 
     S.loaded=true; S.view=(['settings','datacheck'].includes(S.view)?S.settings.defaultView||'today':S.view)||'today'; S.search=''; S.dirty.clear();
-    // Start polling if Drive is configured
-    if (S.settings.driveAutoSync) setTimeout(startLiveUpdatePolling, 5000);
     $('search').value = '';
     $('upload-screen').style.display='none';
     $('app').style.display='flex';
@@ -1604,103 +1597,15 @@ async function executeSave() {
     logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:'System',action:'File exported: '+outName+' ('+dirtyVendors.length+' vendors updated)'});
     toast(`✓ Saved ${dirtyVendors.length} vendor(s) — open in Excel, formulas will recalculate automatically`);
 
-    // Write VCS_History sheet to Excel
-    await writeHistoryToExcel(zip);
-    // Rebuild zip after history write
-    const uint8WithHistory = await zip.generateAsync({type:'uint8array',compression:'DEFLATE',compressionOptions:{level:4}});
-    const finalBuffer = uint8WithHistory.buffer;
-
     // If Drive sync is configured, also push to Google Drive
-    if (S.settings.driveAutoSync) { // proxy handles auth, no clientId required
+    if (S.settings.driveFileId && S.settings.googleClientId && S.settings.driveAutoSync) {
       toast('☁ Syncing to Google Drive...','#4f7cff');
-      const synced = await saveToDrive(typeof finalBuffer !== 'undefined' ? finalBuffer : uint8.buffer, outName);
+      const synced = await saveToDrive(uint8.buffer, outName);
       if (synced) toast('✅ Saved locally and synced to Google Drive');
       else toast('⚠ Saved locally — Drive sync failed (check Settings)','#f59e0b');
     }
   } catch(err) { toast('Save failed: '+err.message, '#ef4444'); console.error(err); }
 }
-
-// ─── History Sheet Writer ─────────────────────────────────────────────────────
-async function writeHistoryToExcel(zip) {
-  try {
-    if (!S.history || S.history.length === 0) return;
-    const rows = S.history.slice(0, 500);
-    let sheetXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
-    sheetXml += '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">';
-    sheetXml += '<sheetData>';
-    sheetXml += '<row r="1">';
-    ['Date','Time','User','Vendor','Action','Note'].forEach((h,i) => {
-      const col = String.fromCharCode(65+i);
-      sheetXml += `<c r="${col}1" t="inlineStr"><is><t>${h}</t></is></c>`;
-    });
-    sheetXml += '</row>';
-    rows.forEach((entry, idx) => {
-      const r = idx + 2;
-      const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-      const vals = [entry.date||'', entry.time||'', entry.user||'', entry.vendor||'', entry.action||'', entry.note||''];
-      sheetXml += `<row r="${r}">`;
-      vals.forEach((v,i) => {
-        const col = String.fromCharCode(65+i);
-        sheetXml += `<c r="${col}${r}" t="inlineStr"><is><t>${esc(v)}</t></is></c>`;
-      });
-      sheetXml += '</row>';
-    });
-    sheetXml += '</sheetData></worksheet>';
-
-    // Find existing VCS_History sheet or create new one
-    const wbXml = await zip.file('xl/workbook.xml').async('string');
-    // Find VCS_History sheet using string search (avoids regex slash issues)
-    const histIdx = wbXml.indexOf('name="VCS_History"');
-    const existingMatch = histIdx >= 0 ? [null, (()=>{
-      const ridStart = wbXml.indexOf('r:id="', histIdx) + 6;
-      const ridEnd = wbXml.indexOf('"', ridStart);
-      return wbXml.slice(ridStart, ridEnd);
-    })()] : null;
-
-    if (existingMatch) {
-      // Update existing sheet — find its path from relationships
-      const rId = existingMatch[1];
-      const relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
-      // Find relationship target using string search
-      const ridPattern = 'Id="' + rId + '"';
-      const ridIdx = relsXml.indexOf(ridPattern);
-      const targetIdx = relsXml.indexOf('Target="', ridIdx) + 8;
-      const targetEnd = relsXml.indexOf('"', targetIdx);
-      const relMatch = ridIdx >= 0 ? [null, relsXml.slice(targetIdx, targetEnd)] : null;
-      if (relMatch) {
-        const target = relMatch[1].replace(/^\.\//,'');
-        const sheetPath = target.startsWith('worksheets/') ? 'xl/'+target : 'xl/worksheets/'+target.split('/').pop();
-        zip.file(sheetPath, sheetXml);
-        console.log('VCS_History sheet updated:', sheetPath);
-        return;
-      }
-    }
-
-    // Create new sheet
-    const existingSheets = Object.keys(zip.files).filter(f => f.startsWith('xl/worksheets/sheet') && f.endsWith('.xml'));
-    const sheetNums = existingSheets.map(f => { const m=f.match(/sheet(\d+)/); return m?parseInt(m[1]):0; });
-    const nextNum = Math.max(0, ...sheetNums) + 1;
-    const sheetPath = `xl/worksheets/sheet${nextNum}.xml`;
-    const rId = `rId${nextNum + 20}`;
-    zip.file(sheetPath, sheetXml);
-
-    const sheetsEnd = wbXml.lastIndexOf('</sheets>');
-    zip.file('xl/workbook.xml', wbXml.slice(0,sheetsEnd) + `<sheet name="VCS_History" sheetId="${nextNum+20}" r:id="${rId}"/>` + wbXml.slice(sheetsEnd));
-
-    const relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
-    const relsEnd = relsXml.lastIndexOf('</Relationships>');
-    zip.file('xl/_rels/workbook.xml.rels', relsXml.slice(0,relsEnd) + `<Relationship Id="${rId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${nextNum}.xml"/>` + relsXml.slice(relsEnd));
-
-    const ctXml = await zip.file('[Content_Types].xml').async('string');
-    const ctEnd = ctXml.lastIndexOf('</Types>');
-    zip.file('[Content_Types].xml', ctXml.slice(0,ctEnd) + `<Override PartName="/xl/worksheets/sheet${nextNum}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>` + ctXml.slice(ctEnd));
-
-    console.log('VCS_History sheet created:', sheetPath);
-  } catch(e) {
-    console.warn('Could not write history sheet:', e.message);
-  }
-}
-
 
 // ─── XML Cell Upsert — preserves existing cell styles ─────────────────────────
 function xmlEsc(s) {
@@ -2637,9 +2542,7 @@ async function loadFromGoogleDrive() {
     });
     await loadFile(file);
     S.driveLastSync = new Date();
-    _lastKnownDriveModified = new Date(); // baseline for update detection
     toast('✅ Loaded from Google Drive');
-    startLiveUpdatePolling();
   } catch(e) {
     console.error('Drive load error:', e);
     toast('❌ Drive load failed: '+e.message.slice(0,100),'#ef4444');
@@ -2648,151 +2551,192 @@ async function loadFromGoogleDrive() {
 
 async function saveToDrive(buffer, filename) {
   const fileId = S.settings.driveFileId;
-
-  // Primary: direct Drive API PATCH — updates by file ID, no duplicate files
-  if (fileId && ['admin','procurement','manager'].includes(USER.role||'')) {
-    try {
-      const token = await getGDriveToken();
-      const boundary = 'vcs_boundary_'+Date.now();
-      const meta = JSON.stringify({name: filename});
-      const body = new Blob([
-        '--'+boundary+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+meta+'\r\n',
-        '--'+boundary+'\r\nContent-Type: application/vnd.ms-excel.sheet.macroEnabled.12\r\n\r\n',
-        new Blob([buffer]),
-        '\r\n--'+boundary+'--'
-      ]);
-      const resp = await fetch(
-        'https://www.googleapis.com/upload/drive/v3/files/'+fileId+'?uploadType=multipart',
-        {method:'PATCH', headers:{Authorization:'Bearer '+token,'Content-Type':'multipart/related; boundary='+boundary}, body}
-      );
-      if (resp.ok) { S.driveLastSync = new Date(); return true; }
-      const errText = await resp.text().catch(()=>'');
-      console.warn('Direct Drive PATCH failed:', resp.status, errText.slice(0,200));
-    } catch(e) { console.warn('Direct Drive save error:', e.message); }
-  }
-
-  // Fallback: proxy — for non-admin or if direct fails
+  if (!fileId) return false;
   try {
-    const uint8 = new Uint8Array(buffer);
-    const CHUNK = 32768;
-    let b64 = '';
-    for (let i = 0; i < uint8.length; i += CHUNK) {
-      b64 += btoa(String.fromCharCode(...uint8.subarray(i, Math.min(i+CHUNK, uint8.length))));
+    const token = await getGDriveToken();
+    // PATCH — updates existing file by ID, no duplicate files created
+    const boundary = 'vcs_boundary_'+Date.now();
+    const meta = JSON.stringify({name: filename});
+    const body = new Blob([
+      '--'+boundary+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+meta+'\r\n',
+      '--'+boundary+'\r\nContent-Type: application/vnd.ms-excel.sheet.macroEnabled.12\r\n\r\n',
+      new Blob([buffer]),
+      '\r\n--'+boundary+'--'
+    ]);
+    const resp = await fetch(
+      'https://www.googleapis.com/upload/drive/v3/files/'+fileId+'?uploadType=multipart',
+      {method:'PATCH', headers:{Authorization:'Bearer '+token,'Content-Type':'multipart/related; boundary='+boundary}, body}
+    );
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error('Drive save API error '+resp.status+': '+err.slice(0,200));
     }
-    const proxyResp = await fetch(VCS_PROXY_URL, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({action:'saveFile', content:b64, name:filename})
-    });
-    if (proxyResp.ok) {
-      const data = await proxyResp.json();
-      if (data.status === 'ok') { S.driveLastSync = new Date(); return true; }
-    }
-  } catch(e) { console.warn('Proxy save failed:', e.message); }
-
-  return false;
+    S.driveLastSync = new Date();
+    return true;
+  } catch(e) {
+    console.warn('Drive save error:', e);
+    return false;
+  }
 }
+const SESSION_KEY = 'vcs_session_state';
 
-
-async function checkForUpdates() {
+function saveSessionState() {
   if (!S.loaded) return;
-  if (_updateBannerShown) return; // don't spam
   try {
-    // Use proxy to get file metadata
-    const resp = await fetch(VCS_PROXY_URL + '?action=ping', {method:'GET'});
-    if (!resp.ok) return;
+    const toSave = {
+      ts: new Date().toISOString(),
+      fileName: S.fileName,
+      dirtyVendors: S.vendors.filter(v=>S.dirty.has(v.name)).map(v=>({
+        name: v.name,
+        fields: Object.fromEntries(
+          Object.entries(v).filter(([k])=>!k.startsWith('_')&&k!=='score'&&k!=='tier')
+            .map(([k,val])=>[k, val instanceof Date ? val.toISOString() : val])
+        )
+      })),
+      history: S.history.slice(-200), // last 200 entries
+      calEvents: S.calEvents,
+      itw: S.itw.map(v=>({...v})),
+      snoozed: Object.fromEntries(Object.entries(S.snoozed).map(([k,v])=>[k,v instanceof Date?v.toISOString():v])),
+      dismissed: [...S.dismissed],
+    };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(toSave));
+  } catch(e) { console.warn('Session save failed:', e); }
+}
 
-    // Get file modified time via Drive API if we have a token
-    let driveModified = null;
-    if (GDriveToken && Date.now() < GDriveTokenExpiry - 5000 && S.settings.driveFileId) {
-      try {
-        const metaResp = await fetch(
-          'https://www.googleapis.com/drive/v3/files/'+S.settings.driveFileId+'?fields=modifiedTime',
-          {headers:{Authorization:'Bearer '+GDriveToken}}
-        );
-        if (metaResp.ok) {
-          const meta = await metaResp.json();
-          driveModified = meta.modifiedTime ? new Date(meta.modifiedTime) : null;
+function loadSessionState() {
+  try {
+    return JSON.parse(localStorage.getItem(SESSION_KEY)||'null');
+  } catch(e) { return null; }
+}
+
+function clearSessionState() {
+  localStorage.removeItem(SESSION_KEY);
+}
+
+function offerSessionRestore() {
+  const saved = loadSessionState();
+  if (!saved || !saved.dirtyVendors?.length) return false;
+  const savedTs = new Date(saved.ts);
+  const ageMin = Math.round((Date.now()-savedTs)/60000);
+  if (ageMin > 24*60) { clearSessionState(); return false; } // Don't restore sessions older than 24h
+
+  openModal(body=>{
+    body.appendChild(el('h3',{},'💾 Unsaved Session Found'));
+    body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--text)',lineHeight:'1.6',marginBottom:'8px'}},'VCS found an unsaved session from '+ageMin+' minute'+(ageMin!==1?'s':'')+' ago. Would you like to restore your unsaved changes?'));
+    const details=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'4px',padding:'8px',marginBottom:'10px',fontSize:'10px'}});
+    details.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'3px'}},'Session details:'));
+    details.appendChild(el('div',{},'File: '+(saved.fileName||'—')));
+    details.appendChild(el('div',{},saved.dirtyVendors.length+' vendor record'+(saved.dirtyVendors.length!==1?'s':'')+' with unsaved changes'));
+    details.appendChild(el('div',{},(saved.history||[]).length+' history entries'));
+    details.appendChild(el('div',{},'Saved: '+savedTs.toLocaleString()));
+    body.appendChild(details);
+    const btns=el('div',{class:'modal-btns'});
+    btns.appendChild(el('button',{class:'btn-primary',onclick(){
+      // Restore dirty vendor fields
+      for (const saved_v of saved.dirtyVendors) {
+        const live = S.vendors.find(v=>v.name===saved_v.name);
+        if (!live) continue;
+        for (const [k,val] of Object.entries(saved_v.fields)) {
+          if (k==='name'||k.startsWith('_')) continue;
+          // Re-parse date strings
+          if (typeof val==='string'&&val.match(/^\d{4}-\d{2}-\d{2}T/)) live[k]=new Date(val);
+          else live[k]=val;
         }
-      } catch(e) {}
-    }
-
-    if (!driveModified) return;
-
-    // Compare with what we loaded
-    if (!_lastKnownDriveModified) {
-      _lastKnownDriveModified = driveModified;
-      return;
-    }
-
-    if (driveModified > _lastKnownDriveModified) {
-      // Newer version available — show banner
-      showUpdateBanner(driveModified);
-    }
-  } catch(e) {
-    // Silent fail — polling should never cause errors
-  }
+        live.score=calcScore(live); live.tier=getActionTier(live);
+        S.dirty.add(live.name);
+      }
+      if (saved.history) S.history=[...saved.history];
+      if (saved.calEvents) S.calEvents={...saved.calEvents};
+      // Restore snoozed/dismissed
+      if (saved.snoozed) Object.entries(saved.snoozed).forEach(([k,v])=>{S.snoozed[k]=new Date(v);});
+      if (saved.dismissed) saved.dismissed.forEach(n=>S.dismissed.add(n));
+      closeModal(); render(); updateSidebar();
+      toast('✓ Session restored — '+saved.dirtyVendors.length+' vendor'+(saved.dirtyVendors.length!==1?'s':'')+' with changes');
+    }},'✅ Restore Session'));
+    btns.appendChild(el('button',{class:'btn-secondary',onclick(){clearSessionState();closeModal();}},'Start Fresh'));
+    body.appendChild(btns);
+  });
+  return true;
 }
 
-function showUpdateBanner(newModifiedTime) {
-  if (_updateBannerShown) return;
-  _updateBannerShown = true;
-
-  const banner = document.createElement('div');
-  banner.id = 'vcs-update-banner';
-  banner.style.cssText = [
-    'position:fixed','top:0','left:0','right:0',
-    'background:linear-gradient(90deg,#1e40af,#4f7cff)',
-    'color:#fff','font-size:11px','font-family:var(--font)',
-    'display:flex','align-items:center','justify-content:center',
-    'gap:12px','padding:7px 16px','z-index:10000',
-    'box-shadow:0 2px 8px rgba(0,0,0,.3)'
-  ].join(';');
-
-  const timeStr = newModifiedTime.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-  banner.innerHTML = `
-    <span>☁ A newer version of the vendor catalogue was saved at ${timeStr}.</span>
-    <button onclick="reloadFromDrive()" style="background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.4);color:#fff;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:10px;font-weight:600">↻ Reload Now</button>
-    <button onclick="dismissUpdateBanner()" style="background:none;border:none;color:rgba(255,255,255,.7);cursor:pointer;font-size:14px;padding:0 4px">✕</button>
-  `;
-  document.body.prepend(banner);
-  document.body.style.paddingTop = (parseInt(document.body.style.paddingTop||'0') + 32) + 'px';
+// Auto-save every 60 seconds while working
+let _autoSaveInterval = null;
+function startAutoSave() {
+  if (_autoSaveInterval) clearInterval(_autoSaveInterval);
+  _autoSaveInterval = setInterval(()=>{
+    if (S.loaded && S.dirty.size > 0) {
+      saveSessionState();
+      const ind=$('dirty-indicator');
+      if(ind){
+        const orig=ind.textContent;
+        ind.textContent='💾 Auto-saved';ind.style.color='var(--green)';
+        setTimeout(()=>{ind.textContent='● Unsaved';ind.style.color='var(--amber)';},2000);
+      }
+    }
+  }, 30000); // every 30 seconds
 }
+const SETTINGS_STORAGE_KEY = 'vcs_user_settings_v2';
+// Personal settings — stored per user email, follow the user across devices
+const PERSONAL_SETTING_KEYS = ['theme','fontSize','compactRows','defaultView','showKPIs',
+  'showHebrew','autoSortByScore','showSnoozed','showDismissedDefault','animateBadges',
+  'emailSignature','cols','dbHiddenCols','sidebarWidth','closedDays','oooDays'];
+// Global settings — stored once, admin-controlled, apply to all sessions
+const GLOBAL_SETTING_KEYS = ['sfClientId','sfRedirectUri','sfLoginUrl','composioKey',
+  'driveFileId','driveFileName','driveAutoSync','googleClientId'];
+const PERSIST_KEYS = [...PERSONAL_SETTING_KEYS, ...GLOBAL_SETTING_KEYS];
 
-function dismissUpdateBanner() {
-  const b = document.getElementById('vcs-update-banner');
-  if (b) {
-    b.remove();
-    document.body.style.paddingTop = Math.max(0, parseInt(document.body.style.paddingTop||'0') - 32) + 'px';
-  }
-}
-
-async function reloadFromDrive() {
-  dismissUpdateBanner();
-  _updateBannerShown = false;
-  _lastKnownDriveModified = null;
-  toast('☁ Reloading latest version...','#4f7cff');
-  const savedView = S.view;
+function saveSettings() {
   try {
-    await loadFromGoogleDrive();
-    S.view = savedView; // stay on current page after reload
-    render();
-    toast('✅ Reloaded — you now have the latest version');
-  } catch(e) {
-    toast('⚠ Reload failed: '+e.message,'#ef4444');
-  }
+    const toSave = {};
+    PERSIST_KEYS.forEach(k => {
+      if (k === 'dbHiddenCols') return; // handled separately below
+      if (S.settings[k] !== undefined) toSave[k] = S.settings[k];
+    });
+    // Also persist googleClientId in sessionStorage as backup (survives localStorage.clear())
+    if (S.settings.googleClientId) sessionStorage.setItem('vcs_gClientId_bk', S.settings.googleClientId);
+    // Save dbHiddenCols from S (not S.settings) — it lives on the main state
+    if (S.dbHiddenCols instanceof Set) toSave.dbHiddenCols = [...S.dbHiddenCols];
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(toSave));
+  } catch(e) { console.warn('Could not save settings:', e); }
 }
 
-function startLiveUpdatePolling() {
-  if (_liveUpdateTimer) clearInterval(_liveUpdateTimer);
-  _liveUpdateTimer = setInterval(checkForUpdates, 3 * 60 * 1000); // every 3 minutes
-  // Also set baseline modified time immediately
-  checkForUpdates();
+function loadSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY)||'{}');
+    // Restore dbHiddenCols to S directly (not S.settings)
+    if (saved.dbHiddenCols) {
+      S.dbHiddenCols = new Set(Array.isArray(saved.dbHiddenCols) ? saved.dbHiddenCols : []);
+      delete saved.dbHiddenCols;
+    }
+    Object.assign(S.settings, saved);
+    // Restore googleClientId from sessionStorage backup if missing
+    if (!S.settings.googleClientId) {
+      const bk = sessionStorage.getItem('vcs_gClientId_bk');
+      if (bk) S.settings.googleClientId = bk;
+    }
+  } catch(e) { console.warn('Could not load settings:', e); }
 }
 
-function stopLiveUpdatePolling() {
-  if (_liveUpdateTimer) { clearInterval(_liveUpdateTimer); _liveUpdateTimer = null; }
+// Auto-save settings when they change — debounced
+let _settingsSaveTimer = null;
+let _driveConfigSaveTimer = null;
+function debouncedSaveSettings() {
+  clearTimeout(_settingsSaveTimer);
+  clearTimeout(_driveConfigSaveTimer);
+  _settingsSaveTimer = setTimeout(saveSettings, 500);
+  // Also push to Drive after a short delay (non-blocking)
+  _driveConfigSaveTimer = setTimeout(() => {
+    saveConfigToDrive().catch(e => console.warn('Drive config save:', e.message));
+  }, 3000); // 3 second delay to batch rapid changes
 }
+
+// ─── Drive-backed Settings + User List ───────────────────────────────────────
+// Stores vcs_config.json in same Drive folder as the catalogue
+// Contains: settings + approved user list
+// Loaded on login, saved whenever settings or users change
+
+const VCS_CONFIG_FILENAME = 'vcs_config.json';
+let vcsConfigFileId = null; // cached Drive file ID for vcs_config.json
 
 async function findOrCreateConfigFile() {
   if (vcsConfigFileId) return vcsConfigFileId;
@@ -3127,14 +3071,14 @@ function getDefaultHiddenFields(role) {
     procurement:  [],
     manager:      [],
     viewer:       [],
-    cro:          ['about','addedValue','agreementType','aka','assignment','assignmentConditions','attachment','bizPhone','changeOfControl','classOfTrade','comments','contactType','contactType2','contractEffective','contractName','contractNo','contractTerm','coverSheet','currentTerm','dataSheet','email','email2','engagementReminder','followUp','inContractSince','justification','lastComm','mobile','mobile2','notes','pricingFrequency','procContact','reportFrequency','score','sharedContact','signatory','termEffective','terminationNotice','title','title2'],
-    director_ops: ['about','addedValue','adminFee','adminFeeNotes','agreementType','aka','assignment','assignmentConditions','attachment','autoRenewal','autoRenewalType','bizPhone','changeOfControl','classOfTrade','comments','contactType','contactType2','contractEffective','contractExpiry','contractName','contractNo','contractTerm','coverSheet','currentTerm','dataSheet','email','email2','engagementReminder','exclusivity','followUp','inContractSince','justification','lastComm','minYears','mobile','mobile2','notes','pricingCommitment','pricingFrequency','procContact','reportFrequency','score','sharedContact','signatory','status','tail','termEffective','tiers','terminationNotice','terminationWoCause','title','title2'],
-    ops_qc:       ['about','addedValue','adminFee','adminFeeNotes','agreementType','aka','assignment','assignmentConditions','attachment','autoRenewal','autoRenewalType','bizPhone','changeOfControl','classOfTrade','comments','contactType','contactType2','contractEffective','contractExpiry','contractName','contractNo','contractTerm','coverSheet','currentTerm','dataSheet','email','email2','engagementReminder','exclusivity','followUp','inContractSince','justification','lastComm','minYears','mobile','mobile2','notes','perpetuity','pricingCommitment','pricingFrequency','procContact','reportFrequency','score','sharedContact','signatory','status','tail','termEffective','tiers','terminationNotice','terminationWoCause','title','title2'],
-    finance_sr:   ['about','addedValue','agreementType','aka','assignment','assignmentConditions','attachment','autoRenewal','autoRenewalType','bizPhone','changeOfControl','classOfTrade','comments','contactType','contactType2','contractEffective','contractExpiry','contractName','contractNo','contractTerm','coverSheet','currentTerm','dataSheet','email','email2','engagementReminder','exclusivity','followUp','havePricing','inContractSince','justification','lastComm','mobile','mobile2','notes','pricingCommitment','pricingDate','pricingFrequency','procContact','score','serviceSummary','sharedContact','signatory','status','termEffective','terminationNotice','terminationWoCause','title','title2','videoRecording','whitePapers'],
-    finance_jr:   ['about','addedValue','agreementType','aka','assignment','assignmentConditions','attachment','autoRenewal','autoRenewalType','bizPhone','changeOfControl','classOfTrade','comments','contactType','contactType2','contractEffective','contractExpiry','contractName','contractNo','contractTerm','coverSheet','currentTerm','dataSheet','email','email2','engagementReminder','exclusivity','followUp','havePricing','inContractSince','justification','lastComm','mobile','mobile2','notes','pricingCommitment','pricingDate','pricingFrequency','procContact','score','serviceSummary','sharedContact','signatory','status','termEffective','terminationNotice','terminationWoCause','title','title2','videoRecording','whitePapers'],
-    ssa:          ['about','addedValue','adminFee','adminFeeNotes','agreementType','aka','assignment','assignmentConditions','attachment','autoRenewal','autoRenewalType','bizPhone','changeOfControl','classOfTrade','comments','contactType','contactType2','contractEffective','contractExpiry','contractName','contractNo','contractTerm','coverSheet','currentTerm','dataSheet','email','email2','engagementReminder','exclusivity','followUp','inContractSince','justification','lastComm','minYears','mobile','mobile2','notes','perpetuity','pricingCommitment','pricingFrequency','procContact','reportFrequency','score','sharedContact','signatory','status','tail','termEffective','tiers','terminationNotice','terminationWoCause','title','title2'],
-    sales_rep:    ['about','addedValue','adminFee','adminFeeNotes','agreementType','aka','assignment','assignmentConditions','attachment','autoRenewal','autoRenewalType','bizPhone','changeOfControl','classOfTrade','comments','contactType','contactType2','contractEffective','contractExpiry','contractName','contractNo','contractTerm','coverSheet','currentTerm','dataSheet','email','email2','engagementReminder','exclusivity','followUp','havePricing','inContractSince','justification','lastComm','minYears','mobile','mobile2','notes','perpetuity','pricingCommitment','pricingDate','pricingFrequency','procContact','reportFrequency','score','sharedContact','signatory','status','tail','termEffective','tiers','terminationNotice','terminationReceived','terminationWoCause','title','title2'],
-    restricted:   ['about','addedValue','adminFee','adminFeeNotes','agreementType','aka','assignment','assignmentConditions','attachment','autoRenewal','autoRenewalType','bizPhone','changeOfControl','classOfTrade','comments','contactType','contactType2','contractEffective','contractExpiry','contractName','contractNo','contractTerm','coverSheet','currentTerm','dataSheet','email','email2','engagementReminder','exclusivity','followUp','havePricing','inContractSince','justification','lastComm','minYears','mobile','mobile2','notes','perpetuity','pricingCommitment','pricingDate','pricingFrequency','procContact','reportFrequency','score','sharedContact','signatory','status','tail','termEffective','tiers','terminationNotice','terminationReceived','terminationWoCause','title','title2','videoRecording','whitePapers'],
+    cro:          ['about','addedValue','agreementType','aka','assignment','assignmentConditions','attachment','bizPhone','changeOfControl','classOfTrade','comments','contactType','contactType2','contractEffective','contractName','contractNo','contractTerm','coverSheet','currentTerm','dataSheet','email','email2','engagementReminder','followUp','justification','lastComm','mobile','notes','pricingFrequency','procContact','reportFrequency','score','sharedContact','signatory','termEffective','terminationNotice','title','title2'],
+    director_ops: ['about','addedValue','adminFee','adminFeeNotes','agreementType','aka','assignment','assignmentConditions','attachment','autoRenewal','autoRenewalType','bizPhone','changeOfControl','classOfTrade','comments','contactType','contactType2','contractEffective','contractExpiry','contractName','contractNo','contractTerm','coverSheet','currentTerm','dataSheet','email','email2','engagementReminder','exclusivity','followUp','justification','lastComm','mobile','notes','pricingFrequency','procContact','reportFrequency','score','sharedContact','signatory','status','tail','termEffective','terminationNotice','terminationWoCause','title','title2'],
+    ops_qc:       ['about','addedValue','adminFee','adminFeeNotes','agreementType','aka','assignment','assignmentConditions','attachment','autoRenewal','autoRenewalType','bizPhone','changeOfControl','classOfTrade','comments','contactType','contactType2','contractEffective','contractExpiry','contractName','contractNo','contractTerm','coverSheet','currentTerm','dataSheet','email','email2','engagementReminder','exclusivity','followUp','justification','lastComm','mobile','notes','perpetuity','pricingFrequency','procContact','reportFrequency','score','sharedContact','signatory','status','tail','termEffective','terminationNotice','terminationWoCause','title','title2'],
+    finance_sr:   ['about','addedValue','agreementType','aka','assignment','assignmentConditions','attachment','autoRenewal','autoRenewalType','bizPhone','changeOfControl','classOfTrade','comments','contactType','contactType2','contractEffective','contractExpiry','contractName','contractNo','contractTerm','coverSheet','currentTerm','dataSheet','email','email2','engagementReminder','exclusivity','followUp','havePricing','justification','lastComm','mobile','notes','pricingDate','pricingFrequency','procContact','score','serviceSummary','sharedContact','signatory','status','termEffective','terminationNotice','terminationWoCause','title','title2','videoRecording','whitePapers'],
+    finance_jr:   ['about','addedValue','agreementType','aka','assignment','assignmentConditions','attachment','autoRenewal','autoRenewalType','bizPhone','changeOfControl','classOfTrade','comments','contactType','contactType2','contractEffective','contractExpiry','contractName','contractNo','contractTerm','coverSheet','currentTerm','dataSheet','email','email2','engagementReminder','exclusivity','followUp','havePricing','justification','lastComm','mobile','notes','pricingDate','pricingFrequency','procContact','score','serviceSummary','sharedContact','signatory','status','termEffective','terminationNotice','terminationWoCause','title','title2','videoRecording','whitePapers'],
+    ssa:          ['about','addedValue','adminFee','adminFeeNotes','agreementType','aka','assignment','assignmentConditions','attachment','autoRenewal','autoRenewalType','bizPhone','changeOfControl','classOfTrade','comments','contactType','contactType2','contractEffective','contractExpiry','contractName','contractNo','contractTerm','coverSheet','currentTerm','dataSheet','email','email2','engagementReminder','exclusivity','followUp','justification','lastComm','mobile','notes','perpetuity','pricingFrequency','procContact','reportFrequency','score','sharedContact','signatory','status','tail','termEffective','terminationNotice','terminationWoCause','title','title2'],
+    sales_rep:    ['about','addedValue','adminFee','adminFeeNotes','agreementType','aka','assignment','assignmentConditions','attachment','autoRenewal','autoRenewalType','bizPhone','changeOfControl','classOfTrade','comments','contactType','contactType2','contractEffective','contractExpiry','contractName','contractNo','contractTerm','coverSheet','currentTerm','dataSheet','email','email2','engagementReminder','exclusivity','followUp','havePricing','justification','lastComm','mobile','notes','perpetuity','pricingDate','pricingFrequency','procContact','reportFrequency','score','sharedContact','signatory','status','tail','termEffective','terminationNotice','terminationReceived','terminationWoCause','title','title2'],
+    restricted:   ['about','addedValue','adminFee','adminFeeNotes','agreementType','aka','assignment','assignmentConditions','attachment','autoRenewal','autoRenewalType','bizPhone','changeOfControl','classOfTrade','comments','contactType','contactType2','contractEffective','contractExpiry','contractName','contractNo','contractTerm','coverSheet','currentTerm','dataSheet','email','email2','engagementReminder','exclusivity','followUp','havePricing','justification','lastComm','mobile','notes','perpetuity','pricingDate','pricingFrequency','procContact','reportFrequency','score','sharedContact','signatory','status','tail','termEffective','terminationNotice','terminationReceived','terminationWoCause','title','title2','videoRecording','whitePapers'],
   };
   return (HIDDEN[role] !== undefined) ? HIDDEN[role] : HIDDEN.restricted;
 }
@@ -3148,9 +3092,9 @@ function getApprovedUsers(){
     // (all-hidden or empty for roles that should have partial access)
     let migrated = false;
     users.forEach(u => {
-      if (u._hiddenFieldsMigrated_v22) return; // already migrated
+      if (u._hiddenFieldsMigrated_v21) return; // already migrated
       u.hiddenFields = getDefaultHiddenFields(u.role);
-      u._hiddenFieldsMigrated_v22 = true;
+      u._hiddenFieldsMigrated_v21 = true;
       migrated = true;
     });
     if (migrated) { localStorage.setItem(AUTH_KEY, JSON.stringify(users)); } // skip Drive sync during migration
@@ -3236,8 +3180,6 @@ function canViewField(fieldKey){
 }
 
 async function logout(){
-  stopLiveUpdatePolling();
-  dismissUpdateBanner();
   // If there are unsaved changes and Drive is configured, offer to push before logout
   if(S.loaded && S.dirty.size>0 && S.settings.driveFileId && S.settings.googleClientId && S.settings.driveAutoSync){
     try{
@@ -3313,63 +3255,6 @@ function hasPermission(p){
   if(p==='configDrive') return USER.role==='admin';
   return !!(ROLE_PERMS[USER.role]||{})[p];
 }
-function applyCopyProtection() {
-  const canCopy = (ROLE_PERMS[USER.role||'restricted']||{}).canCopy;
-
-  // Remove any previous protection
-  if (window._vcsCopyHandler) {
-    document.removeEventListener('keydown', window._vcsCopyHandler, true);
-    window._vcsCopyHandler = null;
-  }
-  if (window._vcsContextHandler) {
-    document.removeEventListener('contextmenu', window._vcsContextHandler, true);
-    window._vcsContextHandler = null;
-  }
-  const oldStyle = document.getElementById('vcs-copy-protection');
-  if (oldStyle) oldStyle.remove();
-  const oldWm = document.getElementById('vcs-watermark');
-  if (oldWm) oldWm.remove();
-
-  if (canCopy) return; // admin/procurement/manager — unrestricted
-
-  // Block Ctrl+C, Ctrl+A, Ctrl+X at document level
-  window._vcsCopyHandler = function(e) {
-    // Allow all keyboard input in form fields
-    const tag = e.target.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) return;
-    if ((e.ctrlKey || e.metaKey) && ['c','a','x'].includes(e.key.toLowerCase())) {
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      toast('\u26a0 Copy/export is not permitted for your role','#f59e0b');
-      return false;
-    }
-  };
-  document.addEventListener('keydown', window._vcsCopyHandler, true);
-
-  // Block right-click (allow in input fields so users can paste)
-  window._vcsContextHandler = function(e) {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    toast('\u26a0 Copy/export is not permitted for your role','#f59e0b');
-    return false;
-  };
-  document.addEventListener('contextmenu', window._vcsContextHandler, true);
-
-  // Disable text selection via CSS
-  const style = document.createElement('style');
-  style.id = 'vcs-copy-protection';
-  style.textContent = '#app table, #app .vendor-link, #app td, #app th { -webkit-user-select: none !important; user-select: none !important; } input, textarea, select, [contenteditable] { -webkit-user-select: text !important; user-select: text !important; }';
-  document.head.appendChild(style);
-
-  // Faint diagonal watermark
-  const wm = document.createElement('div');
-  wm.id = 'vcs-watermark';
-  wm.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-25deg);font-size:28px;color:rgba(255,255,255,.04);pointer-events:none;z-index:9998;font-family:monospace;user-select:none;white-space:nowrap;letter-spacing:2px;font-weight:700';
-  wm.textContent = (USER.email||'user') + ' \u00b7 ' + new Date().toLocaleDateString();
-  document.body.appendChild(wm);
-}
-
 function updateUserBadge(){
   const b=$('user-badge');if(!USER.loggedIn){b.style.display='none';return;}
   const roleC={admin:'var(--green)',manager:'var(--blue)',viewer:'var(--muted)'};
@@ -3808,19 +3693,8 @@ function arBadge(v) {
 
 function searchMatch(v, q) {
   if (!q) return true;
-  // Core identity fields — always searchable regardless of role
-  // (reps can find a vendor by name/category/product, just can't see sensitive detail)
-  const coreFields = [v.name, v.category, v.subCategory, v.product, v.gpo, v.markets, v.website];
-  if (coreFields.some(f => f && String(f).toLowerCase().includes(q))) return true;
-  // Sensitive fields — only search if role has access
-  const canSeeFinancials = ['admin','procurement','manager','cro','finance_sr','finance_jr'].includes(USER.role);
-  const canSeeContacts = ['admin','procurement','manager'].includes(USER.role);
-  const sensitiveFields = [
-    ...(canSeeContacts ? [v.procContact,v.bizPhone,v.mobile,v.email,v.email2] : []),
-    ...(canSeeFinancials ? [v.adminFee,v.contractNo] : []),
-    v.status, v.classOfTrade, v.about,
-  ];
-  return sensitiveFields.some(f => f && String(f).toLowerCase().includes(q));
+  const fields = [v.name,v.category,v.procContact,v.bizPhone,v.mobile,v.email,v.email2,v.shared2,v.notes,v.about,v.contractNo,v.website,v.adminFee,v.product,v.subCategory,v.classOfTrade,v.status,v.gpo];
+  return fields.some(f => f && String(f).toLowerCase().includes(q));
 }
 
 // Highlight search term in a string — returns a span with yellow mark on match
@@ -3939,10 +3813,6 @@ function renderVendorDB(c) {
   sourceBar.appendChild(desc);
   c.appendChild(sourceBar);
 
-  // Force restricted roles to 'all' source — they need to search across all GPOs
-  if (['sales_rep','restricted','ssa'].includes(USER.role) && S.dbSource === 'direct') {
-    S.dbSource = 'all';
-  }
   const VENDOR_POOL = sourcePool[S.dbSource].data;
 
   // ── Column definitions ──
@@ -4120,12 +3990,10 @@ function renderVendorDB(c) {
   const tbody=el('tbody');
   if (!vendors.length) {
     const tr=el('tr'); const td=el('td',{colspan:COLS.length+1,style:{textAlign:'center',padding:'20px',color:'var(--muted)'}});
-    const isRestrictedRole=['sales_rep','restricted'].includes(USER.role);
-    if (isRestrictedRole) {
-        td.textContent = !S.loaded ? '🔍 Load the vendor catalogue to begin searching.' :
-          S.search && S.search.length < 3 ? '🔍 Type at least 3 characters to search.' :
-          S.search ? 'No vendors match your search.' :
-          '🔍 Use the search bar above to find vendors (minimum 3 characters).';
+    if (USER.role === 'restricted' || USER.role === 'sales_rep') {
+        td.textContent = S.search && S.search.length < 3
+          ? '🔍 Type at least 3 characters to search vendors.'
+          : S.search ? 'No vendors match your search.' : '🔍 Use the search bar to find vendors (minimum 3 characters).';
       } else {
         td.textContent=S.vendors.length?'No vendors match the current filters — clear filters to see all':'No vendor data loaded';
       }
@@ -4155,15 +4023,9 @@ function renderVendorDB(c) {
 }
 
 function openColumnFilterModal(col) {
-  // IMPORTANT: Only show values from vendors the user can actually see
-  // This prevents restricted users from inferring hidden data via the filter dropdown
-  // Use the current vendor pool filtered by role permissions (same as what's displayed)
-  const sourcePool = (S.dbSource==='channel' ? S.channelVendors : S.dbSource==='all' ? S.allVendors : S.vendors);
-  // Apply role-based search restriction: restricted roles only see search results
-  const isRestricted = ['sales_rep','restricted','ssa'].includes(USER.role);
-  const visiblePool = isRestricted && S.search && S.search.length >= 3
-    ? sourcePool.filter(v => searchMatch(v, S.search.toLowerCase()))
-    : isRestricted ? [] : sourcePool;
+  const sourcePool=(S.dbSource==='channel'?S.channelVendors:S.dbSource==='all'?S.allVendors:S.vendors);
+  const isRestricted=['sales_rep','restricted','ssa'].includes(USER.role);
+  const visiblePool=isRestricted&&S.search&&S.search.length>=3?sourcePool.filter(v=>searchMatch(v,S.search.toLowerCase())):isRestricted?[]:sourcePool;
   const allVals=[...new Set(visiblePool.map(v=>{ try{return col.get(v);}catch(e){return '';} }).filter(v=>v!=null&&String(v).trim()!==''))].sort((a,b)=>String(a).localeCompare(String(b)));
   const current=new Set(S.dbFilters[col.key]||[]);
   const tempSelected=new Set(current);
@@ -5053,12 +4915,12 @@ const NAV_DEFS=[
 ];
 
 function updateSidebar() {
-  // Show/hide Save and Reload buttons based on role
-  const _saveBtn = $('save-btn');
-  const _reloadBtn = $('reload-btn');
-  const _canSave = (ROLE_PERMS[USER.role||'restricted']||{}).save;
-  if (_saveBtn) _saveBtn.style.display = _canSave ? '' : 'none';
-  if (_reloadBtn) _reloadBtn.style.display = ''; // always show Reload
+  const _sb=$('save-btn'),_rb=$('reload-btn');
+  const _tOvrSave=USER.tabOverrides||{};
+  const _roleCanSave=(ROLE_PERMS[USER.role||'restricted']||{}).save;
+  const _canSave='_savebtn' in _tOvrSave?_tOvrSave['_savebtn']:_roleCanSave;
+  if(_sb)_sb.style.display=_canSave?'':'none';
+  if(_rb)_rb.style.display='';
   const nav=$('nav'); nav.innerHTML='';
   const sb=$('sidebar');
   const collapsed=sb.classList.contains('collapsed');
@@ -5095,8 +4957,9 @@ function updateSidebar() {
     nav.appendChild(btn);
   }
   const qs=$('quick-stats'); qs.innerHTML='';
-  // Only show stats panel for admin and procurement — not relevant for other roles
-  const _canSeeStats = ['admin','procurement','manager'].includes(USER.role||'');
+  const _tOvr=USER.tabOverrides||{};
+  const _roleCanStats=['admin','procurement','manager'].includes(USER.role||'');
+  const _canSeeStats='_statsbar' in _tOvr?_tOvr['_statsbar']:_roleCanStats;
   if (S.loaded && !collapsed && _canSeeStats) {
     const active=S.vendors.filter(isVisible);
     const calls=active.filter(v=>v.tier==='CALL').length;
@@ -7001,7 +6864,7 @@ function renderSettings(c) {
         mainLine.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--amber)',fontSize:'9px'},onclick(){
           const t=getApprovedUsers().find(x=>x.email===u.email);if(!t)return;
           const k='vcs_impersonate_'+Date.now();
-          localStorage.setItem(k,JSON.stringify({email:t.email,name:t.name,role:t.role,hiddenFields:t.hiddenFields||[],expires:Date.now()+300000,_impersonating:true,settings:{driveFileId:S.settings.driveFileId,driveFileName:S.settings.driveFileName,driveAutoSync:true,googleClientId:S.settings.googleClientId}}));
+          localStorage.setItem(k,JSON.stringify({email:t.email,name:t.name,role:t.role,hiddenFields:t.hiddenFields||[],expires:Date.now()+300000,settings:{driveFileId:S.settings.driveFileId,driveFileName:S.settings.driveFileName,driveAutoSync:true,googleClientId:S.settings.googleClientId}}));
           window.open(window.location.href.split('#')[0]+'#impersonate='+k,'_blank');
         }},'👁 View As'));
         mainLine.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',fontSize:'9px'},onclick(){
@@ -7044,8 +6907,6 @@ function renderSettings(c) {
           const fieldGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'8px'}});
           allFields.forEach(f=>{
             const hidden=hf.includes(f.key);
-            const roleDefaultHidden=getDefaultHiddenFields(cu.role).includes(f.key);
-            const isOverriding=hidden !== roleDefaultHidden; // differs from role default
             const btn=el('button',{
               'data-fkey':f.key,
               style:{
@@ -7053,25 +6914,18 @@ function renderSettings(c) {
                 border:'1px solid '+(hidden?'rgba(239,68,68,.4)':'rgba(34,197,94,.4)'),
                 background:hidden?'rgba(239,68,68,.1)':'rgba(34,197,94,.1)',
                 color:hidden?'#f87171':'#4ade80',
-                fontWeight:'500',
-                outline:isOverriding?'1px dashed #f59e0b':''
+                fontWeight:'500'
               },
-              title:(isOverriding?'⚡ Overriding role default. ':'')+(hidden?'Click to make visible':'Click to hide'),
               onclick(){
                 const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
                 let newHf=[...(all[i].hiddenFields||[])];
                 if(hidden){newHf=newHf.filter(k=>k!==f.key);}else{newHf.push(f.key);}
-                all[i].hiddenFields=newHf;
-                // Check if any field still overrides — if not, clear custom flag
-                const defaults=new Set(getDefaultHiddenFields(all[i].role));
-                const current=new Set(newHf);
-                const stillOverriding=[...current].some(k=>!defaults.has(k)) || [...defaults].some(k=>!current.has(k));
-                all[i]._customHiddenFields=stillOverriding;
-                localStorage.setItem(AUTH_KEY,JSON.stringify(all));
+                all[i].hiddenFields=newHf;all[i]._customHiddenFields=true;
+                localStorage.setItem(AUTH_KEY,JSON.stringify(all)); // direct save, skip Drive timer
                 setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
-                buildFieldAccess(container,userEmail);
+                buildFieldAccess(container,userEmail); // rebuild just this section
               }
-            },f.label+' '+(hidden?'🚫':'✅')+(isOverriding?' ⚡':''));
+            },f.label+' '+(hidden?'🚫':'✅'));
             fieldGrid.appendChild(btn);
           });
           container.appendChild(fieldGrid);
@@ -7095,16 +6949,15 @@ function renderSettings(c) {
             {id:'_statsbar',label:'Stats Panel'},{id:'_savebtn',label:'Save Button'},
           ];
           const tabGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'4px'}});
-          // Virtual tab defaults — these aren't in ROLE_PERMS.tabs, they use their own logic
-          const virtualTabDefaults = {
-            '_statsbar': ['admin','procurement','manager'].includes(cu.role),
-            '_savebtn': (ROLE_PERMS[cu.role]||{}).save || false,
+          const virtualTabDefaults={
+            '_statsbar':['admin','procurement','manager'].includes(cu.role),
+            '_savebtn':(ROLE_PERMS[cu.role]||{}).save||false,
           };
           allTabs.forEach(t=>{
             const hasOverride=t.id in tabOverrides;
-            const isVirtual = t.id.startsWith('_');
-            const roleDefault=isVirtual ? (virtualTabDefaults[t.id]||false) : roleDefaultTabs.has(t.id);
+            const roleDefault=t.id.startsWith('_')?(virtualTabDefaults[t.id]||false):roleDefaultTabs.has(t.id);
             const hasAccess=hasOverride?tabOverrides[t.id]:roleDefault;
+            // Only show override indicator if state actually differs from role default
             const isOverridden=hasOverride && (tabOverrides[t.id] !== roleDefault);
             const btn=el('button',{
               style:{
@@ -7787,10 +7640,7 @@ function init() {
         history.replaceState(null,'',window.location.pathname+window.location.search);
         // Apply passed settings so Drive load works
         if (imp.settings) Object.assign(S.settings, imp.settings);
-        loginAs({email:imp.email,name:imp.name,role:imp.role,hiddenFields:imp.hiddenFields||[],_impersonating:true});
-        // Apply copy protection immediately and again after async loads settle
-        setTimeout(applyCopyProtection, 100);
-        setTimeout(applyCopyProtection, 1500);
+        loginAs({email:imp.email,name:imp.name,role:imp.role,hiddenFields:imp.hiddenFields||[]});
         // Show impersonation banner
         document.body.insertAdjacentHTML('afterbegin',
           `<div id="impersonate-banner" style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#f59e0b;color:#000;font-size:11px;font-weight:700;padding:5px 12px;display:flex;align-items:center;justify-content:space-between;">
