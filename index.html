@@ -2756,75 +2756,81 @@ async function loadFromGoogleDrive() {
 }
 
 async function saveToDrive(buffer, filename) {
-  const fileId = S.settings.driveFileId;
-  console.log('[saveToDrive] Starting. fileId:', fileId, 'bufferSize:', buffer?.byteLength);
+  console.log('[saveToDrive] Starting. bufferSize:', buffer?.byteLength);
 
-  // Step 1: Try direct Drive API FIRST — handles binary natively, no base64 needed
-  if (fileId) {
-    try {
-      toast('☁ Saving to Google Drive...', '#4f7cff');
-      const token = await getGDriveToken();
-      console.log('[saveToDrive] Got Google token, length:', token?.length);
-      const boundary = 'vcs_boundary_'+Date.now();
-    const meta = JSON.stringify({name: filename});
-    const body = new Blob([
-      '--'+boundary+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+meta+'\r\n',
-      '--'+boundary+'\r\nContent-Type: application/vnd.ms-excel.sheet.macroEnabled.12\r\n\r\n',
-      new Blob([buffer]),
-      '\r\n--'+boundary+'--'
-    ]);
-    const resp = await fetch(
-      'https://www.googleapis.com/upload/drive/v3/files/'+fileId+'?uploadType=multipart',
-      {method:'PATCH', headers:{Authorization:'Bearer '+token,'Content-Type':'multipart/related; boundary='+boundary}, body}
-    );
-    if (!resp.ok) {
-      const err = await resp.text();
-      console.warn('[saveToDrive] Direct API failed:', resp.status, err.slice(0,200));
-      throw new Error('Drive API error '+resp.status);
-    }
-    S.driveLastSync = new Date();
-    console.log('[saveToDrive] Direct API save succeeded');
-    return true;
-  } catch(directErr) {
-    console.warn('[saveToDrive] Direct API failed, trying proxy...', directErr.message);
-  }
-  }
-
-  // Step 2: Fallback — proxy save (slower, requires base64 encoding of large file)
+  // Step 1: Proxy save (no Google token needed — works for everyone)
   try {
-    toast('☁ Trying proxy save...', '#4f7cff');
-    const uint8 = new Uint8Array(buffer);
-    // Build base64 using FileReader — browser-native, handles large files
-    const blob = new Blob([uint8]);
-    const b64 = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
+    // Use FileReader for base64 encoding — browser-native, handles any file size
+    const blob = new Blob([new Uint8Array(buffer)]);
+    const b64 = await new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onloadend = function() {
         // result is "data:application/octet-stream;base64,XXXX..."
-        const dataUrl = reader.result;
-        resolve(dataUrl.split(',')[1]); // extract base64 part
+        var dataUrl = reader.result;
+        var comma = dataUrl.indexOf(',');
+        resolve(dataUrl.substring(comma + 1));
       };
-      reader.onerror = () => reject(new Error('FileReader failed'));
+      reader.onerror = function() { reject(new Error('FileReader failed')); };
       reader.readAsDataURL(blob);
     });
-    console.log('[saveToDrive] Base64 via FileReader:', b64.length, 'chars');
-    const proxyResp = await fetch(VCS_PROXY_URL, {
+    console.log('[saveToDrive] Base64 encoded via FileReader:', b64.length, 'chars');
+
+    var proxyResp = await fetch(VCS_PROXY_URL, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({action: 'saveFile', content: b64, name: filename})
     });
+    console.log('[saveToDrive] Proxy response status:', proxyResp.status);
     if (proxyResp.ok) {
-      const data = await proxyResp.json();
-      console.log('[saveToDrive] Proxy response:', JSON.stringify(data).slice(0,200));
-      if (data.status === 'ok') { S.driveLastSync = new Date(); return true; }
-      console.warn('[saveToDrive] Proxy error:', data.message);
+      var data = await proxyResp.json();
+      console.log('[saveToDrive] Proxy response:', JSON.stringify(data).slice(0, 300));
+      if (data.status === 'ok') {
+        S.driveLastSync = new Date();
+        console.log('[saveToDrive] SUCCESS via proxy');
+        return true;
+      }
+      console.warn('[saveToDrive] Proxy returned error:', data.message);
+      toast('⚠ Proxy save error: ' + (data.message||'unknown').slice(0,80), '#ef4444');
+    } else {
+      console.warn('[saveToDrive] Proxy HTTP error:', proxyResp.status);
     }
   } catch(proxyErr) {
-    console.error('[saveToDrive] Proxy save also failed:', proxyErr.message);
+    console.error('[saveToDrive] Proxy save failed:', proxyErr);
+    toast('⚠ Proxy error: ' + proxyErr.message.slice(0,60), '#ef4444');
   }
 
-  toast('⚠ Could not save to Drive — both direct API and proxy failed', '#ef4444');
+  // Step 2: Direct Drive API (needs valid Google token — may trigger popup)
+  var fileId = S.settings.driveFileId;
+  if (!fileId) { console.warn('[saveToDrive] No fileId'); return false; }
+  try {
+    console.log('[saveToDrive] Trying direct Drive API...');
+    var token = await getGDriveToken();
+    var boundary = 'vcs_boundary_' + Date.now();
+    var meta = JSON.stringify({name: filename});
+    var body = new Blob([
+      '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + meta + '\r\n',
+      '--' + boundary + '\r\nContent-Type: application/vnd.ms-excel.sheet.macroEnabled.12\r\n\r\n',
+      new Blob([buffer]),
+      '\r\n--' + boundary + '--'
+    ]);
+    var resp = await fetch(
+      'https://www.googleapis.com/upload/drive/v3/files/' + fileId + '?uploadType=multipart',
+      {method: 'PATCH', headers: {Authorization: 'Bearer ' + token, 'Content-Type': 'multipart/related; boundary=' + boundary}, body: body}
+    );
+    if (resp.ok) {
+      S.driveLastSync = new Date();
+      console.log('[saveToDrive] SUCCESS via direct API');
+      return true;
+    }
+    var errText = await resp.text();
+    console.warn('[saveToDrive] Direct API error:', resp.status, errText.slice(0,200));
+  } catch(e) {
+    console.error('[saveToDrive] Direct API failed:', e);
+  }
+
   return false;
 }
+
 const SESSION_KEY = 'vcs_session_state';
 
 function saveSessionState() {
