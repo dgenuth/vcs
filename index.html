@@ -2104,7 +2104,21 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   const snoozedUntil=S.snoozed[vendor.name];
 
   const nameRow=el('div',{style:{display:'flex',alignItems:'center',gap:'5px',flexWrap:'wrap',marginBottom:'4px'}});
-  nameRow.appendChild(el('span',{class:'detail-vendor-name',style:{flex:'1'}},vendor.name));
+  const canEdit = (ROLE_PERMS[USER.role||'restricted']||{}).editNotes;
+  if (canEdit && vendor.source === 'psd') {
+    const nameIn = el('input',{class:'detail-vendor-name detail-edit-field',style:{flex:'1',fontWeight:'700',fontSize:'16px',background:'transparent',border:'none',borderBottom:'1px solid var(--border)',padding:'0 0 2px 0'},value:vendor.name});
+    nameIn.addEventListener('change',()=>{
+      if (!nameIn.value.trim()) { nameIn.value = vendor.name; return; }
+      const oldName = vendor.name;
+      vendor.name = nameIn.value.trim();
+      S.dirty.add(vendor._row);
+      updateSidebar();
+      logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendor.name,action:'Renamed from "'+oldName+'" to "'+vendor.name+'"'});
+    });
+    nameRow.appendChild(nameIn);
+  } else {
+    nameRow.appendChild(el('span',{class:'detail-vendor-name',style:{flex:'1'}},vendor.name));
+  }
   if (isPriority(vendor)) nameRow.appendChild(priorityBadge());
   if (tier) nameRow.appendChild(el('span',{class:'tier-badge',style:{background:TC[tier]||'#6b7280'}},tier));
   if (vendor.score) nameRow.appendChild(el('span',{class:'score-badge'},`Score: ${vendor.score.toFixed(1)}`));
@@ -2267,6 +2281,24 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     body.appendChild(qcSec);
   }
 
+  // Details first — vendor identity and categorization
+  addEditableSection(body,'Details',vendor,[
+    ['Category','category'],['Sub-Category','subCategory'],
+    ['Product','product'],['Class of Trade','classOfTrade'],
+    ['Markets','markets'],['Previously Named','aka'],['Contract Name','contractName'],
+  ]);
+  // Relationship — GPO belongs here, not in Contract
+  addEditableSection(body,'Relationship',vendor,[
+    ['GPO / Channel','gpo'],['Status','status'],
+  ]);
+  // Contacts second
+  addEditableSection(body,'Contacts',vendor,[
+    ['Contact','procContact'],['Title','title'],
+    ['Business Phone','bizPhone'],['Mobile','mobile'],['Email','email'],
+    ['2nd Contact','shared2'],['2nd Title','title2'],
+    ['2nd Mobile','mobile2'],['2nd Email','email2'],['Website','website'],
+  ]);
+  // Contract last
   addEditableSection(body,'Contract',vendor,[
     ['Contract No.','contractNo'],['Agreement Type','agreementType'],
     ['In Contract Since','inContractSince',true],['Effective Date','effectiveDate',true],
@@ -2276,18 +2308,6 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     ['Assignment','assignment'],['Exclusivity','exclusivity'],
     ['Admin Fee','adminFee'],['Admin Fee Notes','adminFeeNotes'],
     ['Tiers','tiers'],['Perpetuity','perpetuity'],['Tail','tail'],
-    ['Status','status'],['GPO','gpo'],
-  ]);
-  addEditableSection(body,'Contacts',vendor,[
-    ['Contact','procContact'],['Title','title'],
-    ['Business Phone','bizPhone'],['Mobile','mobile'],['Email','email'],
-    ['2nd Contact','shared2'],['2nd Title','title2'],
-    ['2nd Mobile','mobile2'],['2nd Email','email2'],['Website','website'],
-  ]);
-  addEditableSection(body,'Details',vendor,[
-    ['Category','category'],['Sub-Category','subCategory'],
-    ['Product','product'],['Class of Trade','classOfTrade'],
-    ['Markets','markets'],['Previously Named','aka'],['Contract Name','contractName'],
   ]);
 
   // All notes sources
@@ -3408,6 +3428,9 @@ function addEditableSection(body, title, vendor, fields) {
           if(String(val||'')===opt) o.selected=true;
           inp.appendChild(o);
         });
+        // Always add "Other (type custom)..." option for free-text entry
+        const otherOpt=el('option',{value:'__custom__'},'✏ Type custom value...');
+        inp.appendChild(otherOpt);
         // Allow free-text if current value isn't in list
         if(val && !picklist.includes(String(val))) {
           const custom=el('option',{value:String(val)},String(val)+' (current)');
@@ -3421,6 +3444,23 @@ function addEditableSection(body, title, vendor, fields) {
       if (inp.tagName==='SELECT') {
         inp.focus();
         inp.addEventListener('change',()=>{
+          if(inp.value==='__custom__'){
+            // Replace select with text input for custom entry
+            const customIn=el('input',{type:'text',class:'detail-edit-field',placeholder:'Type custom value...',value:''});
+            inp.replaceWith(customIn);
+            customIn.focus();
+            let _cSaved=false;
+            const saveCustom=()=>{
+              if(_cSaved)return;_cSaved=true;
+              if(!customIn.value.trim()){customIn.replaceWith(el('span',{class:'detail-value'},'—'));return;}
+              updateVendorField(vendor,field,customIn.value.trim());
+              const newSpan=makeValSpan(customIn.value.trim(),field,label,vendor,isDate);
+              try{customIn.replaceWith(newSpan);}catch(e){}
+            };
+            customIn.addEventListener('blur',saveCustom);
+            customIn.addEventListener('keydown',e=>{if(e.key==='Enter')saveCustom();if(e.key==='Escape'){try{customIn.replaceWith(el('span',{class:'detail-value'},String(val||'—')));}catch(err){}}});
+            return;
+          }
           const newVal=inp.value;
           updateVendorField(vendor, field, newVal);
           const newSpan=makeValSpan(newVal||'—', field, label, vendor, isDate);
@@ -3443,8 +3483,10 @@ function addEditableSection(body, title, vendor, fields) {
           const newSpan=makeValSpan(newDisplayVal||'—',field,label,vendor,isDate);
           try{inp.replaceWith(newSpan);}catch(e){}
         };
-        inp.addEventListener('blur',save);
-        inp.addEventListener('keydown',e=>{if(e.key==='Enter')save();if(e.key==='Escape'){try{inp.replaceWith(valEl);}catch(er){}}});
+        let _saved=false;
+        const saveOnce=()=>{if(_saved)return;_saved=true;save();};
+        inp.addEventListener('blur',saveOnce);
+        inp.addEventListener('keydown',e=>{if(e.key==='Enter'){saveOnce();}if(e.key==='Escape'){try{inp.replaceWith(valEl);}catch(er){}}});
       }
     });
     grid.appendChild(valEl);
