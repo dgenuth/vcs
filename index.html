@@ -7464,15 +7464,41 @@ function renderSettings(c) {
           const k='vcs_impersonate_'+Date.now();
           localStorage.setItem(k,JSON.stringify({email:t.email,name:t.name,role:t.role,hiddenFields:t.hiddenFields||[],expires:Date.now()+300000,settings:{driveFileId:S.settings.driveFileId,driveFileName:S.settings.driveFileName,driveAutoSync:true,googleClientId:S.settings.googleClientId}}));
           (() => {
-            // Ensure token has fresh expiry
-            const _d = JSON.parse(localStorage.getItem(k) || 'null');
-            if (_d) { _d.expires = Date.now() + 300000; localStorage.setItem(k, JSON.stringify(_d)); }
-            // Store under predictable key — body bootstrap script reads this even on cached pages
-            localStorage.setItem('vcs_pending_impersonate', k);
-            const _cb = Date.now();
-            const _base = window.location.href.split('?')[0].split('#')[0];
-            // Open with cache-bust + hash for both fresh and cached page paths
-            window.open(_base + '?v=' + _cb + '#impersonate=' + k, '_blank');
+            // Save current admin session so we can restore it on exit
+            localStorage.setItem('vcs_admin_restore', JSON.stringify({
+              email: USER.email, name: USER.name, role: USER.role,
+              hiddenFields: USER.hiddenFields || [],
+              tabOverrides: USER.tabOverrides || {}
+            }));
+            // Switch to target user in this same tab — no new tab, no caching issues
+            localStorage.removeItem(k); // no longer needed for hash routing
+            loginAs({email:t.email, name:t.name, role:t.role, hiddenFields:t.hiddenFields||[]});
+            // Show preview banner with exit button
+            const _oldBanner = document.getElementById('impersonate-banner');
+            if (_oldBanner) _oldBanner.remove();
+            document.body.insertAdjacentHTML('afterbegin',
+              '<div id="impersonate-banner" style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#f59e0b;color:#000;padding:5px 16px;font-size:11px;font-weight:600;display:flex;align-items:center;gap:12px;">' +
+              '<span>👁 Admin Preview: Viewing as <strong>' + t.email + '</strong> (' + (ROLES[t.role]||t.role) + ') — this is a test session</span>' +
+              '<button onclick="(function(){' +
+                'var _ar=JSON.parse(localStorage.getItem(\'vcs_admin_restore\')||\'null\');' +
+                'localStorage.removeItem(\'vcs_admin_restore\');' +
+                'if(_ar){loginAs(_ar);}' +
+                'var _b=document.getElementById(\'impersonate-banner\');if(_b)_b.remove();' +
+                'document.body.style.paddingTop=\'\';' +
+                'S.view=\'settings\';render();' +
+              '})()" style="background:rgba(0,0,0,.2);border:none;padding:2px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:700;">✕ Exit Preview</button>' +
+              '</div>');
+            document.body.style.paddingTop = '28px';
+            // Reload Drive data as the target user
+            S.loaded = false;
+            S.vendors = []; S.allVendors = []; S.channelVendors = [];
+            S.view = 'vendordb';
+            $('upload-screen').style.display = 'flex';
+            $('app').style.display = 'none';
+            setTimeout(async () => {
+              try { await loadFromGoogleDrive(); }
+              catch(e) { toast('Load failed: ' + e.message, '#ef4444'); }
+            }, 400);
           })();
         }},'👁 View As'));
         mainLine.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',fontSize:'9px'},onclick(){
