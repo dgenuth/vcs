@@ -1411,7 +1411,8 @@ async function loadFile(file) {
 
 
     // ── Parse Share Criteria tab — sets per-user hiddenFields from spreadsheet ──
-    const scSheet = getSheet(wb, 'Share Criteria');
+    try {
+    const scSheet = findSheet(wb, 'Share Criteria');
     if (scSheet) {
       const scData = XLSX.utils.sheet_to_json(scSheet, {header:1, defval:null, raw:true});
       const _SC_LABEL_TO_KEY = {'GPO':'gpo','Vendor':'name','Category':'category','Sub-Category':'subCategory','Product / Description':'product','Class of Trade':'classOfTrade','Markets Serviced':'markets','Added Value':'addedValue','Website':'website','Contract Agreement Name':'contractName','Signatory':'signatory','Assingment (Allowed, Not Allowed)':'assignment','Assingment Conditions':'assignmentConditions','Exclusivity (Y/N)':'exclusivity','Termination w/o Cause (Y/N)':'terminationWoCause','Termination Notice (Days)':'terminationNotice','Pricing Commitment to PS (Best, Competitive, Case by case)':'pricingCommitment','Procurement Contact':'procContact','Contact Type':'contactType','Title':'title','Business #':'bizPhone','Mobile #':'mobile','Email Address':'email','Shared Contact':'sharedContact','Contact Type (2)':'contactType2','Title (2)':'title2','Business (#2)':'mobile2','Email Address (2)':'email2','In Contract Since (Date)':'inContractSince','In Contract Since (Date)':'inContractSince','Latest Contract Effective Date':'contractEffective','Latest Contract Expiration Date':'contractExpiry','Auto-renewal':'autoRenewal','Auto-renewal / By Term or Year':'autoRenewalType','Status':'status','Latest Term Effective Date':'termEffective','Latest Term Expiration Date':'termExpiry','Vendor Engagement Reminder (Optional)':'engagementReminder','Contract Term':'contractTerm','Current Term':'currentTerm','Termination Notice Received?':'terminationReceived','Needs LOP':'needsLOP','Cover Sheet':'coverSheet','Data Sheet':'dataSheet','Have Pricing?':'havePricing','Location of Pricing':'pricingLocation','Location of Pricing ':'pricingLocation','Pricing Date':'pricingDate','Update Pricing Frequency?':'pricingFrequency','White Papers (Date)':'whitePapers','Service Summary (Date)':'serviceSummary','Video Recording':'videoRecording','Admin Fee':'adminFee','Admin Fee Notes':'adminFeeNotes','Tiers?':'tiers','Perpetuity':'perpetuity','Tail (# years)':'tail','Min. # yrs per Customer':'minYears','Min. # yrs per Customer ':'minYears','Contract No.':'contractNo','Report Frequency':'reportFrequency','Agreement Type':'agreementType','Comments':'comments','Notes':'notes','Latest Communication Date':'lastComm','About':'about','Scheduled Follow-up Date':'followUp','Previously Named / AKA':'aka','Score':'score','Short Justification':'justification','Change of Control (Y/N & Conditions)':'changeOfControl','Attachment / Location':'attachment'};
@@ -1459,6 +1460,7 @@ async function loadFile(file) {
         console.log('[VCS] Share Criteria: updated hiddenFields for', Object.keys(scHiddenFields).length, 'users');
       }
     }
+    } catch(scErr) { console.warn('[VCS] Share Criteria parse error (non-fatal):', scErr.message); }
 
     S.loaded=true; setTimeout(applyCopyProtection, 300); S.view=(['settings','datacheck'].includes(S.view)?S.settings.defaultView||'today':S.view)||'today'; S.search=''; S.dirty.clear();
     $('search').value = '';
