@@ -4113,6 +4113,7 @@ function renderVendorDB(c) {
   c.appendChild(sourceBar);
 
   if (['sales_rep','restricted'].includes(USER.role) && S.dbSource === 'direct') S.dbSource = 'all';
+  if (['sales_rep','restricted'].includes(USER.role) && S.dbSource === 'direct') S.dbSource = 'all';
   const VENDOR_POOL = sourcePool[S.dbSource].data;
 
   // ── Column definitions ──
@@ -5215,6 +5216,7 @@ const NAV_DEFS=[
 ];
 
 function updateSidebar() {
+  var _svBtn=$('save-btn');if(_svBtn){var _canSv=(ROLE_PERMS[USER.role||'restricted']||{}).save;_svBtn.style.display=_canSv?'':'none';}
   var _svBtn=$('save-btn');
   if(_svBtn){var _canSv=(ROLE_PERMS[USER.role||'restricted']||{}).save;_svBtn.style.display=_canSv?'':'none';}
   const _sb=$('save-btn'),_rb=$('reload-btn');
@@ -7620,7 +7622,7 @@ function renderSettings(c) {
     }
   };
   renderDayLists();
-  if(['admin','procurement','manager'].includes(USER.role))c.appendChild(secCal);
+  if(['admin','procurement','manager'].includes(USER.role))if(['admin','procurement','manager'].includes(USER.role))c.appendChild(secCal);
 
   // Default View on load
   const secDefaults=el('div',{class:'settings-section'});
@@ -7644,7 +7646,7 @@ function renderSettings(c) {
     kbTable.appendChild(el('span',{style:{color:'var(--muted)'}},desc));
   });
   secDefaults.appendChild(kbTable);
-  if(['admin','procurement','manager'].includes(USER.role))c.appendChild(secDefaults);
+  if(['admin','procurement','manager'].includes(USER.role))if(['admin','procurement','manager'].includes(USER.role))c.appendChild(secDefaults);
 
   // Theme & Appearance
   const secTheme=el('div',{class:'settings-section'});
@@ -7709,7 +7711,7 @@ function renderSettings(c) {
   const sigTa=el('textarea',{class:'modal-textarea',style:{height:'80px',marginTop:'5px'}});
   sigTa.value=S.settings.emailSignature||'';
   sigTa.addEventListener('change',()=>{S.settings.emailSignature=sigTa.value;toast('Signature saved');});
-  sec5.appendChild(sigTa); if(['admin','procurement','manager'].includes(USER.role))c.appendChild(sec5);
+  sec5.appendChild(sigTa); if(['admin','procurement','manager'].includes(USER.role))if(['admin','procurement','manager'].includes(USER.role))c.appendChild(sec5);
 
   // Data info
   if (S.loaded) {
@@ -7734,7 +7736,7 @@ function renderSettings(c) {
     ['Clear AI Chat History','btn-ghost',()=>{aiHistory=[];$('ai-messages').innerHTML='';toast('AI chat cleared');}],
   ];
   for (const [label,cls,fn] of btns) sec3.appendChild(el('button',{class:`${cls} btn-action`,style:{marginRight:'5px',marginBottom:'5px'},onclick:fn},label));
-  if(['admin','procurement','manager'].includes(USER.role))c.appendChild(sec3);
+  if(['admin','procurement','manager'].includes(USER.role))if(['admin','procurement','manager'].includes(USER.role))c.appendChild(sec3);
 }
 
 // ─── AI Assistant ─────────────────────────────────────────────────────────────
