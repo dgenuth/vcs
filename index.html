@@ -2339,25 +2339,26 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   if (fu) {
     const fd=dayDiff(new Date(),fu);
     const fuClass=fd>0?'red':fd>-7?'amber':'';
-    hdr.appendChild(el('div',{class:'next-followup'},`📅 Follow-up: ${fmtDate(fu)}${fd>0?' ('+fd+'d overdue)':''}`));
+    hdr.appendChild(el('div',{class:'next-followup'},`📅 Follow-up: ${fmtDate(fu)}${fd>0?' ('+formatDuration(fd)+' overdue)':''}`));
   }
   body.appendChild(hdr);
 
+  const _canAct = ['admin','procurement','manager','cro'].includes(USER.role);
   const acts=el('div',{class:'detail-actions'});
-  acts.appendChild(el('button',{class:'btn-green btn-action',onclick(){openDoneModal(vendor);}},'✓ Done'));
-  acts.appendChild(el('button',{class:'btn-blue btn-action',onclick(){openEmailModal(vendor);}},'✉ Email'));
+  if (_canAct) acts.appendChild(el('button',{class:'btn-green btn-action',onclick(){openDoneModal(vendor);}},'✓ Done'));
+  if (_canAct) acts.appendChild(el('button',{class:'btn-blue btn-action',onclick(){openEmailModal(vendor);}},'✉ Email'));
   acts.appendChild(el('button',{class:'btn-blue btn-action',style:{background:'rgba(56,189,248,.12)',borderColor:'rgba(56,189,248,.3)',color:'#38bdf8'},onclick(){
     // Pre-fill calendar event modal with this vendor
     const today=new Date(); const iso=isoDate(today);
     openCalendarEventModal(iso, vendor.name);
   }},'📅 Schedule'));
-  acts.appendChild(el('button',{class:'btn-amber btn-action',onclick(){openSnoozeModal(vendor);}},'💤 Snooze'));
-  acts.appendChild(el('button',{class:'btn-ghost btn-action',title:'AI briefing for this vendor',onclick(){openAIBriefingModal(vendor);}},'🤖 Brief'));
-  if (vendor.source==='psd'&&!findITWVendor(vendor.name)) {
+  if (_canAct) acts.appendChild(el('button',{class:'btn-amber btn-action',onclick(){openSnoozeModal(vendor);}},'💤 Snooze'));
+  if (_canAct) acts.appendChild(el('button',{class:'btn-ghost btn-action',title:'AI briefing for this vendor',onclick(){openAIBriefingModal(vendor);}},'🤖 Brief'));
+  if (_canAct && vendor.source==='psd'&&!findITWVendor(vendor.name)) {
     acts.appendChild(el('button',{class:'btn-ghost btn-action',style:{color:'var(--green)'},title:'Add to In The Works pipeline',onclick(){openAddToITWModal(vendor.name);}},'+ Pipeline'));
   }
-  if (isDismissed) acts.appendChild(el('button',{class:'btn-blue btn-action',onclick(){undismissVendor(vendor);closeDetail();}}, '↩ Restore'));
-  else acts.appendChild(el('button',{class:'btn-ghost btn-action',onclick(){openDismissConfirm(vendor);}}, '✕ Dismiss'));
+  if (_canAct) { if (isDismissed) acts.appendChild(el('button',{class:'btn-blue btn-action',onclick(){undismissVendor(vendor);closeDetail();}}, '↩ Restore'));
+  else acts.appendChild(el('button',{class:'btn-ghost btn-action',onclick(){openDismissConfirm(vendor);}}, '✕ Dismiss')); }
   body.appendChild(acts);
 
   // Find cross-tab data for this vendor using fuzzy name matching
@@ -2365,13 +2366,13 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   const itwVendor = vendor.source==='itw' ? vendor : findITWVendor(vendor.name);
   const reviewRecord = findReviewRecord(vendor.name);
 
-  // Health panel for PSD vendors
-  if (vendor.source==='psd') {
+  // Health panel for PSD vendors — only for roles with financials access
+  const _canSeeHealth = ['admin','procurement','manager','cro','finance_sr','finance_jr'].includes(USER.role);
+  if (vendor.source==='psd' && _canSeeHealth) {
     body.appendChild(healthPanel(vendor));
     // Fee negotiation assistant
     const fee=parseFee(vendor.adminFee);
-    // fee parsed above
-    if (vendor.category) {
+    if (_canAct && vendor.category) {
       const catVs=(S.allVendors||S.vendors).filter(v=>v.category===vendor.category&&String(v.adminFee||'').match(/\d+/));
       const catFees=catVs.map(v=>parseInt(String(v.adminFee).match(/(\d+)/)[1]));
       if (catFees.length>=2) {
@@ -4014,7 +4015,7 @@ function healthPanel(vendor) {
     {
       label:'Expiry', score:expiryScore, max:10,
       hint: exp?(days<0?'Expired '+formatDuration(days)+' ago':formatDuration(days)+' remaining'):'No expiry on file',
-      minLabel:'Expired', maxLabel:'2yr+', valueLabel:exp?(days<0?'Expired':days+'d'):'—',
+      minLabel:'Expired', maxLabel:'2yr+', valueLabel:exp?(days<0?'Expired':formatDuration(days)):'—',
     },
     {
       label:'Auto-Renew', score:arScore, max:10,
@@ -4203,7 +4204,7 @@ function renderVendorDB(c) {
     {key:'markets', label:'Markets',         sortable:true,  get:v=>v.markets||'',            fmt:v=>hlEl(v.markets), sk:v=>v.markets||''},
     {key:'ar',      label:'Auto-Renew',      sortable:true,  get:v=>isAutoRenew(v)?'Yes':'No',fmt:v=>arBadge(v), sk:v=>isAutoRenew(v)?0:1},
     {key:'expiry',  label:'Expiry',          sortable:true,  get:v=>{const e=getCurrentExpiry(v);return e?isoDate(e):'';}, fmt:v=>{const e=getCurrentExpiry(v);if(!e)return '—';const d=dayDiff(e,today);return el('span',{style:{color:d<0?'var(--red)':d<=30?'var(--amber)':''},title:fmtDate(e)},(d<0?'⚠ '+Math.abs(d)+'d ago':d<=30?'⚡ '+d+'d':fmtDate(e)));}, sk:v=>getCurrentExpiry(v)||new Date(9e12)},
-    {key:'days',    label:'Days',            sortable:true,  get:v=>{const e=getCurrentExpiry(v);return e?String(dayDiff(e,today)):'';}, fmt:v=>{const e=getCurrentExpiry(v);if(!e)return '';const d=dayDiff(e,today);return String(Math.abs(d))+(d<0?' ago':'d');}, sk:v=>{const e=getCurrentExpiry(v);return e?dayDiff(e,today):99999;}},
+    {key:'days',    label:'Days',            sortable:true,  get:v=>{const e=getCurrentExpiry(v);return e?String(dayDiff(e,today)):'';}, fmt:v=>{const e=getCurrentExpiry(v);if(!e)return '';const d=dayDiff(e,today);return d<0?formatDuration(d)+' ago':formatDuration(d);}, sk:v=>{const e=getCurrentExpiry(v);return e?dayDiff(e,today):99999;}},
     {key:'status',  label:'Status',          sortable:true,  get:v=>(v.status||'').slice(0,40), fmt:v=>(v.status||'').slice(0,35)||'', sk:v=>v.status||''},
     {key:'tier',    label:'Tier',            sortable:true,  get:v=>v.tier||'',               fmt:v=>v.tier?tierTag(v.tier):'', sk:v=>({CALL:0,EMAIL:1,REVIEW:2,MONITOR:3}[v.tier]||4)},
     {key:'score',   label:'Score',           sortable:true,  get:v=>String((v.score||0).toFixed(1)), fmt:v=>scorePill(v.score), sk:v=>v.score||0},
@@ -6151,7 +6152,7 @@ function openAIBriefingModal(vendor) {
 
     const sections=[
       {title:'📋 Contract Status', items:[
-        exp?(days<0?'⚠️ EXPIRED '+formatDuration(days)+' ago ('+fmtDate(exp)+')':'Expires: '+fmtDate(exp)+' ('+days+'d)'):'No expiry on file',
+        exp?(days<0?'⚠️ EXPIRED '+formatDuration(days)+' ago ('+fmtDate(exp)+')':'Expires: '+fmtDate(exp)+' ('+formatDuration(days)+')'):'No expiry on file',
         isAutoRenew(vendor)?'✅ Auto-renews: '+(vendor.autoRenewType||'Yes'):'❌ No auto-renewal — manual action required',
         vendor.terminationNotice?'Notice period: '+vendor.terminationNotice:'',
         vendor.adminFee?'Admin fee: '+vendor.adminFee+(catAvg?' (category avg: '+catAvg.toFixed(1)+'%)':''):'No admin fee on file',
