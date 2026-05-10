@@ -4220,7 +4220,12 @@ function renderVendorDB(c) {
     {key:'contact', label:'Contact',         sortable:true,  get:v=>v.procContact||'',        fmt:v=>hlEl(v.procContact), sk:v=>v.procContact||''},
     {key:'phone',   label:'Phone',           sortable:false, get:v=>v.bizPhone||v.mobile||'', fmt:v=>v.bizPhone||v.mobile||'', sk:v=>v.bizPhone||''},
     {key:'email',   label:'Email',           sortable:false, get:v=>v.email||'',              fmt:v=>hlEl(v.email), sk:v=>v.email||''},
-    {key:'notes',   label:'Notes',           sortable:false, get:v=>v.notes?'yes':'',         fmt:v=>v.notes?el('span',{class:'note-preview clickable',title:String(v.notes).slice(0,200),onclick(e){e.stopPropagation();showNotePopup(v.name,v.notes,v);}},String(v.notes).split('|')[0].slice(0,40)+'…'):'', sk:v=>v.notes?0:1},
+    {key:'website', label:'Website',        sortable:false, get:v=>v.website||'',            fmt:v=>v.website?el('a',{href:v.website,target:'_blank',style:{color:'var(--blue)',fontSize:'10px'}},v.website.replace(/^https?:\/\//,'').slice(0,25)):'', sk:v=>v.website||''},
+    {key:'wp',      label:'White Papers',   sortable:true,  get:v=>v.whitePapers||'',        fmt:v=>v.whitePapers?'✅':'—', sk:v=>v.whitePapers||''},
+    {key:'ss',      label:'Service Summary',sortable:true,  get:v=>v.serviceSummary||'',     fmt:v=>v.serviceSummary?'✅':'—', sk:v=>v.serviceSummary||''},
+    {key:'vid',     label:'Video',          sortable:true,  get:v=>v.videoRecording||'',     fmt:v=>v.videoRecording?'✅':'—', sk:v=>v.videoRecording||''},
+    {key:'lop',     label:'Needs LOP',      sortable:true,  get:v=>v.needsLOP||'',           fmt:v=>v.needsLOP?'Yes':'—', sk:v=>v.needsLOP||''},
+        {key:'notes',   label:'Notes',           sortable:false, get:v=>v.notes?'yes':'',         fmt:v=>v.notes?el('span',{class:'note-preview clickable',title:String(v.notes).slice(0,200),onclick(e){e.stopPropagation();showNotePopup(v.name,v.notes,v);}},String(v.notes).split('|')[0].slice(0,40)+'…'):'', sk:v=>v.notes?0:1},
   ];
 
   // Default hidden: show the most useful cols, hide the verbose ones
@@ -4271,7 +4276,7 @@ function renderVendorDB(c) {
 
   // Filter visible cols
   const _userHidden = new Set(USER.hiddenFields || []);
-  const _fToCol = {adminFee:'fee',autoRenew:'ar',perpetuity:'perp',terminationNotice:'notice',procContact:'contact',bizPhone:'phone',mobile:'phone',email:'email',notes:'notes',classOfTrade:'cot',markets:'markets',gpo:'gpo',score:'score'};
+  const _fToCol = {adminFee:'fee',autoRenewal:'ar',autoRenewalType:'ar',perpetuity:'perp',terminationNotice:'notice',procContact:'contact',contactType:'contact',bizPhone:'phone',mobile:'phone',email:'email',email2:'email',notes:'notes',classOfTrade:'cot',markets:'markets',gpo:'gpo',score:'score',tiers:'perp',tail:'perp'};
   const VISIBLE_COLS = COLS.filter(col => {
     if (S.dbHiddenCols.has(col.key)) return false;
     for (const [f, ck] of Object.entries(_fToCol)) {
@@ -7248,7 +7253,7 @@ function renderSettings(c) {
           const t=getApprovedUsers().find(x=>x.email===u.email);if(!t)return;
           const k='vcs_impersonate_'+Date.now();
           localStorage.setItem(k,JSON.stringify({email:t.email,name:t.name,role:t.role,hiddenFields:t.hiddenFields||[],expires:Date.now()+300000,settings:{driveFileId:S.settings.driveFileId,driveFileName:S.settings.driveFileName,driveAutoSync:true,googleClientId:S.settings.googleClientId}}));
-          window.open(window.location.href.split('#')[0]+'#impersonate='+k,'_blank');
+          window.open(window.location.href.split('#')[0]+'?v='+Date.now()+'#impersonate='+k,'_blank');
         }},'👁 View As'));
         mainLine.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',fontSize:'9px'},onclick(){
           if(!confirm('Remove '+u.email+'?'))return;
