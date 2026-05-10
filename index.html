@@ -1613,7 +1613,6 @@ async function executeSave() {
 
     // Write VCS_History sheet to Excel zip
     await writeHistoryToExcel(zip);
-    await writeUsersToExcel(zip);
     // Rebuild buffer after adding history sheet
     const histBuffer = (await zip.generateAsync({type:'uint8array',compression:'DEFLATE',compressionOptions:{level:4}})).buffer;
 
@@ -1633,6 +1632,57 @@ async function executeSave() {
 }
 
 // ─── VCS History Sheet Writer ─────────────────────────────────────────────────
+async function writeUsersToExcel(zip) {
+  try {
+    var users = getApprovedUsers();
+    if (!users || !users.length) return;
+    var wbXml = await zip.file('xl/workbook.xml').async('string');
+    var uaIdx = wbXml.indexOf('name="User Accounts"');
+    if (uaIdx < 0) { console.warn('User Accounts sheet not found'); return; }
+    var ridStart = wbXml.indexOf('r:id="', uaIdx) + 6;
+    var ridEnd = wbXml.indexOf('"', ridStart);
+    var rId = wbXml.slice(ridStart, ridEnd);
+    var relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+    var ridPos = relsXml.indexOf('Id="' + rId + '"');
+    if (ridPos < 0) return;
+    var tStart = relsXml.indexOf('Target="', ridPos) + 8;
+    var tEnd = relsXml.indexOf('"', tStart);
+    var target = relsXml.slice(tStart, tEnd);
+    var sheetPath = target.startsWith('worksheets/') ? 'xl/' + target : 'xl/worksheets/' + target.split('/').pop();
+    var sheetXml = await zip.file(sheetPath).async('string');
+    var ROLE_DISPLAY = {admin:'Admin',procurement:'Procurement',manager:'Manager',cro:'CRO',director_ops:'Director of Operations',ops_qc:'Operations Quality Control',finance_sr:'Senior Finance',finance_jr:'Junior Finance',ssa:'SSA',sales_rep:'Sales Rep',viewer:'Viewer',restricted:'Restricted Viewer'};
+    var FIELD_LABELS = {gpo:'GPO',name:'Vendor',category:'Category',subCategory:'Sub-Category',product:'Product / Description',classOfTrade:'Class of Trade',markets:'Markets Serviced',website:'Website',contractName:'Contract Agreement Name',procContact:'Procurement Contact',title:'Title',bizPhone:'Business #',mobile:'Mobile #',email:'Email Address',status:'Status',adminFee:'Admin Fee',adminFeeNotes:'Admin Fee Notes',tiers:'Tiers',perpetuity:'Perpetuity',tail:'Tail',contractNo:'Contract No.',agreementType:'Agreement Type',notes:'Notes',about:'About'};
+    var rowMatches = sheetXml.match(/<row /g);
+    var existingRowCount = rowMatches ? rowMatches.length : 1;
+    for (var ui = 0; ui < users.length; ui++) {
+      var u = users[ui];
+      var uName = u.name || u.email.split('@')[0];
+      var uRole = ROLE_DISPLAY[u.role] || u.role || 'Viewer';
+      var canView = (ROLE_PERMS[u.role]||{}).viewTable !== false ? 'Yes' : 'No';
+      var canCopy = (ROLE_PERMS[u.role]||{}).canCopy ? 'Yes' : 'No';
+      var hidden = new Set(u.hiddenFields || []);
+      var visCols = [];
+      for (var fk in FIELD_LABELS) { if (!hidden.has(fk)) visCols.push(FIELD_LABELS[fk]); }
+      var colAccess = visCols.join(' | ');
+      var config = uName + '=View:' + canView + '=Copy:' + canCopy + '= COLS:' + colAccess.slice(0,200);
+      var rowNum = -1;
+      for (var r = 2; r <= existingRowCount + 1; r++) {
+        var ref = 'B' + r;
+        if (sheetXml.indexOf('r="' + ref + '"') >= 0 && sheetXml.indexOf(xmlEsc(uName)) >= 0) { rowNum = r; break; }
+      }
+      if (rowNum < 0) { existingRowCount++; rowNum = existingRowCount; }
+      sheetXml = upsertCell(sheetXml, rowNum, 'A', config);
+      sheetXml = upsertCell(sheetXml, rowNum, 'B', uName);
+      sheetXml = upsertCell(sheetXml, rowNum, 'C', uRole);
+      sheetXml = upsertCell(sheetXml, rowNum, 'D', canView);
+      sheetXml = upsertCell(sheetXml, rowNum, 'E', canCopy);
+      sheetXml = upsertCell(sheetXml, rowNum, 'F', colAccess);
+    }
+    zip.file(sheetPath, sheetXml);
+    console.log('[writeUsersToExcel] Updated ' + users.length + ' users');
+  } catch(e) { console.warn('writeUsersToExcel failed:', e.message); }
+}
+
 async function writeHistoryToExcel(zip) {
   try {
     if (!S.history || !S.history.length) return;
