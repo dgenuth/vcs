@@ -5252,11 +5252,6 @@ const NAV_DEFS=[
 ];
 
 function updateSidebar() {
-  var _sb=$('save-btn'),_rb=$('reload-btn');
-  var _tOvrSave=USER.tabOverrides||{};
-  var _roleCanSave=(ROLE_PERMS[USER.role||'restricted']||{}).save;
-  var _canSave='_savebtn' in _tOvrSave?_tOvrSave['_savebtn']:_roleCanSave;
-  if(_sb)_sb.style.display=_canSave?'':'none';
   const _sb=$('save-btn'),_rb=$('reload-btn');
   const _tOvrSave=USER.tabOverrides||{};
   const _roleCanSave=(ROLE_PERMS[USER.role||'restricted']||{}).save;
