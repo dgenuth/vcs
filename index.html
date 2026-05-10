@@ -4275,6 +4275,18 @@ function renderVendorDB(c) {
   colToggleBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'3px'}},'Columns:'));
   // Admin-controlled locked columns (always hidden for non-admins)
   // Max allowed columns per role — user can only toggle within this set
+  // Filter visible cols
+  const _userHidden = new Set(USER.hiddenFields || []);
+  const _userHiddenForCols = _userHidden; // alias
+  const _fToCol = {'gpo':'gpo','name':'name','category':'cat','subCategory':'subcat','product':'product','classOfTrade':'cot','markets':'markets','addedValue':'addedValue','website':'website','score':'score','status':'status','tier':'tier','contractName':'contractName','signatory':'signatory','assignment':'assignment','assignmentConditions':'assignmentConditions','exclusivity':'exclusivity','terminationWoCause':'terminationWoCause','terminationNotice':'notice','pricingCommitment':'pricingCommitment','procContact':'contact','contactType':'contact','title':'contact','bizPhone':'phone','mobile':'phone','email':'email','sharedContact':'contact','contactType2':'mobile2','title2':'mobile2','mobile2':'mobile2','email2':'email2','inContractSince':'inContractSince','contractEffective':'contractEffective','contractExpiry':'expiry','autoRenewal':'ar','autoRenewalType':'autoRenewalType','termEffective':'termEffective','termExpiry':'termExpiry','engagementReminder':'engagementReminder','contractTerm':'contractTerm','currentTerm':'currentTerm','terminationReceived':'terminationReceived','needsLOP':'lop','coverSheet':'coverSheet','dataSheet':'dataSheet','havePricing':'havePricing','pricingLocation':'pricingLocation','pricingDate':'pricingDate','pricingFrequency':'pricingFrequency','whitePapers':'wp','serviceSummary':'ss','videoRecording':'vid','adminFee':'fee','adminFeeNotes':'adminFeeNotes','tiers':'tiers','perpetuity':'perp','tail':'perp','minYears':'minYears','contractNo':'contractNo','reportFrequency':'reportFrequency','agreementType':'agreementType','comments':'comments','notes':'notes','lastComm':'lastComm','about':'about','followUp':'followUp','aka':'aka','justification':'justification','changeOfControl':'changeOfControl','attachment':'attachment'};
+  const VISIBLE_COLS = COLS.filter(col => {
+    if (S.dbHiddenCols.has(col.key)) return false;
+    for (const [f, ck] of Object.entries(_fToCol)) {
+      if (ck === col.key && _userHidden.has(f)) return false;
+    }
+    return true;
+  });
+
   // Column visibility driven by user's hiddenFields — no hardcoded role restrictions
   const myAllowedCols = new Set(COLS.map(c=>c.key).filter(key => {
     for (const [f, ck] of Object.entries(_fToCol)) {
@@ -4304,17 +4316,6 @@ function renderVendorDB(c) {
     colToggleBar.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',marginLeft:'4px'},onclick(){S.dbHiddenCols=new Set();debouncedSaveSettings();render();}},'Show All'));
   }
   c.appendChild(colToggleBar);
-
-  // Filter visible cols
-  const _userHidden = new Set(USER.hiddenFields || []);
-  const _fToCol = {'gpo':'gpo','name':'name','category':'cat','subCategory':'subcat','product':'product','classOfTrade':'cot','markets':'markets','addedValue':'addedValue','website':'website','score':'score','status':'status','tier':'tier','contractName':'contractName','signatory':'signatory','assignment':'assignment','assignmentConditions':'assignmentConditions','exclusivity':'exclusivity','terminationWoCause':'terminationWoCause','terminationNotice':'notice','pricingCommitment':'pricingCommitment','procContact':'contact','contactType':'contact','title':'contact','bizPhone':'phone','mobile':'phone','email':'email','sharedContact':'contact','contactType2':'mobile2','title2':'mobile2','mobile2':'mobile2','email2':'email2','inContractSince':'inContractSince','contractEffective':'contractEffective','contractExpiry':'expiry','autoRenewal':'ar','autoRenewalType':'autoRenewalType','termEffective':'termEffective','termExpiry':'termExpiry','engagementReminder':'engagementReminder','contractTerm':'contractTerm','currentTerm':'currentTerm','terminationReceived':'terminationReceived','needsLOP':'lop','coverSheet':'coverSheet','dataSheet':'dataSheet','havePricing':'havePricing','pricingLocation':'pricingLocation','pricingDate':'pricingDate','pricingFrequency':'pricingFrequency','whitePapers':'wp','serviceSummary':'ss','videoRecording':'vid','adminFee':'fee','adminFeeNotes':'adminFeeNotes','tiers':'tiers','perpetuity':'perp','tail':'perp','minYears':'minYears','contractNo':'contractNo','reportFrequency':'reportFrequency','agreementType':'agreementType','comments':'comments','notes':'notes','lastComm':'lastComm','about':'about','followUp':'followUp','aka':'aka','justification':'justification','changeOfControl':'changeOfControl','attachment':'attachment'};
-  const VISIBLE_COLS = COLS.filter(col => {
-    if (S.dbHiddenCols.has(col.key)) return false;
-    for (const [f, ck] of Object.entries(_fToCol)) {
-      if (ck === col.key && _userHidden.has(f)) return false;
-    }
-    return true;
-  });
 
   // ── Filter + sort function ──
   function getFiltered() {
