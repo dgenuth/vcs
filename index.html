@@ -4217,6 +4217,19 @@ function renderVendorDB(c) {
     {key:'notes',   label:'Notes',           sortable:false, get:v=>v.notes?'yes':'',         fmt:v=>v.notes?el('span',{class:'note-preview clickable',title:String(v.notes).slice(0,200),onclick(e){e.stopPropagation();showNotePopup(v.name,v.notes,v);}},String(v.notes).split('|')[0].slice(0,40)+'…'):'', sk:v=>v.notes?0:1},
   ];
 
+  // Filter COLS based on user's hiddenFields — removes columns they can't see
+  const _userHidden = new Set(USER.hiddenFields || []);
+  const _fieldToCol = {adminFee:'fee',autoRenew:'ar',perpetuity:'perp',terminationNotice:'notice',procContact:'contact',bizPhone:'phone',email:'email',notes:'notes',classOfTrade:'cot',markets:'markets',gpo:'gpo',score:'score',tiers:'perp'};
+  const VISIBLE_COLS = COLS.filter(col => {
+    // Check if any hiddenField maps to this column key
+    for (const [field, colKey] of Object.entries(_fieldToCol)) {
+      if (colKey === col.key && _userHidden.has(field)) return false;
+    }
+    return true;
+  });
+  // Use VISIBLE_COLS for rendering instead of COLS
+  const _COLS = VISIBLE_COLS;
+
   // Default hidden: show the most useful cols, hide the verbose ones
   // (already initialized above — do not reinitialize here)
 
@@ -4279,11 +4292,11 @@ function renderVendorDB(c) {
     } else if (USER.role === 'restricted' || USER.role === 'sales_rep') {
       return []; // restricted users see nothing without searching
     }
-    COLS.forEach(col=>{
+    _COLS.forEach(col=>{
       const vals = S.dbFilters[col.key];
       if (vals && vals.size > 0) vs = vs.filter(v => vals.has(col.get(v)));
     });
-    const sortCol = COLS.find(c=>c.label===S.dbSort.col) || COLS.find(c=>c.key==='expiry') || COLS[0];
+    const sortCol = _COLS.find(c=>c.label===S.dbSort.col) || _COLS.find(c=>c.key==='expiry') || _COLS[0];
     vs.sort((a,b)=>{
       const av=sortCol.sk(a), bv=sortCol.sk(b);
       if (av instanceof Date && bv instanceof Date) return S.dbSort.dir*(av-bv);
@@ -8027,11 +8040,11 @@ function init() {
         $('upload-screen').style.display='flex';
         updateUserBadge();
         $('upload-user-info').innerHTML='<span style="color:#f59e0b;font-weight:700">👁 Admin preview as '+imp.email+'</span> — load the file to test their view';
-        // Show load button — token needs to be obtained fresh in this tab
-        if (S.settings.driveFileId && S.settings.googleClientId) {
+        // Always show load button — proxy works without googleClientId
+        {
           const autoLoadDiv = document.createElement('div');
           autoLoadDiv.style.cssText = 'margin-top:10px';
-          autoLoadDiv.innerHTML = '<button id="imp-load-btn" style="background:#f59e0b;color:#000;border:none;padding:8px 20px;border-radius:5px;font-weight:700;cursor:pointer;font-size:12px">☁ Load File as '+imp.email+'</button>';
+          autoLoadDiv.innerHTML = '<button id="imp-load-btn" style="background:#4f7cff;color:#fff;border:none;padding:8px 20px;border-radius:5px;font-weight:700;cursor:pointer;font-size:12px">☁ Load File as '+imp.email+'</button>';
           $('upload-user-info').appendChild(autoLoadDiv);
           document.getElementById('imp-load-btn').addEventListener('click', async () => {
             document.getElementById('imp-load-btn').textContent = 'Loading...';
@@ -8039,9 +8052,15 @@ function init() {
               await loadFromGoogleDrive();
             } catch(e) {
               toast('Load failed: '+e.message, '#ef4444');
-              document.getElementById('imp-load-btn').textContent = '☁ Load File as '+imp.email;
+              document.getElementById('imp-load-btn').textContent = '☁ Load from Drive';
             }
           });
+          // Auto-trigger load after short delay so user doesn't have to click
+          setTimeout(async () => {
+            const btn = document.getElementById('imp-load-btn');
+            if (btn) { btn.textContent = 'Loading...'; }
+            try { await loadFromGoogleDrive(); } catch(e) { if(btn) btn.textContent = '☁ Load from Drive'; }
+          }, 800);
         }
         return; // skip normal auth flow
       } else {
