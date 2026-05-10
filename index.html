@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Vendor Contract Scheduler</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -7369,7 +7372,16 @@ function renderSettings(c) {
           const t=getApprovedUsers().find(x=>x.email===u.email);if(!t)return;
           const k='vcs_impersonate_'+Date.now();
           localStorage.setItem(k,JSON.stringify({email:t.email,name:t.name,role:t.role,hiddenFields:t.hiddenFields||[],expires:Date.now()+300000,settings:{driveFileId:S.settings.driveFileId,driveFileName:S.settings.driveFileName,driveAutoSync:true,googleClientId:S.settings.googleClientId}}));
-          window.open(window.location.href.split('#')[0]+'?v='+Date.now()+'#impersonate='+k,'_blank');
+          (() => {
+            const _cb = Date.now();
+            const _base = window.location.href.split('?')[0].split('#')[0];
+            const _url = _base + '?nocache=' + _cb + '#impersonate=' + k;
+            const _w = window.open('', '_blank');
+            if (_w) {
+              _w.document.write('<html><head><meta http-equiv="refresh" content="0;url=' + _url + '"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"></head><body>Loading...</body></html>');
+              _w.document.close();
+            }
+          })();
         }},'👁 View As'));
         mainLine.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',fontSize:'9px'},onclick(){
           if(!confirm('Remove '+u.email+'?'))return;
