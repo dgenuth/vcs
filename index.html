@@ -1616,26 +1616,8 @@ async function executeSave() {
     // Rebuild buffer after adding history sheet
     const histBuffer = (await zip.generateAsync({type:'uint8array',compression:'DEFLATE',compressionOptions:{level:4}})).buffer;
 
-    // Check if server file is currently open before syncing
-    try {
-      const lockResp = await fetch(VCS_PROXY_URL + '?action=getLockStatus', {method:'GET'});
-      if (lockResp.ok) {
-        const lockData = await lockResp.json();
-        if (lockData.status === 'ok' && lockData.locked) {
-          const lockUser = lockData.user || 'someone';
-          if (!confirm(
-            'The vendor catalogue is currently open on the server' +
-            (lockUser !== 'unknown' ? ' (possibly by ' + lockUser + ')' : '') +
-            '.\n\nYour changes will save to Drive but may be overwritten when the server file saves.\n\n' +
-            'Recommendation: Ask them to save and close first.\n\nSave anyway?'
-          )) {
-            toast('Save cancelled - server file is in use', '#f59e0b');
-            return;
-          }
-        }
-      }
-    } catch(lockErr) { /* lock check failed silently - proceed */ }
-
+    // Always attempt Drive sync — proxy handles auth
+    // Show persistent saving indicator
     toast('☁ Syncing to Google Drive... (this may take a few seconds)','#4f7cff');
     try {
       const syncBuffer = typeof histBuffer !== 'undefined' ? histBuffer : uint8.buffer;
@@ -3500,46 +3482,38 @@ function hasPermission(p){
 }
 function applyCopyProtection() {
   var canCopy = (ROLE_PERMS[USER.role||'restricted']||{}).canCopy;
-  // Remove any previous protection
-  if (window._vcsCopyHandler) { document.removeEventListener('keydown', window._vcsCopyHandler, true); window._vcsCopyHandler = null; }
-  if (window._vcsContextHandler) { document.removeEventListener('contextmenu', window._vcsContextHandler, true); window._vcsContextHandler = null; }
+  if (window._vcsCopyHandler) { document.removeEventListener('keydown', window._vcsCopyHandler, true); }
+  if (window._vcsContextHandler) { document.removeEventListener('contextmenu', window._vcsContextHandler, true); }
   var oldStyle = document.getElementById('vcs-copy-protection');
   if (oldStyle) oldStyle.remove();
   var oldWm = document.getElementById('vcs-watermark');
   if (oldWm) oldWm.remove();
   if (canCopy) return;
-  // Block Ctrl+C/A/X at document level (skip input fields)
   window._vcsCopyHandler = function(e) {
     var tag = e.target.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) return;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
     if ((e.ctrlKey || e.metaKey) && ['c','a','x'].includes(e.key.toLowerCase())) {
       e.preventDefault(); e.stopImmediatePropagation();
       toast('Copy/export is not permitted for your role','#f59e0b');
-      return false;
     }
   };
   document.addEventListener('keydown', window._vcsCopyHandler, true);
-  // Block right-click (allow in input fields)
   window._vcsContextHandler = function(e) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
     e.preventDefault(); e.stopImmediatePropagation();
     toast('Copy/export is not permitted for your role','#f59e0b');
-    return false;
   };
   document.addEventListener('contextmenu', window._vcsContextHandler, true);
-  // Disable text selection on data only
   var style = document.createElement('style');
   style.id = 'vcs-copy-protection';
   style.textContent = '#app table, #app td, #app th, .vendor-link { -webkit-user-select: none !important; user-select: none !important; } input, textarea, select { -webkit-user-select: text !important; user-select: text !important; }';
   document.head.appendChild(style);
-  // Watermark
   var wm = document.createElement('div');
   wm.id = 'vcs-watermark';
   wm.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-25deg);font-size:28px;color:rgba(255,255,255,.04);pointer-events:none;z-index:9998;font-family:monospace;user-select:none;white-space:nowrap;letter-spacing:2px;font-weight:700';
   wm.textContent = (USER.email||'user') + ' - ' + new Date().toLocaleDateString();
   document.body.appendChild(wm);
 }
-
 function updateUserBadge(){
   const b=$('user-badge');if(!USER.loggedIn){b.style.display='none';return;}
   const roleC={admin:'var(--green)',manager:'var(--blue)',viewer:'var(--muted)'};
@@ -4007,30 +3981,22 @@ function arBadge(v) {
 function searchMatch(v, q) {
   if (!q) return true;
   var role = USER.role || 'restricted';
-  var hiddenFields = new Set(USER.hiddenFields || []);
-
-  // Reps/restricted: search ONLY vendor name, category, sub-category, product
-  // NOT GPO, markets, website — those are too broad and expose full vendor lists
   if (['sales_rep','restricted'].includes(role)) {
     var repFields = [v.name, v.category, v.subCategory, v.product];
     return repFields.some(function(f) { return f && String(f).toLowerCase().includes(q); });
   }
-
-  // All other roles: search fields the user has access to (not hidden)
-  var allSearchable = [
+  var hiddenFields = new Set(USER.hiddenFields || []);
+  var allFields = [
     ['name', v.name], ['category', v.category], ['subCategory', v.subCategory],
     ['product', v.product], ['gpo', v.gpo], ['markets', v.markets],
     ['website', v.website], ['classOfTrade', v.classOfTrade],
     ['procContact', v.procContact], ['bizPhone', v.bizPhone],
-    ['mobile', v.mobile], ['email', v.email], ['email2', v.email2],
-    ['contractNo', v.contractNo], ['adminFee', v.adminFee],
-    ['status', v.status], ['about', v.about], ['notes', v.notes],
+    ['mobile', v.mobile], ['email', v.email], ['adminFee', v.adminFee],
+    ['status', v.status], ['notes', v.notes], ['about', v.about],
   ];
-  // Only search fields the user can see
-  var visible = allSearchable.filter(function(pair) { return !hiddenFields.has(pair[0]); });
-  return visible.some(function(pair) { return pair[1] && String(pair[1]).toLowerCase().includes(q); });
+  var visible = allFields.filter(function(p) { return !hiddenFields.has(p[0]); });
+  return visible.some(function(p) { return p[1] && String(p[1]).toLowerCase().includes(q); });
 }
-
 function highlightText(text, query) {
   if (!query || !text) return document.createTextNode(String(text||''));
   const str = String(text);
@@ -4146,10 +4112,7 @@ function renderVendorDB(c) {
   sourceBar.appendChild(desc);
   c.appendChild(sourceBar);
 
-  // Force search-only roles to 'all' source — they search across all GPOs
-  if (['sales_rep','restricted'].includes(USER.role) && S.dbSource === 'direct') {
-    S.dbSource = 'all';
-  }
+  if (['sales_rep','restricted'].includes(USER.role) && S.dbSource === 'direct') S.dbSource = 'all';
   const VENDOR_POOL = sourcePool[S.dbSource].data;
 
   // ── Column definitions ──
@@ -4361,8 +4324,8 @@ function renderVendorDB(c) {
 
 function openColumnFilterModal(col) {
   const sourcePool=(S.dbSource==='channel'?S.channelVendors:S.dbSource==='all'?S.allVendors:S.vendors);
-  const isSearchOnly=['sales_rep','restricted'].includes(USER.role);
-  const visiblePool=isSearchOnly&&S.search&&S.search.length>=3?sourcePool.filter(v=>searchMatch(v,S.search.toLowerCase())):isSearchOnly?[]:sourcePool;
+  const isRestricted=['sales_rep','restricted','ssa'].includes(USER.role);
+  const visiblePool=isRestricted&&S.search&&S.search.length>=3?sourcePool.filter(v=>searchMatch(v,S.search.toLowerCase())):isRestricted?[]:sourcePool;
   const allVals=[...new Set(visiblePool.map(v=>{ try{return col.get(v);}catch(e){return '';} }).filter(v=>v!=null&&String(v).trim()!==''))].sort((a,b)=>String(a).localeCompare(String(b)));
   const current=new Set(S.dbFilters[col.key]||[]);
   const tempSelected=new Set(current);
@@ -5252,6 +5215,8 @@ const NAV_DEFS=[
 ];
 
 function updateSidebar() {
+  var _svBtn=$('save-btn');
+  if(_svBtn){var _canSv=(ROLE_PERMS[USER.role||'restricted']||{}).save;_svBtn.style.display=_canSv?'':'none';}
   const _sb=$('save-btn'),_rb=$('reload-btn');
   const _tOvrSave=USER.tabOverrides||{};
   const _roleCanSave=(ROLE_PERMS[USER.role||'restricted']||{}).save;
@@ -7589,7 +7554,7 @@ function renderSettings(c) {
     const btn=el('button',{class:'col-toggle-btn'+(on?' on':''),onclick(){S.settings.cols[key]=!on;renderSettings(c);}},label);
     colWrap.appendChild(btn);
   }
-  sec1.appendChild(colWrap); if (['admin','procurement','manager'].includes(USER.role)) c.appendChild(sec1);
+  sec1.appendChild(colWrap); if(['admin','procurement','manager'].includes(USER.role))c.appendChild(sec1);
 
   // Display preferences
   const sec4=el('div',{class:'settings-section'});
@@ -7655,7 +7620,7 @@ function renderSettings(c) {
     }
   };
   renderDayLists();
-  if (['admin','procurement','manager'].includes(USER.role)) c.appendChild(secCal);
+  if(['admin','procurement','manager'].includes(USER.role))c.appendChild(secCal);
 
   // Default View on load
   const secDefaults=el('div',{class:'settings-section'});
@@ -7679,7 +7644,7 @@ function renderSettings(c) {
     kbTable.appendChild(el('span',{style:{color:'var(--muted)'}},desc));
   });
   secDefaults.appendChild(kbTable);
-  if (['admin','procurement','manager'].includes(USER.role)) c.appendChild(secDefaults);
+  if(['admin','procurement','manager'].includes(USER.role))c.appendChild(secDefaults);
 
   // Theme & Appearance
   const secTheme=el('div',{class:'settings-section'});
@@ -7744,7 +7709,7 @@ function renderSettings(c) {
   const sigTa=el('textarea',{class:'modal-textarea',style:{height:'80px',marginTop:'5px'}});
   sigTa.value=S.settings.emailSignature||'';
   sigTa.addEventListener('change',()=>{S.settings.emailSignature=sigTa.value;toast('Signature saved');});
-  sec5.appendChild(sigTa); if (['admin','procurement','manager'].includes(USER.role)) c.appendChild(sec5);
+  sec5.appendChild(sigTa); if(['admin','procurement','manager'].includes(USER.role))c.appendChild(sec5);
 
   // Data info
   if (S.loaded) {
@@ -7769,7 +7734,8 @@ function renderSettings(c) {
     ['Clear AI Chat History','btn-ghost',()=>{aiHistory=[];$('ai-messages').innerHTML='';toast('AI chat cleared');}],
   ];
   for (const [label,cls,fn] of btns) sec3.appendChild(el('button',{class:`${cls} btn-action`,style:{marginRight:'5px',marginBottom:'5px'},onclick:fn},label));
-    if (['admin','procurement','manager'].includes(USER.role)) c.appendChild(sec3);
+  if(['admin','procurement','manager'].includes(USER.role))c.appendChild(sec3);
+}
 
 // ─── AI Assistant ─────────────────────────────────────────────────────────────
 let aiHistory = [];
