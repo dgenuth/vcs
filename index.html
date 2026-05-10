@@ -877,6 +877,20 @@ function fmtDate(v) {
   if (!d) return '';
   return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
 }
+function formatDuration(totalDays) {
+  var abs = Math.abs(totalDays);
+  if (abs < 60) return abs + 'd';
+  var y = Math.floor(abs / 365);
+  var rem = abs % 365;
+  var m = Math.floor(rem / 30);
+  var d = rem % 30;
+  var parts = [];
+  if (y > 0) parts.push(y + 'y');
+  if (m > 0) parts.push(m + 'mo');
+  if (d > 0) parts.push(d + 'd');
+  return parts.join(' ') || '0d';
+}
+
 function dayDiff(d1, d2) {
   if (!d1 || !d2) return null;
   return Math.round((d1.getTime() - d2.getTime()) / 86400000);
@@ -3370,7 +3384,7 @@ function getApprovedUsers(){
       u._hiddenFieldsMigrated_v21 = true;
       migrated = true;
     });
-    if (migrated) { localStorage.setItem(AUTH_KEY, JSON.stringify(users)); } // skip Drive sync during migration
+    if (migrated) { S._usersChanged = true; localStorage.setItem(AUTH_KEY, JSON.stringify(users)); } // skip Drive sync during migration
     return users;
   }catch(e){return [];}
 }
@@ -3999,7 +4013,7 @@ function healthPanel(vendor) {
     },
     {
       label:'Expiry', score:expiryScore, max:10,
-      hint: exp?(days<0?'Expired':days+'d remaining'):'No expiry on file',
+      hint: exp?(days<0?'Expired '+formatDuration(days)+' ago':formatDuration(days)+' remaining'):'No expiry on file',
       minLabel:'Expired', maxLabel:'2yr+', valueLabel:exp?(days<0?'Expired':days+'d'):'—',
     },
     {
@@ -4169,7 +4183,7 @@ function renderVendorDB(c) {
   sourceBar.appendChild(desc);
   c.appendChild(sourceBar);
 
-  if (['sales_rep','restricted'].includes(USER.role)) S.dbSource = 'all';
+  // Reps can choose Direct, Channel Partners, or All — no forced source
   const VENDOR_POOL = sourcePool[S.dbSource].data;
 
   // ── Column definitions ──
@@ -5613,7 +5627,7 @@ function renderExpiring(c) {
     v=>{
       const exp=getCurrentExpiry(v); const days=dayDiff(exp,today);
       const dColor=days<0?'var(--red)':days<=30?'var(--red)':days<=90?'var(--amber)':'var(--text)';
-      const dLabel=days<0?Math.abs(days)+'d ago':days+'d';
+      const dLabel=days<0?formatDuration(days)+' ago':formatDuration(days);
       return [
         scorePill(v.score), vLink(v), v.category||'',
         fmtDate(exp),
@@ -6137,7 +6151,7 @@ function openAIBriefingModal(vendor) {
 
     const sections=[
       {title:'📋 Contract Status', items:[
-        exp?(days<0?'⚠️ EXPIRED '+Math.abs(days)+'d ago ('+fmtDate(exp)+')':'Expires: '+fmtDate(exp)+' ('+days+'d)'):'No expiry on file',
+        exp?(days<0?'⚠️ EXPIRED '+formatDuration(days)+' ago ('+fmtDate(exp)+')':'Expires: '+fmtDate(exp)+' ('+days+'d)'):'No expiry on file',
         isAutoRenew(vendor)?'✅ Auto-renews: '+(vendor.autoRenewType||'Yes'):'❌ No auto-renewal — manual action required',
         vendor.terminationNotice?'Notice period: '+vendor.terminationNotice:'',
         vendor.adminFee?'Admin fee: '+vendor.adminFee+(catAvg?' (category avg: '+catAvg.toFixed(1)+'%)':''):'No admin fee on file',
