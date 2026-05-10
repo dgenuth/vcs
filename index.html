@@ -1415,7 +1415,7 @@ async function loadFile(file) {
     const scSheet = findSheet(wb, 'Share Criteria');
     if (scSheet) {
       const scData = XLSX.utils.sheet_to_json(scSheet, {header:1, defval:null, raw:true});
-      const _SC_LABEL_TO_KEY = {'GPO':'gpo','Vendor':'name','Category':'category','Sub-Category':'subCategory','Product / Description':'product','Class of Trade':'classOfTrade','Markets Serviced':'markets','Added Value':'addedValue','Website':'website','Contract Agreement Name':'contractName','Signatory':'signatory','Assingment (Allowed, Not Allowed)':'assignment','Assingment Conditions':'assignmentConditions','Exclusivity (Y/N)':'exclusivity','Termination w/o Cause (Y/N)':'terminationWoCause','Termination Notice (Days)':'terminationNotice','Pricing Commitment to PS (Best, Competitive, Case by case)':'pricingCommitment','Procurement Contact':'procContact','Contact Type':'contactType','Title':'title','Business #':'bizPhone','Mobile #':'mobile','Email Address':'email','Shared Contact':'sharedContact','Contact Type (2)':'contactType2','Title (2)':'title2','Business (#2)':'mobile2','Email Address (2)':'email2','In Contract Since (Date)':'inContractSince','In Contract Since (Date)':'inContractSince','Latest Contract Effective Date':'contractEffective','Latest Contract Expiration Date':'contractExpiry','Auto-renewal':'autoRenewal','Auto-renewal / By Term or Year':'autoRenewalType','Status':'status','Latest Term Effective Date':'termEffective','Latest Term Expiration Date':'termExpiry','Vendor Engagement Reminder (Optional)':'engagementReminder','Contract Term':'contractTerm','Current Term':'currentTerm','Termination Notice Received?':'terminationReceived','Needs LOP':'needsLOP','Cover Sheet':'coverSheet','Data Sheet':'dataSheet','Have Pricing?':'havePricing','Location of Pricing':'pricingLocation','Location of Pricing ':'pricingLocation','Pricing Date':'pricingDate','Update Pricing Frequency?':'pricingFrequency','White Papers (Date)':'whitePapers','Service Summary (Date)':'serviceSummary','Video Recording':'videoRecording','Admin Fee':'adminFee','Admin Fee Notes':'adminFeeNotes','Tiers?':'tiers','Perpetuity':'perpetuity','Tail (# years)':'tail','Min. # yrs per Customer':'minYears','Min. # yrs per Customer ':'minYears','Contract No.':'contractNo','Report Frequency':'reportFrequency','Agreement Type':'agreementType','Comments':'comments','Notes':'notes','Latest Communication Date':'lastComm','About':'about','Scheduled Follow-up Date':'followUp','Previously Named / AKA':'aka','Score':'score','Short Justification':'justification','Change of Control (Y/N & Conditions)':'changeOfControl','Attachment / Location':'attachment'};
+      const _SC_LABEL_TO_KEY = {'GPO':'gpo','Vendor':'name','Category':'category','Sub-Category':'subCategory','Product / Description':'product','Class of Trade':'classOfTrade','Markets Serviced':'markets','Added Value':'addedValue','Website':'website','Contract Agreement Name':'contractName','Signatory':'signatory','Assingment (Allowed, Not Allowed)':'assignment','Assingment Conditions':'assignmentConditions','Exclusivity (Y/N)':'exclusivity','Termination w/o Cause (Y/N)':'terminationWoCause','Termination Notice (Days)':'terminationNotice','Pricing Commitment to PS (Best, Competitive, Case by case)':'pricingCommitment','Procurement Contact':'procContact','Contact Type':'contactType','Title':'title','Business #':'bizPhone','Mobile #':'mobile','Email Address':'email','Shared Contact':'sharedContact','Contact Type (2)':'contactType2','Title (2)':'title2','Business (#2)':'mobile2','Email Address (2)':'email2','In Contract Since (Date)':'inContractSince','In Contract Since (Date)':'inContractSince','Latest Contract Effective Date':'contractEffective','Latest Contract Expiration Date':'contractExpiry','Auto-renewal':'autoRenewal','Auto-renewal / By Term or Year':'autoRenewalType','Status':'status','Latest Term Effective Date':'termEffective','Latest Term Expiration Date':'termExpiry','Vendor Engagement Reminder (Optional)':'engagementReminder','Contract Term':'contractTerm','Current Term':'currentTerm','Termination Notice Received?':'terminationReceived','Needs LOP':'needsLOP','Cover Sheet':'coverSheet','Data Sheet':'dataSheet','Have Pricing?':'havePricing','Location of Pricing':'pricingLocation','Location of Pricing ':'pricingLocation','Location of Pricing ':'pricingLocation','Pricing Date':'pricingDate','Update Pricing Frequency?':'pricingFrequency','White Papers (Date)':'whitePapers','Service Summary (Date)':'serviceSummary','Video Recording':'videoRecording','Admin Fee':'adminFee','Admin Fee Notes':'adminFeeNotes','Tiers?':'tiers','Perpetuity':'perpetuity','Tail (# years)':'tail','Min. # yrs per Customer':'minYears','Min. # yrs per Customer ':'minYears','Contract No.':'contractNo','Report Frequency':'reportFrequency','Agreement Type':'agreementType','Comments':'comments','Notes':'notes','Latest Communication Date':'lastComm','About':'about','Scheduled Follow-up Date':'followUp','Previously Named / AKA':'aka','Score':'score','Short Justification':'justification','Change of Control (Y/N & Conditions)':'changeOfControl','Attachment / Location':'attachment'};
       // Row 1 (index 0): col 0='COLUMNS', col 1='USER ACCOUNTS', col 2+=display names
       // Row 2 (index 1): col 0=blank, col 1=blank, col 2+=usernames (login names)
       const usernameRow = scData[1] || [];
@@ -1429,7 +1429,8 @@ async function loadFile(file) {
         if (!uname || colIdx < 2) return; // skip blanks and header cols
         const hidden = [];
         fieldRows.forEach(row => {
-          const label = String(row[0] || '').trim();
+          // Normalize label: collapse whitespace/newlines for matching
+          const label = String(row[0] || '').trim().replace(/\s+/g, ' ');
           const fieldKey = _SC_LABEL_TO_KEY[label];
           if (!fieldKey) return; // skip ⚠️ row and unknowns
           const val = row[colIdx];
@@ -1474,6 +1475,7 @@ async function loadFile(file) {
     }
     } catch(scErr) { console.warn('[VCS] Share Criteria parse error (non-fatal):', scErr.message); }
 
+    S.dbHiddenCols = new Set(); // Reset: show all permitted cols by default on each load
     S.loaded=true; setTimeout(applyCopyProtection, 300); S.view=(['settings','datacheck'].includes(S.view)?S.settings.defaultView||'today':S.view)||'today'; S.search=''; S.dirty.clear();
     $('search').value = '';
     $('upload-screen').style.display='none';
@@ -7389,27 +7391,17 @@ function renderSettings(c) {
           (() => {
             const _cb = Date.now();
             const _base = window.location.href.split('?')[0].split('#')[0];
-            const _url = _base + '?nocache=' + _cb + '#impersonate=' + k;
-            const _w = window.open('', '_blank');
-            if (_w) {
-              // Fetch fresh HTML then write it into the new tab — bypasses browser cache entirely
-              fetch(_base + '?bust=' + _cb, {cache: 'no-store'})
-                .then(r => r.text())
-                .then(html => {
-                  // Inject the impersonate hash into the fetched HTML
-                  const patched = html.replace('</head>', '<script>window.__IMP_HASH__="#impersonate=' + k + '";</' + 'script></head>');
-                  _w.document.open();
-                  _w.document.write(patched);
-                  _w.document.close();
-                  // Set the hash after write
-                  setTimeout(() => { try { _w.location.hash = '#impersonate=' + k; } catch(e){} }, 100);
-                })
-                .catch(() => {
-                  // Fallback to meta-refresh
-                  _w.document.write('<html><head><meta http-equiv="refresh" content="0;url=' + _url + '"></head><body>Loading...</body></html>');
-                  _w.document.close();
-                });
+            // Use existing localStorage key k — it's already set above
+            // Add a fresh expiry to ensure it's valid when new tab reads it
+            const _existingData = JSON.parse(localStorage.getItem(k) || 'null');
+            if (_existingData) {
+              _existingData.expires = Date.now() + 300000; // refresh 5min expiry
+              localStorage.setItem(k, JSON.stringify(_existingData));
             }
+            // Open with cache-bust query param so GitHub Pages serves fresh HTML
+            // Hash carries the localStorage key
+            const _url = _base + '?v=' + _cb + '#impersonate=' + k;
+            window.open(_url, '_blank');
           })();
         }},'👁 View As'));
         mainLine.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',fontSize:'9px'},onclick(){
