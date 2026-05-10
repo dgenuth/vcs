@@ -4225,7 +4225,23 @@ function renderVendorDB(c) {
     {key:'ss',      label:'Service Summary',sortable:true,  get:v=>v.serviceSummary||'',     fmt:v=>v.serviceSummary?'✅':'—', sk:v=>v.serviceSummary||''},
     {key:'vid',     label:'Video',          sortable:true,  get:v=>v.videoRecording||'',     fmt:v=>v.videoRecording?'✅':'—', sk:v=>v.videoRecording||''},
     {key:'lop',     label:'Needs LOP',      sortable:true,  get:v=>v.needsLOP||'',           fmt:v=>v.needsLOP?'Yes':'—', sk:v=>v.needsLOP||''},
-        {key:'notes',   label:'Notes',           sortable:false, get:v=>v.notes?'yes':'',         fmt:v=>v.notes?el('span',{class:'note-preview clickable',title:String(v.notes).slice(0,200),onclick(e){e.stopPropagation();showNotePopup(v.name,v.notes,v);}},String(v.notes).split('|')[0].slice(0,40)+'…'):'', sk:v=>v.notes?0:1},
+    {key:'addedValue',   label:'Added Value',     sortable:false, get:v=>v.addedValue||'',       fmt:v=>v.addedValue?String(v.addedValue).slice(0,40):'—', sk:v=>v.addedValue||''},
+    {key:'contractName',  label:'Contract Name',   sortable:true,  get:v=>v.contractName||'',     fmt:v=>v.contractName||'—', sk:v=>v.contractName||''},
+    {key:'inContractSince',label:'In Contract Since',sortable:true, get:v=>{const d=parseDate(v.inContractSince);return d?isoDate(d):'';}, fmt:v=>{const d=parseDate(v.inContractSince);return d?fmtDate(d):'—';}, sk:v=>parseDate(v.inContractSince)||new Date(9e12)},
+    {key:'contractEffective',label:'Effective Date',sortable:true,  get:v=>{const d=parseDate(v.contractEffective||v.effectiveDate);return d?isoDate(d):'';}, fmt:v=>{const d=parseDate(v.contractEffective||v.effectiveDate);return d?fmtDate(d):'—';}, sk:v=>parseDate(v.contractEffective||v.effectiveDate)||new Date(9e12)},
+    {key:'autoRenewalType',label:'Auto-Renewal Type',sortable:true, get:v=>v.autoRenewalType||'',  fmt:v=>v.autoRenewalType||'—', sk:v=>v.autoRenewalType||''},
+    {key:'contractTerm',  label:'Contract Term',   sortable:true,  get:v=>v.contractTerm||'',     fmt:v=>v.contractTerm||'—', sk:v=>v.contractTerm||''},
+    {key:'currentTerm',   label:'Current Term',    sortable:true,  get:v=>v.currentTerm||'',      fmt:v=>v.currentTerm||'—', sk:v=>v.currentTerm||''},
+    {key:'termExpiry',    label:'Term Expiry',      sortable:true,  get:v=>{const d=parseDate(v.termExpiry);return d?isoDate(d):'';}, fmt:v=>{const d=parseDate(v.termExpiry);return d?fmtDate(d):'—';}, sk:v=>parseDate(v.termExpiry)||new Date(9e12)},
+    {key:'tiers',         label:'Tiers',            sortable:false, get:v=>v.tiers||'',            fmt:v=>v.tiers?String(v.tiers).slice(0,30):'—', sk:v=>v.tiers||''},
+    {key:'adminFeeNotes', label:'Admin Fee Notes',  sortable:false, get:v=>v.adminFeeNotes||'',    fmt:v=>v.adminFeeNotes?String(v.adminFeeNotes).slice(0,30):'—', sk:v=>v.adminFeeNotes||''},
+    {key:'contractNo',    label:'Contract No.',     sortable:true,  get:v=>v.contractNo||'',       fmt:v=>v.contractNo||'—', sk:v=>v.contractNo||''},
+    {key:'agreementType', label:'Agreement Type',   sortable:true,  get:v=>v.agreementType||'',    fmt:v=>v.agreementType||'—', sk:v=>v.agreementType||''},
+    {key:'comments',      label:'Comments',         sortable:false, get:v=>v.comments||'',         fmt:v=>v.comments?String(v.comments).slice(0,40):'—', sk:v=>v.comments||''},
+    {key:'about',         label:'About',            sortable:false, get:v=>v.about||'',            fmt:v=>v.about?String(v.about).slice(0,40):'—', sk:v=>v.about||''},
+    {key:'followUp',      label:'Follow-up Date',   sortable:true,  get:v=>{const d=parseDate(v.followUp);return d?isoDate(d):'';}, fmt:v=>{const d=parseDate(v.followUp);return d?fmtDate(d):'—';}, sk:v=>parseDate(v.followUp)||new Date(9e12)},
+    {key:'aka',           label:'AKA',              sortable:false, get:v=>v.aka||'',              fmt:v=>v.aka||'—', sk:v=>v.aka||''},
+            {key:'notes',   label:'Notes',           sortable:false, get:v=>v.notes?'yes':'',         fmt:v=>v.notes?el('span',{class:'note-preview clickable',title:String(v.notes).slice(0,200),onclick(e){e.stopPropagation();showNotePopup(v.name,v.notes,v);}},String(v.notes).split('|')[0].slice(0,40)+'…'):'', sk:v=>v.notes?0:1},
   ];
 
   // Default hidden: show the most useful cols, hide the verbose ones
@@ -4436,7 +4452,7 @@ function openColumnFilterModal(col, filteredVendors) {
       saRow.append(saCb, el('span',{},'(Select All)'), el('span',{style:{marginLeft:'auto',color:'var(--muted)',fontSize:'9px',fontWeight:'normal'}},`${filtered.length} values`));
       listDiv.appendChild(saRow);
       filtered.forEach(val=>{
-        const cnt=S.vendors.filter(v=>{ try{return col.get(v)===val;}catch(e){return false;}}).length;
+        const cnt=visiblePool.filter(v=>{ try{return col.get(v)===val;}catch(e){return false;}}).length;
         const row=el('label',{style:{display:'flex',gap:'6px',padding:'3px 6px',cursor:'pointer',alignItems:'center',fontSize:'10px',borderRadius:'3px'}});
         row.addEventListener('mouseover',()=>row.style.background='rgba(255,255,255,.04)');
         row.addEventListener('mouseout',()=>row.style.background='');
@@ -8059,9 +8075,13 @@ function init() {
           setTimeout(async () => {
             const _b = document.getElementById('imp-load-btn');
             if (_b) _b.textContent = 'Loading...';
-            try { await loadFromGoogleDrive(); }
+            try {
+              await loadFromGoogleDrive();
+              // Hide orange button after successful load
+              if (_b) _b.style.display = 'none';
+            }
             catch(e) { if (_b) _b.textContent = '☁ Load from Drive'; }
-          }, 800);
+          }, 1200);
         }
         return; // skip normal auth flow
       } else {
