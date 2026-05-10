@@ -1406,6 +1406,57 @@ async function loadFile(file) {
     if (rev) { const {reviews,talkingPoints} = parseReviews(rev); S.reviews=reviews; S.reviewTPs=talkingPoints; }
     else { S.reviews=[]; S.reviewTPs=[]; }
 
+
+    // ── Parse Share Criteria tab — sets per-user hiddenFields from spreadsheet ──
+    const scSheet = getSheet(wb, 'Share Criteria');
+    if (scSheet) {
+      const scData = XLSX.utils.sheet_to_json(scSheet, {header:1, defval:null, raw:true});
+      const _SC_LABEL_TO_KEY = {'GPO':'gpo','Vendor':'name','Category':'category','Sub-Category':'subCategory','Product / Description':'product','Class of Trade':'classOfTrade','Markets Serviced':'markets','Added Value':'addedValue','Website':'website','Contract Agreement Name':'contractName','Signatory':'signatory','Assingment (Allowed, Not Allowed)':'assignment','Assingment Conditions':'assignmentConditions','Exclusivity (Y/N)':'exclusivity','Termination w/o Cause (Y/N)':'terminationWoCause','Termination Notice (Days)':'terminationNotice','Pricing Commitment to PS (Best, Competitive, Case by case)':'pricingCommitment','Procurement Contact':'procContact','Contact Type':'contactType','Title':'title','Business #':'bizPhone','Mobile #':'mobile','Email Address':'email','Shared Contact':'sharedContact','Contact Type (2)':'contactType2','Title (2)':'title2','Business (#2)':'mobile2','Email Address (2)':'email2','In Contract Since (Date)':'inContractSince','In Contract Since (Date)':'inContractSince','Latest Contract Effective Date':'contractEffective','Latest Contract Expiration Date':'contractExpiry','Auto-renewal':'autoRenewal','Auto-renewal / By Term or Year':'autoRenewalType','Status':'status','Latest Term Effective Date':'termEffective','Latest Term Expiration Date':'termExpiry','Vendor Engagement Reminder (Optional)':'engagementReminder','Contract Term':'contractTerm','Current Term':'currentTerm','Termination Notice Received?':'terminationReceived','Needs LOP':'needsLOP','Cover Sheet':'coverSheet','Data Sheet':'dataSheet','Have Pricing?':'havePricing','Location of Pricing':'pricingLocation','Location of Pricing ':'pricingLocation','Pricing Date':'pricingDate','Update Pricing Frequency?':'pricingFrequency','White Papers (Date)':'whitePapers','Service Summary (Date)':'serviceSummary','Video Recording':'videoRecording','Admin Fee':'adminFee','Admin Fee Notes':'adminFeeNotes','Tiers?':'tiers','Perpetuity':'perpetuity','Tail (# years)':'tail','Min. # yrs per Customer':'minYears','Min. # yrs per Customer ':'minYears','Contract No.':'contractNo','Report Frequency':'reportFrequency','Agreement Type':'agreementType','Comments':'comments','Notes':'notes','Latest Communication Date':'lastComm','About':'about','Scheduled Follow-up Date':'followUp','Previously Named / AKA':'aka','Score':'score','Short Justification':'justification','Change of Control (Y/N & Conditions)':'changeOfControl','Attachment / Location':'attachment'};
+      // Row 1 (index 0): col 0='COLUMNS', col 1='USER ACCOUNTS', col 2+=display names
+      // Row 2 (index 1): col 0=blank, col 1=blank, col 2+=usernames (login names)
+      const usernameRow = scData[1] || [];
+      // Row 3 (index 2): col access strings — skip
+      // Row 4+ (index 3+): col 0=field label, col 2+=True/False
+      const fieldRows = scData.slice(3).filter(r => r && r[0]);
+
+      // Build per-username hiddenFields from Share Criteria
+      const scHiddenFields = {}; // username -> [hidden field keys]
+      usernameRow.forEach((uname, colIdx) => {
+        if (!uname || colIdx < 2) return; // skip blanks and header cols
+        const hidden = [];
+        fieldRows.forEach(row => {
+          const label = String(row[0] || '').trim();
+          const fieldKey = _SC_LABEL_TO_KEY[label];
+          if (!fieldKey) return; // skip ⚠️ row and unknowns
+          const val = row[colIdx];
+          const isVisible = (val === true || String(val).toLowerCase() === 'true');
+          if (!isVisible) hidden.push(fieldKey);
+        });
+        scHiddenFields[String(uname).toLowerCase().trim()] = hidden;
+      });
+
+      // Apply to approved users in localStorage
+      const _allUsers = getApprovedUsers();
+      let _scUpdated = false;
+      _allUsers.forEach(u => {
+        const ukey = (u.email || u.name || '').toLowerCase().trim();
+        // Try email prefix match (e.g., 'bflekel' matches 'bflekel@primesourcex.com')
+        const emailPrefix = ukey.split('@')[0];
+        const scKey = Object.keys(scHiddenFields).find(k => 
+          k === ukey || k === emailPrefix || ukey.startsWith(k) || k.startsWith(emailPrefix)
+        );
+        if (scKey) {
+          u.hiddenFields = scHiddenFields[scKey];
+          u._customHiddenFields = true;
+          _scUpdated = true;
+        }
+      });
+      if (_scUpdated) {
+        localStorage.setItem('vcs_approved_users', JSON.stringify(_allUsers));
+        console.log('[VCS] Share Criteria: updated hiddenFields for', Object.keys(scHiddenFields).length, 'users');
+      }
+    }
+
     S.loaded=true; setTimeout(applyCopyProtection, 300); S.view=(['settings','datacheck'].includes(S.view)?S.settings.defaultView||'today':S.view)||'today'; S.search=''; S.dirty.clear();
     $('search').value = '';
     $('upload-screen').style.display='none';
@@ -3321,43 +3372,76 @@ const ROLE_PERMS = {
 // hiddenFields is stored per-user in the approved users list
 // All 69 vendor fields — complete list from SearchTable in Vendor_Catalogue.xlsm
 const ALL_RESTRICTABLE_FIELDS = [
-  {key:'gpo',label:'GPO'},{key:'name',label:'Vendor Name'},
-  {key:'category',label:'Category'},{key:'subCategory',label:'Sub-Category'},
-  {key:'product',label:'Product / Description'},{key:'classOfTrade',label:'Class of Trade'},
-  {key:'markets',label:'Markets Serviced'},{key:'addedValue',label:'Added Value'},
-  {key:'website',label:'Website'},{key:'contractName',label:'Contract Name'},
-  {key:'signatory',label:'Signatory'},{key:'assignment',label:'Assignment'},
-  {key:'assignmentConditions',label:'Assignment Conditions'},{key:'exclusivity',label:'Exclusivity'},
-  {key:'terminationWoCause',label:'Termination w/o Cause'},{key:'terminationNotice',label:'Termination Notice'},
-  {key:'pricingCommitment',label:'Pricing Commitment'},{key:'procContact',label:'Contact Name'},
-  {key:'contactType',label:'Contact Type'},{key:'title',label:'Contact Title'},
-  {key:'bizPhone',label:'Business Phone'},{key:'mobile',label:'Mobile Phone'},
-  {key:'email',label:'Email Address'},{key:'sharedContact',label:'Shared Contact'},
-  {key:'contactType2',label:'Contact Type 2'},{key:'title2',label:'Title 2'},
-  {key:'mobile2',label:'Mobile 2'},{key:'email2',label:'Email 2'},
-  {key:'inContractSince',label:'In Contract Since'},{key:'contractEffective',label:'Contract Effective'},
-  {key:'contractExpiry',label:'Contract Expiry'},{key:'autoRenewal',label:'Auto-Renewal'},
-  {key:'autoRenewalType',label:'Auto-Renewal Type'},{key:'status',label:'Status'},
-  {key:'termEffective',label:'Term Effective'},{key:'termExpiry',label:'Term Expiry'},
-  {key:'engagementReminder',label:'Engagement Reminder'},{key:'contractTerm',label:'Contract Term'},
-  {key:'currentTerm',label:'Current Term'},{key:'terminationReceived',label:'Termination Received'},
-  {key:'needsLOP',label:'Needs LOP'},{key:'coverSheet',label:'Cover Sheet'},
-  {key:'dataSheet',label:'Data Sheet'},{key:'havePricing',label:'Have Pricing'},
-  {key:'pricingLocation',label:'Pricing Location'},{key:'pricingDate',label:'Pricing Date'},
-  {key:'pricingFrequency',label:'Pricing Frequency'},{key:'whitePapers',label:'White Papers'},
-  {key:'serviceSummary',label:'Service Summary'},{key:'videoRecording',label:'Video Recording'},
-  {key:'adminFee',label:'Admin Fee'},{key:'adminFeeNotes',label:'Admin Fee Notes'},
-  {key:'tiers',label:'Tiers'},{key:'perpetuity',label:'Perpetuity'},
-  {key:'tail',label:'Tail (Years)'},{key:'minYears',label:'Min. Years/Customer'},
-  {key:'contractNo',label:'Contract No.'},{key:'reportFrequency',label:'Report Frequency'},
-  {key:'agreementType',label:'Agreement Type'},{key:'comments',label:'Comments'},
-  {key:'notes',label:'Notes'},{key:'lastComm',label:'Last Communication'},
-  {key:'about',label:'About'},{key:'followUp',label:'Follow-up Date'},
-  {key:'aka',label:'AKA'},{key:'score',label:'Score'},
-  {key:'justification',label:'Justification'},{key:'changeOfControl',label:'Change of Control'},
-  {key:'attachment',label:'Attachment'},
+  {key:'gpo',label:'GPO'},
+  {key:'name',label:'Vendor'},
+  {key:'category',label:'Category'},
+  {key:'subCategory',label:'Sub-Category'},
+  {key:'product',label:'Product / Description'},
+  {key:'classOfTrade',label:'Class of Trade'},
+  {key:'markets',label:'Markets Serviced'},
+  {key:'addedValue',label:'Added Value'},
+  {key:'website',label:'Website'},
+  {key:'contractName',label:'Contract Agreement Name'},
+  {key:'signatory',label:'Signatory'},
+  {key:'assignment',label:'Assingment (Allowed, Not Allowed)'},
+  {key:'assignmentConditions',label:'Assingment Conditions'},
+  {key:'exclusivity',label:'Exclusivity (Y/N)'},
+  {key:'terminationWoCause',label:'Termination w/o Cause (Y/N)'},
+  {key:'terminationNotice',label:'Termination Notice (Days)'},
+  {key:'pricingCommitment',label:'Pricing Commitment to PS (Best, Competitive, Case by case)'},
+  {key:'procContact',label:'Procurement Contact'},
+  {key:'contactType',label:'Contact Type'},
+  {key:'title',label:'Title'},
+  {key:'bizPhone',label:'Business #'},
+  {key:'mobile',label:'Mobile #'},
+  {key:'email',label:'Email Address'},
+  {key:'sharedContact',label:'Shared Contact'},
+  {key:'contactType2',label:'Contact Type (2)'},
+  {key:'title2',label:'Title (2)'},
+  {key:'mobile2',label:'Business (#2)'},
+  {key:'email2',label:'Email Address (2)'},
+  {key:'inContractSince',label:'In Contract Since (Date)'},
+  {key:'contractEffective',label:'Latest Contract Effective Date'},
+  {key:'contractExpiry',label:'Latest Contract Expiration Date'},
+  {key:'autoRenewal',label:'Auto-renewal'},
+  {key:'autoRenewalType',label:'Auto-renewal / By Term or Year'},
+  {key:'status',label:'Status'},
+  {key:'termEffective',label:'Latest Term Effective Date'},
+  {key:'termExpiry',label:'Latest Term Expiration Date'},
+  {key:'engagementReminder',label:'Vendor Engagement Reminder (Optional)'},
+  {key:'contractTerm',label:'Contract Term'},
+  {key:'currentTerm',label:'Current Term'},
+  {key:'terminationReceived',label:'Termination Notice Received?'},
+  {key:'needsLOP',label:'Needs LOP'},
+  {key:'coverSheet',label:'Cover Sheet'},
+  {key:'dataSheet',label:'Data Sheet'},
+  {key:'havePricing',label:'Have Pricing?'},
+  {key:'pricingLocation',label:'Location of Pricing'},
+  {key:'pricingDate',label:'Pricing Date'},
+  {key:'pricingFrequency',label:'Update Pricing Frequency?'},
+  {key:'whitePapers',label:'White Papers (Date)'},
+  {key:'serviceSummary',label:'Service Summary (Date)'},
+  {key:'videoRecording',label:'Video Recording'},
+  {key:'adminFee',label:'Admin Fee'},
+  {key:'adminFeeNotes',label:'Admin Fee Notes'},
+  {key:'tiers',label:'Tiers?'},
+  {key:'perpetuity',label:'Perpetuity'},
+  {key:'tail',label:'Tail (# years)'},
+  {key:'minYears',label:'Min. # yrs per Customer'},
+  {key:'contractNo',label:'Contract No.'},
+  {key:'reportFrequency',label:'Report Frequency'},
+  {key:'agreementType',label:'Agreement Type'},
+  {key:'comments',label:'Comments'},
+  {key:'notes',label:'Notes'},
+  {key:'lastComm',label:'Latest Communication Date'},
+  {key:'about',label:'About'},
+  {key:'followUp',label:'Scheduled Follow-up Date'},
+  {key:'aka',label:'Previously Named / AKA'},
+  {key:'score',label:'Score'},
+  {key:'justification',label:'Short Justification'},
+  {key:'changeOfControl',label:'Change of Control (Y/N & Conditions)'},
+  {key:'attachment',label:'Attachment / Location'},
 ];
-
 // Default hidden fields per role — parsed exactly from Share Criteria tab in Vendor_Catalogue.xlsm
 function getDefaultHiddenFields(role) {
   const HIDDEN = {
@@ -4205,65 +4289,65 @@ function renderVendorDB(c) {
     {key:'name',    label:'Vendor',          sortable:true,  get:v=>v.name||'',               fmt:v=>{const n=el('span',{class:'vendor-link',onclick(e){e.stopPropagation();openDetail(v);}});n.appendChild(hl(v.name));n.style.color=v.tier==='CALL'?'var(--red)':v.tier==='EMAIL'?'var(--amber)':'';n.style.fontWeight='600';return n;}, sk:v=>v.name.toLowerCase()},
     {key:'cat',     label:'Category',        sortable:true,  get:v=>v.category||'',           fmt:v=>hlEl(v.category), sk:v=>v.category||''},
     {key:'subcat',  label:'Sub-Category',    sortable:true,  get:v=>v.subCategory||'',        fmt:v=>hlEl(v.subCategory), sk:v=>v.subCategory||''},
-    {key:'product', label:'Product/Desc',    sortable:false, get:v=>v.product||v.about||'',   fmt:v=>{const txt=(v.product||v.about||'').slice(0,60);const s=el('span',{title:v.product||v.about||'',style:{maxWidth:'180px',display:'inline-block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}});s.appendChild(hl(txt));return s;}, sk:v=>v.product||''},
+    {key:'product', label:'Product / Description',    sortable:false, get:v=>v.product||v.about||'',   fmt:v=>{const txt=(v.product||v.about||'').slice(0,60);const s=el('span',{title:v.product||v.about||'',style:{maxWidth:'180px',display:'inline-block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}});s.appendChild(hl(txt));return s;}, sk:v=>v.product||''},
     {key:'cot',     label:'Class of Trade',  sortable:true,  get:v=>v.classOfTrade||'',       fmt:v=>hlEl(v.classOfTrade), sk:v=>v.classOfTrade||''},
-    {key:'markets', label:'Markets',         sortable:true,  get:v=>v.markets||'',            fmt:v=>hlEl(v.markets), sk:v=>v.markets||''},
-    {key:'ar',      label:'Auto-Renew',      sortable:true,  get:v=>isAutoRenew(v)?'Yes':'No',fmt:v=>arBadge(v), sk:v=>isAutoRenew(v)?0:1},
-    {key:'expiry',  label:'Expiry',          sortable:true,  get:v=>{const e=getCurrentExpiry(v);return e?isoDate(e):'';}, fmt:v=>{const e=getCurrentExpiry(v);if(!e)return '—';const d=dayDiff(e,today);return el('span',{style:{color:d<0?'var(--red)':d<=30?'var(--amber)':''},title:fmtDate(e)},(d<0?'⚠ '+formatDuration(d)+' ago':d<=30?'⚡ '+formatDuration(d):fmtDate(e)));}, sk:v=>getCurrentExpiry(v)||new Date(9e12)},
+    {key:'markets', label:'Markets Serviced',         sortable:true,  get:v=>v.markets||'',            fmt:v=>hlEl(v.markets), sk:v=>v.markets||''},
+    {key:'ar',      label:'Auto-renewal',      sortable:true,  get:v=>isAutoRenew(v)?'Yes':'No',fmt:v=>arBadge(v), sk:v=>isAutoRenew(v)?0:1},
+    {key:'expiry',  label:'Latest Contract Expiration Date',          sortable:true,  get:v=>{const e=getCurrentExpiry(v);return e?isoDate(e):'';}, fmt:v=>{const e=getCurrentExpiry(v);if(!e)return '—';const d=dayDiff(e,today);return el('span',{style:{color:d<0?'var(--red)':d<=30?'var(--amber)':''},title:fmtDate(e)},(d<0?'⚠ '+formatDuration(d)+' ago':d<=30?'⚡ '+formatDuration(d):fmtDate(e)));}, sk:v=>getCurrentExpiry(v)||new Date(9e12)},
     {key:'days',    label:'Days',            sortable:true,  get:v=>{const e=getCurrentExpiry(v);return e?String(dayDiff(e,today)):'';}, fmt:v=>{const e=getCurrentExpiry(v);if(!e)return '';const d=dayDiff(e,today);return d<0?formatDuration(d)+' ago':formatDuration(d);}, sk:v=>{const e=getCurrentExpiry(v);return e?dayDiff(e,today):99999;}},
     {key:'status',  label:'Status',          sortable:true,  get:v=>(v.status||'').slice(0,40), fmt:v=>(v.status||'').slice(0,35)||'', sk:v=>v.status||''},
     {key:'tier',    label:'Tier',            sortable:true,  get:v=>v.tier||'',               fmt:v=>v.tier?tierTag(v.tier):'', sk:v=>({CALL:0,EMAIL:1,REVIEW:2,MONITOR:3}[v.tier]||4)},
     {key:'score',   label:'Score',           sortable:true,  get:v=>String((v.score||0).toFixed(1)), fmt:v=>scorePill(v.score), sk:v=>v.score||0},
     {key:'fee',     label:'Admin Fee',       sortable:true,  get:v=>{const f=parseFee(v.adminFee);return f?f+'%':'';}, fmt:v=>{const f=parseFee(v.adminFee);return f?el('span',{style:{color:f>=5?'var(--green)':f>=3?'var(--amber)':'var(--red)',fontWeight:'600'}},f+'%'):(v.adminFee||'—');}, sk:v=>parseFee(v.adminFee)||0},
     {key:'perp',    label:'Perpetuity',      sortable:true,  get:v=>v.perpetuity||'',         fmt:v=>v.perpetuity||'', sk:v=>v.perpetuity||''},
-    {key:'notice',  label:'Notice',          sortable:true,  get:v=>v.terminationNotice||'',  fmt:v=>v.terminationNotice||'', sk:v=>v.terminationNotice||''},
-    {key:'contact', label:'Contact',         sortable:true,  get:v=>v.procContact||'',        fmt:v=>hlEl(v.procContact), sk:v=>v.procContact||''},
-    {key:'phone',   label:'Phone',           sortable:false, get:v=>v.bizPhone||v.mobile||'', fmt:v=>v.bizPhone||v.mobile||'', sk:v=>v.bizPhone||''},
-    {key:'email',   label:'Email',           sortable:false, get:v=>v.email||'',              fmt:v=>hlEl(v.email), sk:v=>v.email||''},
+    {key:'notice',  label:'Termination Notice (Days)',          sortable:true,  get:v=>v.terminationNotice||'',  fmt:v=>v.terminationNotice||'', sk:v=>v.terminationNotice||''},
+    {key:'contact', label:'Procurement Contact',         sortable:true,  get:v=>v.procContact||'',        fmt:v=>hlEl(v.procContact), sk:v=>v.procContact||''},
+    {key:'phone',   label:'Mobile #',           sortable:false, get:v=>v.bizPhone||v.mobile||'', fmt:v=>v.bizPhone||v.mobile||'', sk:v=>v.bizPhone||''},
+    {key:'email',   label:'Email Address',           sortable:false, get:v=>v.email||'',              fmt:v=>hlEl(v.email), sk:v=>v.email||''},
     {key:'website', label:'Website',        sortable:false, get:v=>v.website||'',            fmt:v=>v.website?el('a',{href:v.website,target:'_blank',style:{color:'var(--blue)',fontSize:'10px'}},v.website.replace(/^https?:\/\//,'').slice(0,25)):'', sk:v=>v.website||''},
-    {key:'wp',      label:'White Papers',   sortable:true,  get:v=>v.whitePapers||'',        fmt:v=>v.whitePapers?'✅':'—', sk:v=>v.whitePapers||''},
-    {key:'ss',      label:'Service Summary',sortable:true,  get:v=>v.serviceSummary||'',     fmt:v=>v.serviceSummary?'✅':'—', sk:v=>v.serviceSummary||''},
-    {key:'vid',     label:'Video',          sortable:true,  get:v=>v.videoRecording||'',     fmt:v=>v.videoRecording?'✅':'—', sk:v=>v.videoRecording||''},
+    {key:'wp',      label:'White Papers (Date)',   sortable:true,  get:v=>v.whitePapers||'',        fmt:v=>v.whitePapers?'✅':'—', sk:v=>v.whitePapers||''},
+    {key:'ss',      label:'Service Summary (Date)',sortable:true,  get:v=>v.serviceSummary||'',     fmt:v=>v.serviceSummary?'✅':'—', sk:v=>v.serviceSummary||''},
+    {key:'vid',     label:'Video Recording',          sortable:true,  get:v=>v.videoRecording||'',     fmt:v=>v.videoRecording?'✅':'—', sk:v=>v.videoRecording||''},
     {key:'lop',     label:'Needs LOP',      sortable:true,  get:v=>v.needsLOP||'',           fmt:v=>v.needsLOP?'Yes':'—', sk:v=>v.needsLOP||''},
     {key:'addedValue',   label:'Added Value',     sortable:false, get:v=>v.addedValue||'',       fmt:v=>v.addedValue?String(v.addedValue).slice(0,40):'—', sk:v=>v.addedValue||''},
-    {key:'contractName',  label:'Contract Name',   sortable:true,  get:v=>v.contractName||'',     fmt:v=>v.contractName||'—', sk:v=>v.contractName||''},
-    {key:'inContractSince',label:'In Contract Since',sortable:true, get:v=>{const d=parseDate(v.inContractSince);return d?isoDate(d):'';}, fmt:v=>{const d=parseDate(v.inContractSince);return d?fmtDate(d):'—';}, sk:v=>parseDate(v.inContractSince)||new Date(9e12)},
-    {key:'contractEffective',label:'Effective Date',sortable:true,  get:v=>{const d=parseDate(v.contractEffective||v.effectiveDate);return d?isoDate(d):'';}, fmt:v=>{const d=parseDate(v.contractEffective||v.effectiveDate);return d?fmtDate(d):'—';}, sk:v=>parseDate(v.contractEffective||v.effectiveDate)||new Date(9e12)},
-    {key:'autoRenewalType',label:'Auto-Renewal Type',sortable:true, get:v=>v.autoRenewalType||'',  fmt:v=>v.autoRenewalType||'—', sk:v=>v.autoRenewalType||''},
+    {key:'contractName',  label:'Contract Agreement Name',   sortable:true,  get:v=>v.contractName||'',     fmt:v=>v.contractName||'—', sk:v=>v.contractName||''},
+    {key:'inContractSince',label:'In Contract Since (Date)',sortable:true, get:v=>{const d=parseDate(v.inContractSince);return d?isoDate(d):'';}, fmt:v=>{const d=parseDate(v.inContractSince);return d?fmtDate(d):'—';}, sk:v=>parseDate(v.inContractSince)||new Date(9e12)},
+    {key:'contractEffective',label:'Latest Contract Effective Date',sortable:true,  get:v=>{const d=parseDate(v.contractEffective||v.effectiveDate);return d?isoDate(d):'';}, fmt:v=>{const d=parseDate(v.contractEffective||v.effectiveDate);return d?fmtDate(d):'—';}, sk:v=>parseDate(v.contractEffective||v.effectiveDate)||new Date(9e12)},
+    {key:'autoRenewalType',label:'Auto-renewal / By Term or Year',sortable:true, get:v=>v.autoRenewalType||'',  fmt:v=>v.autoRenewalType||'—', sk:v=>v.autoRenewalType||''},
     {key:'contractTerm',  label:'Contract Term',   sortable:true,  get:v=>v.contractTerm||'',     fmt:v=>v.contractTerm||'—', sk:v=>v.contractTerm||''},
     {key:'currentTerm',   label:'Current Term',    sortable:true,  get:v=>v.currentTerm||'',      fmt:v=>v.currentTerm||'—', sk:v=>v.currentTerm||''},
-    {key:'termExpiry',    label:'Term Expiry',      sortable:true,  get:v=>{const d=parseDate(v.termExpiry);return d?isoDate(d):'';}, fmt:v=>{const d=parseDate(v.termExpiry);return d?fmtDate(d):'—';}, sk:v=>parseDate(v.termExpiry)||new Date(9e12)},
-    {key:'tiers',         label:'Tiers',            sortable:false, get:v=>v.tiers||'',            fmt:v=>v.tiers?String(v.tiers).slice(0,30):'—', sk:v=>v.tiers||''},
+    {key:'termExpiry',    label:'Latest Term Expiration Date',      sortable:true,  get:v=>{const d=parseDate(v.termExpiry);return d?isoDate(d):'';}, fmt:v=>{const d=parseDate(v.termExpiry);return d?fmtDate(d):'—';}, sk:v=>parseDate(v.termExpiry)||new Date(9e12)},
+    {key:'tiers',         label:'Tiers?',            sortable:false, get:v=>v.tiers||'',            fmt:v=>v.tiers?String(v.tiers).slice(0,30):'—', sk:v=>v.tiers||''},
     {key:'adminFeeNotes', label:'Admin Fee Notes',  sortable:false, get:v=>v.adminFeeNotes||'',    fmt:v=>v.adminFeeNotes?String(v.adminFeeNotes).slice(0,30):'—', sk:v=>v.adminFeeNotes||''},
     {key:'contractNo',    label:'Contract No.',     sortable:true,  get:v=>v.contractNo||'',       fmt:v=>v.contractNo||'—', sk:v=>v.contractNo||''},
     {key:'agreementType', label:'Agreement Type',   sortable:true,  get:v=>v.agreementType||'',    fmt:v=>v.agreementType||'—', sk:v=>v.agreementType||''},
     {key:'comments',      label:'Comments',         sortable:false, get:v=>v.comments||'',         fmt:v=>v.comments?String(v.comments).slice(0,40):'—', sk:v=>v.comments||''},
     {key:'about',         label:'About',            sortable:false, get:v=>v.about||'',            fmt:v=>v.about?String(v.about).slice(0,40):'—', sk:v=>v.about||''},
-    {key:'followUp',      label:'Follow-up Date',   sortable:true,  get:v=>{const d=parseDate(v.followUp);return d?isoDate(d):'';}, fmt:v=>{const d=parseDate(v.followUp);return d?fmtDate(d):'—';}, sk:v=>parseDate(v.followUp)||new Date(9e12)},
-    {key:'aka',           label:'AKA',              sortable:false, get:v=>v.aka||'',              fmt:v=>v.aka||'—', sk:v=>v.aka||''},
+    {key:'followUp',      label:'Scheduled Follow-up Date',   sortable:true,  get:v=>{const d=parseDate(v.followUp);return d?isoDate(d):'';}, fmt:v=>{const d=parseDate(v.followUp);return d?fmtDate(d):'—';}, sk:v=>parseDate(v.followUp)||new Date(9e12)},
+    {key:'aka',           label:'Previously Named / AKA',              sortable:false, get:v=>v.aka||'',              fmt:v=>v.aka||'—', sk:v=>v.aka||''},
         {key:'signatory',label:'Signatory',sortable:false,get:v=>v.signatory||'',fmt:v=>{const _v=v.signatory||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.signatory||''},
-    {key:'assignment',label:'Assignment',sortable:false,get:v=>v.assignment||'',fmt:v=>{const _v=v.assignment||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.assignment||''},
-    {key:'assignmentConditions',label:'Assignment Conditions',sortable:false,get:v=>v.assignmentConditions||'',fmt:v=>{const _v=v.assignmentConditions||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.assignmentConditions||''},
-    {key:'exclusivity',label:'Exclusivity',sortable:false,get:v=>v.exclusivity||'',fmt:v=>{const _v=v.exclusivity||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.exclusivity||''},
-    {key:'terminationWoCause',label:'Termination w/o Cause',sortable:false,get:v=>v.terminationWoCause||'',fmt:v=>{const _v=v.terminationWoCause||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.terminationWoCause||''},
-    {key:'pricingCommitment',label:'Pricing Commitment',sortable:false,get:v=>v.pricingCommitment||'',fmt:v=>{const _v=v.pricingCommitment||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingCommitment||''},
-    {key:'mobile2',label:'Mobile 2',sortable:false,get:v=>v.mobile2||'',fmt:v=>{const _v=v.mobile2||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.mobile2||''},
-    {key:'email2',label:'Email 2',sortable:false,get:v=>v.email2||'',fmt:v=>{const _v=v.email2||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.email2||''},
-    {key:'termEffective',label:'Term Effective',sortable:false,get:v=>v.termEffective||'',fmt:v=>{const _v=v.termEffective||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.termEffective||''},
-    {key:'engagementReminder',label:'Engagement Reminder',sortable:false,get:v=>v.engagementReminder||'',fmt:v=>{const _v=v.engagementReminder||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.engagementReminder||''},
-    {key:'terminationReceived',label:'Termination Received',sortable:false,get:v=>v.terminationReceived||'',fmt:v=>{const _v=v.terminationReceived||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.terminationReceived||''},
+    {key:'assignment',label:'Assingment (Allowed, Not Allowed)',sortable:false,get:v=>v.assignment||'',fmt:v=>{const _v=v.assignment||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.assignment||''},
+    {key:'assignmentConditions',label:'Assingment Conditions',sortable:false,get:v=>v.assignmentConditions||'',fmt:v=>{const _v=v.assignmentConditions||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.assignmentConditions||''},
+    {key:'exclusivity',label:'Exclusivity (Y/N)',sortable:false,get:v=>v.exclusivity||'',fmt:v=>{const _v=v.exclusivity||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.exclusivity||''},
+    {key:'terminationWoCause',label:'Termination w/o Cause (Y/N)',sortable:false,get:v=>v.terminationWoCause||'',fmt:v=>{const _v=v.terminationWoCause||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.terminationWoCause||''},
+    {key:'pricingCommitment',label:'Pricing Commitment to PS (Best, Competitive, Case by case)',sortable:false,get:v=>v.pricingCommitment||'',fmt:v=>{const _v=v.pricingCommitment||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingCommitment||''},
+    {key:'mobile2',label:'Business (#2)',sortable:false,get:v=>v.mobile2||'',fmt:v=>{const _v=v.mobile2||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.mobile2||''},
+    {key:'email2',label:'Email Address (2)',sortable:false,get:v=>v.email2||'',fmt:v=>{const _v=v.email2||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.email2||''},
+    {key:'termEffective',label:'Latest Term Effective Date',sortable:false,get:v=>v.termEffective||'',fmt:v=>{const _v=v.termEffective||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.termEffective||''},
+    {key:'engagementReminder',label:'Vendor Engagement Reminder (Optional)',sortable:false,get:v=>v.engagementReminder||'',fmt:v=>{const _v=v.engagementReminder||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.engagementReminder||''},
+    {key:'terminationReceived',label:'Termination Notice Received?',sortable:false,get:v=>v.terminationReceived||'',fmt:v=>{const _v=v.terminationReceived||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.terminationReceived||''},
     {key:'coverSheet',label:'Cover Sheet',sortable:false,get:v=>v.coverSheet||'',fmt:v=>{const _v=v.coverSheet||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.coverSheet||''},
     {key:'dataSheet',label:'Data Sheet',sortable:false,get:v=>v.dataSheet||'',fmt:v=>{const _v=v.dataSheet||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.dataSheet||''},
-    {key:'havePricing',label:'Have Pricing',sortable:false,get:v=>v.havePricing||'',fmt:v=>{const _v=v.havePricing||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.havePricing||''},
-    {key:'pricingLocation',label:'Pricing Location',sortable:false,get:v=>v.pricingLocation||'',fmt:v=>{const _v=v.pricingLocation||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingLocation||''},
+    {key:'havePricing',label:'Have Pricing?',sortable:false,get:v=>v.havePricing||'',fmt:v=>{const _v=v.havePricing||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.havePricing||''},
+    {key:'pricingLocation',label:'Location of Pricing',sortable:false,get:v=>v.pricingLocation||'',fmt:v=>{const _v=v.pricingLocation||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingLocation||''},
     {key:'pricingDate',label:'Pricing Date',sortable:false,get:v=>v.pricingDate||'',fmt:v=>{const _v=v.pricingDate||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingDate||''},
-    {key:'pricingFrequency',label:'Pricing Frequency',sortable:false,get:v=>v.pricingFrequency||'',fmt:v=>{const _v=v.pricingFrequency||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingFrequency||''},
-    {key:'minYears',label:'Min. Years/Customer',sortable:false,get:v=>v.minYears||'',fmt:v=>{const _v=v.minYears||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.minYears||''},
+    {key:'pricingFrequency',label:'Update Pricing Frequency?',sortable:false,get:v=>v.pricingFrequency||'',fmt:v=>{const _v=v.pricingFrequency||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingFrequency||''},
+    {key:'minYears',label:'Min. # yrs per Customer',sortable:false,get:v=>v.minYears||'',fmt:v=>{const _v=v.minYears||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.minYears||''},
     {key:'reportFrequency',label:'Report Frequency',sortable:false,get:v=>v.reportFrequency||'',fmt:v=>{const _v=v.reportFrequency||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.reportFrequency||''},
-    {key:'lastComm',label:'Last Communication',sortable:false,get:v=>v.lastComm||'',fmt:v=>{const _v=v.lastComm||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.lastComm||''},
-    {key:'justification',label:'Justification',sortable:false,get:v=>v.justification||'',fmt:v=>{const _v=v.justification||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.justification||''},
-    {key:'changeOfControl',label:'Change of Control',sortable:false,get:v=>v.changeOfControl||'',fmt:v=>{const _v=v.changeOfControl||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.changeOfControl||''},
-    {key:'attachment',label:'Attachment',sortable:false,get:v=>v.attachment||'',fmt:v=>{const _v=v.attachment||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.attachment||''},
+    {key:'lastComm',label:'Latest Communication Date',sortable:false,get:v=>v.lastComm||'',fmt:v=>{const _v=v.lastComm||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.lastComm||''},
+    {key:'justification',label:'Short Justification',sortable:false,get:v=>v.justification||'',fmt:v=>{const _v=v.justification||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.justification||''},
+    {key:'changeOfControl',label:'Change of Control (Y/N & Conditions)',sortable:false,get:v=>v.changeOfControl||'',fmt:v=>{const _v=v.changeOfControl||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.changeOfControl||''},
+    {key:'attachment',label:'Attachment / Location',sortable:false,get:v=>v.attachment||'',fmt:v=>{const _v=v.attachment||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.attachment||''},
     {key:'notes',   label:'Notes',           sortable:false, get:v=>v.notes?'yes':'',         fmt:v=>v.notes?el('span',{class:'note-preview clickable',title:String(v.notes).slice(0,200),onclick(e){e.stopPropagation();showNotePopup(v.name,v.notes,v);}},String(v.notes).split('|')[0].slice(0,40)+'…'):'', sk:v=>v.notes?0:1},
   ];
 
