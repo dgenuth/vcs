@@ -2569,8 +2569,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   }
 
   // Related Vendors section — only for roles with access
-  const _canSeeRelated = ['admin','procurement','manager','cro','finance_sr','finance_jr','director_ops','ops_qc'].includes(USER.role);
-  if (_canSeeRelated && vendor.source==='psd' && vendor.category) {
+  // Related Vendors: show for all logged-in users, but filter sensitive data below
+  if (vendor.source==='psd' && vendor.category) {
     const sameCat=S.vendors.filter(v=>v.name!==vendor.name&&v.category===vendor.category&&isVisible(v)).slice(0,4);
 
     // Service-based cross-referral: what does this vendor's category need?
@@ -4241,7 +4241,30 @@ function renderVendorDB(c) {
     {key:'about',         label:'About',            sortable:false, get:v=>v.about||'',            fmt:v=>v.about?String(v.about).slice(0,40):'—', sk:v=>v.about||''},
     {key:'followUp',      label:'Follow-up Date',   sortable:true,  get:v=>{const d=parseDate(v.followUp);return d?isoDate(d):'';}, fmt:v=>{const d=parseDate(v.followUp);return d?fmtDate(d):'—';}, sk:v=>parseDate(v.followUp)||new Date(9e12)},
     {key:'aka',           label:'AKA',              sortable:false, get:v=>v.aka||'',              fmt:v=>v.aka||'—', sk:v=>v.aka||''},
-            {key:'notes',   label:'Notes',           sortable:false, get:v=>v.notes?'yes':'',         fmt:v=>v.notes?el('span',{class:'note-preview clickable',title:String(v.notes).slice(0,200),onclick(e){e.stopPropagation();showNotePopup(v.name,v.notes,v);}},String(v.notes).split('|')[0].slice(0,40)+'…'):'', sk:v=>v.notes?0:1},
+        {key:'signatory',label:'Signatory',sortable:false,get:v=>v.signatory||'',fmt:v=>{const _v=v.signatory||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.signatory||''},
+    {key:'assignment',label:'Assignment',sortable:false,get:v=>v.assignment||'',fmt:v=>{const _v=v.assignment||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.assignment||''},
+    {key:'assignmentConditions',label:'Assignment Conditions',sortable:false,get:v=>v.assignmentConditions||'',fmt:v=>{const _v=v.assignmentConditions||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.assignmentConditions||''},
+    {key:'exclusivity',label:'Exclusivity',sortable:false,get:v=>v.exclusivity||'',fmt:v=>{const _v=v.exclusivity||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.exclusivity||''},
+    {key:'terminationWoCause',label:'Termination w/o Cause',sortable:false,get:v=>v.terminationWoCause||'',fmt:v=>{const _v=v.terminationWoCause||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.terminationWoCause||''},
+    {key:'pricingCommitment',label:'Pricing Commitment',sortable:false,get:v=>v.pricingCommitment||'',fmt:v=>{const _v=v.pricingCommitment||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingCommitment||''},
+    {key:'mobile2',label:'Mobile 2',sortable:false,get:v=>v.mobile2||'',fmt:v=>{const _v=v.mobile2||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.mobile2||''},
+    {key:'email2',label:'Email 2',sortable:false,get:v=>v.email2||'',fmt:v=>{const _v=v.email2||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.email2||''},
+    {key:'termEffective',label:'Term Effective',sortable:false,get:v=>v.termEffective||'',fmt:v=>{const _v=v.termEffective||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.termEffective||''},
+    {key:'engagementReminder',label:'Engagement Reminder',sortable:false,get:v=>v.engagementReminder||'',fmt:v=>{const _v=v.engagementReminder||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.engagementReminder||''},
+    {key:'terminationReceived',label:'Termination Received',sortable:false,get:v=>v.terminationReceived||'',fmt:v=>{const _v=v.terminationReceived||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.terminationReceived||''},
+    {key:'coverSheet',label:'Cover Sheet',sortable:false,get:v=>v.coverSheet||'',fmt:v=>{const _v=v.coverSheet||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.coverSheet||''},
+    {key:'dataSheet',label:'Data Sheet',sortable:false,get:v=>v.dataSheet||'',fmt:v=>{const _v=v.dataSheet||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.dataSheet||''},
+    {key:'havePricing',label:'Have Pricing',sortable:false,get:v=>v.havePricing||'',fmt:v=>{const _v=v.havePricing||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.havePricing||''},
+    {key:'pricingLocation',label:'Pricing Location',sortable:false,get:v=>v.pricingLocation||'',fmt:v=>{const _v=v.pricingLocation||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingLocation||''},
+    {key:'pricingDate',label:'Pricing Date',sortable:false,get:v=>v.pricingDate||'',fmt:v=>{const _v=v.pricingDate||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingDate||''},
+    {key:'pricingFrequency',label:'Pricing Frequency',sortable:false,get:v=>v.pricingFrequency||'',fmt:v=>{const _v=v.pricingFrequency||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingFrequency||''},
+    {key:'minYears',label:'Min. Years/Customer',sortable:false,get:v=>v.minYears||'',fmt:v=>{const _v=v.minYears||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.minYears||''},
+    {key:'reportFrequency',label:'Report Frequency',sortable:false,get:v=>v.reportFrequency||'',fmt:v=>{const _v=v.reportFrequency||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.reportFrequency||''},
+    {key:'lastComm',label:'Last Communication',sortable:false,get:v=>v.lastComm||'',fmt:v=>{const _v=v.lastComm||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.lastComm||''},
+    {key:'justification',label:'Justification',sortable:false,get:v=>v.justification||'',fmt:v=>{const _v=v.justification||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.justification||''},
+    {key:'changeOfControl',label:'Change of Control',sortable:false,get:v=>v.changeOfControl||'',fmt:v=>{const _v=v.changeOfControl||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.changeOfControl||''},
+    {key:'attachment',label:'Attachment',sortable:false,get:v=>v.attachment||'',fmt:v=>{const _v=v.attachment||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.attachment||''},
+    {key:'notes',   label:'Notes',           sortable:false, get:v=>v.notes?'yes':'',         fmt:v=>v.notes?el('span',{class:'note-preview clickable',title:String(v.notes).slice(0,200),onclick(e){e.stopPropagation();showNotePopup(v.name,v.notes,v);}},String(v.notes).split('|')[0].slice(0,40)+'…'):'', sk:v=>v.notes?0:1},
   ];
 
   // Default hidden: show the most useful cols, hide the verbose ones
@@ -4252,21 +4275,13 @@ function renderVendorDB(c) {
   colToggleBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'3px'}},'Columns:'));
   // Admin-controlled locked columns (always hidden for non-admins)
   // Max allowed columns per role — user can only toggle within this set
-  const ROLE_ALLOWED_COLS = {
-    admin:        new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
-    procurement:  new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
-    cro:          new Set(['gpo','name','cat','subcat','product','markets','ar','expiry','status','fee','perp','score']),
-    director_ops: new Set(['gpo','name','cat','subcat','product','markets','ar','expiry','perp']),
-    ops_qc:       new Set(['gpo','name','cat','subcat','product','markets','ar','expiry']),
-    finance_sr:   new Set(['gpo','name','cat','subcat','product','markets','ar','expiry','fee','perp']),
-    finance_jr:   new Set(['gpo','name','cat','subcat','product','markets','ar','expiry','fee','perp']),
-    ssa:          new Set(['gpo','name','cat','subcat','product','markets','ar','expiry']),
-    sales_rep:    new Set(['gpo','name','cat','subcat','product','markets','ar','expiry']),
-    viewer:       new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
-    restricted:   new Set(['gpo','name','cat','subcat','product','markets','ar','expiry']),
-    manager:      new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
-  };
-  const myAllowedCols = ROLE_ALLOWED_COLS[USER.role||'restricted'] || ROLE_ALLOWED_COLS.restricted;
+  // Column visibility driven by user's hiddenFields — no hardcoded role restrictions
+  const myAllowedCols = new Set(COLS.map(c=>c.key).filter(key => {
+    for (const [f, ck] of Object.entries(_fToCol)) {
+      if (ck === key && _userHiddenForCols.has(f)) return false;
+    }
+    return true;
+  }));
   const canEditCols = hasPermission('editAll') || USER.role === 'admin' || USER.role === 'manager';
 
   COLS.forEach(col=>{
@@ -4292,7 +4307,7 @@ function renderVendorDB(c) {
 
   // Filter visible cols
   const _userHidden = new Set(USER.hiddenFields || []);
-  const _fToCol = {adminFee:'fee',autoRenewal:'ar',autoRenewalType:'ar',perpetuity:'perp',terminationNotice:'notice',procContact:'contact',contactType:'contact',bizPhone:'phone',mobile:'phone',email:'email',email2:'email',notes:'notes',classOfTrade:'cot',markets:'markets',gpo:'gpo',score:'score',tiers:'perp',tail:'perp'};
+  const _fToCol = {'gpo':'gpo','name':'name','category':'cat','subCategory':'subcat','product':'product','classOfTrade':'cot','markets':'markets','addedValue':'addedValue','website':'website','score':'score','status':'status','tier':'tier','contractName':'contractName','signatory':'signatory','assignment':'assignment','assignmentConditions':'assignmentConditions','exclusivity':'exclusivity','terminationWoCause':'terminationWoCause','terminationNotice':'notice','pricingCommitment':'pricingCommitment','procContact':'contact','contactType':'contact','title':'contact','bizPhone':'phone','mobile':'phone','email':'email','sharedContact':'contact','contactType2':'mobile2','title2':'mobile2','mobile2':'mobile2','email2':'email2','inContractSince':'inContractSince','contractEffective':'contractEffective','contractExpiry':'expiry','autoRenewal':'ar','autoRenewalType':'autoRenewalType','termEffective':'termEffective','termExpiry':'termExpiry','engagementReminder':'engagementReminder','contractTerm':'contractTerm','currentTerm':'currentTerm','terminationReceived':'terminationReceived','needsLOP':'lop','coverSheet':'coverSheet','dataSheet':'dataSheet','havePricing':'havePricing','pricingLocation':'pricingLocation','pricingDate':'pricingDate','pricingFrequency':'pricingFrequency','whitePapers':'wp','serviceSummary':'ss','videoRecording':'vid','adminFee':'fee','adminFeeNotes':'adminFeeNotes','tiers':'tiers','perpetuity':'perp','tail':'perp','minYears':'minYears','contractNo':'contractNo','reportFrequency':'reportFrequency','agreementType':'agreementType','comments':'comments','notes':'notes','lastComm':'lastComm','about':'about','followUp':'followUp','aka':'aka','justification':'justification','changeOfControl':'changeOfControl','attachment':'attachment'};
   const VISIBLE_COLS = COLS.filter(col => {
     if (S.dbHiddenCols.has(col.key)) return false;
     for (const [f, ck] of Object.entries(_fToCol)) {
