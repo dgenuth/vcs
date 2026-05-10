@@ -7389,8 +7389,21 @@ function renderSettings(c) {
   // ── User Management (Admin only) ──
   if (hasPermission('manageUsers')) {
     const secUsers=el('div',{class:'settings-section'});
-    secUsers.appendChild(el('h3',{},'👥 User Management'));
-    secUsers.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.5'}},'Control who can access VCS and what they can do. Only Admins can manage users. Stored in this browser — export user list to share settings with another device.'));
+    // Collapsible header
+    const _umCollapsed = localStorage.getItem('vcs_um_collapsed') === '1';
+    const _umHdr=el('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',cursor:'pointer',userSelect:'none'},onclick(){
+      const _c=!(_umBody.style.display==='none');
+      _umBody.style.display=_c?'none':'';
+      _umChev.textContent=_c?'▶':'▼';
+      localStorage.setItem('vcs_um_collapsed',_c?'1':'0');
+    }});
+    const _umChev=el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'6px'}},_umCollapsed?'▶':'▼');
+    _umHdr.appendChild(_umChev);
+    _umHdr.appendChild(el('h3',{style:{margin:'0',display:'inline'}},'👥 User Management'));
+    _umHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'8px'}},'(click to expand/collapse)'));
+    secUsers.appendChild(_umHdr);
+    const _umBody=el('div',{style:{display:_umCollapsed?'none':''}});
+    _umBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.5'}},'Control who can access VCS and what they can do. Only Admins can manage users. Stored in this browser — export user list to share settings with another device.'));
 
     // Role legend
     const legend=el('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',marginBottom:'10px',padding:'6px 8px',background:'rgba(255,255,255,.03)',borderRadius:'4px',border:'1px solid var(--border)'}});
@@ -7401,7 +7414,7 @@ function renderSettings(c) {
       pill.appendChild(el('span',{style:{color:ROLE_COLORS[role],fontWeight:'700'}},ROLES[role]));
       legend.appendChild(pill);
     }
-    secUsers.appendChild(legend);
+    _umBody.appendChild(legend);
 
     // User table
     const users=getApprovedUsers();
@@ -7486,7 +7499,7 @@ function renderSettings(c) {
                 'if(_ar){loginAs(_ar);}' +
                 'var _b=document.getElementById(\'impersonate-banner\');if(_b)_b.remove();' +
                 'document.body.style.paddingTop=\'\';' +
-                'S.view=\'settings\';render();' +
+                'S.view=\'settings\';updateSidebar();render();' +
               '})()" style="background:rgba(0,0,0,.2);border:none;padding:2px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:700;">✕ Exit Preview</button>' +
               '</div>');
             document.body.style.paddingTop = '28px';
@@ -7650,7 +7663,7 @@ function renderSettings(c) {
 
       tblWrap.appendChild(row);
     });
-    secUsers.appendChild(tblWrap);
+    _umBody.appendChild(tblWrap);
 
     // Add new user form
     const addSec=el('div',{style:{padding:'10px',background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'5px',marginBottom:'10px'}});
@@ -7673,7 +7686,7 @@ function renderSettings(c) {
       toast('✓ '+e+' added as '+ROLES[roleIn.value]);
     }},'Add User'));
     addSec.appendChild(addRow);
-    secUsers.appendChild(addSec);
+    _umBody.appendChild(addSec);
 
     // Login attempt log
     const logSec=el('div',{style:{marginBottom:'4px'}});
@@ -7706,7 +7719,7 @@ function renderSettings(c) {
       }},'🗑 Clear Log'));
     }
     logSec.appendChild(logBody);
-    secUsers.appendChild(logSec);
+    _umBody.appendChild(logSec);
 
     // Authentication status note
     const authNote=el('div',{style:{marginTop:'12px',padding:'10px',background:'rgba(245,158,11,.06)',border:'1px solid rgba(245,158,11,.25)',borderRadius:'5px'}});
@@ -7714,7 +7727,7 @@ function renderSettings(c) {
     authNote.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.6',marginBottom:'6px'}},'Right now VCS checks if the email entered matches your approved list — but it cannot verify the person actually owns that email. Anyone who knows an approved email address could type it in. This is adequate for internal use on a non-public URL, but is not a true security wall.'));
     authNote.appendChild(el('div',{style:{fontSize:'9px',color:'var(--green)',fontWeight:'600',marginBottom:'3px'}},'✅ Upgrade Path: Microsoft OAuth (coming after GitHub Pages hosting)'));
     authNote.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.6'}},'Once hosted on GitHub Pages, we will wire up Microsoft/Outlook sign-in — same as Fathom, Teams, and all your Microsoft apps. Users click "Sign in with Microsoft", the Microsoft portal verifies their identity, and sends back a confirmed token. VCS never handles passwords at all. Only users whose Microsoft email matches your approved list get through. Until then, keep the VCS URL private and only share it with approved team members.'));
-    secUsers.appendChild(authNote);;
+    _umBody.appendChild(authNote);;
     const exportRow=el('div',{style:{display:'flex',gap:'6px',marginTop:'8px',flexWrap:'wrap'}});
     exportRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){
       const data=JSON.stringify(getApprovedUsers(),null,2);
@@ -7742,8 +7755,9 @@ function renderSettings(c) {
     });
     exportRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){importFile.click();}},'⬆ Import User List'));
     exportRow.appendChild(importFile);
-    secUsers.appendChild(exportRow);
+    _umBody.appendChild(exportRow);
 
+    secUsers.appendChild(_umBody);
     c.appendChild(secUsers);
   } else if(USER.loggedIn){
     // Non-admin sees a read-only note
