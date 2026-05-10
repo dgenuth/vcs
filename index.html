@@ -3685,11 +3685,14 @@ const FIELD_PICKLISTS = new Proxy({}, {
 
 function addEditableSection(body, title, vendor, fields) {
   const canEdit = hasPermission('editContract') || hasPermission('editContact') || !USER.loggedIn;
-  const nonEmpty = fields.filter(([,field]) => {
+  // Filter out fields hidden from this user's role
+  const _hidden = new Set(USER.hiddenFields || []);
+  const visibleFields = fields.filter(([,field]) => !_hidden.has(field));
+  const nonEmpty = visibleFields.filter(([,field]) => {
     const v = vendor[field]; return v !== '' && v !== null && v !== undefined && String(v).trim() !== '';
   });
   // Also include empty fields that have picklists (so user can set them)
-  const withPicklist = fields.filter(([,field]) => FIELD_PICKLISTS[field] && !nonEmpty.find(([,f])=>f===field));
+  const withPicklist = visibleFields.filter(([,field]) => FIELD_PICKLISTS[field] && !nonEmpty.find(([,f])=>f===field));
   const allFields = [...nonEmpty, ...withPicklist];
   if (!allFields.length) return;
   const sec=el('div',{class:'detail-section'});
@@ -3829,6 +3832,9 @@ function addNotesSection(body, vendor, title) {
 function showDetailPanel() {
   $('detail-panel').style.display='block';
   $('detail-overlay').style.display='block';
+  // Re-attach close handlers (ensures they work in View As / impersonation)
+  $('detail-overlay').onclick = closeDetail;
+  $('detail-close-btn').onclick = closeDetail;
 }
 function closeDetail() {
   _openDetailVendor=null;
@@ -4163,8 +4169,7 @@ function renderVendorDB(c) {
   sourceBar.appendChild(desc);
   c.appendChild(sourceBar);
 
-  if (['sales_rep','restricted'].includes(USER.role) && S.dbSource === 'direct') S.dbSource = 'all';
-  if (['sales_rep','restricted'].includes(USER.role) && S.dbSource === 'direct') S.dbSource = 'all';
+  if (['sales_rep','restricted'].includes(USER.role)) S.dbSource = 'all';
   const VENDOR_POOL = sourcePool[S.dbSource].data;
 
   // ── Column definitions ──
@@ -4375,9 +4380,9 @@ function renderVendorDB(c) {
 }
 
 function openColumnFilterModal(col) {
-  const sourcePool=(S.dbSource==='channel'?S.channelVendors:S.dbSource==='all'?S.allVendors:S.vendors);
-  const isRestricted=['sales_rep','restricted','ssa'].includes(USER.role);
-  const visiblePool=isRestricted&&S.search&&S.search.length>=3?sourcePool.filter(v=>searchMatch(v,S.search.toLowerCase())):isRestricted?[]:sourcePool;
+  // Use the currently visible/filtered results for filter values
+  // This ensures filter options only show values from what the user can currently see
+  const visiblePool = typeof getFiltered === 'function' ? getFiltered() : [];
   const allVals=[...new Set(visiblePool.map(v=>{ try{return col.get(v);}catch(e){return '';} }).filter(v=>v!=null&&String(v).trim()!==''))].sort((a,b)=>String(a).localeCompare(String(b)));
   const current=new Set(S.dbFilters[col.key]||[]);
   const tempSelected=new Set(current);
