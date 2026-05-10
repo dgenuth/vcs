@@ -2412,7 +2412,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       ['Status','vendorStatus'],['Section','section'],['Category','category'],
       ['Contact','contact'],['Phone','phone'],['Email','email'],
     ]);
-    addNotesSection(body, vendor, '📋 Pipeline Notes (In The Works)');
+    if (hasPermission('editNotes') || ['admin','procurement','manager','cro'].includes(USER.role)) addNotesSection(body, vendor, '📋 Pipeline Notes (In The Works)');
     if (psdVendor) {
       // Show contract summary inline
       const cSec=el('div',{class:'detail-section'});
@@ -2422,7 +2422,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       cSec.appendChild(grid);
       cSec.appendChild(el('button',{class:'btn-xs btn-blue',style:{marginTop:'6px'},onclick(){openDetail(psdVendor, fromAnalytics, true);}},'→ Open Full Contract Record'));
       body.appendChild(cSec);
-      addNotesSection(body, psdVendor, '📝 Contract Notes (Prime Source Direct)');
+      if (hasPermission('editNotes') || ['admin','procurement','manager','cro'].includes(USER.role)) addNotesSection(body, psdVendor, '📝 Contract Notes (Prime Source Direct)');
     }
     showDetailPanel(); return;
   }
@@ -2518,8 +2518,11 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   ]);
 
   // All notes sources
-  addNotesSection(body, vendor, '📝 Contract Notes');
-  if (itwVendor) addNotesSection(body, itwVendor, '📋 Pipeline Notes (In The Works)');
+  // Only show notes to roles with editNotes permission
+  if (hasPermission('editNotes') || ['admin','procurement','manager','cro'].includes(USER.role)) {
+    addNotesSection(body, vendor, '📝 Contract Notes');
+    if (itwVendor) addNotesSection(body, itwVendor, '📋 Pipeline Notes (In The Works)');
+  }
   if (reviewRecord) {
     const rSec=el('div',{class:'detail-section'});
     const rHdr=el('div',{class:'detail-sec-hdr'});
@@ -2552,19 +2555,20 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     if (reviewRecord.sfNotes) {
       rSec.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',margin:'4px 0 2px'}},'Salesforce / Meeting Notes:'));
       const nd=el('div',{class:'notes-area'});
-      renderNotesStr(nd,reviewRecord.sfNotes); rSec.appendChild(nd);
+      if (['admin','procurement','manager','cro'].includes(USER.role)) { renderNotesStr(nd,reviewRecord.sfNotes); rSec.appendChild(nd); }
     }
     if (reviewRecord.contractNotes) {
       rSec.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',margin:'6px 0 2px'}},'Contract Notes:'));
       const nd2=el('div',{class:'notes-area'});
-      renderNotesStr(nd2,reviewRecord.contractNotes); rSec.appendChild(nd2);
+      if (['admin','procurement','manager','cro'].includes(USER.role)) { renderNotesStr(nd2,reviewRecord.contractNotes); rSec.appendChild(nd2); }
     }
     if (!reviewRecord.sfNotes && !reviewRecord.contractNotes) rSec.appendChild(el('p',{class:'muted',style:{padding:'4px 0',fontSize:'10px'}},'No review notes yet.'));
     body.appendChild(rSec);
   }
 
-  // Related Vendors section — service-based matching (same logic as Network Intel)
-  if (vendor.source==='psd' && vendor.category) {
+  // Related Vendors section — only for roles with access
+  const _canSeeRelated = ['admin','procurement','manager','cro','finance_sr','finance_jr','director_ops','ops_qc'].includes(USER.role);
+  if (_canSeeRelated && vendor.source==='psd' && vendor.category) {
     const sameCat=S.vendors.filter(v=>v.name!==vendor.name&&v.category===vendor.category&&isVisible(v)).slice(0,4);
 
     // Service-based cross-referral: what does this vendor's category need?
@@ -4265,11 +4269,11 @@ function renderVendorDB(c) {
 
   // Filter visible cols
   const _userHidden = new Set(USER.hiddenFields || []);
-  const _fieldToCol = {adminFee:'fee',autoRenew:'ar',perpetuity:'perp',terminationNotice:'notice',procContact:'contact',bizPhone:'phone',email:'email',notes:'notes',classOfTrade:'cot',markets:'markets',gpo:'gpo',score:'score'};
+  const _fToCol = {adminFee:'fee',autoRenew:'ar',perpetuity:'perp',terminationNotice:'notice',procContact:'contact',bizPhone:'phone',mobile:'phone',email:'email',notes:'notes',classOfTrade:'cot',markets:'markets',gpo:'gpo',score:'score'};
   const VISIBLE_COLS = COLS.filter(col => {
     if (S.dbHiddenCols.has(col.key)) return false;
-    for (const [field, colKey] of Object.entries(_fieldToCol)) {
-      if (colKey === col.key && _userHidden.has(field)) return false;
+    for (const [f, ck] of Object.entries(_fToCol)) {
+      if (ck === col.key && _userHidden.has(f)) return false;
     }
     return true;
   });
@@ -8036,7 +8040,7 @@ function init() {
         updateUserBadge();
         $('upload-user-info').innerHTML='<span style="color:#f59e0b;font-weight:700">👁 Admin preview as '+imp.email+'</span> — load the file to test their view';
         // Show load button — token needs to be obtained fresh in this tab
-        if (S.settings.driveFileId && S.settings.googleClientId) {
+        { // Always show load button — proxy works without googleClientId
           const autoLoadDiv = document.createElement('div');
           autoLoadDiv.style.cssText = 'margin-top:10px';
           autoLoadDiv.innerHTML = '<button id="imp-load-btn" style="background:#f59e0b;color:#000;border:none;padding:8px 20px;border-radius:5px;font-weight:700;cursor:pointer;font-size:12px">☁ Load File as '+imp.email+'</button>';
@@ -8050,6 +8054,13 @@ function init() {
               document.getElementById('imp-load-btn').textContent = '☁ Load File as '+imp.email;
             }
           });
+          // Auto-load immediately — no button click needed
+          setTimeout(async () => {
+            const _b = document.getElementById('imp-load-btn');
+            if (_b) _b.textContent = 'Loading...';
+            try { await loadFromGoogleDrive(); }
+            catch(e) { if (_b) _b.textContent = '☁ Load from Drive'; }
+          }, 800);
         }
         return; // skip normal auth flow
       } else {
