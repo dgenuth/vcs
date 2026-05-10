@@ -2347,7 +2347,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   const acts=el('div',{class:'detail-actions'});
   if (_canAct) acts.appendChild(el('button',{class:'btn-green btn-action',onclick(){openDoneModal(vendor);}},'✓ Done'));
   if (_canAct) acts.appendChild(el('button',{class:'btn-blue btn-action',onclick(){openEmailModal(vendor);}},'✉ Email'));
-  acts.appendChild(el('button',{class:'btn-blue btn-action',style:{background:'rgba(56,189,248,.12)',borderColor:'rgba(56,189,248,.3)',color:'#38bdf8'},onclick(){
+  if (_canAct) acts.appendChild(el('button',{class:'btn-blue btn-action',style:{background:'rgba(56,189,248,.12)',borderColor:'rgba(56,189,248,.3)',color:'#38bdf8'},onclick(){
     // Pre-fill calendar event modal with this vendor
     const today=new Date(); const iso=isoDate(today);
     openCalendarEventModal(iso, vendor.name);
@@ -2429,11 +2429,12 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
   // PSD vendor — full contract detail
 
-  // ── Contract Period Progress Bar ──
+  // ── Contract Period Progress Bar — only for roles with contract visibility ──
+  const _canSeeContract = ['admin','procurement','manager','cro','finance_sr','finance_jr','director_ops','ops_qc'].includes(USER.role);
   const today2=new Date();
   const effDate=parseDate(vendor.effectiveDate)||parseDate(vendor.inContractSince);
   const expDate=getCurrentExpiry(vendor);
-  if (effDate && expDate && expDate > effDate) {
+  if (_canSeeContract && effDate && expDate && expDate > effDate) {
     const totalMs=expDate-effDate, elapsedMs=today2-effDate;
     const pct=Math.max(0,Math.min(100,(elapsedMs/totalMs)*100));
     const daysLeft=dayDiff(expDate,today2);
@@ -2453,8 +2454,9 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     body.appendChild(progSec);
   }
 
-  // ── Quick Contact Bar ──
-  if (vendor.procContact||vendor.email||vendor.bizPhone||vendor.mobile) {
+  // ── Quick Contact Bar — only for roles with contact access ──
+  const _canSeeContact = !['sales_rep','restricted'].includes(USER.role);
+  if (_canSeeContact && (vendor.procContact||vendor.email||vendor.bizPhone||vendor.mobile)) {
     const qcSec=el('div',{class:'detail-section'});
     qcSec.appendChild(el('h4',{class:'detail-sec-title'},'👤 Quick Contact'));
     const qcRow=el('div',{style:{display:'flex',gap:'5px',flexWrap:'wrap',alignItems:'center'}});
@@ -4207,7 +4209,7 @@ function renderVendorDB(c) {
     {key:'cot',     label:'Class of Trade',  sortable:true,  get:v=>v.classOfTrade||'',       fmt:v=>hlEl(v.classOfTrade), sk:v=>v.classOfTrade||''},
     {key:'markets', label:'Markets',         sortable:true,  get:v=>v.markets||'',            fmt:v=>hlEl(v.markets), sk:v=>v.markets||''},
     {key:'ar',      label:'Auto-Renew',      sortable:true,  get:v=>isAutoRenew(v)?'Yes':'No',fmt:v=>arBadge(v), sk:v=>isAutoRenew(v)?0:1},
-    {key:'expiry',  label:'Expiry',          sortable:true,  get:v=>{const e=getCurrentExpiry(v);return e?isoDate(e):'';}, fmt:v=>{const e=getCurrentExpiry(v);if(!e)return '—';const d=dayDiff(e,today);return el('span',{style:{color:d<0?'var(--red)':d<=30?'var(--amber)':''},title:fmtDate(e)},(d<0?'⚠ '+Math.abs(d)+'d ago':d<=30?'⚡ '+d+'d':fmtDate(e)));}, sk:v=>getCurrentExpiry(v)||new Date(9e12)},
+    {key:'expiry',  label:'Expiry',          sortable:true,  get:v=>{const e=getCurrentExpiry(v);return e?isoDate(e):'';}, fmt:v=>{const e=getCurrentExpiry(v);if(!e)return '—';const d=dayDiff(e,today);return el('span',{style:{color:d<0?'var(--red)':d<=30?'var(--amber)':''},title:fmtDate(e)},(d<0?'⚠ '+formatDuration(d)+' ago':d<=30?'⚡ '+formatDuration(d):fmtDate(e)));}, sk:v=>getCurrentExpiry(v)||new Date(9e12)},
     {key:'days',    label:'Days',            sortable:true,  get:v=>{const e=getCurrentExpiry(v);return e?String(dayDiff(e,today)):'';}, fmt:v=>{const e=getCurrentExpiry(v);if(!e)return '';const d=dayDiff(e,today);return d<0?formatDuration(d)+' ago':formatDuration(d);}, sk:v=>{const e=getCurrentExpiry(v);return e?dayDiff(e,today):99999;}},
     {key:'status',  label:'Status',          sortable:true,  get:v=>(v.status||'').slice(0,40), fmt:v=>(v.status||'').slice(0,35)||'', sk:v=>v.status||''},
     {key:'tier',    label:'Tier',            sortable:true,  get:v=>v.tier||'',               fmt:v=>v.tier?tierTag(v.tier):'', sk:v=>({CALL:0,EMAIL:1,REVIEW:2,MONITOR:3}[v.tier]||4)},
@@ -4358,7 +4360,7 @@ function renderVendorDB(c) {
     inner.appendChild(lbl);
     // Filter button
     const fBtn=el('span',{title:`Filter by ${col.label}`,style:{cursor:'pointer',opacity:hasFilter?1:0.35,color:hasFilter?'var(--amber)':'var(--muted)',fontSize:'9px'},
-      onclick(e){e.stopPropagation();openColumnFilterModal(col);}}, hasFilter?'▼●':'▼');
+      onclick(e){e.stopPropagation();openColumnFilterModal(col, vendors);}}, hasFilter?'▼●':'▼');
     inner.appendChild(fBtn);
     // Resize handle
     const rh=document.createElement('div');
@@ -4406,10 +4408,9 @@ function renderVendorDB(c) {
   table.appendChild(tbody); tblWrap.appendChild(table); c.appendChild(tblWrap);
 }
 
-function openColumnFilterModal(col) {
-  // Use the currently visible/filtered results for filter values
-  // This ensures filter options only show values from what the user can currently see
-  const visiblePool = typeof getFiltered === 'function' ? getFiltered() : [];
+function openColumnFilterModal(col, filteredVendors) {
+  // Use passed filtered vendors or fall back to empty
+  const visiblePool = Array.isArray(filteredVendors) ? filteredVendors : [];
   const allVals=[...new Set(visiblePool.map(v=>{ try{return col.get(v);}catch(e){return '';} }).filter(v=>v!=null&&String(v).trim()!==''))].sort((a,b)=>String(a).localeCompare(String(b)));
   const current=new Set(S.dbFilters[col.key]||[]);
   const tempSelected=new Set(current);
@@ -5299,25 +5300,20 @@ const NAV_DEFS=[
 ];
 
 function updateSidebar() {
-  var _svBtn=$('save-btn');if(_svBtn){var _canSv=(ROLE_PERMS[USER.role||'restricted']||{}).save;_svBtn.style.display=_canSv?'':'none';}
-  var _svBtn=$('save-btn');
-  if(_svBtn){var _canSv=(ROLE_PERMS[USER.role||'restricted']||{}).save;_svBtn.style.display=_canSv?'':'none';}
-  const _sb=$('save-btn'),_rb=$('reload-btn');
-  const _tOvrSave=USER.tabOverrides||{};
-  const _roleCanSave=(ROLE_PERMS[USER.role||'restricted']||{}).save;
-  const _canSave='_savebtn' in _tOvrSave?_tOvrSave['_savebtn']:_roleCanSave;
-  if(_sb)_sb.style.display=_canSave?'':'none';
-  if(_rb)_rb.style.display='';
+  // Hide save/reload for non-edit roles
+  const _sb=$('save-btn');
+  if(_sb){ const _canSv=(ROLE_PERMS[USER.role||'restricted']||{}).save; _sb.style.display=_canSv?'':'none'; }
   const nav=$('nav'); nav.innerHTML='';
   const sb=$('sidebar');
   const collapsed=sb.classList.contains('collapsed');
 
   // Show/hide header buttons based on loaded state
   const isLoaded = S.loaded;
-  ['save-btn','refresh-btn'].forEach(id=>{
+  ['refresh-btn'].forEach(id=>{
     const btn=$(id);
     if(btn) btn.style.display = isLoaded ? 'inline-block' : 'none';
   });
+  // Save button respects role permission (already set above)
   const dirtyInd=$('dirty-indicator');
   if(dirtyInd){
     const hasDirty=isLoaded&&S.dirty&&S.dirty.size>0;
