@@ -4006,17 +4006,29 @@ function arBadge(v) {
 
 function searchMatch(v, q) {
   if (!q) return true;
-  // Core identity fields - always searchable regardless of role
-  var coreFields = [v.name, v.category, v.subCategory, v.product, v.gpo, v.markets, v.website];
-  if (coreFields.some(function(f) { return f && String(f).toLowerCase().includes(q); })) return true;
-  // Sensitive fields - only search if role has access
-  var canSeeFinancials = ['admin','procurement','manager','cro','finance_sr','finance_jr'].includes(USER.role);
-  var canSeeContacts = ['admin','procurement','manager'].includes(USER.role);
-  var extraFields = [];
-  if (canSeeContacts) extraFields.push(v.procContact, v.bizPhone, v.mobile, v.email, v.email2);
-  if (canSeeFinancials) extraFields.push(v.adminFee, v.contractNo);
-  extraFields.push(v.status, v.classOfTrade, v.about);
-  return extraFields.some(function(f) { return f && String(f).toLowerCase().includes(q); });
+  var role = USER.role || 'restricted';
+  var hiddenFields = new Set(USER.hiddenFields || []);
+
+  // Reps/restricted: search ONLY vendor name, category, sub-category, product
+  // NOT GPO, markets, website — those are too broad and expose full vendor lists
+  if (['sales_rep','restricted'].includes(role)) {
+    var repFields = [v.name, v.category, v.subCategory, v.product];
+    return repFields.some(function(f) { return f && String(f).toLowerCase().includes(q); });
+  }
+
+  // All other roles: search fields the user has access to (not hidden)
+  var allSearchable = [
+    ['name', v.name], ['category', v.category], ['subCategory', v.subCategory],
+    ['product', v.product], ['gpo', v.gpo], ['markets', v.markets],
+    ['website', v.website], ['classOfTrade', v.classOfTrade],
+    ['procContact', v.procContact], ['bizPhone', v.bizPhone],
+    ['mobile', v.mobile], ['email', v.email], ['email2', v.email2],
+    ['contractNo', v.contractNo], ['adminFee', v.adminFee],
+    ['status', v.status], ['about', v.about], ['notes', v.notes],
+  ];
+  // Only search fields the user can see
+  var visible = allSearchable.filter(function(pair) { return !hiddenFields.has(pair[0]); });
+  return visible.some(function(pair) { return pair[1] && String(pair[1]).toLowerCase().includes(q); });
 }
 
 function highlightText(text, query) {
@@ -4345,8 +4357,8 @@ function renderVendorDB(c) {
 
 function openColumnFilterModal(col) {
   const sourcePool=(S.dbSource==='channel'?S.channelVendors:S.dbSource==='all'?S.allVendors:S.vendors);
-  const isRestricted=['sales_rep','restricted','ssa'].includes(USER.role);
-  const visiblePool=isRestricted&&S.search&&S.search.length>=3?sourcePool.filter(v=>searchMatch(v,S.search.toLowerCase())):isRestricted?[]:sourcePool;
+  const isSearchOnly=['sales_rep','restricted'].includes(USER.role);
+  const visiblePool=isSearchOnly&&S.search&&S.search.length>=3?sourcePool.filter(v=>searchMatch(v,S.search.toLowerCase())):isSearchOnly?[]:sourcePool;
   const allVals=[...new Set(visiblePool.map(v=>{ try{return col.get(v);}catch(e){return '';} }).filter(v=>v!=null&&String(v).trim()!==''))].sort((a,b)=>String(a).localeCompare(String(b)));
   const current=new Set(S.dbFilters[col.key]||[]);
   const tempSelected=new Set(current);
