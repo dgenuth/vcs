@@ -424,7 +424,7 @@ var VCS_VERSION = 'v1778431112';
       if (_pdata && _pdata.expires > Date.now()) {
         // Check if this page version matches what was pushed
         var _cachedVer = localStorage.getItem('vcs_last_version');
-        if (_cachedVer && _cachedVer !== VCS_VERSION) {
+        if (_cachedVer !== VCS_VERSION) { // reload if stale OR never loaded
           // Page is stale — force reload with cache-bust before impersonating
           localStorage.removeItem('vcs_pending_impersonate');
           localStorage.setItem('vcs_pending_impersonate', _pik); // re-queue
