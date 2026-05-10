@@ -2623,13 +2623,14 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   // Contract last
   addEditableSection(body,'Contract',vendor,[
     ['Contract No.','contractNo'],['Agreement Type','agreementType'],
-    ['In Contract Since','inContractSince',true],['Effective Date','effectiveDate',true],
-    ['Expiration Date','expiry',true],['Auto-Renewal','autoRenew'],
-    ['Auto-Renewal Type','autoRenewType'],['Termination Notice','terminationNotice'],
-    ['Contract Term (mo)','contractTerm'],['Current Term (mo)','currentTerm'],
-    ['Assignment','assignment'],['Exclusivity','exclusivity'],
+    ['In Contract Since','inContractSince',true],['Latest Contract Effective Date','contractEffective',true],
+    ['Latest Contract Expiration Date','contractExpiry',true],['Auto-renewal','autoRenewal'],
+    ['Auto-renewal / By Term or Year','autoRenewalType'],['Termination Notice (Days)','terminationNotice'],
+    ['Contract Term','contractTerm'],['Current Term','currentTerm'],
+    ['Latest Term Effective Date','termEffective',true],['Latest Term Expiration Date','termExpiry',true],
+    ['Assingment (Allowed, Not Allowed)','assignment'],['Exclusivity (Y/N)','exclusivity'],
     ['Admin Fee','adminFee'],['Admin Fee Notes','adminFeeNotes'],
-    ['Tiers','tiers'],['Perpetuity','perpetuity'],['Tail','tail'],
+    ['Tiers?','tiers'],['Perpetuity','perpetuity'],['Tail (# years)','tail'],
   ]);
 
   // All notes sources
@@ -2638,7 +2639,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     addNotesSection(body, vendor, '📝 Contract Notes');
     if (itwVendor) addNotesSection(body, itwVendor, '📋 Pipeline Notes (In The Works)');
   }
-  if (reviewRecord) {
+  if (reviewRecord && ['admin','procurement','manager','cro'].includes(USER.role)) {
     const rSec=el('div',{class:'detail-section'});
     const rHdr=el('div',{class:'detail-sec-hdr'});
     rHdr.appendChild(el('h4',{class:'detail-sec-title',style:{marginBottom:'0'}},'🔍 Review Notes'));
@@ -2705,8 +2706,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
         sameCat.forEach(v=>{
           const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'3px',padding:'3px 0',borderBottom:'1px solid var(--border)'}});
           row.appendChild(el('span',{class:'vendor-link',style:{flex:'1'},onclick(){openDetail(v);}},v.name));
-          if(v.adminFee) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},v.adminFee));
-          row.appendChild(tierTag(v.tier));
+          if(v.adminFee && ['admin','procurement','manager','cro','finance_sr','finance_jr'].includes(USER.role)) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},v.adminFee));
+          if(['admin','procurement','manager','cro'].includes(USER.role)) row.appendChild(tierTag(v.tier));
           relSec.appendChild(row);
         });
       }
