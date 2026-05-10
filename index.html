@@ -1566,6 +1566,26 @@ async function executeSave() {
     // Date fields — must be written as Excel serial numbers, not ISO strings
     const DATE_FIELDS = new Set(['expiry','effectiveDate','inContractSince','lastComm','followUp']);
 
+    // Re-apply any previously saved changes from dirtyHistory
+    // This protects against Excel full-file pushes overwriting VCS changes
+    if (S.dirtyHistory && S.dirtyHistory.size > 0 && fetchedFresh) {
+      let reapplied = 0;
+      for (const [row, hist] of S.dirtyHistory) {
+        // Check if this vendor is already in the current dirty set (will be applied below)
+        const alreadyDirty = dirtyVendors.some(v => v._row === row);
+        if (alreadyDirty) continue; // current changes take priority
+        // Re-apply the saved field values to the fresh copy
+        for (const [field, val] of Object.entries(hist.fields)) {
+          const col = COL_MAP[field];
+          if (!col || val === undefined || val === null || val === '') continue;
+          const writeVal = DATE_FIELDS.has(field) ? dateToExcelSerial(val) : val;
+          if (writeVal === null || writeVal === undefined) continue;
+          try { xmlCellUpsert(sheetXml, col, row, writeVal); reapplied++; } catch(e) {}
+        }
+      }
+      if (reapplied > 0) console.log('[executeSave] Re-applied ' + reapplied + ' cells from dirtyHistory');
+    }
+
     for (const v of dirtyVendors) {
       const rowNum = v._row + 1; // Excel is 1-based
       for (const [field, col] of Object.entries(COL_MAP)) {
@@ -1599,8 +1619,28 @@ async function executeSave() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href=url; a.download=outName; a.click();
     URL.revokeObjectURL(url);
+    // Move current dirty to persistent history — don't lose track of our changes
+    // even after save, in case a full-file push from Excel overwrites them later
+    if (!S.dirtyHistory) S.dirtyHistory = new Map();
+    // Clean up entries older than 24 hours
+    const dayAgo = new Date(Date.now() - 24*60*60*1000).toISOString();
+    for (const [row, hist] of S.dirtyHistory) {
+      if (hist.savedAt < dayAgo) S.dirtyHistory.delete(row);
+    }
+    for (const v of dirtyVendors) {
+      // Store the full vendor state so we can re-apply if overwritten
+      const snapshot = {};
+      for (const [key, col] of Object.entries(COL_MAP)) {
+        if (v[key] !== undefined && v[key] !== null && v[key] !== '') {
+          snapshot[key] = v[key];
+        }
+      }
+      S.dirtyHistory.set(v._row, {name: v.name, fields: snapshot, savedAt: new Date().toISOString()});
+    }
     S.dirty.clear();
     if (S.dirtyRows) S.dirtyRows.clear();
+    // Clear _dirty flags on vendors
+    dirtyVendors.forEach(v => { v._dirty = false; });
     updateSidebar();
     logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:'System',action:'File exported: '+outName+' ('+dirtyVendors.length+' vendors updated)'});
     const mergeMsg = fetchedFresh ? '☁ Merged & saved' : '⚠ Saved (local only — Drive fetch failed)';
