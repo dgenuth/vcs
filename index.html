@@ -414,21 +414,33 @@ body.light-theme .sb-logo-text{color:var(--blue)}
 </head>
 <body>
 <script>
-// Impersonation bootstrap — runs before everything else
-// If a pending impersonation is queued (from parent tab), reload fresh to get latest code
+// VCS version token — used to detect cached pages and force reload
+var VCS_VERSION = 'v1778431112';
 (function(){
   try {
     var _pik = localStorage.getItem('vcs_pending_impersonate');
     if (_pik) {
       var _pdata = JSON.parse(localStorage.getItem(_pik) || 'null');
       if (_pdata && _pdata.expires > Date.now()) {
-        // Has valid pending impersonation — set hash so init() will pick it up
+        // Check if this page version matches what was pushed
+        var _cachedVer = localStorage.getItem('vcs_last_version');
+        if (_cachedVer && _cachedVer !== VCS_VERSION) {
+          // Page is stale — force reload with cache-bust before impersonating
+          localStorage.removeItem('vcs_pending_impersonate');
+          localStorage.setItem('vcs_pending_impersonate', _pik); // re-queue
+          var _bust = window.location.href.split('?')[0] + '?reload=' + Date.now() + '#impersonate=' + _pik;
+          window.location.replace(_bust);
+          return;
+        }
+        // Page is current — set hash so init() will pick it up
         if (!window.location.hash || !window.location.hash.includes(_pik)) {
           window.location.hash = 'impersonate=' + _pik;
         }
         localStorage.removeItem('vcs_pending_impersonate');
       }
     }
+    // Record this version as the last loaded version
+    localStorage.setItem('vcs_last_version', VCS_VERSION);
   } catch(e) {}
 })();
 </script>
