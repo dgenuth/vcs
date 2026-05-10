@@ -8274,6 +8274,59 @@ function render() {
   if (hadFocus){search.focus();try{search.setSelectionRange(curPos,curPos);}catch(e){}}
 }
 
+
+// ── Per-user search history ────────────────────────────────────────────────
+function getSearchHistoryKey() {
+  return 'vcs_search_history_' + (USER.email || 'default');
+}
+function getSearchHistory() {
+  try { return JSON.parse(localStorage.getItem(getSearchHistoryKey()) || '[]'); }
+  catch(e) { return []; }
+}
+function addToSearchHistory(term) {
+  if (!term || term.length < 3) return;
+  var h = getSearchHistory().filter(function(t) { return t !== term; });
+  h.unshift(term);
+  if (h.length > 10) h = h.slice(0, 10);
+  localStorage.setItem(getSearchHistoryKey(), JSON.stringify(h));
+}
+function renderSearchDropdown() {
+  var existing = document.getElementById('search-history-dropdown');
+  if (existing) existing.remove();
+  var history = getSearchHistory();
+  if (!history.length) return;
+  var inp = $('search');
+  if (!inp) return;
+  var rect = inp.getBoundingClientRect();
+  var dd = document.createElement('div');
+  dd.id = 'search-history-dropdown';
+  dd.style.cssText = 'position:fixed;top:' + (rect.bottom + 2) + 'px;left:' + rect.left + 'px;width:' + rect.width + 'px;background:var(--sb);border:1px solid var(--border);border-radius:6px;z-index:9000;box-shadow:0 4px 16px rgba(0,0,0,.3);overflow:hidden';
+  var header = document.createElement('div');
+  header.style.cssText = 'padding:4px 10px;font-size:9px;color:var(--muted);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center';
+  header.innerHTML = '<span>Recent searches</span><button onclick="localStorage.removeItem(getSearchHistoryKey());document.getElementById(\'search-history-dropdown\').remove()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:9px">Clear</button>';
+  dd.appendChild(header);
+  history.forEach(function(term) {
+    var item = document.createElement('div');
+    item.style.cssText = 'padding:6px 10px;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:8px';
+    item.innerHTML = '<span style="color:var(--muted);font-size:9px">🕐</span><span>' + term + '</span>';
+    item.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      $('search').value = term;
+      S.search = term;
+      document.getElementById('search-history-dropdown').remove();
+      render();
+    });
+    item.addEventListener('mouseenter', function() { this.style.background = 'var(--hover)'; });
+    item.addEventListener('mouseleave', function() { this.style.background = ''; });
+    dd.appendChild(item);
+  });
+  document.body.appendChild(dd);
+}
+function hideSearchDropdown() {
+  var dd = document.getElementById('search-history-dropdown');
+  if (dd) dd.remove();
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 function init() {
   // ── Impersonation handler (admin Login As feature) ──
@@ -8446,7 +8499,33 @@ function init() {
     render(); updateSidebar(); toast('🔄 Refreshed — scores, tiers and terms recalculated');
   });
   $('save-btn').addEventListener('click',saveFile);
-  $('search').addEventListener('input',e=>{S.search=e.target.value;render();});
+  var _searchTimer = null;
+  $('search').addEventListener('input', e => {
+    S.search = e.target.value;
+    render();
+    // Save to history after 800ms pause (user stopped typing) and min 3 chars
+    clearTimeout(_searchTimer);
+    if (e.target.value.length >= 3) {
+      _searchTimer = setTimeout(() => addToSearchHistory(e.target.value.trim()), 800);
+    }
+    // Hide dropdown while typing
+    hideSearchDropdown();
+  });
+  $('search').addEventListener('focus', e => {
+    // Show history dropdown when focused and empty (or on click)
+    if (!e.target.value) renderSearchDropdown();
+  });
+  $('search').addEventListener('blur', () => {
+    // Small delay so mousedown on dropdown item fires first
+    setTimeout(hideSearchDropdown, 150);
+  });
+  $('search').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && $('search').value.length >= 3) {
+      addToSearchHistory($('search').value.trim());
+      hideSearchDropdown();
+    }
+    if (e.key === 'Escape') { hideSearchDropdown(); }
+  });
   $('detail-close-btn').addEventListener('click',closeDetail);
   $('detail-overlay').addEventListener('click',closeDetail);
   $('modal-bg').addEventListener('click',closeModal);
