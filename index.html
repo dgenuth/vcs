@@ -1458,6 +1458,18 @@ async function loadFile(file) {
       if (_scUpdated) {
         localStorage.setItem('vcs_approved_users', JSON.stringify(_allUsers));
         console.log('[VCS] Share Criteria: updated hiddenFields for', Object.keys(scHiddenFields).length, 'users');
+        // Also update current user's hiddenFields immediately (they may already be logged in)
+        if (USER.loggedIn && USER.email) {
+          const _curKey = USER.email.toLowerCase().trim();
+          const _curPrefix = _curKey.split('@')[0];
+          const _curScKey = Object.keys(scHiddenFields).find(k =>
+            k === _curKey || k === _curPrefix || _curKey.startsWith(k) || k.startsWith(_curPrefix)
+          );
+          if (_curScKey) {
+            USER.hiddenFields = scHiddenFields[_curScKey];
+            console.log('[VCS] Updated current user hiddenFields from Share Criteria:', USER.hiddenFields.length, 'hidden fields');
+          }
+        }
       }
     }
     } catch(scErr) { console.warn('[VCS] Share Criteria parse error (non-fatal):', scErr.message); }
@@ -7380,8 +7392,23 @@ function renderSettings(c) {
             const _url = _base + '?nocache=' + _cb + '#impersonate=' + k;
             const _w = window.open('', '_blank');
             if (_w) {
-              _w.document.write('<html><head><meta http-equiv="refresh" content="0;url=' + _url + '"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"></head><body>Loading...</body></html>');
-              _w.document.close();
+              // Fetch fresh HTML then write it into the new tab — bypasses browser cache entirely
+              fetch(_base + '?bust=' + _cb, {cache: 'no-store'})
+                .then(r => r.text())
+                .then(html => {
+                  // Inject the impersonate hash into the fetched HTML
+                  const patched = html.replace('</head>', '<script>window.__IMP_HASH__="#impersonate=' + k + '";</' + 'script></head>');
+                  _w.document.open();
+                  _w.document.write(patched);
+                  _w.document.close();
+                  // Set the hash after write
+                  setTimeout(() => { try { _w.location.hash = '#impersonate=' + k; } catch(e){} }, 100);
+                })
+                .catch(() => {
+                  // Fallback to meta-refresh
+                  _w.document.write('<html><head><meta http-equiv="refresh" content="0;url=' + _url + '"></head><body>Loading...</body></html>');
+                  _w.document.close();
+                });
             }
           })();
         }},'👁 View As'));
