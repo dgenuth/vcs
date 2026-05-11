@@ -6085,7 +6085,7 @@ function renderReviews(c) {
   if (S.search){const q=S.search.toLowerCase();reviews=reviews.filter(r=>r.name.toLowerCase().includes(q)||String(r.sfNotes||'').toLowerCase().includes(q)||String(r.contractNotes||'').toLowerCase().includes(q));}
 
   c.appendChild(buildTable(
-    ['Vendor','Date','Action','SF / Meeting Notes','Contract Notes'],
+    ['Vendor','Date','Action','Review Progress Notes','SF / Meeting Notes','Contract Notes'],
     reviews,
     r=>{
       // Use fuzzy match — "Nestle" finds "Nestle Health Science"
@@ -6100,10 +6100,10 @@ function renderReviews(c) {
         const wrap=el('span',{}); wrap.appendChild(nameEl); wrap.appendChild(hint);
         // Re-package
         const noteCell=(txt,fieldName,label)=>makeReviewNoteCell(r,txt,fieldName,label);
-        return [wrap,fmtDate(r.date)||String(r.date||''),r.action||'',noteCell(r.sfNotes,'sfNotes','SF Notes'),noteCell(r.contractNotes,'contractNotes','Contract Notes')];
+        return [wrap,fmtDate(r.date)||String(r.date||''),r.action||'',noteCell(r.progressNotes,'progressNotes','Progress Notes'),noteCell(r.sfNotes,'sfNotes','SF Notes'),noteCell(r.contractNotes,'contractNotes','Contract Notes')];
       }
       const noteCell=(txt,fieldName,label)=>makeReviewNoteCell(r,txt,fieldName,label);
-      return [nameEl,fmtDate(r.date)||String(r.date||''),r.action||'',noteCell(r.sfNotes,'sfNotes','SF Notes'),noteCell(r.contractNotes,'contractNotes','Contract Notes')];
+      return [nameEl,fmtDate(r.date)||String(r.date||''),r.action||'',noteCell(r.progressNotes,'progressNotes','Progress Notes'),noteCell(r.sfNotes,'sfNotes','SF Notes'),noteCell(r.contractNotes,'contractNotes','Contract Notes')];
     }
   ));
   if (S.reviewTPs.length) {
