@@ -410,6 +410,21 @@ body.light-theme .sb-logo-text{color:var(--blue)}
 ::-webkit-scrollbar-thumb{background:#3a3d52;border-radius:4px}
 ::-webkit-scrollbar-thumb:hover{background:var(--muted)}
 ::-webkit-scrollbar-corner{background:transparent}
+
+/* ── Collapsible Panel Sections ─────────────────────────────────────────── */
+.panel-sec{border-bottom:1px solid var(--border);}
+.panel-sec:last-child{border-bottom:none;}
+.panel-sec-hdr{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;cursor:pointer;user-select:none;transition:background .12s;}
+.panel-sec-hdr:hover{background:var(--hover);}
+.panel-sec-chev{font-size:12px;color:var(--muted);width:14px;flex-shrink:0;line-height:1;}
+.panel-sec-title{font-size:10px;font-weight:700;color:var(--fg);letter-spacing:.3px;text-transform:uppercase;}
+.panel-sec-dot{width:6px;height:6px;border-radius:50%;background:var(--blue);margin-left:4px;display:inline-block;vertical-align:middle;}
+.panel-sec-body{padding:6px 14px 10px;}
+.panel-sec-body.ps-collapsed{display:none;}
+.panel-exp-bar{display:flex;gap:8px;padding:6px 12px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--sb);z-index:5;}
+.panel-exp-bar button{font-size:10px;padding:4px 12px;border-radius:5px;border:1px solid var(--border);background:var(--card);color:var(--fg);cursor:pointer;transition:all .15s;font-weight:600;}
+.panel-exp-bar button:hover{background:var(--blue);color:#fff;border-color:var(--blue);}
+
 </style>
 </head>
 <body>
@@ -4893,19 +4908,6 @@ function printContractReport() {
 
   const html=`<!DOCTYPE html><html><head><title>Prime Source VCS — Contract Report ${today.toLocaleDateString()}</title>
 <style>body{font-family:Arial,sans-serif;margin:30px;color:#111}h1{font-size:20px;margin-bottom:4px}p.sub{color:#666;font-size:12px;margin-bottom:20px}@media print{button{display:none}}
-/* ── Collapsible Panel Sections ─────────────────────────────────────────── */
-.panel-sec{border-bottom:1px solid var(--border);}
-.panel-sec:last-child{border-bottom:none;}
-.panel-sec-hdr{display:flex;align-items:center;justify-content:space-between;padding:6px 12px;cursor:pointer;user-select:none;transition:background .12s;}
-.panel-sec-hdr:hover{background:var(--hover);}
-.panel-sec-chev{font-size:9px;color:var(--muted);width:10px;flex-shrink:0;}
-.panel-sec-title{font-size:9.5px;font-weight:700;color:var(--fg);letter-spacing:.4px;text-transform:uppercase;}
-.panel-sec-dot{font-size:5px;color:var(--blue);margin-left:3px;vertical-align:middle;}
-.panel-sec-body{padding:4px 12px 8px;}
-.panel-sec-body.ps-collapsed{display:none;}
-.panel-exp-bar{display:flex;gap:6px;padding:4px 10px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--sb);z-index:5;}
-.panel-exp-bar button{font-size:8.5px;padding:2px 8px;border-radius:3px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;transition:all .1s;}
-.panel-exp-bar button:hover{color:var(--fg);border-color:var(--fg);}
 </style></head><body>
 <button onclick="window.print()" style="float:right;padding:6px 14px;background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">🖨 Print</button>
 <h1>Prime Source — Vendor Contract Report</h1>
