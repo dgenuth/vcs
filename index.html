@@ -1359,24 +1359,31 @@ function parseReviews(sheet) {
   const rows = XLSX.utils.sheet_to_json(sheet, {header:1, defval:'', raw:false});
   const cm = S.commentsMap['3'] || {};
   // Row 1 (index 0) = "Touched" header, Row 2 (index 1) = field headers, data starts index 2
+  // Column layout (after inserting "Review Progress Notes" as new col L on 5/10/2026):
+  // I(8)=vendor, J(9)=services, K(10)=action
+  // L(11)=Review Progress Notes (latest note in cell, full history as hover note)
+  // M(12)=SF Notes (shifted from col L), N(13)=Contract Notes (shifted from col M)
   for (let i = 2; i < rows.length; i++) {
     const r = rows[i];
     const vendorName = String(r[8]||'').trim(); // col I
-    const excelRow = i + 1; // convert 0-based index to 1-based Excel row
-    const lRef = `L${excelRow}`, mRef = `M${excelRow}`;
+    const excelRow = i + 1;
+    const lRef = `L${excelRow}`, mRef = `M${excelRow}`, nRef = `N${excelRow}`;
     if (!vendorName) {
-      // Rows 24+ in col L = talking points (no vendor in I)
-      const tpText = cm[lRef] || String(r[11]||'').trim();
+      // Talking points: now in col M (SF Notes section, no vendor in col I)
+      const tpText = cm[mRef] || String(r[12]||'').trim();
       if (tpText && tpText.length > 2) talkingPoints.push({text:tpText, _row:i});
       continue;
     }
-    // Prefer hover comments (full text) over cell text (truncated)
-    const sfNotes = cm[lRef] || String(r[11]||'').trim();
-    const contractNotes = cm[mRef] || String(r[12]||'').trim();
+    // Review Progress Notes: cell value = latest, hover note = full history
+    const progressNotes = cm[lRef] || String(r[11]||'').trim();
+    // SF Notes: prefer hover comment (full text) over truncated cell value
+    const sfNotes = cm[mRef] || String(r[12]||'').trim();
+    // Contract Notes: plain cell value only
+    const contractNotes = String(r[13]||'').trim();
     reviews.push({
       _row:i, name:vendorName,
       date:r[1], services:r[9], action:r[10],
-      sfNotes, contractNotes,
+      progressNotes, sfNotes, contractNotes,
       source:'review',
     });
   }
@@ -2667,7 +2674,24 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       btns3.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
       b.appendChild(btns3);setTimeout(()=>ta3.focus(),50);
     });}},'✏ Contract Notes'));
+    // Add Edit button for Progress Notes
+    rBtnGrp.insertBefore(el('button',{class:'btn-xs btn-ghost',onclick(){closeModal();openModal(b=>{
+      b.appendChild(el('h3',{},'✏️ Edit Progress Notes — '+reviewRecord.name));
+      const toolbarP=buildNoteToolbar();
+      const taP=el('textarea',{class:'modal-textarea notes-editor'});taP.value=String(reviewRecord.progressNotes||'');
+      toolbarP.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>applyNoteFormat(taP,btn)));
+      b.appendChild(toolbarP);b.appendChild(taP);
+      const btnsP=el('div',{class:'modal-btns'});
+      btnsP.appendChild(el('button',{class:'btn-primary',onclick(){reviewRecord.progressNotes=taP.value;refreshDetailIfOpen(vendor);closeModal();}},'Save'));
+      btnsP.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
+      b.appendChild(btnsP);setTimeout(()=>taP.focus(),50);
+    });}},'✏ Progress Notes'), rBtnGrp.firstChild);
     rHdr.appendChild(rBtnGrp); rSec.appendChild(rHdr);
+    if (reviewRecord.progressNotes) {
+      rSec.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',margin:'4px 0 2px'}},'📋 Review Progress Notes:'));
+      const ndP=el('div',{class:'notes-area'});
+      renderNotesStr(ndP, reviewRecord.progressNotes); rSec.appendChild(ndP);
+    }
     if (reviewRecord.sfNotes) {
       rSec.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',margin:'4px 0 2px'}},'Salesforce / Meeting Notes:'));
       const nd=el('div',{class:'notes-area'});
@@ -2678,7 +2702,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       const nd2=el('div',{class:'notes-area'});
       if (['admin','procurement','manager','cro'].includes(USER.role)) { renderNotesStr(nd2,reviewRecord.contractNotes); rSec.appendChild(nd2); }
     }
-    if (!reviewRecord.sfNotes && !reviewRecord.contractNotes) rSec.appendChild(el('p',{class:'muted',style:{padding:'4px 0',fontSize:'10px'}},'No review notes yet.'));
+    if (!reviewRecord.progressNotes && !reviewRecord.sfNotes && !reviewRecord.contractNotes) rSec.appendChild(el('p',{class:'muted',style:{padding:'4px 0',fontSize:'10px'}},'No review notes yet.'));
     body.appendChild(rSec);
   }
 
