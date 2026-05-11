@@ -1533,13 +1533,13 @@ async function loadFile(file) {
     updateSidebar(); render();
     const gpCount = S.channelVendors.length;
     toast(`Loaded ${S.vendors.length} direct + ${gpCount} channel partner vendors, ${S.itw.length} pipeline, ${S.reviews.length} reviews`);
-    clearSessionState(); // Clear old session — file just reloaded fresh
     startAutoSave();
 
     // Offer to restore unsaved session — AFTER file loads so we can actually apply changes
+    // NOTE: clearSessionState() intentionally NOT called here — modal handles it after user decides
     setTimeout(()=>{
       const saved=loadSessionState();
-      if(!saved||!saved.dirtyVendors?.length) return;
+      if(!saved||!saved.dirtyVendors?.length){ clearSessionState(); return; }
       const ageMin=Math.round((Date.now()-new Date(saved.ts))/60000);
       if(ageMin>24*60){clearSessionState();return;}
       if(saved.fileName&&saved.fileName!==S.fileName){clearSessionState();return;} // Different file
@@ -1756,7 +1756,7 @@ async function executeSave() {
     try {
       const syncBuffer = typeof histBuffer !== 'undefined' ? histBuffer : uint8.buffer;
       const synced = await saveToDrive(syncBuffer, outName);
-      if (synced) toast('✅ Saved and synced to Google Drive');
+      if (synced) { toast('✅ Saved and synced to Google Drive'); clearSessionState(); }
       else toast('⚠ Drive sync failed — saveToDrive returned false. Check console.','#f59e0b');
     } catch(syncErr) {
       toast('⚠ Drive sync error: ' + syncErr.message.slice(0,100),'#ef4444');
