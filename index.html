@@ -748,6 +748,16 @@ function loginAs(userObj) {
   USER.hiddenFields = _scMatch !== null && _scMatch !== undefined ? _scMatch : (userObj.hiddenFields || getDefaultHiddenFields(userObj.role, userObj.email));
   USER.tabOverrides = userObj.tabOverrides || {};
   USER._impersonating = userObj._impersonating || false;
+  // Always hide VCS-internal columns from non-admin/procurement roles
+  // 'tier' = CALL/EMAIL/REVIEW/MONITOR badge (internal procurement tool)
+  // 'days' = raw days count (redundant with expiry column)
+  var _internalCols = ['tier','days'];
+  var _canSeeInternal = ['admin','procurement','manager','cro'].includes(USER.role);
+  if (!_canSeeInternal) {
+    var _hf = USER.hiddenFields || [];
+    _internalCols.forEach(function(f) { if (_hf.indexOf(f) < 0) _hf.push(f); });
+    USER.hiddenFields = _hf;
+  }
   setTimeout(applyCopyProtection, 100);
   // Persist session
   sessionStorage.setItem('vcs_session', JSON.stringify({
