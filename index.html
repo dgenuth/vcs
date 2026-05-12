@@ -1560,7 +1560,7 @@ async function loadFile(file) {
 
       openModal(body=>{
         body.appendChild(el('h3',{},'💾 Restore Unsaved Changes?'));
-        body.appendChild(el('p',{style:{fontSize:'11px',lineHeight:'1.6',marginBottom:'8px'}},'Found '+saved.dirtyVendors.length+' vendor'+(saved.dirtyVendors.length!==1?'s':'')+' with unsaved changes from '+ageMin+' minute'+(ageMin!==1?'s':'')+' ago. Apply them to this file?'));
+        body.appendChild(el('p',{style:{fontSize:'11px',lineHeight:'1.6',marginBottom:'8px'}},(()=>{const _vd=saved.dirtyVendors?.length||0;const _rd=saved.dirtyReviews?.length||0;const _parts=[];if(_vd)_parts.push(_vd+' vendor'+(_vd!==1?'s':''));if(_rd)_parts.push(_rd+' review note'+(_rd!==1?'s':''));return'Found '+(_parts.join(' and ')||'0 items')+' with unsaved changes from '+ageMin+' minute'+(ageMin!==1?'s':'')+' ago. Apply them to this file?';})()));
         const ul=el('ul',{style:{fontSize:'10px',color:'var(--muted)',margin:'0 0 10px 16px',lineHeight:'1.7'}});
         saved.dirtyVendors.slice(0,8).forEach(v=>ul.appendChild(el('li',{},v.name)));
         if(saved.dirtyVendors.length>8) ul.appendChild(el('li',{},'...and '+(saved.dirtyVendors.length-8)+' more'));
@@ -3115,7 +3115,7 @@ function offerSessionRestore() {
     const details=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'4px',padding:'8px',marginBottom:'10px',fontSize:'10px'}});
     details.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'3px'}},'Session details:'));
     details.appendChild(el('div',{},'File: '+(saved.fileName||'—')));
-    details.appendChild(el('div',{},saved.dirtyVendors.length+' vendor record'+(saved.dirtyVendors.length!==1?'s':'')+' with unsaved changes'));
+    details.appendChild(el('div',{},(()=>{const _vd=saved.dirtyVendors?.length||0;const _rd=saved.dirtyReviews?.length||0;const _parts=[];if(_vd)_parts.push(_vd+' vendor record'+(_vd!==1?'s':''));if(_rd)_parts.push(_rd+' review note'+(_rd!==1?'s':''));return(_parts.join(', ')||'0 items')+' with unsaved changes';})()));
     details.appendChild(el('div',{},(saved.history||[]).length+' history entries'));
     details.appendChild(el('div',{},'Saved: '+savedTs.toLocaleString()));
     body.appendChild(details);
@@ -3140,7 +3140,7 @@ function offerSessionRestore() {
       if (saved.snoozed) Object.entries(saved.snoozed).forEach(([k,v])=>{S.snoozed[k]=new Date(v);});
       if (saved.dismissed) saved.dismissed.forEach(n=>S.dismissed.add(n));
       closeModal(); render(); updateSidebar();
-      toast('✓ Session restored — '+saved.dirtyVendors.length+' vendor'+(saved.dirtyVendors.length!==1?'s':'')+' with changes');
+      toast((()=>{const _vd=saved.dirtyVendors?.length||0;const _rd=saved.dirtyReviews?.length||0;const _parts=[];if(_vd)_parts.push(_vd+' vendor'+(_vd!==1?'s':''));if(_rd)_parts.push(_rd+' review note'+(_rd!==1?'s':''));return'✓ Session restored — '+(_parts.join(', ')||'0 items')+' with changes';})());
     }},'✅ Restore Session'));
     btns.appendChild(el('button',{class:'btn-secondary',onclick(){clearSessionState();closeModal();}},'Start Fresh'));
     body.appendChild(btns);
