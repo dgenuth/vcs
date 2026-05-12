@@ -2689,7 +2689,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       toolbar2.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>applyNoteFormat(ta2,btn)));
       b.appendChild(toolbar2);b.appendChild(ta2);
       const btns2=el('div',{class:'modal-btns'});
-      btns2.appendChild(el('button',{class:'btn-primary',onclick(){reviewRecord.sfNotes=ta2.value;reviewRecord._dirty=true;if(!S.dirtyReviews)S.dirtyReviews=new Set();S.dirtyReviews.add(reviewRecord._row);refreshDetailIfOpen(vendor);render();saveSessionState();closeModal();toast('✓ Saved');}},'Save'));
+      btns2.appendChild(el('button',{class:'btn-primary',onclick(){reviewRecord.sfNotes=ta2.value;reviewRecord._dirty=true;if(!S.dirtyReviews)S.dirtyReviews=new Set();S.dirtyReviews.add(reviewRecord._row);refreshDetailIfOpen(vendor);saveSessionState();updateSidebar();render();closeModal();toast('✓ Saved');}},'Save'));
       btns2.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
       b.appendChild(btns2);setTimeout(()=>ta2.focus(),50);
     });}},'✏ SF Notes'));
@@ -2700,7 +2700,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       toolbar3.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>applyNoteFormat(ta3,btn)));
       b.appendChild(toolbar3);b.appendChild(ta3);
       const btns3=el('div',{class:'modal-btns'});
-      btns3.appendChild(el('button',{class:'btn-primary',onclick(){reviewRecord.contractNotes=ta3.value;reviewRecord._dirty=true;if(!S.dirtyReviews)S.dirtyReviews=new Set();S.dirtyReviews.add(reviewRecord._row);refreshDetailIfOpen(vendor);render();saveSessionState();closeModal();toast('✓ Saved');}},'Save'));
+      btns3.appendChild(el('button',{class:'btn-primary',onclick(){reviewRecord.contractNotes=ta3.value;reviewRecord._dirty=true;if(!S.dirtyReviews)S.dirtyReviews=new Set();S.dirtyReviews.add(reviewRecord._row);refreshDetailIfOpen(vendor);saveSessionState();updateSidebar();render();closeModal();toast('✓ Saved');}},'Save'));
       btns3.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
       b.appendChild(btns3);setTimeout(()=>ta3.focus(),50);
     });}},'✏ Contract Notes'));
@@ -2712,7 +2712,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       toolbarP.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>applyNoteFormat(taP,btn)));
       b.appendChild(toolbarP);b.appendChild(taP);
       const btnsP=el('div',{class:'modal-btns'});
-      btnsP.appendChild(el('button',{class:'btn-primary',onclick(){reviewRecord.progressNotes=taP.value;reviewRecord._dirty=true;if(!S.dirtyReviews)S.dirtyReviews=new Set();S.dirtyReviews.add(reviewRecord._row);refreshDetailIfOpen(vendor);render();saveSessionState();closeModal();toast('✓ Saved');}},'Save'));
+      btnsP.appendChild(el('button',{class:'btn-primary',onclick(){reviewRecord.progressNotes=taP.value;reviewRecord._dirty=true;if(!S.dirtyReviews)S.dirtyReviews=new Set();S.dirtyReviews.add(reviewRecord._row);refreshDetailIfOpen(vendor);saveSessionState();updateSidebar();render();closeModal();toast('✓ Saved');}},'Save'));
       btnsP.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
       b.appendChild(btnsP);setTimeout(()=>taP.focus(),50);
     });}},'✏ Progress Notes'), rBtnGrp.firstChild);
@@ -6167,7 +6167,7 @@ function makeReviewNoteCell(r, txt, fieldName, label) {
       body.appendChild(toolbar);
       body.appendChild(ta);
       const btns=el('div',{class:'modal-btns'});
-      btns.appendChild(el('button',{class:'btn-primary',onclick(){r[fieldName]=ta.value;r._dirty=true;if(!S.dirtyReviews)S.dirtyReviews=new Set();S.dirtyReviews.add(r._row);toast('DEBUG: dirtyReviews.size='+S.dirtyReviews.size+' _row='+r._row,'#4f7cff');logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:r.name,action:`Updated Review ${label}`,to:ta.value.slice(0,60)});saveSessionState();updateSidebar();render();closeModal();toast('✓ Saved');}},'Save'));
+      btns.appendChild(el('button',{class:'btn-primary',onclick(){r[fieldName]=ta.value;r._dirty=true;if(!S.dirtyReviews)S.dirtyReviews=new Set();S.dirtyReviews.add(r._row);logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:r.name,action:`Updated Review ${label}`,to:ta.value.slice(0,60)});saveSessionState();updateSidebar();render();closeModal();toast('✓ Saved');}},'Save'));
       btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
       body.appendChild(btns);
       setTimeout(()=>ta.focus(),50);
