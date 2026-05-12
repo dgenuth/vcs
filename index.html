@@ -733,6 +733,13 @@ function loginAs(userObj) {
   USER.hiddenFields = _scMatch !== null && _scMatch !== undefined ? _scMatch : (userObj.hiddenFields || getDefaultHiddenFields(userObj.role, userObj.email));
   USER.tabOverrides = userObj.tabOverrides || {};
   USER._impersonating = userObj._impersonating || false;
+  // Always hide tier and days for non-admin roles — hard rule, not spreadsheet-dependent
+  if (USER.role !== 'admin') {
+    var _alwaysHide = ['tier', 'days'];
+    _alwaysHide.forEach(function(f) {
+      if (USER.hiddenFields.indexOf(f) === -1) USER.hiddenFields.push(f);
+    });
+  }
   setTimeout(applyCopyProtection, 100);
   // Persist session
   sessionStorage.setItem('vcs_session', JSON.stringify({
