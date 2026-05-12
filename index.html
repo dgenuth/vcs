@@ -1407,6 +1407,12 @@ async function loadFile(file) {
         const sheetFile = wbRels.match(new RegExp(`Id="${psdRid}"[^T]*Target="worksheets/([^"]+)"`))?.[1];
         if (sheetFile) S.psdSheetFile = `xl/worksheets/${sheetFile}`;
       }
+      const revRid = wbXml.match(/name="Reviews"[^>]*r:id="([^"]+)"/)?.[1] ||
+                     wbXml.match(/r:id="([^"]+)"[^>]*name="Reviews"/)?.[1];
+      if (revRid) {
+        const revSheetFile = wbRels.match(new RegExp(`Id="${revRid}"[^T]*Target="worksheets/([^"]+)"`))?.[1];
+        if (revSheetFile) S.reviewsSheetFile = `xl/worksheets/${revSheetFile}`;
+      }
       // Parse comments1/2/3.xml into S.commentsMap
       S.commentsMap = {};
       for (const num of ['1','2','3']) {
@@ -1724,6 +1730,25 @@ async function executeSave() {
 
     zip.file(sheetFile, sheetXml);
 
+    // ── Write dirty review notes back to Reviews sheet ──────────────────────────
+    const dirtyReviews = S.reviews.filter(r => r._dirty);
+    if (dirtyReviews.length > 0) {
+      const revSheetPath = S.reviewsSheetFile || 'xl/worksheets/sheet8.xml';
+      const revSheetEntry = zip.file(revSheetPath);
+      if (revSheetEntry) {
+        let revXml = await revSheetEntry.async('text');
+        for (const r of dirtyReviews) {
+          const rowNum = r._row + 1; // _row is 0-based array index; Excel row = _row+1
+          if (r.progressNotes !== undefined) revXml = upsertCell(revXml, rowNum, 'L', String(r.progressNotes || ''));
+          if (r.sfNotes      !== undefined) revXml = upsertCell(revXml, rowNum, 'M', String(r.sfNotes      || ''));
+          if (r.contractNotes!== undefined) revXml = upsertCell(revXml, rowNum, 'N', String(r.contractNotes|| ''));
+        }
+        zip.file(revSheetPath, revXml);
+        logHistory({date:isoDate(new Date()), time:new Date().toLocaleTimeString(),
+          vendor:'System', action:`Reviews sheet updated: ${dirtyReviews.length} record(s) saved`});
+      }
+    }
+
     // Old VCS History writer removed — using writeHistoryToExcel instead
 
     const uint8 = await zip.generateAsync({
@@ -1740,6 +1765,9 @@ async function executeSave() {
     if (S.dirtyRows) S.dirtyRows.clear();
     // Clear _dirty flags on vendors
     dirtyVendors.forEach(v => { v._dirty = false; });
+    // Clear _dirty flags on review records
+    S.reviews.forEach(r => { r._dirty = false; });
+    if (S.dirtyReviews) S.dirtyReviews.clear();
     updateSidebar();
     logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:'System',action:'File exported: '+outName+' ('+dirtyVendors.length+' vendors updated)'});
     const mergeMsg = fetchedFresh ? '☁ Merged & saved' : '⚠ Saved (local only — Drive fetch failed)';
@@ -2659,7 +2687,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       toolbar2.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>applyNoteFormat(ta2,btn)));
       b.appendChild(toolbar2);b.appendChild(ta2);
       const btns2=el('div',{class:'modal-btns'});
-      btns2.appendChild(el('button',{class:'btn-primary',onclick(){reviewRecord.sfNotes=ta2.value;refreshDetailIfOpen(vendor);render();closeModal();toast('✓ Saved');}},'Save'));
+      btns2.appendChild(el('button',{class:'btn-primary',onclick(){reviewRecord.sfNotes=ta2.value;reviewRecord._dirty=true;if(!S.dirtyReviews)S.dirtyReviews=new Set();S.dirtyReviews.add(reviewRecord._row);refreshDetailIfOpen(vendor);render();saveSessionState();closeModal();toast('✓ Saved');}},'Save'));
       btns2.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
       b.appendChild(btns2);setTimeout(()=>ta2.focus(),50);
     });}},'✏ SF Notes'));
@@ -2670,7 +2698,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       toolbar3.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>applyNoteFormat(ta3,btn)));
       b.appendChild(toolbar3);b.appendChild(ta3);
       const btns3=el('div',{class:'modal-btns'});
-      btns3.appendChild(el('button',{class:'btn-primary',onclick(){reviewRecord.contractNotes=ta3.value;refreshDetailIfOpen(vendor);render();closeModal();toast('✓ Saved');}},'Save'));
+      btns3.appendChild(el('button',{class:'btn-primary',onclick(){reviewRecord.contractNotes=ta3.value;reviewRecord._dirty=true;if(!S.dirtyReviews)S.dirtyReviews=new Set();S.dirtyReviews.add(reviewRecord._row);refreshDetailIfOpen(vendor);render();saveSessionState();closeModal();toast('✓ Saved');}},'Save'));
       btns3.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
       b.appendChild(btns3);setTimeout(()=>ta3.focus(),50);
     });}},'✏ Contract Notes'));
@@ -2682,7 +2710,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       toolbarP.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>applyNoteFormat(taP,btn)));
       b.appendChild(toolbarP);b.appendChild(taP);
       const btnsP=el('div',{class:'modal-btns'});
-      btnsP.appendChild(el('button',{class:'btn-primary',onclick(){reviewRecord.progressNotes=taP.value;refreshDetailIfOpen(vendor);closeModal();}},'Save'));
+      btnsP.appendChild(el('button',{class:'btn-primary',onclick(){reviewRecord.progressNotes=taP.value;reviewRecord._dirty=true;if(!S.dirtyReviews)S.dirtyReviews=new Set();S.dirtyReviews.add(reviewRecord._row);refreshDetailIfOpen(vendor);render();saveSessionState();closeModal();toast('✓ Saved');}},'Save'));
       btnsP.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
       b.appendChild(btnsP);setTimeout(()=>taP.focus(),50);
     });}},'✏ Progress Notes'), rBtnGrp.firstChild);
