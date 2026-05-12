@@ -3124,7 +3124,8 @@ let _autoSaveInterval = null;
 function startAutoSave() {
   if (_autoSaveInterval) clearInterval(_autoSaveInterval);
   _autoSaveInterval = setInterval(()=>{
-    if (S.loaded && S.dirty.size > 0) {
+    const _totalDirty = (S.dirty?.size||0) + (S.dirtyReviews?.size||0);
+    if (S.loaded && _totalDirty > 0) {
       saveSessionState();
       const ind=$('dirty-indicator');
       if(ind){
@@ -5584,9 +5585,10 @@ function updateSidebar() {
   // Save button respects role permission (already set above)
   const dirtyInd=$('dirty-indicator');
   if(dirtyInd){
-    const hasDirty=isLoaded&&S.dirty&&S.dirty.size>0;
+    const _vDirty=S.dirty?.size||0; const _rDirty=S.dirtyReviews?.size||0;
+    const hasDirty=isLoaded&&(_vDirty+_rDirty)>0;
     dirtyInd.style.display=hasDirty?'inline':'none';
-    if(hasDirty) dirtyInd.title=S.dirty.size+' vendor'+(S.dirty.size!==1?'s':'')+' with unsaved changes';
+    if(hasDirty) dirtyInd.title=(_vDirty?_vDirty+' vendor'+(_vDirty!==1?'s':'')+' ':'')+(_rDirty?_rDirty+' review'+(_rDirty!==1?'s':'')+' ':'')+' with unsaved changes';
   }
   // Get effective tabs — role defaults + per-user overrides
   const _roleBaseTabs = (ROLE_PERMS[USER.role||'viewer']||ROLE_PERMS.viewer).tabs || NAV_DEFS.map(n=>n[0]);
@@ -5615,7 +5617,7 @@ function updateSidebar() {
     const active=S.vendors.filter(isVisible);
     const calls=active.filter(v=>v.tier==='CALL').length;
     const emails=active.filter(v=>v.tier==='EMAIL').length;
-    [[`Vendors`,active.length,''],[`🔴 CALL`,calls,'red'],[`🟡 EMAIL`,emails,'amber'],[`Pipeline`,S.itw.length,''],[`Dirty`,S.dirty.size,S.dirty.size?'amber':'']].forEach(([label,val,cls])=>{
+    [[`Vendors`,active.length,''],[`🔴 CALL`,calls,'red'],[`🟡 EMAIL`,emails,'amber'],[`Pipeline`,S.itw.length,''],[`Dirty`,(S.dirty.size||0)+(S.dirtyReviews?.size||0),(S.dirty.size||S.dirtyReviews?.size)?'amber':'']].forEach(([label,val,cls])=>{
       if (cls==='') { qs.appendChild(el('div',{class:'stat-row'},el('span',{class:'stat-label'},label),el('span',{class:'stat-val'},val))); }
       else { qs.appendChild(el('div',{class:'stat-row'},el('span',{class:'stat-label '+cls},label),el('span',{class:'stat-val '+cls},val))); }
     });
@@ -6163,7 +6165,7 @@ function makeReviewNoteCell(r, txt, fieldName, label) {
       body.appendChild(toolbar);
       body.appendChild(ta);
       const btns=el('div',{class:'modal-btns'});
-      btns.appendChild(el('button',{class:'btn-primary',onclick(){r[fieldName]=ta.value;logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:r.name,action:`Updated Review ${label}`,to:ta.value.slice(0,60)});render();closeModal();toast('✓ Saved');}},'Save'));
+      btns.appendChild(el('button',{class:'btn-primary',onclick(){r[fieldName]=ta.value;r._dirty=true;if(!S.dirtyReviews)S.dirtyReviews=new Set();S.dirtyReviews.add(r._row);logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:r.name,action:`Updated Review ${label}`,to:ta.value.slice(0,60)});saveSessionState();updateSidebar();render();closeModal();toast('✓ Saved');}},'Save'));
       btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
       body.appendChild(btns);
       setTimeout(()=>ta.focus(),50);
@@ -6171,7 +6173,8 @@ function makeReviewNoteCell(r, txt, fieldName, label) {
   };
   if (!txt) return el('button',{class:'btn-xs btn-ghost',onclick(e){e.stopPropagation();editFn();}},'+');
   const wrap=el('span',{style:{display:'inline-flex',alignItems:'center',gap:'4px'}});
-  wrap.appendChild(el('span',{class:'note-preview clickable',title:'Click to view full note',onclick(e){e.stopPropagation();showNotePopupWithEdit(r.name+' — '+label,txt,editFn);}},txt.slice(0,70)+(txt.length>70?' [+]':'')));
+  const _previewEntry=txt.includes('|')?txt.split('|').map(e=>e.trim()).filter(Boolean).pop():txt;
+  wrap.appendChild(el('span',{class:'note-preview clickable',title:'Click to view full note',onclick(e){e.stopPropagation();showNotePopupWithEdit(r.name+' — '+label,txt,editFn);}},_previewEntry.slice(0,70)+(_previewEntry.length>70||txt.includes('|')?' [+]':'')));
   wrap.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Edit',onclick(e){e.stopPropagation();editFn();}},'✏'));
   return wrap;
 }
