@@ -1411,13 +1411,13 @@ async function loadFile(file) {
       const psdRid = wbXml.match(/name="Prime Source Direct"[^>]*r:id="([^"]+)"/)?.[1] ||
                      wbXml.match(/r:id="([^"]+)"[^>]*name="Prime Source Direct"/)?.[1];
       if (psdRid) {
-        const sheetFile = wbRels.match(new RegExp(`Id="${psdRid}"[^T]*Target="worksheets/([^"]+)"`))?.[1];
+        const sheetFile = wbRels.match(new RegExp(`Id="${psdRid}"[^>]*Target="worksheets/([^"]+)"`))?.[1];
         if (sheetFile) S.psdSheetFile = `xl/worksheets/${sheetFile}`;
       }
       const revRid = wbXml.match(/name="Reviews"[^>]*r:id="([^"]+)"/)?.[1] ||
                      wbXml.match(/r:id="([^"]+)"[^>]*name="Reviews"/)?.[1];
       if (revRid) {
-        const revSheetFile = wbRels.match(new RegExp(`Id="${revRid}"[^/]*Target="worksheets/([^"]+)"`))?.[1];
+        const revSheetFile = wbRels.match(new RegExp(`Id="${revRid}"[^>]*Target="worksheets/([^"]+)"`))?.[1];
         if (revSheetFile) {
           S.reviewsSheetFile = `xl/worksheets/${revSheetFile}`;
           console.log('[VCS] reviewsSheetFile detected:', S.reviewsSheetFile);
