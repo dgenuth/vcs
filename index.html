@@ -1552,7 +1552,8 @@ async function loadFile(file) {
     // NOTE: clearSessionState() intentionally NOT called here — modal handles it after user decides
     setTimeout(()=>{
       const saved=loadSessionState();
-      if(!saved||!saved.dirtyVendors?.length){ clearSessionState(); return; }
+      if(!saved||(!saved.dirtyVendors?.length&&!saved.dirtyReviews?.length)){ clearSessionState(); return; }
+      if(USER._impersonating){ return; } // Never offer restore during View As
       const ageMin=Math.round((Date.now()-new Date(saved.ts))/60000);
       if(ageMin>24*60){clearSessionState();return;}
       if(saved.fileName&&saved.fileName!==S.fileName){clearSessionState();return;} // Different file
@@ -1582,6 +1583,19 @@ async function loadFile(file) {
           }
           if(saved.history) S.history=[...saved.history,...S.history];
           if(saved.calEvents) Object.assign(S.calEvents,saved.calEvents);
+          // Restore dirty review records
+          if (saved.dirtyReviews && saved.dirtyReviews.length) {
+            if (!S.dirtyReviews) S.dirtyReviews = new Set();
+            for (const sr of saved.dirtyReviews) {
+              const live = S.reviews.find(r => r._row === sr._row);
+              if (!live) continue;
+              if (sr.progressNotes !== undefined) live.progressNotes = sr.progressNotes;
+              if (sr.sfNotes      !== undefined) live.sfNotes       = sr.sfNotes;
+              if (sr.contractNotes!== undefined) live.contractNotes = sr.contractNotes;
+              live._dirty = true;
+              S.dirtyReviews.add(live._row);
+            }
+          }
           clearSessionState();
           render(); updateSidebar(); closeModal();
           toast('✓ Restored '+applied+' vendor'+(applied!==1?'s':'')+(skipped?' ('+skipped+' not found in this file)':''));
@@ -3067,6 +3081,12 @@ function saveSessionState() {
       itw: S.itw.map(v=>({...v})),
       snoozed: Object.fromEntries(Object.entries(S.snoozed).map(([k,v])=>[k,v instanceof Date?v.toISOString():v])),
       dismissed: [...S.dismissed],
+      dirtyReviews: S.reviews.filter(r=>r._dirty).map(r=>({
+        _row: r._row, name: r.name,
+        progressNotes: r.progressNotes,
+        sfNotes: r.sfNotes,
+        contractNotes: r.contractNotes
+      })),
     };
     localStorage.setItem(SESSION_KEY, JSON.stringify(toSave));
   } catch(e) { console.warn('Session save failed:', e); }
