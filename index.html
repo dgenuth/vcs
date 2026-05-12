@@ -1755,9 +1755,12 @@ async function executeSave() {
 
     // ── Write dirty review notes back to Reviews sheet ──────────────────────────
     const dirtyReviews = S.reviews.filter(r => r._dirty);
+    console.log('[REVIEW WRITE] dirtyReviews count:', dirtyReviews.length, 'reviewsSheetFile:', S.reviewsSheetFile);
     if (dirtyReviews.length > 0) {
       const revSheetPath = S.reviewsSheetFile || 'xl/worksheets/sheet8.xml';
       const revSheetEntry = zip.file(revSheetPath);
+      console.log('[REVIEW WRITE] revSheetPath:', revSheetPath, 'entry found:', !!revSheetEntry);
+      console.log('[REVIEW WRITE] available sheets:', Object.keys(zip.files).filter(k=>k.startsWith('xl/worksheets/')));
       if (revSheetEntry) {
         let revXml = await revSheetEntry.async('text');
         for (const r of dirtyReviews) {
