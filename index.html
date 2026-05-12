@@ -1417,8 +1417,15 @@ async function loadFile(file) {
       const revRid = wbXml.match(/name="Reviews"[^>]*r:id="([^"]+)"/)?.[1] ||
                      wbXml.match(/r:id="([^"]+)"[^>]*name="Reviews"/)?.[1];
       if (revRid) {
-        const revSheetFile = wbRels.match(new RegExp(`Id="${revRid}"[^T]*Target="worksheets/([^"]+)"`))?.[1];
-        if (revSheetFile) S.reviewsSheetFile = `xl/worksheets/${revSheetFile}`;
+        const revSheetFile = wbRels.match(new RegExp(`Id="${revRid}"[^/]*Target="worksheets/([^"]+)"`))?.[1];
+        if (revSheetFile) {
+          S.reviewsSheetFile = `xl/worksheets/${revSheetFile}`;
+          console.log('[VCS] reviewsSheetFile detected:', S.reviewsSheetFile);
+        } else {
+          console.warn('[VCS] reviewsSheetFile detection failed for revRid:', revRid);
+        }
+      } else {
+        console.warn('[VCS] Reviews rId not found in workbook XML');
       }
       // Parse comments1/2/3.xml into S.commentsMap
       S.commentsMap = {};
@@ -1754,10 +1761,30 @@ async function executeSave() {
     zip.file(sheetFile, sheetXml);
 
     // ── Write dirty review notes back to Reviews sheet ──────────────────────────
-    // REVIEWS SHEET WRITE DISABLED — sheet path detection needs fixing
-    // Review notes are saved in session state and visible in VCS but not yet
-    // written back to Excel. Re-enable after correct sheet path is confirmed.
     const dirtyReviews = S.reviews.filter(r => r._dirty);
+    if (dirtyReviews.length > 0) {
+      if (S.reviewsSheetFile) {
+        const revSheetEntry = zip.file(S.reviewsSheetFile);
+        if (revSheetEntry) {
+          let revXml = await revSheetEntry.async('text');
+          for (const r of dirtyReviews) {
+            const rowNum = r._row + 1;
+            if (r.progressNotes !== undefined) revXml = upsertCell(revXml, rowNum, 'L', String(r.progressNotes || ''));
+            if (r.sfNotes      !== undefined) revXml = upsertCell(revXml, rowNum, 'M', String(r.sfNotes      || ''));
+            if (r.contractNotes!== undefined) revXml = upsertCell(revXml, rowNum, 'N', String(r.contractNotes|| ''));
+          }
+          zip.file(S.reviewsSheetFile, revXml);
+          logHistory({date:isoDate(new Date()), time:new Date().toLocaleTimeString(),
+            vendor:'System', action:`Reviews sheet updated: ${dirtyReviews.length} record(s) saved`});
+        } else {
+          console.warn('[VCS] Reviews sheet entry not found in zip:', S.reviewsSheetFile);
+          toast('⚠ Review notes not saved to Excel — sheet not found', '#f59e0b');
+        }
+      } else {
+        console.warn('[VCS] reviewsSheetFile not detected — review notes NOT written to Excel');
+        toast('⚠ Review notes saved in VCS only — reload file to enable Excel sync', '#f59e0b');
+      }
+    }
 
     // Old VCS History writer removed — using writeHistoryToExcel instead
 
