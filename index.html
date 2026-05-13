@@ -1762,29 +1762,9 @@ async function executeSave() {
 
     // ── Write dirty review notes back to Reviews sheet ──────────────────────────
     const dirtyReviews = S.reviews.filter(r => r._dirty);
-    if (dirtyReviews.length > 0) {
-      if (S.reviewsSheetFile) {
-        const revSheetEntry = zip.file(S.reviewsSheetFile);
-        if (revSheetEntry) {
-          let revXml = await revSheetEntry.async('text');
-          for (const r of dirtyReviews) {
-            const rowNum = r._row + 1;
-            if (r.progressNotes !== undefined) revXml = upsertCell(revXml, rowNum, 'L', String(r.progressNotes || ''));
-            if (r.sfNotes      !== undefined) revXml = upsertCell(revXml, rowNum, 'M', String(r.sfNotes      || ''));
-            if (r.contractNotes!== undefined) revXml = upsertCell(revXml, rowNum, 'N', String(r.contractNotes|| ''));
-          }
-          zip.file(S.reviewsSheetFile, revXml);
-          logHistory({date:isoDate(new Date()), time:new Date().toLocaleTimeString(),
-            vendor:'System', action:`Reviews sheet updated: ${dirtyReviews.length} record(s) saved`});
-        } else {
-          console.warn('[VCS] Reviews sheet entry not found in zip:', S.reviewsSheetFile);
-          toast('⚠ Review notes not saved to Excel — sheet not found', '#f59e0b');
-        }
-      } else {
-        console.warn('[VCS] reviewsSheetFile not detected — review notes NOT written to Excel');
-        toast('⚠ Review notes saved in VCS only — reload file to enable Excel sync', '#f59e0b');
-      }
-    }
+    // Reviews Excel write disabled — pending proper sharedStrings + comment implementation
+    // Notes are preserved in VCS session state and visible in VCS UI
+    // Will be re-enabled next session with correct cell/comment split write
 
     // Old VCS History writer removed — using writeHistoryToExcel instead
 
