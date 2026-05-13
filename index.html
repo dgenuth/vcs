@@ -1342,7 +1342,7 @@ function parseITW(sheet) {
 
     const vendorStatus = STATUS_FLAGS.has(colA) ? colA : (colA || '');
     const excelRow = i + 1;
-    const noteComment = cm[`Z${excelRow}`] || cm[`X${excelRow}`] || '';
+    const noteComment = cm[`BD${excelRow}`] || cm[`Z${excelRow}`] || cm[`X${excelRow}`] || '';
     const noteCell = String(r[25]||'').trim();
 
     vendors.push({
@@ -1381,8 +1381,10 @@ function parseReviews(sheet) {
       if (tpText && tpText.length > 2) talkingPoints.push({text:tpText, _row:i});
       continue;
     }
-    // Review Progress Notes: cell value = latest, hover note = full history
-    const progressNotes = cm[lRef] || String(r[11]||'').trim();
+    // Review Progress Notes: Q col comment = raw VCS markdown (source of truth)
+    // Falls back to L comment (plain text) then L cell value
+    const qRef = `Q${excelRow}`;
+    const progressNotes = cm[qRef] || cm[lRef] || String(r[11]||'').trim();
     // SF Notes: prefer hover comment (full text) over truncated cell value
     const sfNotes = cm[mRef] || String(r[12]||'').trim();
     // Contract Notes: plain cell value only
@@ -1905,9 +1907,22 @@ async function executeSave() {
             }
           }
 
-          // 3. Upsert full note history into comments3.xml
+          // 3. Write plain text to L hover comment (readable in Excel, no markers)
+          // Strip VCS markdown markers for plain text version
+          const plainText = notes
+            .replace(/\*\*(.*?)\*\*/g, '$1')
+            .replace(/_(.*?)_/g, '$1')
+            .replace(/\[u\](.*?)\[\/u\]/gi, '$1')
+            .replace(/\[red\](.*?)\[\/red\]/gi, '$1')
+            .replace(/\[green\](.*?)\[\/green\]/gi, '$1')
+            .replace(/\[amber\](.*?)\[\/amber\]/gi, '$1')
+            .replace(/\[blue\](.*?)\[\/blue\]/gi, '$1');
           const authorName = USER.name || 'David Genuth';
-          commentsXml = upsertComment(commentsXml, cellRef, notes, authorName);
+          commentsXml = upsertComment(commentsXml, cellRef, plainText, authorName);
+
+          // 4. Write full markdown to Q hidden column comment (VCS source of truth)
+          const qRef2 = `Q${excelRow}`;
+          commentsXml = upsertComment(commentsXml, qRef2, notes, authorName);
         }
 
         // Write all three files back into the zip
