@@ -1650,6 +1650,96 @@ function dateToExcelSerial(d) {
   return Math.round((dt - epoch) / 86400000);
 }
 
+// ─── Reviews Excel Write Helpers ─────────────────────────────────────────────
+
+// Find or append a plain-text entry in sharedStrings XML.
+// Returns { xml: updatedXml, index: zeroBasedIndex }
+function upsertSharedString(ssXml, text) {
+  // Escape XML entities for comparison and storage
+  const escaped = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+  // Search for existing exact match — plain <t> or <t xml:space="preserve">
+  // We check both forms since existing strings use either
+  const plainRe = new RegExp('<si><t(?:[^>]*)>' + escaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '</t></si>');
+  const existingMatch = ssXml.match(plainRe);
+  if (existingMatch) {
+    // Count index of this match
+    const idx = (ssXml.slice(0, ssXml.indexOf(existingMatch[0])).match(/<si>/g) || []).length;
+    return { xml: ssXml, index: idx };
+  }
+
+  // Not found — append new si before closing </sst>
+  // Use xml:space="preserve" to safely handle whitespace/newlines in note text
+  const newSi = `<si><t xml:space="preserve">${escaped}</t></si>`;
+  const updated = ssXml.replace('</sst>', newSi + '</sst>');
+
+  // Get new index = old uniqueCount value
+  const ucMatch = ssXml.match(/uniqueCount="(\d+)"/);
+  const newIndex = ucMatch ? parseInt(ucMatch[1]) : 0;
+
+  // Increment count and uniqueCount
+  const finalXml = updated
+    .replace(/\bcount="(\d+)"/, (m, n) => `count="${parseInt(n) + 1}"`)
+    .replace(/\buniqueCount="(\d+)"/, (m, n) => `uniqueCount="${parseInt(n) + 1}"`);
+
+  return { xml: finalXml, index: newIndex };
+}
+
+// Upsert a comment for a cell ref in comments XML.
+// If comment exists for ref: appends newNoteText as a new plain run.
+// If no comment exists: creates full comment with bold author header + note text.
+// authorName must match an entry in the <authors> list (0-indexed).
+function upsertComment(commentsXml, ref, newNoteText, authorName) {
+  // Find authorId for authorName
+  const authorsMatch = commentsXml.match(/<authors>([\s\S]*?)<\/authors>/);
+  let authorId = 0;
+  if (authorsMatch) {
+    const authorList = authorsMatch[1].match(/<author>([^<]*)<\/author>/g) || [];
+    const idx = authorList.findIndex(a => a.includes(authorName));
+    if (idx >= 0) authorId = idx;
+  }
+
+  // Escape the new note text for XML
+  const escapedNote = newNoteText
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  // Standard rPr blocks matching existing file format
+  const boldRpr = `<rPr><b/><sz val="9"/><color indexed="81"/><rFont val="Tahoma"/><family val="2"/></rPr>`;
+  const plainRpr = `<rPr><sz val="9"/><color indexed="81"/><rFont val="Tahoma"/><family val="2"/></rPr>`;
+
+  // Check if comment for this ref already exists
+  const existingRe = new RegExp(`(<comment ref="${ref}"[^>]*>)([\\s\\S]*?)(</comment>)`);
+  const existingMatch = commentsXml.match(existingRe);
+
+  if (existingMatch) {
+    // Append new run to existing comment text
+    const appendRun = `<r><rPr><b/><sz val="9"/><color indexed="81"/><rFont val="Tahoma"/><family val="2"/></rPr><t xml:space="preserve">\r\n\r\n</t></r>` +
+      `<r><${plainRpr.slice(1)}<t xml:space="preserve">${escapedNote}</t></r>`;
+    const updatedComment = existingMatch[1] +
+      existingMatch[2].replace('</text>', appendRun + '</text>') +
+      existingMatch[3];
+    return commentsXml.replace(existingRe, updatedComment);
+  }
+
+  // No existing comment — create new one with author bold header + note text
+  // Generate a simple uid placeholder (Excel will re-assign on open)
+  const uid = '{' + 'VCSNEW' + ref.replace(/\D/g, '').padStart(4, '0') + '-0000-0000-0000-000000000000}';
+  const newComment =
+    `<comment ref="${ref}" authorId="${authorId}" shapeId="0" xr:uid="${uid}">` +
+    `<text>` +
+    `<r><${boldRpr.slice(1)}<t>${authorName}:</t></r>` +
+    `<r><${plainRpr.slice(1)}<t xml:space="preserve">\r\n${escapedNote}</t></r>` +
+    `</text></comment>`;
+
+  return commentsXml.replace('</commentList>', newComment + '</commentList>');
+}
+
 async function executeSave() {
   if (!S.originalBuffer) return;
   try {
@@ -1762,9 +1852,72 @@ async function executeSave() {
 
     // ── Write dirty review notes back to Reviews sheet ──────────────────────────
     const dirtyReviews = S.reviews.filter(r => r._dirty);
-    // Reviews Excel write disabled — pending proper sharedStrings + comment implementation
-    // Notes are preserved in VCS session state and visible in VCS UI
-    // Will be re-enabled next session with correct cell/comment split write
+    console.log(`[VCS Reviews] dirtyReviews count: ${dirtyReviews.length}, reviewsSheetFile: ${S.reviewsSheetFile}`);
+    if (dirtyReviews.length > 0 && S.reviewsSheetFile) {
+      try {
+        // Load the three XML files we need to update
+        const ssFile       = zip.file('xl/sharedStrings.xml');
+        const commentsFile = zip.file('xl/comments3.xml');
+        const sheetFile2   = zip.file(S.reviewsSheetFile);
+        console.log(`[VCS Reviews] zip files — sharedStrings: ${!!ssFile}, comments3: ${!!commentsFile}, sheet: ${!!sheetFile2}`);
+        if (!ssFile || !commentsFile || !sheetFile2) throw new Error(`Missing zip entry — ss:${!!ssFile} c3:${!!commentsFile} sheet:${!!sheetFile2}`);
+        let ssXml       = await ssFile.async('text');
+        let commentsXml = await commentsFile.async('text');
+        let sheetXml    = await sheetFile2.async('text');
+
+        for (const rev of dirtyReviews) {
+          const excelRow = rev._row + 1; // _row is 0-based array index; Excel row = _row+1
+          const cellRef  = `L${excelRow}`;
+          const notes    = (rev.progressNotes || '').trim();
+          if (!notes) continue;
+
+          // Cell value = last paragraph (latest entry) — split on blank line
+          const paragraphs = notes.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+          const latestEntry = paragraphs[paragraphs.length - 1];
+
+          // 1. Upsert latest entry into sharedStrings → get index
+          const ssResult = upsertSharedString(ssXml, latestEntry);
+          ssXml = ssResult.xml;
+          const ssIndex = ssResult.index;
+
+          // 2. Update cell in sheet XML: must be t="s" (shared string), preserve existing style attr
+          const existingCellRe = new RegExp(`<c r="${cellRef}"([^>]*)>.*?</c>`, 's');
+          const existingCell = sheetXml.match(existingCellRe);
+          let styleAttr = 's="109"';
+          if (existingCell) {
+            const sMatch = existingCell[1].match(/s="(\d+)"/);
+            if (sMatch) styleAttr = `s="${sMatch[1]}"`;
+          }
+          const newCell = `<c r="${cellRef}" ${styleAttr} t="s"><v>${ssIndex}</v></c>`;
+
+          if (existingCell) {
+            sheetXml = sheetXml.replace(existingCellRe, newCell);
+          } else {
+            const rowRe = new RegExp(`(<row r="${excelRow}"[^>]*>)([\s\S]*?)(</row>)`);
+            const rowMatch = sheetXml.match(rowRe);
+            if (rowMatch) {
+              sheetXml = sheetXml.replace(rowRe, rowMatch[1] + rowMatch[2] + newCell + rowMatch[3]);
+            } else {
+              const newRow = `<row r="${excelRow}" spans="1:14">${newCell}</row>`;
+              sheetXml = sheetXml.replace('</sheetData>', newRow + '</sheetData>');
+            }
+          }
+
+          // 3. Upsert full note history into comments3.xml
+          const authorName = USER.name || 'David Genuth';
+          commentsXml = upsertComment(commentsXml, cellRef, notes, authorName);
+        }
+
+        // Write all three files back into the zip
+        zip.file('xl/sharedStrings.xml', ssXml);
+        zip.file('xl/comments3.xml', commentsXml);
+        zip.file(S.reviewsSheetFile, sheetXml);
+        console.log(`[VCS] Reviews write complete: ${dirtyReviews.length} record(s) written to ${S.reviewsSheetFile}`);
+      } catch(e) {
+        console.error('[VCS] Reviews write failed:', e);
+        toast('⚠ Reviews notes could not be written to Excel: ' + e.message, '#f59e0b');
+      }
+    }
 
     // Old VCS History writer removed — using writeHistoryToExcel instead
 
