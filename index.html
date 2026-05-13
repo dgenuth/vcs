@@ -1650,7 +1650,7 @@ function dateToExcelSerial(d) {
   return Math.round((dt - epoch) / 86400000);
 }
 
-// ─── Reviews Excel Write Helpers (v2) ──────────────────────────────────────
+// ─── Reviews Excel Write Helpers ─────────────────────────────────────────────
 
 // Find or append a plain-text entry in sharedStrings XML.
 // Returns { xml: updatedXml, index: zeroBasedIndex }
@@ -1718,13 +1718,15 @@ function upsertComment(commentsXml, ref, newNoteText, authorName) {
   const existingMatch = commentsXml.match(existingRe);
 
   if (existingMatch) {
-    // Append new run to existing comment text
-    const appendRun = `<r><rPr><b/><sz val="9"/><color indexed="81"/><rFont val="Tahoma"/><family val="2"/></rPr><t xml:space="preserve">\r\n\r\n</t></r>` +
-      `<r><${plainRpr.slice(1)}<t xml:space="preserve">${escapedNote}</t></r>`;
-    const updatedComment = existingMatch[1] +
-      existingMatch[2].replace('</text>', appendRun + '</text>') +
+    // Replace entire comment content with current full note history
+    // progressNotes already contains the complete history — overwrite, don't append
+    const replacedComment = existingMatch[1] +
+      `<text>` +
+      `<r><${boldRpr.slice(1)}<t>${authorName}:</t></r>` +
+      `<r><${plainRpr.slice(1)}<t xml:space="preserve">\r\n${escapedNote}</t></r>` +
+      `</text>` +
       existingMatch[3];
-    return commentsXml.replace(existingRe, updatedComment);
+    return commentsXml.replace(existingRe, replacedComment);
   }
 
   // No existing comment — create new one with author bold header + note text
