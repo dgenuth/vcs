@@ -1692,58 +1692,57 @@ function upsertSharedString(ssXml, text) {
   return { xml: finalXml, index: newIndex };
 }
 
-// Upsert a comment for a cell ref: replace if exists, create with VML shape if not.
-function upsertComment(commentsXml, vmlXml, ref, noteText, authorName) {
-  const escaped = noteText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const boldRpr  = '<rPr><b/><sz val="9"/><color indexed="81"/><rFont val="Tahoma"/><family val="2"/></rPr>';
-  const plainRpr = '<rPr><sz val="9"/><color indexed="81"/><rFont val="Tahoma"/><family val="2"/></rPr>';
-  const authMatch = commentsXml.match(/<authors>([\s\S]*?)<\/authors>/);
+// Upsert a comment for a cell ref in comments XML.
+// If comment exists for ref: appends newNoteText as a new plain run.
+// If no comment exists: creates full comment with bold author header + note text.
+// authorName must match an entry in the <authors> list (0-indexed).
+function upsertComment(commentsXml, ref, newNoteText, authorName) {
+  // Find authorId for authorName
+  const authorsMatch = commentsXml.match(/<authors>([\s\S]*?)<\/authors>/);
   let authorId = 0;
-  if (authMatch) {
-    const list = authMatch[1].match(/<author>([^<]*)<\/author>/g) || [];
-    const idx  = list.findIndex(a => a.includes(authorName));
+  if (authorsMatch) {
+    const authorList = authorsMatch[1].match(/<author>([^<]*)<\/author>/g) || [];
+    const idx = authorList.findIndex(a => a.includes(authorName));
     if (idx >= 0) authorId = idx;
   }
-  const commentBody =
-    '<text><r><' + boldRpr.slice(1) + '<t>' + authorName + ':</t></r>' +
-    '<r><' + plainRpr.slice(1) + '<t xml:space="preserve">\r\n' + escaped + '</t></r></text>';
-  const existingRe = new RegExp('(<comment ref="' + ref + '"[^>]*>)[\\s\\S]*?(</comment>)');
-  if (existingRe.test(commentsXml)) {
-    commentsXml = commentsXml.replace(existingRe, '$1' + commentBody + '$2');
-  } else {
-    const rowNum = parseInt(ref.replace(/\D/g,''), 10);
-    const colLet = ref.replace(/\d/g,'');
-    const colNum = [...colLet].reduce((n,c) => n*26 + c.charCodeAt(0)-64, 0);
-    const shapeIds = [...vmlXml.matchAll(/id="_x0000_s(\d+)"/g)].map(m => parseInt(m[1]));
-    const nextId   = shapeIds.length ? Math.max(...shapeIds)+1 : 17500;
-    const uid = '{VCSNEW' + String(rowNum).padStart(4,'0') + '-' + colLet + '-0000-0000-000000000000}';
-    const newComment =
-      '<comment ref="' + ref + '" authorId="' + authorId + '" shapeId="0" xr:uid="' + uid + '">' +
-      commentBody + '</comment>';
-    commentsXml = commentsXml.replace('</commentList>', newComment + '</commentList>');
-    const marginTop  = (rowNum-1)*14;
-    const marginLeft = colNum*48;
-    const newShape =
-      '<v:shape id="_x0000_s' + nextId + '" type="#_x0000_t202" ' +
-      'style=\'position:absolute;margin-left:' + marginLeft + 'pt;margin-top:' + marginTop + 'pt;' +
-      'width:200pt;height:100pt;z-index:1;visibility:hidden;mso-wrap-style:tight\' ' +
-      'fillcolor="infoBackground [80]" strokecolor="none [81]" o:insetmode="auto">\r\n' +
-      '  <v:fill color2="infoBackground [80]"/>\r\n' +
-      '  <v:shadow color="none [81]" obscured="t"/>\r\n' +
-      '  <v:path o:connecttype="none"/>\r\n' +
-      '  <v:textbox style=\'mso-direction-alt:auto\'><div style=\'text-align:left\'></div></v:textbox>\r\n' +
-      '  <x:ClientData ObjectType="Note">\r\n' +
-      '   <x:MoveWithCells/>\r\n' +
-      '   <x:SizeWithCells/>\r\n' +
-      '   <x:Anchor>11, 0, ' + (rowNum-1) + ', 0, 13, 0, ' + (rowNum+3) + ', 0</x:Anchor>\r\n' +
-      '   <x:AutoFill>False</x:AutoFill>\r\n' +
-      '   <x:Row>' + (rowNum-1) + '</x:Row>\r\n' +
-      '   <x:Column>' + (colNum-1) + '</x:Column>\r\n' +
-      '  </x:ClientData>\r\n' +
-      ' </v:shape>';
-    vmlXml = vmlXml.replace('</xml>', newShape + '\r\n</xml>');
+
+  // Escape the new note text for XML
+  const escapedNote = newNoteText
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  // Standard rPr blocks matching existing file format
+  const boldRpr = `<rPr><b/><sz val="9"/><color indexed="81"/><rFont val="Tahoma"/><family val="2"/></rPr>`;
+  const plainRpr = `<rPr><sz val="9"/><color indexed="81"/><rFont val="Tahoma"/><family val="2"/></rPr>`;
+
+  // Check if comment for this ref already exists
+  const existingRe = new RegExp(`(<comment ref="${ref}"[^>]*>)([\\s\\S]*?)(</comment>)`);
+  const existingMatch = commentsXml.match(existingRe);
+
+  if (existingMatch) {
+    // Replace entire comment content with current full note history
+    // progressNotes already contains the complete history — overwrite, don't append
+    const replacedComment = existingMatch[1] +
+      `<text>` +
+      `<r><${boldRpr.slice(1)}<t>${authorName}:</t></r>` +
+      `<r><${plainRpr.slice(1)}<t xml:space="preserve">\r\n${escapedNote}</t></r>` +
+      `</text>` +
+      existingMatch[3];
+    return commentsXml.replace(existingRe, replacedComment);
   }
-  return { commentsXml, vmlXml };
+
+  // No existing comment — create new one with author bold header + note text
+  // Generate a simple uid placeholder (Excel will re-assign on open)
+  const uid = '{' + 'VCSNEW' + ref.replace(/\D/g, '').padStart(4, '0') + '-0000-0000-0000-000000000000}';
+  const newComment =
+    `<comment ref="${ref}" authorId="${authorId}" shapeId="0" xr:uid="${uid}">` +
+    `<text>` +
+    `<r><${boldRpr.slice(1)}<t>${authorName}:</t></r>` +
+    `<r><${plainRpr.slice(1)}<t xml:space="preserve">\r\n${escapedNote}</t></r>` +
+    `</text></comment>`;
+
+  return commentsXml.replace('</commentList>', newComment + '</commentList>');
 }
 
 async function executeSave() {
@@ -1914,26 +1913,7 @@ async function executeSave() {
           }
         }
 
-        // Write L hover comment — creates new comment+VML shape if needed, replaces if exists
-        let commentsXml = await zip.file('xl/comments3.xml').async('text');
-        let vmlXml      = await zip.file('xl/drawings/vmlDrawing3.vml').async('text');
-        for (const rev of dirtyReviews) {
-          const excelRow  = rev._row + 1;
-          const cellRef   = `L${excelRow}`;
-          const notes     = (rev.progressNotes || '').trim();
-          if (!notes) continue;
-          const plainText = notes
-            .replace(/\*\*(.*?)\*\*/g, '$1').replace(/_(.*?)_/g, '$1')
-            .replace(/\[u\](.*?)\[\/u\]/gi, '$1').replace(/\[red\](.*?)\[\/red\]/gi, '$1')
-            .replace(/\[green\](.*?)\[\/green\]/gi, '$1').replace(/\[amber\](.*?)\[\/amber\]/gi, '$1')
-            .replace(/\[blue\](.*?)\[\/blue\]/gi, '$1');
-          const authorName = USER.name || 'David Genuth';
-          ({ commentsXml, vmlXml } = upsertComment(commentsXml, vmlXml, cellRef, plainText, authorName));
-        }
-        zip.file('xl/comments3.xml', commentsXml);
-        zip.file('xl/drawings/vmlDrawing3.vml', vmlXml);
-
-        // Write sharedStrings and sheet
+        // Write sharedStrings and sheet only — comments3.xml never touched (no VML corruption risk)
         zip.file('xl/sharedStrings.xml', ssXml);
         zip.file(S.reviewsSheetFile, sheetXml);
         console.log(`[VCS] Reviews write complete: ${dirtyReviews.length} record(s) written to ${S.reviewsSheetFile}`);
