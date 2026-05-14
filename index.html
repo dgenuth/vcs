@@ -1692,16 +1692,11 @@ function upsertSharedString(ssXml, text) {
   return { xml: finalXml, index: newIndex };
 }
 
-// Upsert a comment for a cell ref: replace if exists, create (with VML shape) if not.
-// Both comment and VML shape are always kept in sync — no VML mismatch possible.
+// Upsert a comment for a cell ref: replace if exists, create with VML shape if not.
 function upsertComment(commentsXml, vmlXml, ref, noteText, authorName) {
-  // Escape for XML
-  const escaped = noteText
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const boldRpr  = `<rPr><b/><sz val="9"/><color indexed="81"/><rFont val="Tahoma"/><family val="2"/></rPr>`;
-  const plainRpr = `<rPr><sz val="9"/><color indexed="81"/><rFont val="Tahoma"/><family val="2"/></rPr>`;
-
-  // Find authorId
+  const escaped = noteText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const boldRpr  = '<rPr><b/><sz val="9"/><color indexed="81"/><rFont val="Tahoma"/><family val="2"/></rPr>';
+  const plainRpr = '<rPr><sz val="9"/><color indexed="81"/><rFont val="Tahoma"/><family val="2"/></rPr>';
   const authMatch = commentsXml.match(/<authors>([\s\S]*?)<\/authors>/);
   let authorId = 0;
   if (authMatch) {
@@ -1709,71 +1704,45 @@ function upsertComment(commentsXml, vmlXml, ref, noteText, authorName) {
     const idx  = list.findIndex(a => a.includes(authorName));
     if (idx >= 0) authorId = idx;
   }
-
   const commentBody =
-    `<text><r><${boldRpr.slice(1)}<t>${authorName}:</t></r>` +
-    `<r><${plainRpr.slice(1)}<t xml:space="preserve">\r\n${escaped}</t></r></text>`;
-
-  const existingRe = new RegExp(`(<comment ref="${ref}"[^>]*>)[\s\S]*?(</comment>)`);
+    '<text><r><' + boldRpr.slice(1) + '<t>' + authorName + ':</t></r>' +
+    '<r><' + plainRpr.slice(1) + '<t xml:space="preserve">\r\n' + escaped + '</t></r></text>';
+  const existingRe = new RegExp('(<comment ref="' + ref + '"[^>]*>)[\\s\\S]*?(</comment>)');
   if (existingRe.test(commentsXml)) {
-    // Replace existing comment content
-    commentsXml = commentsXml.replace(existingRe,
-      `$1${commentBody}$2`);
+    commentsXml = commentsXml.replace(existingRe, '$1' + commentBody + '$2');
   } else {
-    // Create new comment + matching VML shape (always together to keep counts in sync)
-    const rowNum = parseInt(ref.replace(/\D/g, ''), 10);
-    const colLet = ref.replace(/\d/g, '');
-    const colNum = [...colLet].reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0);
-
-    // Get next shape ID from VML
+    const rowNum = parseInt(ref.replace(/\D/g,''), 10);
+    const colLet = ref.replace(/\d/g,'');
+    const colNum = [...colLet].reduce((n,c) => n*26 + c.charCodeAt(0)-64, 0);
     const shapeIds = [...vmlXml.matchAll(/id="_x0000_s(\d+)"/g)].map(m => parseInt(m[1]));
-    const nextId   = shapeIds.length ? Math.max(...shapeIds) + 1 : 17500;
-    const uid = `{VCSNEW${String(rowNum).padStart(4,'0')}-${colLet}-0000-0000-000000000000}`;
-
-    // New comment XML
+    const nextId   = shapeIds.length ? Math.max(...shapeIds)+1 : 17500;
+    const uid = '{VCSNEW' + String(rowNum).padStart(4,'0') + '-' + colLet + '-0000-0000-000000000000}';
     const newComment =
-      `<comment ref="${ref}" authorId="${authorId}" shapeId="0" xr:uid="${uid}">` +
-      commentBody + `</comment>`;
+      '<comment ref="' + ref + '" authorId="' + authorId + '" shapeId="0" xr:uid="' + uid + '">' +
+      commentBody + '</comment>';
     commentsXml = commentsXml.replace('</commentList>', newComment + '</commentList>');
-
-    // New VML shape (hidden by default, positioned near cell)
-    const marginTop  = (rowNum - 1) * 14;
-    const marginLeft = colNum * 48;
+    const marginTop  = (rowNum-1)*14;
+    const marginLeft = colNum*48;
     const newShape =
-      `<v:shape id="_x0000_s${nextId}" type="#_x0000_t202" ` +
-      `style='position:absolute;margin-left:${marginLeft}pt;margin-top:${marginTop}pt;` +
-      `width:200pt;height:100pt;z-index:1;visibility:hidden;mso-wrap-style:tight' ` +
-      `fillcolor="infoBackground [80]" strokecolor="none [81]" o:insetmode="auto">
-` +
-      `  <v:fill color2="infoBackground [80]"/>
-` +
-      `  <v:shadow color="none [81]" obscured="t"/>
-` +
-      `  <v:path o:connecttype="none"/>
-` +
-      `  <v:textbox style='mso-direction-alt:auto'><div style='text-align:left'></div></v:textbox>
-` +
-      `  <x:ClientData ObjectType="Note">
-` +
-      `   <x:MoveWithCells/>
-` +
-      `   <x:SizeWithCells/>
-` +
-      `   <x:Anchor>11, 0, ${rowNum-1}, 0, 13, 0, ${rowNum+3}, 0</x:Anchor>
-` +
-      `   <x:AutoFill>False</x:AutoFill>
-` +
-      `   <x:Row>${rowNum-1}</x:Row>
-` +
-      `   <x:Column>${colNum-1}</x:Column>
-` +
-      `  </x:ClientData>
-` +
-      ` </v:shape>`;
-    vmlXml = vmlXml.replace('</xml>', newShape + '
-</xml>');
+      '<v:shape id="_x0000_s' + nextId + '" type="#_x0000_t202" ' +
+      'style=\'position:absolute;margin-left:' + marginLeft + 'pt;margin-top:' + marginTop + 'pt;' +
+      'width:200pt;height:100pt;z-index:1;visibility:hidden;mso-wrap-style:tight\' ' +
+      'fillcolor="infoBackground [80]" strokecolor="none [81]" o:insetmode="auto">\r\n' +
+      '  <v:fill color2="infoBackground [80]"/>\r\n' +
+      '  <v:shadow color="none [81]" obscured="t"/>\r\n' +
+      '  <v:path o:connecttype="none"/>\r\n' +
+      '  <v:textbox style=\'mso-direction-alt:auto\'><div style=\'text-align:left\'></div></v:textbox>\r\n' +
+      '  <x:ClientData ObjectType="Note">\r\n' +
+      '   <x:MoveWithCells/>\r\n' +
+      '   <x:SizeWithCells/>\r\n' +
+      '   <x:Anchor>11, 0, ' + (rowNum-1) + ', 0, 13, 0, ' + (rowNum+3) + ', 0</x:Anchor>\r\n' +
+      '   <x:AutoFill>False</x:AutoFill>\r\n' +
+      '   <x:Row>' + (rowNum-1) + '</x:Row>\r\n' +
+      '   <x:Column>' + (colNum-1) + '</x:Column>\r\n' +
+      '  </x:ClientData>\r\n' +
+      ' </v:shape>';
+    vmlXml = vmlXml.replace('</xml>', newShape + '\r\n</xml>');
   }
-
   return { commentsXml, vmlXml };
 }
 
