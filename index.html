@@ -2354,7 +2354,7 @@ function openDoneModal(vendor) {
 // Shared note toolbar builder - used by all note-editing modals
 function buildNoteToolbar(ta) {
   const toolbar=el('div',{class:'note-toolbar'});
-  const applyWrap=(pre,suf)=>{if(!ta)return;const s=ta.selectionStart,e=ta.selectionEnd,sel=ta.value.slice(s,e);if(!sel){toast('Select text first','#f59e0b');return;}ta.setRangeText(pre+sel+suf,s,e,'select');ta.focus();};
+  const applyWrap=(pre,suf)=>{if(!ta)return;const s=ta.selectionStart,e=ta.selectionEnd,sel=ta.value.slice(s,e);if(!sel){toast('Select text first','#f59e0b');return;}if(sel.startsWith(pre)&&sel.endsWith(suf)){const inner=sel.slice(pre.length,sel.length-suf.length);ta.setRangeText(inner,s,e,'select');}else{ta.setRangeText(pre+sel+suf,s,e,'select');}ta.focus();};
   const applyPrefix=(prefix)=>{if(!ta)return;const s=ta.selectionStart,ls=ta.value.lastIndexOf('\n',s-1)+1;ta.setRangeText(prefix,ls,ls,'end');ta.focus();};
   const insert=(t)=>{if(!ta)return;const s=ta.selectionStart;ta.setRangeText(t,s,ta.selectionEnd,'end');ta.focus();};
   [['𝐁',()=>applyWrap('**','**'),'Bold'],['𝐼',()=>applyWrap('_','_'),'Italic'],['U͟',()=>applyWrap('[u]','[/u]'),'Underline'],
@@ -2399,8 +2399,12 @@ function openEditNotesModal(vendor) {
       const start=ta.selectionStart, end=ta.selectionEnd;
       const sel = ta.value.slice(start, end);
       if (!sel) { toast('Select text first','#f59e0b'); return; }
-      const rep = pre + sel + suf;
-      ta.setRangeText(rep, start, end, 'select');
+      if (sel.startsWith(pre) && sel.endsWith(suf)) {
+        const inner = sel.slice(pre.length, sel.length - suf.length);
+        ta.setRangeText(inner, start, end, 'select');
+      } else {
+        ta.setRangeText(pre + sel + suf, start, end, 'select');
+      }
       ta.focus();
     };
     const applyLinePrefix = (prefix) => {
@@ -6352,7 +6356,7 @@ function makeReviewNoteCell(r, txt, fieldName, label) {
       const toolbar=el('div',{class:'note-toolbar'});
       const ta=el('textarea',{class:'modal-textarea notes-editor'});
       ta.value=String(r[fieldName]||'');
-      const applyWrap=(pre,suf)=>{const s=ta.selectionStart,e=ta.selectionEnd,sel=ta.value.slice(s,e);if(!sel){toast('Select text first','#f59e0b');return;}ta.setRangeText(pre+sel+suf,s,e,'select');ta.focus();};
+      const applyWrap=(pre,suf)=>{const s=ta.selectionStart,e=ta.selectionEnd,sel=ta.value.slice(s,e);if(!sel){toast('Select text first','#f59e0b');return;}if(sel.startsWith(pre)&&sel.endsWith(suf)){const inner=sel.slice(pre.length,sel.length-suf.length);ta.setRangeText(inner,s,e,'select');}else{ta.setRangeText(pre+sel+suf,s,e,'select');}ta.focus();};
       const insertText=(t)=>{const s=ta.selectionStart;ta.setRangeText(t,s,ta.selectionEnd,'end');ta.focus();};
       [['𝐁 Bold',()=>applyWrap('**','**')],['𝐼 Italic',()=>applyWrap('_','_')],['U͟ Underline',()=>applyWrap('[u]','[/u]')],['• Bullet',()=>insertText('\n• ')],['🔴 Red',()=>applyWrap('[red]','[/red]')],['🟢 Green',()=>applyWrap('[green]','[/green]')],['🟡 Amber',()=>applyWrap('[amber]','[/amber]')],['🔵 Blue',()=>applyWrap('[blue]','[/blue]')],['📅 Today',()=>insertText(isoDate(new Date())+': ')],].forEach(([lbl,fn])=>toolbar.appendChild(el('button',{class:'note-tb-btn',onclick:fn},lbl)));
       body.appendChild(toolbar);
