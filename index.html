@@ -1692,39 +1692,89 @@ function upsertSharedString(ssXml, text) {
   return { xml: finalXml, index: newIndex };
 }
 
-// Update an EXISTING comment for a cell ref in comments XML.
-// SAFE: only replaces existing comments, never creates new ones (new = VML mismatch = corruption).
-// Returns updated commentsXml, or original unchanged if no existing comment for ref.
-function upsertComment(commentsXml, ref, newNoteText, authorName) {
-  // Only proceed if comment already exists for this ref
-  const existingRe = new RegExp(`(<comment ref="${ref}"[^>]*>)([\s\S]*?)(</comment>)`);
-  const existingMatch = commentsXml.match(existingRe);
-  if (!existingMatch) return commentsXml; // no existing comment — skip safely
-
-  // Escape note text for XML
-  const escapedNote = newNoteText
+// Upsert a comment for a cell ref: replace if exists, create (with VML shape) if not.
+// Both comment and VML shape are always kept in sync — no VML mismatch possible.
+function upsertComment(commentsXml, vmlXml, ref, noteText, authorName) {
+  // Escape for XML
+  const escaped = noteText
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
   const boldRpr  = `<rPr><b/><sz val="9"/><color indexed="81"/><rFont val="Tahoma"/><family val="2"/></rPr>`;
   const plainRpr = `<rPr><sz val="9"/><color indexed="81"/><rFont val="Tahoma"/><family val="2"/></rPr>`;
 
-  // Find authorId for authorName
-  const authorsMatch = commentsXml.match(/<authors>([\s\S]*?)<\/authors>/);
+  // Find authorId
+  const authMatch = commentsXml.match(/<authors>([\s\S]*?)<\/authors>/);
   let authorId = 0;
-  if (authorsMatch) {
-    const authorList = authorsMatch[1].match(/<author>([^<]*)<\/author>/g) || [];
-    const idx = authorList.findIndex(a => a.includes(authorName));
+  if (authMatch) {
+    const list = authMatch[1].match(/<author>([^<]*)<\/author>/g) || [];
+    const idx  = list.findIndex(a => a.includes(authorName));
     if (idx >= 0) authorId = idx;
   }
 
-  // Replace entire comment content — full note history, clean overwrite
-  const replacedComment = existingMatch[1] +
-    `<text>` +
-    `<r><${boldRpr.slice(1)}<t>${authorName}:</t></r>` +
-    `<r><${plainRpr.slice(1)}<t xml:space="preserve">\r\n${escapedNote}</t></r>` +
-    `</text>` +
-    existingMatch[3];
-  return commentsXml.replace(existingRe, replacedComment);
+  const commentBody =
+    `<text><r><${boldRpr.slice(1)}<t>${authorName}:</t></r>` +
+    `<r><${plainRpr.slice(1)}<t xml:space="preserve">\r\n${escaped}</t></r></text>`;
+
+  const existingRe = new RegExp(`(<comment ref="${ref}"[^>]*>)[\s\S]*?(</comment>)`);
+  if (existingRe.test(commentsXml)) {
+    // Replace existing comment content
+    commentsXml = commentsXml.replace(existingRe,
+      `$1${commentBody}$2`);
+  } else {
+    // Create new comment + matching VML shape (always together to keep counts in sync)
+    const rowNum = parseInt(ref.replace(/\D/g, ''), 10);
+    const colLet = ref.replace(/\d/g, '');
+    const colNum = [...colLet].reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0);
+
+    // Get next shape ID from VML
+    const shapeIds = [...vmlXml.matchAll(/id="_x0000_s(\d+)"/g)].map(m => parseInt(m[1]));
+    const nextId   = shapeIds.length ? Math.max(...shapeIds) + 1 : 17500;
+    const uid = `{VCSNEW${String(rowNum).padStart(4,'0')}-${colLet}-0000-0000-000000000000}`;
+
+    // New comment XML
+    const newComment =
+      `<comment ref="${ref}" authorId="${authorId}" shapeId="0" xr:uid="${uid}">` +
+      commentBody + `</comment>`;
+    commentsXml = commentsXml.replace('</commentList>', newComment + '</commentList>');
+
+    // New VML shape (hidden by default, positioned near cell)
+    const marginTop  = (rowNum - 1) * 14;
+    const marginLeft = colNum * 48;
+    const newShape =
+      `<v:shape id="_x0000_s${nextId}" type="#_x0000_t202" ` +
+      `style='position:absolute;margin-left:${marginLeft}pt;margin-top:${marginTop}pt;` +
+      `width:200pt;height:100pt;z-index:1;visibility:hidden;mso-wrap-style:tight' ` +
+      `fillcolor="infoBackground [80]" strokecolor="none [81]" o:insetmode="auto">
+` +
+      `  <v:fill color2="infoBackground [80]"/>
+` +
+      `  <v:shadow color="none [81]" obscured="t"/>
+` +
+      `  <v:path o:connecttype="none"/>
+` +
+      `  <v:textbox style='mso-direction-alt:auto'><div style='text-align:left'></div></v:textbox>
+` +
+      `  <x:ClientData ObjectType="Note">
+` +
+      `   <x:MoveWithCells/>
+` +
+      `   <x:SizeWithCells/>
+` +
+      `   <x:Anchor>11, 0, ${rowNum-1}, 0, 13, 0, ${rowNum+3}, 0</x:Anchor>
+` +
+      `   <x:AutoFill>False</x:AutoFill>
+` +
+      `   <x:Row>${rowNum-1}</x:Row>
+` +
+      `   <x:Column>${colNum-1}</x:Column>
+` +
+      `  </x:ClientData>
+` +
+      ` </v:shape>`;
+    vmlXml = vmlXml.replace('</xml>', newShape + '
+</xml>');
+  }
+
+  return { commentsXml, vmlXml };
 }
 
 async function executeSave() {
@@ -1895,23 +1945,24 @@ async function executeSave() {
           }
         }
 
-        // Write L hover comment — ONLY if comment already exists (replacing existing = safe, no VML needed)
+        // Write L hover comment — creates new comment+VML shape if needed, replaces if exists
         let commentsXml = await zip.file('xl/comments3.xml').async('text');
+        let vmlXml      = await zip.file('xl/drawings/vmlDrawing3.vml').async('text');
         for (const rev of dirtyReviews) {
           const excelRow  = rev._row + 1;
           const cellRef   = `L${excelRow}`;
           const notes     = (rev.progressNotes || '').trim();
           if (!notes) continue;
-          // Strip markdown markers for plain readable text in Excel hover
           const plainText = notes
             .replace(/\*\*(.*?)\*\*/g, '$1').replace(/_(.*?)_/g, '$1')
             .replace(/\[u\](.*?)\[\/u\]/gi, '$1').replace(/\[red\](.*?)\[\/red\]/gi, '$1')
             .replace(/\[green\](.*?)\[\/green\]/gi, '$1').replace(/\[amber\](.*?)\[\/amber\]/gi, '$1')
             .replace(/\[blue\](.*?)\[\/blue\]/gi, '$1');
           const authorName = USER.name || 'David Genuth';
-          commentsXml = upsertComment(commentsXml, cellRef, plainText, authorName);
+          ({ commentsXml, vmlXml } = upsertComment(commentsXml, vmlXml, cellRef, plainText, authorName));
         }
         zip.file('xl/comments3.xml', commentsXml);
+        zip.file('xl/drawings/vmlDrawing3.vml', vmlXml);
 
         // Write sharedStrings and sheet
         zip.file('xl/sharedStrings.xml', ssXml);
