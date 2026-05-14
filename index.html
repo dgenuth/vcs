@@ -1383,8 +1383,9 @@ function parseReviews(sheet) {
     }
     // Review Progress Notes: Q col comment = raw VCS markdown (source of truth)
     // Falls back to L comment (plain text) then L cell value
-    const qRef = `Q${excelRow}`;
-    const progressNotes = cm[qRef] || cm[lRef] || String(r[11]||'').trim();
+    // Q cell value (r[16]) = full VCS markdown. Falls back to L comment then L cell.
+    const qCell = String(r[16]||'').trim();
+    const progressNotes = qCell || cm[lRef] || String(r[11]||'').trim();
     // SF Notes: prefer hover comment (full text) over truncated cell value
     const sfNotes = cm[mRef] || String(r[12]||'').trim();
     // Contract Notes: plain cell value only
@@ -1860,74 +1861,60 @@ async function executeSave() {
     if (dirtyReviews.length > 0 && S.reviewsSheetFile) {
       try {
         // Load the three XML files we need to update
-        const ssFile       = zip.file('xl/sharedStrings.xml');
-        const commentsFile = zip.file('xl/comments3.xml');
-        const sheetFile2   = zip.file(S.reviewsSheetFile);
-        console.log(`[VCS Reviews] zip files — sharedStrings: ${!!ssFile}, comments3: ${!!commentsFile}, sheet: ${!!sheetFile2}`);
-        if (!ssFile || !commentsFile || !sheetFile2) throw new Error(`Missing zip entry — ss:${!!ssFile} c3:${!!commentsFile} sheet:${!!sheetFile2}`);
-        let ssXml       = await ssFile.async('text');
-        let commentsXml = await commentsFile.async('text');
-        let sheetXml    = await sheetFile2.async('text');
+        const ssFile     = zip.file('xl/sharedStrings.xml');
+        const sheetFile2 = zip.file(S.reviewsSheetFile);
+        console.log(`[VCS Reviews] zip files — ss:${!!ssFile} sheet:${!!sheetFile2}`);
+        if (!ssFile || !sheetFile2) throw new Error(`Missing zip entry ss:${!!ssFile} sheet:${!!sheetFile2}`);
+        let ssXml    = await ssFile.async('text');
+        let sheetXml = await sheetFile2.async('text');
 
         for (const rev of dirtyReviews) {
-          const excelRow = rev._row + 1; // _row is 0-based array index; Excel row = _row+1
+          const excelRow = rev._row + 1;
           const cellRef  = `L${excelRow}`;
           const notes    = (rev.progressNotes || '').trim();
           if (!notes) continue;
 
-          // Cell value = last paragraph (latest entry) — split on blank line
-          const paragraphs = notes.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+          // L cell = latest entry
+          const paragraphs  = notes.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
           const latestEntry = paragraphs[paragraphs.length - 1];
 
-          // 1. Upsert latest entry into sharedStrings → get index
+          // 1. Write latest entry to L cell (sharedString)
           const ssResult = upsertSharedString(ssXml, latestEntry);
           ssXml = ssResult.xml;
           const ssIndex = ssResult.index;
-
-          // 2. Update cell in sheet XML: must be t="s" (shared string), preserve existing style attr
           const existingCellRe = new RegExp(`<c r="${cellRef}"([^>]*)>.*?</c>`, 's');
-          const existingCell = sheetXml.match(existingCellRe);
+          const existingCell   = sheetXml.match(existingCellRe);
           let styleAttr = 's="109"';
-          if (existingCell) {
-            const sMatch = existingCell[1].match(/s="(\d+)"/);
-            if (sMatch) styleAttr = `s="${sMatch[1]}"`;
-          }
+          if (existingCell) { const sM = existingCell[1].match(/s="(\d+)"/); if (sM) styleAttr = `s="${sM[1]}"`; }
           const newCell = `<c r="${cellRef}" ${styleAttr} t="s"><v>${ssIndex}</v></c>`;
-
           if (existingCell) {
             sheetXml = sheetXml.replace(existingCellRe, newCell);
           } else {
             const rowRe = new RegExp(`(<row r="${excelRow}"[^>]*>)([\s\S]*?)(</row>)`);
-            const rowMatch = sheetXml.match(rowRe);
-            if (rowMatch) {
-              sheetXml = sheetXml.replace(rowRe, rowMatch[1] + rowMatch[2] + newCell + rowMatch[3]);
-            } else {
-              const newRow = `<row r="${excelRow}" spans="1:14">${newCell}</row>`;
-              sheetXml = sheetXml.replace('</sheetData>', newRow + '</sheetData>');
-            }
+            const rowM  = sheetXml.match(rowRe);
+            if (rowM) { sheetXml = sheetXml.replace(rowRe, rowM[1] + rowM[2] + newCell + rowM[3]); }
+            else { sheetXml = sheetXml.replace('</sheetData>', `<row r="${excelRow}" spans="1:17">${newCell}</row></sheetData>`); }
           }
 
-          // 3. Write plain text to L hover comment (readable in Excel, no markers)
-          // Strip VCS markdown markers for plain text version
-          const plainText = notes
-            .replace(/\*\*(.*?)\*\*/g, '$1')
-            .replace(/_(.*?)_/g, '$1')
-            .replace(/\[u\](.*?)\[\/u\]/gi, '$1')
-            .replace(/\[red\](.*?)\[\/red\]/gi, '$1')
-            .replace(/\[green\](.*?)\[\/green\]/gi, '$1')
-            .replace(/\[amber\](.*?)\[\/amber\]/gi, '$1')
-            .replace(/\[blue\](.*?)\[\/blue\]/gi, '$1');
-          const authorName = USER.name || 'David Genuth';
-          commentsXml = upsertComment(commentsXml, cellRef, plainText, authorName);
-
-          // 4. Write full markdown to Q hidden column comment (VCS source of truth)
-          const qRef2 = `Q${excelRow}`;
-          commentsXml = upsertComment(commentsXml, qRef2, notes, authorName);
+          // 2. Write full VCS markdown to Q cell (no comment, no VML risk)
+          const qCellRef  = `Q${excelRow}`;
+          const qSsResult = upsertSharedString(ssXml, notes);
+          ssXml = qSsResult.xml;
+          const qSsIndex  = qSsResult.index;
+          const existingQRe   = new RegExp(`<c r="${qCellRef}"([^>]*)>.*?</c>`, 's');
+          const existingQCell = sheetXml.match(existingQRe);
+          const qNewCell = `<c r="${qCellRef}" s="109" t="s"><v>${qSsIndex}</v></c>`;
+          if (existingQCell) {
+            sheetXml = sheetXml.replace(existingQRe, qNewCell);
+          } else {
+            const qRowRe = new RegExp(`(<row r="${excelRow}"[^>]*>)([\s\S]*?)(</row>)`);
+            const qRowM  = sheetXml.match(qRowRe);
+            if (qRowM) { sheetXml = sheetXml.replace(qRowRe, qRowM[1] + qRowM[2] + qNewCell + qRowM[3]); }
+          }
         }
 
-        // Write all three files back into the zip
+        // Write sharedStrings and sheet only — comments3.xml never touched (no VML corruption risk)
         zip.file('xl/sharedStrings.xml', ssXml);
-        zip.file('xl/comments3.xml', commentsXml);
         zip.file(S.reviewsSheetFile, sheetXml);
         console.log(`[VCS] Reviews write complete: ${dirtyReviews.length} record(s) written to ${S.reviewsSheetFile}`);
       } catch(e) {
