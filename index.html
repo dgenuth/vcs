@@ -2508,9 +2508,9 @@ function openDoneModal(vendor) {
 }
 
 // Shared note toolbar builder - used by all note-editing modals
-function buildNoteToolbar(ta, onChangeCb) {
+function buildNoteToolbar(ta) {
   const toolbar=el('div',{class:'note-toolbar'});
-  const insertAtCursor=(text)=>{ta.focus();const ok=document.execCommand('insertText',false,text);if(!ok){const s=ta.selectionStart;ta.setRangeText(text,s,ta.selectionEnd,'end');}if(onChangeCb)onChangeCb();};
+  const insertAtCursor=(text)=>{ta.focus();const ok=document.execCommand('insertText',false,text);if(!ok){const s=ta.selectionStart;ta.setRangeText(text,s,ta.selectionEnd,'end');}};
   const applyWrap=(pre,suf)=>{
     if(!ta)return;const s=ta.selectionStart,e=ta.selectionEnd,sel=ta.value.slice(s,e);
     if(!sel){toast('Select text first','#f59e0b');return;}
@@ -2522,10 +2522,10 @@ function buildNoteToolbar(ta, onChangeCb) {
       COLOR_TAGS.forEach(c=>{cleaned=cleaned.replace(new RegExp('\\['+c+'\\](.*?)\\[/'+c+'\\]','gi'),'$1');});
       ta.focus();document.execCommand('insertText',false,pre+cleaned+suf);
     }
-    if(onChangeCb)onChangeCb();ta.focus();
+    ta.focus();
   };
-  const applyPrefix=(prefix)=>{if(!ta)return;const s=ta.selectionStart,ls=ta.value.lastIndexOf('\n',s-1)+1;ta.setRangeText(prefix,ls,ls,'end');if(onChangeCb)onChangeCb();ta.focus();};
-  const insert=(t)=>{if(!ta)return;ta.focus();document.execCommand('insertText',false,t);if(onChangeCb)onChangeCb();};
+  const applyPrefix=(prefix)=>{if(!ta)return;const s=ta.selectionStart,ls=ta.value.lastIndexOf('\n',s-1)+1;ta.setRangeText(prefix,ls,ls,'end');ta.focus();};
+  const insert=(t)=>{if(!ta)return;ta.focus();document.execCommand('insertText',false,t);};
   [['𝐁',()=>applyWrap('**','**'),'Bold'],['𝐼',()=>applyWrap('_','_'),'Italic'],['U͟',()=>applyWrap('[u]','[/u]'),'Underline'],
    ['• Bullet',()=>applyPrefix('• '),'Bullet'],
    ['🔴',()=>applyWrap('[red]','[/red]'),'Red text'],['🟢',()=>applyWrap('[green]','[/green]'),'Green text'],
@@ -2542,26 +2542,8 @@ function openNoteModal(vendor) {
     body.appendChild(el('h3',{},`📝 Add Note — ${vendor.name}`));
     body.appendChild(el('p',{class:'modal-sub'},'Use toolbar to format. Entry will be prepended to notes.'));
     const ta = el('textarea',{class:'modal-textarea notes-editor',placeholder:'What happened? Key takeaways, next steps...'});
-    const previewDiv2=el('div',{});
-    const updatePreview2=()=>{previewDiv2.innerHTML='';renderNotesStr(previewDiv2,ta.value);};
-    ta.addEventListener('input',updatePreview2);
-    body.appendChild(buildNoteToolbar(ta,updatePreview2));
-    // Toggleable preview panel (hidden by default, shown on demand)
-    let previewVisible=false;
-    const prevPanel=el('div',{style:{display:'none',maxHeight:'180px',overflowY:'auto',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'8px 10px',fontSize:'11px',lineHeight:'1.6',marginTop:'6px'}});
-    prevPanel.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'4px'}},'\ud83d\udc41 Formatted Preview:'));
-    prevPanel.appendChild(previewDiv2);
-    // Add preview toggle button to toolbar
-    const prevToggleBtn=el('button',{class:'note-tb-btn',title:'Toggle preview',style:{marginLeft:'auto'},onclick(){
-      previewVisible=!previewVisible;
-      prevPanel.style.display=previewVisible?'block':'none';
-      prevToggleBtn.style.background=previewVisible?'var(--blue)':'';
-      if(previewVisible)updatePreview2();
-    }},'\ud83d\udc41 Preview');
-    const toolbar2=body.querySelector('.note-toolbar');
-    if(toolbar2)toolbar2.appendChild(prevToggleBtn);
+    body.appendChild(buildNoteToolbar(ta));
     body.appendChild(ta);
-    body.appendChild(prevPanel);
     body.appendChild(el('label',{style:{marginTop:'8px',display:'block'}},'Optional follow-up date:'));
     const dateIn=el('input',{type:'date',class:'modal-input'});
     body.appendChild(dateIn);
@@ -6592,28 +6574,16 @@ function makeReviewNoteCell(r, txt, fieldName, label) {
         if(sel.startsWith(pre)&&sel.endsWith(suf)){
           ta.setRangeText(sel.slice(pre.length,sel.length-suf.length),s,e,'select');
         } else {
-          const COLOR_TAGS=['red','green','amber','blue'];
-          let cleaned=sel;
+          const COLOR_TAGS=['red','green','amber','blue'];let cleaned=sel;
           COLOR_TAGS.forEach(c=>{cleaned=cleaned.replace(new RegExp('\\['+c+'\\](.*?)\\[/'+c+'\\]','gi'),'$1');});
           ta.setRangeText(pre+cleaned+suf,s,e,'select');
         }
-        updatePreview(); ta.focus();
+        ta.focus();
       };
-      const insertText=(t)=>{const s=ta.selectionStart;ta.setRangeText(t,s,ta.selectionEnd,'end');updatePreview();ta.focus();};
-      const previewWrap=el('div',{style:{display:'flex',gap:'8px',alignItems:'flex-start'}});
-      previewWrap.appendChild(ta);
-      const previewPanel=el('div',{style:{flex:'0 0 48%',minHeight:'120px',maxHeight:'240px',overflowY:'auto',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'8px 10px',fontSize:'11px',lineHeight:'1.6'}});
-      const previewDiv=el('div',{});
-      previewPanel.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'4px'}},'Preview:'));
-      previewPanel.appendChild(previewDiv);
-      previewWrap.appendChild(previewPanel);
-      function updatePreview(){previewDiv.innerHTML='';renderNotesStr(previewDiv,ta.value);}
-      ta.addEventListener('input',updatePreview);
-      ta.style.flex='0 0 48%';
+      const insertText=(t)=>{const s=ta.selectionStart;ta.setRangeText(t,s,ta.selectionEnd,'end');ta.focus();};
       [['𝐁 Bold',()=>applyWrap('**','**')],['𝐼 Italic',()=>applyWrap('_','_')],['U͟ Underline',()=>applyWrap('[u]','[/u]')],['• Bullet',()=>insertText('\n• ')],['🔴 Red',()=>applyWrap('[red]','[/red]')],['🟢 Green',()=>applyWrap('[green]','[/green]')],['🟡 Amber',()=>applyWrap('[amber]','[/amber]')],['🔵 Blue',()=>applyWrap('[blue]','[/blue]')],['📅 Today',()=>insertText(isoDate(new Date())+': ')],].forEach(([lbl,fn])=>toolbar.appendChild(el('button',{class:'note-tb-btn',onclick:fn},lbl)));
       body.appendChild(toolbar);
-      body.appendChild(previewWrap);
-      setTimeout(()=>updatePreview(),10);
+      body.appendChild(ta);
       const btns=el('div',{class:'modal-btns'});
       btns.appendChild(el('button',{class:'btn-primary',onclick(){r[fieldName]=ta.value;r._dirty=true;if(!S.dirtyReviews)S.dirtyReviews=new Set();S.dirtyReviews.add(r._row);logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:r.name,action:`Updated Review ${label}`,to:ta.value.slice(0,60)});saveSessionState();updateSidebar();render();closeModal();toast('✓ Saved');}},'Save'));
       btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
