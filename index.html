@@ -1937,35 +1937,23 @@ async function executeSave() {
             const colNum = cellRef.replace(/\d/g,'').split('').reduce((n,c)=>n*26+c.charCodeAt(0)-64,0);
             const shapeIds = [...vmlXml.matchAll(/id="_x0000_s(\d+)"/g)].map(m=>parseInt(m[1]));
             const nextId   = shapeIds.length ? Math.max(...shapeIds)+1 : 17500;
-            const newShape =
-              '<v:shape id="_x0000_s'+nextId+'" type="#_x0000_t202" '+
-              'style='position:absolute;margin-left:'+(colNum*48)+'pt;margin-top:'+((excelRow-1)*14)+'pt;'+
-              'width:200pt;height:100pt;z-index:1;visibility:hidden;mso-wrap-style:tight' '+
-              'fillcolor="infoBackground [80]" strokecolor="none [81]" o:insetmode="auto">
-'+
-              '  <v:fill color2="infoBackground [80]"/>
-'+
-              '  <v:shadow color="none [81]" obscured="t"/>
-'+
-              '  <v:path o:connecttype="none"/>
-'+
-              '  <v:textbox style='mso-direction-alt:auto'><div style='text-align:left'></div></v:textbox>
-'+
-              '  <x:ClientData ObjectType="Note">
-'+
-              '   <x:MoveWithCells/>
-   <x:SizeWithCells/>
-'+
-              '   <x:Anchor>11, 0, '+(excelRow-1)+', 0, 13, 0, '+(excelRow+3)+', 0</x:Anchor>
-'+
-              '   <x:AutoFill>False</x:AutoFill>
-'+
-              '   <x:Row>'+(excelRow-1)+'</x:Row>
-'+
-              '   <x:Column>'+(colNum-1)+'</x:Column>
-'+
-              '  </x:ClientData>
- </v:shape>';
+            const newShape = [
+              '<v:shape id="_x0000_s'+nextId+'" type="#_x0000_t202"',
+              ' style="position:absolute;margin-left:'+(colNum*48)+'pt;margin-top:'+((excelRow-1)*14)+'pt;',
+              'width:200pt;height:100pt;z-index:1;visibility:hidden;mso-wrap-style:tight"',
+              ' fillcolor="infoBackground [80]" strokecolor="none [81]" o:insetmode="auto">\r\n',
+              '  <v:fill color2="infoBackground [80]"/>\r\n',
+              '  <v:shadow color="none [81]" obscured="t"/>\r\n',
+              '  <v:path o:connecttype="none"/>\r\n',
+              '  <v:textbox style="mso-direction-alt:auto"><div style="text-align:left"></div></v:textbox>\r\n',
+              '  <x:ClientData ObjectType="Note">\r\n',
+              '   <x:MoveWithCells/>\r\n   <x:SizeWithCells/>\r\n',
+              '   <x:Anchor>11, 0, '+(excelRow-1)+', 0, 13, 0, '+(excelRow+3)+', 0</x:Anchor>\r\n',
+              '   <x:AutoFill>False</x:AutoFill>\r\n',
+              '   <x:Row>'+(excelRow-1)+'</x:Row>\r\n',
+              '   <x:Column>'+(colNum-1)+'</x:Column>\r\n',
+              '  </x:ClientData>\r\n </v:shape>'
+            ].join('');
             vmlXml = vmlXml.replace('</xml>', newShape + '\r\n</xml>');
             existingCommentRefs.add(cellRef); // prevent double-add if same row appears twice
           }
