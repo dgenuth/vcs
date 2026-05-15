@@ -1988,9 +1988,9 @@ async function executeSave() {
           const notes    = (v.notes || '').trim();
           if (!notes) continue;
 
-          // Z cell = latest note entry
+          // Z cell = latest note entry (first paragraph = most recent, prependNote puts newest first)
           const itwParagraphs  = notes.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
-          const itwLatestEntry = itwParagraphs[itwParagraphs.length - 1];
+          const itwLatestEntry = itwParagraphs[0] || notes;
           const itwSsResult    = upsertSharedString(ssXmlITW, itwLatestEntry);
           ssXmlITW = itwSsResult.xml;
           const existingZRe = new RegExp(`<c r="${zRef}"([^>]*)>.*?</c>`, 's');
@@ -2344,8 +2344,8 @@ function markDirty(vendor) {
 
 function prependNote(vendor, text) {
   const entry = `${isoDate(new Date())}: ${text}`;
-  vendor.notes = vendor.notes ? `${entry} | ${vendor.notes}` : entry;
-  markDirty(vendor);
+  vendor.notes = vendor.notes ? `${entry}\n\n${vendor.notes}` : entry;
+  if (vendor.source !== 'itw') markDirty(vendor);
 }
 
 function markDone(vendor, noteText, followUpDate) {
