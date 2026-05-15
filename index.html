@@ -6555,11 +6555,34 @@ function makeReviewNoteCell(r, txt, fieldName, label) {
       const toolbar=el('div',{class:'note-toolbar'});
       const ta=el('textarea',{class:'modal-textarea notes-editor'});
       ta.value=String(r[fieldName]||'');
-      const applyWrap=(pre,suf)=>{const s=ta.selectionStart,e=ta.selectionEnd,sel=ta.value.slice(s,e);if(!sel){toast('Select text first','#f59e0b');return;}if(sel.startsWith(pre)&&sel.endsWith(suf)){const inner=sel.slice(pre.length,sel.length-suf.length);ta.setRangeText(inner,s,e,'select');}else{ta.setRangeText(pre+sel+suf,s,e,'select');}ta.focus();};
-      const insertText=(t)=>{const s=ta.selectionStart;ta.setRangeText(t,s,ta.selectionEnd,'end');ta.focus();};
+      const applyWrap=(pre,suf)=>{
+        const s=ta.selectionStart,e=ta.selectionEnd,sel=ta.value.slice(s,e);
+        if(!sel){toast('Select text first','#f59e0b');return;}
+        if(sel.startsWith(pre)&&sel.endsWith(suf)){
+          ta.setRangeText(sel.slice(pre.length,sel.length-suf.length),s,e,'select');
+        } else {
+          const COLOR_TAGS=['red','green','amber','blue'];
+          let cleaned=sel;
+          COLOR_TAGS.forEach(c=>{cleaned=cleaned.replace(new RegExp('\\['+c+'\\](.*?)\\[/'+c+'\\]','gi'),'$1');});
+          ta.setRangeText(pre+cleaned+suf,s,e,'select');
+        }
+        updatePreview(); ta.focus();
+      };
+      const insertText=(t)=>{const s=ta.selectionStart;ta.setRangeText(t,s,ta.selectionEnd,'end');updatePreview();ta.focus();};
+      const previewWrap=el('div',{style:{display:'flex',gap:'8px',alignItems:'flex-start'}});
+      previewWrap.appendChild(ta);
+      const previewPanel=el('div',{style:{flex:'0 0 48%',minHeight:'120px',maxHeight:'240px',overflowY:'auto',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'8px 10px',fontSize:'11px',lineHeight:'1.6'}});
+      const previewDiv=el('div',{});
+      previewPanel.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'4px'}},'Preview:'));
+      previewPanel.appendChild(previewDiv);
+      previewWrap.appendChild(previewPanel);
+      function updatePreview(){previewDiv.innerHTML='';renderNotesStr(previewDiv,ta.value);}
+      ta.addEventListener('input',updatePreview);
+      ta.style.flex='0 0 48%';
       [['𝐁 Bold',()=>applyWrap('**','**')],['𝐼 Italic',()=>applyWrap('_','_')],['U͟ Underline',()=>applyWrap('[u]','[/u]')],['• Bullet',()=>insertText('\n• ')],['🔴 Red',()=>applyWrap('[red]','[/red]')],['🟢 Green',()=>applyWrap('[green]','[/green]')],['🟡 Amber',()=>applyWrap('[amber]','[/amber]')],['🔵 Blue',()=>applyWrap('[blue]','[/blue]')],['📅 Today',()=>insertText(isoDate(new Date())+': ')],].forEach(([lbl,fn])=>toolbar.appendChild(el('button',{class:'note-tb-btn',onclick:fn},lbl)));
       body.appendChild(toolbar);
-      body.appendChild(ta);
+      body.appendChild(previewWrap);
+      setTimeout(()=>updatePreview(),10);
       const btns=el('div',{class:'modal-btns'});
       btns.appendChild(el('button',{class:'btn-primary',onclick(){r[fieldName]=ta.value;r._dirty=true;if(!S.dirtyReviews)S.dirtyReviews=new Set();S.dirtyReviews.add(r._row);logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:r.name,action:`Updated Review ${label}`,to:ta.value.slice(0,60)});saveSessionState();updateSidebar();render();closeModal();toast('✓ Saved');}},'Save'));
       btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
