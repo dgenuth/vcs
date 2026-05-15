@@ -6389,19 +6389,21 @@ function makeReviewDateCell(r) {
   return span;
 }
 
-// Make a Reviews action cell editable (click to open dropdown)
+// Make a Reviews action cell editable (free text input)
 function makeReviewActionCell(r) {
-  const ACTION_OPTS = ['', 'Accomplished!', 'No Action', 'Action/No'];
   const span = el('span', {
     style: {cursor:'pointer', borderBottom:'1px dashed var(--muted)'},
     title: 'Click to edit action',
     onclick() {
-      const sel = document.createElement('select');
-      sel.style.cssText = 'font-size:11px;padding:2px;background:var(--input);color:var(--text);border:1px solid var(--border);border-radius:3px;';
-      ACTION_OPTS.forEach(opt => { const o=document.createElement('option'); o.value=opt; o.textContent=opt||'(none)'; if(opt===(r.action||''))o.selected=true; sel.appendChild(o); });
-      const commit = () => { r.action=sel.value; r._dirty=true; if(!S.dirtyReviews)S.dirtyReviews=new Set(); S.dirtyReviews.add(r._row); saveSessionState(); updateSidebar(); render(); };
-      sel.onblur = commit; sel.onchange = commit;
-      span.replaceWith(sel); sel.focus();
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = r.action || '';
+      input.placeholder = 'e.g. Accomplished!, No Action...';
+      input.style.cssText = 'font-size:11px;padding:2px;width:120px;background:var(--input);color:var(--text);border:1px solid var(--border);border-radius:3px;';
+      const commit = () => { r.action=input.value.trim(); r._dirty=true; if(!S.dirtyReviews)S.dirtyReviews=new Set(); S.dirtyReviews.add(r._row); saveSessionState(); updateSidebar(); render(); };
+      input.onblur = commit;
+      input.onkeydown = e => { if(e.key==='Enter') input.blur(); if(e.key==='Escape'){input.value=r.action||''; input.blur();} };
+      span.replaceWith(input); input.focus(); input.select();
     }
   }, r.action || '\u2014');
   return span;
