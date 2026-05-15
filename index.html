@@ -1872,6 +1872,29 @@ async function executeSave() {
           const notes    = (rev.progressNotes || '').trim();
           if (!notes) continue;
 
+          // J cell = date (Excel serial number)
+          if (rev.date) {
+            const dateSerial = Math.round((new Date(rev.date) - new Date(1899,11,30)) / 86400000);
+            const existingJRe = new RegExp(`<c r="J${excelRow}"([^>]*)>.*?</c>`, 's');
+            const existingJ   = sheetXml.match(existingJRe);
+            let jStyle = 's="8"';
+            if (existingJ) { const sm = existingJ[1].match(/s="(\d+)"/); if (sm) jStyle = `s="${sm[1]}"`; }
+            const jCell = `<c r="J${excelRow}" ${jStyle}><v>${dateSerial}</v></c>`;
+            if (existingJ) { sheetXml = sheetXml.replace(existingJRe, jCell); }
+            else { const jRowRe = new RegExp(`(<row r="${excelRow}"[^>]*>)([\s\S]*?)(</row>)`); const jRowM = sheetXml.match(jRowRe); if (jRowM) sheetXml = sheetXml.replace(jRowRe, jRowM[1]+jRowM[2]+jCell+jRowM[3]); }
+          }
+          // K cell = action (sharedString)
+          if (rev.action !== undefined) {
+            const kSsResult = upsertSharedString(ssXml, rev.action||'');
+            ssXml = kSsResult.xml;
+            const existingKRe = new RegExp(`<c r="K${excelRow}"([^>]*)>.*?</c>`, 's');
+            const existingK   = sheetXml.match(existingKRe);
+            let kStyle = 's="109"';
+            if (existingK) { const sm = existingK[1].match(/s="(\d+)"/); if (sm) kStyle = `s="${sm[1]}"`; }
+            const kCell = `<c r="K${excelRow}" ${kStyle} t="s"><v>${kSsResult.index}</v></c>`;
+            if (existingK) { sheetXml = sheetXml.replace(existingKRe, kCell); }
+            else { const kRowRe = new RegExp(`(<row r="${excelRow}"[^>]*>)([\s\S]*?)(</row>)`); const kRowM = sheetXml.match(kRowRe); if (kRowM) sheetXml = sheetXml.replace(kRowRe, kRowM[1]+kRowM[2]+kCell+kRowM[3]); }
+          }
           // L cell = latest entry
           const paragraphs  = notes.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
           const latestEntry = paragraphs[paragraphs.length - 1];
@@ -6344,6 +6367,46 @@ function renderITW(c) {
   ));
 }
 
+// Make a Reviews date cell inline-editable (click to open date picker)
+function makeReviewDateCell(r) {
+  const display = fmtDate(r.date) || String(r.date||'');
+  const span = el('span', {
+    style: {cursor:'pointer', borderBottom:'1px dashed var(--muted)'},
+    title: 'Click to edit date',
+    onclick() {
+      const input = document.createElement('input');
+      input.type = 'date';
+      input.value = r.date ? isoDate(new Date(r.date)) : '';
+      input.style.cssText = 'font-size:11px;padding:2px;background:var(--input);color:var(--text);border:1px solid var(--border);border-radius:3px;';
+      const commit = () => {
+        if (input.value) { r.date = new Date(input.value); r._dirty = true; if(!S.dirtyReviews)S.dirtyReviews=new Set(); S.dirtyReviews.add(r._row); saveSessionState(); }
+        updateSidebar(); render();
+      };
+      input.onblur = commit; input.onchange = commit;
+      span.replaceWith(input); input.focus();
+    }
+  }, display || '\u2014');
+  return span;
+}
+
+// Make a Reviews action cell editable (click to open dropdown)
+function makeReviewActionCell(r) {
+  const ACTION_OPTS = ['', 'Accomplished!', 'No Action', 'Action/No'];
+  const span = el('span', {
+    style: {cursor:'pointer', borderBottom:'1px dashed var(--muted)'},
+    title: 'Click to edit action',
+    onclick() {
+      const sel = document.createElement('select');
+      sel.style.cssText = 'font-size:11px;padding:2px;background:var(--input);color:var(--text);border:1px solid var(--border);border-radius:3px;';
+      ACTION_OPTS.forEach(opt => { const o=document.createElement('option'); o.value=opt; o.textContent=opt||'(none)'; if(opt===(r.action||''))o.selected=true; sel.appendChild(o); });
+      const commit = () => { r.action=sel.value; r._dirty=true; if(!S.dirtyReviews)S.dirtyReviews=new Set(); S.dirtyReviews.add(r._row); saveSessionState(); updateSidebar(); render(); };
+      sel.onblur = commit; sel.onchange = commit;
+      span.replaceWith(sel); sel.focus();
+    }
+  }, r.action || '\u2014');
+  return span;
+}
+
 function renderReviews(c) {
   if (!S.reviews.length&&!S.reviewTPs.length) {
     c.appendChild(el('p',{class:'muted',style:{marginBottom:'8px'}},`No review data found. Available sheets: ${S.wb?S.wb.SheetNames.join(', '):'none'}`));
@@ -6368,10 +6431,10 @@ function renderReviews(c) {
         const wrap=el('span',{}); wrap.appendChild(nameEl); wrap.appendChild(hint);
         // Re-package
         const noteCell=(txt,fieldName,label)=>makeReviewNoteCell(r,txt,fieldName,label);
-        return [wrap,fmtDate(r.date)||String(r.date||''),r.action||'',noteCell(r.progressNotes,'progressNotes','Progress Notes'),noteCell(r.sfNotes,'sfNotes','SF Notes'),noteCell(r.contractNotes,'contractNotes','Contract Notes')];
+        return [wrap,makeReviewDateCell(r),makeReviewActionCell(r),noteCell(r.progressNotes,'progressNotes','Progress Notes'),noteCell(r.sfNotes,'sfNotes','SF Notes'),noteCell(r.contractNotes,'contractNotes','Contract Notes')];
       }
       const noteCell=(txt,fieldName,label)=>makeReviewNoteCell(r,txt,fieldName,label);
-      return [nameEl,fmtDate(r.date)||String(r.date||''),r.action||'',noteCell(r.progressNotes,'progressNotes','Progress Notes'),noteCell(r.sfNotes,'sfNotes','SF Notes'),noteCell(r.contractNotes,'contractNotes','Contract Notes')];
+      return [nameEl,makeReviewDateCell(r),makeReviewActionCell(r),noteCell(r.progressNotes,'progressNotes','Progress Notes'),noteCell(r.sfNotes,'sfNotes','SF Notes'),noteCell(r.contractNotes,'contractNotes','Contract Notes')];
     }
   ));
   if (S.reviewTPs.length) {
