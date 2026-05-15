@@ -5971,7 +5971,7 @@ function updateSidebar() {
     const active=S.vendors.filter(isVisible);
     const calls=active.filter(v=>v.tier==='CALL').length;
     const emails=active.filter(v=>v.tier==='EMAIL').length;
-    [[`Vendors`,active.length,''],[`🔴 CALL`,calls,'red'],[`🟡 EMAIL`,emails,'amber'],[`Pipeline`,S.itw.length,''],[`Dirty`,(S.dirty.size||0)+(S.dirtyReviews?.size||0),(S.dirty.size||S.dirtyReviews?.size)?'amber':'']].forEach(([label,val,cls])=>{
+    [[`Vendors`,active.length,''],[`🔴 CALL`,calls,'red'],[`🟡 EMAIL`,emails,'amber'],[`Pipeline`,S.itw.length,''],[`Dirty`,(S.dirty.size||0)+(S.dirtyReviews?.size||0)+(S.dirtyITW?.size||0),(S.dirty.size||S.dirtyReviews?.size||S.dirtyITW?.size)?'amber':'']].forEach(([label,val,cls])=>{
       if (cls==='') { qs.appendChild(el('div',{class:'stat-row'},el('span',{class:'stat-label'},label),el('span',{class:'stat-val'},val))); }
       else { qs.appendChild(el('div',{class:'stat-row'},el('span',{class:'stat-label '+cls},label),el('span',{class:'stat-val '+cls},val))); }
     });
