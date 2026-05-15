@@ -2508,11 +2508,24 @@ function openDoneModal(vendor) {
 }
 
 // Shared note toolbar builder - used by all note-editing modals
-function buildNoteToolbar(ta) {
+function buildNoteToolbar(ta, onChangeCb) {
   const toolbar=el('div',{class:'note-toolbar'});
-  const applyWrap=(pre,suf)=>{if(!ta)return;const s=ta.selectionStart,e=ta.selectionEnd,sel=ta.value.slice(s,e);if(!sel){toast('Select text first','#f59e0b');return;}if(sel.startsWith(pre)&&sel.endsWith(suf)){const inner=sel.slice(pre.length,sel.length-suf.length);ta.setRangeText(inner,s,e,'select');}else{ta.setRangeText(pre+sel+suf,s,e,'select');}ta.focus();};
-  const applyPrefix=(prefix)=>{if(!ta)return;const s=ta.selectionStart,ls=ta.value.lastIndexOf('\n',s-1)+1;ta.setRangeText(prefix,ls,ls,'end');ta.focus();};
-  const insert=(t)=>{if(!ta)return;const s=ta.selectionStart;ta.setRangeText(t,s,ta.selectionEnd,'end');ta.focus();};
+  const insertAtCursor=(text)=>{ta.focus();const ok=document.execCommand('insertText',false,text);if(!ok){const s=ta.selectionStart;ta.setRangeText(text,s,ta.selectionEnd,'end');}if(onChangeCb)onChangeCb();};
+  const applyWrap=(pre,suf)=>{
+    if(!ta)return;const s=ta.selectionStart,e=ta.selectionEnd,sel=ta.value.slice(s,e);
+    if(!sel){toast('Select text first','#f59e0b');return;}
+    if(sel.startsWith(pre)&&sel.endsWith(suf)){
+      ta.selectionStart=s;ta.selectionEnd=e;
+      ta.focus();document.execCommand('insertText',false,sel.slice(pre.length,sel.length-suf.length));
+    } else {
+      const COLOR_TAGS=['red','green','amber','blue'];let cleaned=sel;
+      COLOR_TAGS.forEach(c=>{cleaned=cleaned.replace(new RegExp('\\['+c+'\\](.*?)\\[/'+c+'\\]','gi'),'$1');});
+      ta.focus();document.execCommand('insertText',false,pre+cleaned+suf);
+    }
+    if(onChangeCb)onChangeCb();ta.focus();
+  };
+  const applyPrefix=(prefix)=>{if(!ta)return;const s=ta.selectionStart,ls=ta.value.lastIndexOf('\n',s-1)+1;ta.setRangeText(prefix,ls,ls,'end');if(onChangeCb)onChangeCb();ta.focus();};
+  const insert=(t)=>{if(!ta)return;ta.focus();document.execCommand('insertText',false,t);if(onChangeCb)onChangeCb();};
   [['𝐁',()=>applyWrap('**','**'),'Bold'],['𝐼',()=>applyWrap('_','_'),'Italic'],['U͟',()=>applyWrap('[u]','[/u]'),'Underline'],
    ['• Bullet',()=>applyPrefix('• '),'Bullet'],
    ['🔴',()=>applyWrap('[red]','[/red]'),'Red text'],['🟢',()=>applyWrap('[green]','[/green]'),'Green text'],
@@ -2529,8 +2542,18 @@ function openNoteModal(vendor) {
     body.appendChild(el('h3',{},`📝 Add Note — ${vendor.name}`));
     body.appendChild(el('p',{class:'modal-sub'},'Use toolbar to format. Entry will be prepended to notes.'));
     const ta = el('textarea',{class:'modal-textarea notes-editor',placeholder:'What happened? Key takeaways, next steps...'});
-    body.appendChild(buildNoteToolbar(ta));
-    body.appendChild(ta);
+    const previewDiv2=el('div',{});
+    const updatePreview2=()=>{previewDiv2.innerHTML='';renderNotesStr(previewDiv2,ta.value);};
+    ta.addEventListener('input',updatePreview2);
+    ta.style.flex='0 0 48%';
+    body.appendChild(buildNoteToolbar(ta,updatePreview2));
+    const splitWrap=el('div',{style:{display:'flex',gap:'8px',alignItems:'flex-start'}});
+    splitWrap.appendChild(ta);
+    const prevPanel=el('div',{style:{flex:'0 0 48%',minHeight:'100px',maxHeight:'200px',overflowY:'auto',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'8px 10px',fontSize:'11px',lineHeight:'1.6'}});
+    prevPanel.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'4px'}},'Preview:'));
+    prevPanel.appendChild(previewDiv2);
+    splitWrap.appendChild(prevPanel);
+    body.appendChild(splitWrap);
     body.appendChild(el('label',{style:{marginTop:'8px',display:'block'}},'Optional follow-up date:'));
     const dateIn=el('input',{type:'date',class:'modal-input'});
     body.appendChild(dateIn);
