@@ -2545,15 +2545,23 @@ function openNoteModal(vendor) {
     const previewDiv2=el('div',{});
     const updatePreview2=()=>{previewDiv2.innerHTML='';renderNotesStr(previewDiv2,ta.value);};
     ta.addEventListener('input',updatePreview2);
-    ta.style.flex='0 0 48%';
     body.appendChild(buildNoteToolbar(ta,updatePreview2));
-    const splitWrap=el('div',{style:{display:'flex',gap:'8px',alignItems:'flex-start'}});
-    splitWrap.appendChild(ta);
-    const prevPanel=el('div',{style:{flex:'0 0 48%',minHeight:'100px',maxHeight:'200px',overflowY:'auto',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'8px 10px',fontSize:'11px',lineHeight:'1.6'}});
-    prevPanel.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'4px'}},'Preview:'));
+    // Toggleable preview panel (hidden by default, shown on demand)
+    let previewVisible=false;
+    const prevPanel=el('div',{style:{display:'none',maxHeight:'180px',overflowY:'auto',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'8px 10px',fontSize:'11px',lineHeight:'1.6',marginTop:'6px'}});
+    prevPanel.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'4px'}},'\ud83d\udc41 Formatted Preview:'));
     prevPanel.appendChild(previewDiv2);
-    splitWrap.appendChild(prevPanel);
-    body.appendChild(splitWrap);
+    // Add preview toggle button to toolbar
+    const prevToggleBtn=el('button',{class:'note-tb-btn',title:'Toggle preview',style:{marginLeft:'auto'},onclick(){
+      previewVisible=!previewVisible;
+      prevPanel.style.display=previewVisible?'block':'none';
+      prevToggleBtn.style.background=previewVisible?'var(--blue)':'';
+      if(previewVisible)updatePreview2();
+    }},'\ud83d\udc41 Preview');
+    const toolbar2=body.querySelector('.note-toolbar');
+    if(toolbar2)toolbar2.appendChild(prevToggleBtn);
+    body.appendChild(ta);
+    body.appendChild(prevPanel);
     body.appendChild(el('label',{style:{marginTop:'8px',display:'block'}},'Optional follow-up date:'));
     const dateIn=el('input',{type:'date',class:'modal-input'});
     body.appendChild(dateIn);
@@ -6451,7 +6459,7 @@ function renderITW(c) {
 
       // Note preview — split by pipe, show latest entry
       const notes=String(v.notes||'');
-      const latestNote=notes.split('|').map(e=>e.trim()).filter(Boolean).pop()||'';
+      const latestNote=notes.split(/\n\s*\n/).map(e=>e.trim()).filter(Boolean)[0]||notes.split('\n')[0]||'';
       const noteEl=latestNote
         ? el('span',{class:'note-preview clickable',title:'Click to view/edit notes',onclick(e){e.stopPropagation();showNotePopup(v.name,v.notes,v);}},
             latestNote.split('\n')[0].slice(0,80)+(latestNote.length>80?' …':''))
