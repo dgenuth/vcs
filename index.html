@@ -1623,7 +1623,8 @@ async function saveFile() {
   if (!S.originalBuffer) { toast('No file loaded', '#ef4444'); return; }
   const dirtyCount = S.vendors.filter(v => S.dirty.has(v.name)).length;
   const reviewDirtyCount = S.dirtyReviews ? S.dirtyReviews.size : 0;
-  const itwDirtyCount = S.dirtyITW ? S.dirtyITW.size : 0;   if (!dirtyCount && !reviewDirtyCount && !itwDirtyCount) { toast('No unsaved changes','#f59e0b'); return; }
+  const itwDirtyCount = S.dirtyITW ? S.dirtyITW.size : 0;
+  if (!dirtyCount && !reviewDirtyCount && !itwDirtyCount) { toast('No unsaved changes','#f59e0b'); return; }
 
   // ── Confirmation required — user must approve before any file is written ──
   openModal(body=>{
@@ -1633,6 +1634,7 @@ async function saveFile() {
     summary.appendChild(el('div',{style:{fontWeight:'700',marginBottom:'4px'}},'Changes to be saved:'));
     summary.appendChild(el('div',{},dirtyCount+' vendor record'+(dirtyCount!==1?'s':'')+' modified'));
     if(reviewDirtyCount) summary.appendChild(el('div',{},reviewDirtyCount+' review note'+(reviewDirtyCount!==1?'s':'')+' updated'));
+    if(itwDirtyCount) summary.appendChild(el('div',{},itwDirtyCount+' ITW note'+(itwDirtyCount!==1?'s':'')+' updated'));
     summary.appendChild(el('div',{},S.history.length+' actions logged this session'));
     summary.appendChild(el('div',{style:{color:'var(--muted)',marginTop:'4px',fontSize:'9px'}},'User: '+(USER.email||'—')+' | Role: '+(ROLES[USER.role]||'—')));
     body.appendChild(summary);
