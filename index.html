@@ -1925,6 +1925,27 @@ async function executeSave() {
 
     // Old VCS History writer removed — using writeHistoryToExcel instead
 
+    // Check if server file is currently open BEFORE generating zip or clearing dirty flags
+    // This way, cancelling preserves all dirty changes
+    try {
+      const lockResp = await fetch(VCS_PROXY_URL + '?action=getLockStatus', {method:'GET'});
+      if (lockResp.ok) {
+        const lockData = await lockResp.json();
+        if (lockData.status === 'ok' && lockData.locked) {
+          const lockUser = lockData.user && lockData.user !== 'unknown' ? lockData.user : null;
+          if (!confirm(
+            'The vendor catalogue is currently open on the server' +
+            (lockUser ? ' (possibly by ' + lockUser + ')' : '') +
+            '.\n\nYour changes will save to Drive but may be overwritten when the server file saves.\n\n' +
+            'Recommendation: Ask them to save and close first.\n\nSave anyway?'
+          )) {
+            toast('Save cancelled — server file is in use. Your changes are still pending.','#f59e0b');
+            return; // dirty flags untouched — changes preserved
+          }
+        }
+      }
+    } catch(lockErr) { /* lock check failed — proceed silently */ }
+
     const uint8 = await zip.generateAsync({
       type: 'uint8array',
       compression: 'DEFLATE',
@@ -1954,26 +1975,6 @@ async function executeSave() {
 
     // Always attempt Drive sync — proxy handles auth
     // Show persistent saving indicator
-    // Check if server file is currently open before syncing to Drive
-    try {
-      const lockResp = await fetch(VCS_PROXY_URL + '?action=getLockStatus', {method:'GET'});
-      if (lockResp.ok) {
-        const lockData = await lockResp.json();
-        if (lockData.status === 'ok' && lockData.locked) {
-          const lockUser = lockData.user || 'someone';
-          if (!confirm(
-            'The vendor catalogue is currently open on the server' +
-            (lockUser !== 'unknown' ? ' (possibly by ' + lockUser + ')' : '') +
-            '.\n\nYour changes will save to Drive but may be overwritten when the server file saves.\n\n' +
-            'Recommendation: Ask them to save and close first.\n\nSave anyway?'
-          )) {
-            toast('Save cancelled — server file is in use','#f59e0b');
-            return;
-          }
-        }
-      }
-    } catch(lockErr) { /* lock check failed — proceed silently */ }
-
     toast('☁ Syncing to Google Drive... (this may take a few seconds)','#4f7cff');
     try {
       const syncBuffer = typeof histBuffer !== 'undefined' ? histBuffer : uint8.buffer;
