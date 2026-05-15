@@ -1342,7 +1342,7 @@ function parseITW(sheet) {
 
     const vendorStatus = STATUS_FLAGS.has(colA) ? colA : (colA || '');
     const excelRow = i + 1;
-    const noteComment = cm[`BD${excelRow}`] || cm[`Z${excelRow}`] || cm[`X${excelRow}`] || '';
+    const noteComment = cm[`Z${excelRow}`] || cm[`X${excelRow}`] || '';
     const noteCell = String(r[25]||'').trim();
 
     vendors.push({
@@ -1979,6 +1979,99 @@ async function executeSave() {
       }
     }
 
+
+    // ── Write dirty ITW notes back to In The Works sheet ───────────────────────
+    const dirtyITW = (S.itw||[]).filter(v => v._dirty);
+    console.log(`[VCS ITW] dirtyITW count: ${dirtyITW.length}`);
+    if (dirtyITW.length > 0) {
+      try {
+        const itwSheetFile = 'xl/worksheets/sheet14.xml';
+        const ssFileITW    = zip.file('xl/sharedStrings.xml');
+        const sheetFileITW = zip.file(itwSheetFile);
+        if (!ssFileITW || !sheetFileITW) throw new Error('Missing ITW zip entry');
+        let ssXmlITW    = await ssFileITW.async('text');
+        let sheetXmlITW = await sheetFileITW.async('text');
+
+        let commentsXmlITW = await zip.file('xl/comments2.xml').async('text');
+        let vmlXmlITW      = await zip.file('xl/drawings/vmlDrawing2.vml').async('text');
+        const existingITWRefs = new Set([...commentsXmlITW.matchAll(/<comment ref="([^"]+)"/g)].map(m => m[1]));
+
+        for (const v of dirtyITW) {
+          const excelRow = v._row + 1;
+          const zRef     = `Z${excelRow}`;
+          const notes    = (v.notes || '').trim();
+          if (!notes) continue;
+
+          // Z cell = latest note entry
+          const itwParagraphs  = notes.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+          const itwLatestEntry = itwParagraphs[itwParagraphs.length - 1];
+          const itwSsResult    = upsertSharedString(ssXmlITW, itwLatestEntry);
+          ssXmlITW = itwSsResult.xml;
+
+          const existingZRe = new RegExp(`<c r="${zRef}"([^>]*)>.*?</c>`, 's');
+          const existingZ   = sheetXmlITW.match(existingZRe);
+          let zStyle = 's="95"';
+          if (existingZ) { const sm = existingZ[1].match(/s="(\d+)"/); if (sm) zStyle = `s="${sm[1]}"`; }
+          const zCell = `<c r="${zRef}" ${zStyle} t="s"><v>${itwSsResult.index}</v></c>`;
+          if (existingZ) {
+            sheetXmlITW = sheetXmlITW.replace(existingZRe, zCell);
+          } else {
+            const zRowRe = new RegExp(`(<row r="${excelRow}"[^>]*>)([\s\S]*?)(</row>)`);
+            const zRowM  = sheetXmlITW.match(zRowRe);
+            if (zRowM) sheetXmlITW = sheetXmlITW.replace(zRowRe, zRowM[1]+zRowM[2]+zCell+zRowM[3]);
+            else sheetXmlITW = sheetXmlITW.replace('</sheetData>', `<row r="${excelRow}" spans="1:40">${zCell}</row></sheetData>`);
+          }
+
+          // Z hover comment — create with VML if new, replace if existing
+          const plainITW = notes
+            .replace(/\*\*(.*?)\*\*/g,'$1').replace(/_(.*?)_/g,'$1')
+            .replace(/\[u\](.*?)\[\/u\]/gi,'$1').replace(/\[red\](.*?)\[\/red\]/gi,'$1')
+            .replace(/\[green\](.*?)\[\/green\]/gi,'$1').replace(/\[amber\](.*?)\[\/amber\]/gi,'$1')
+            .replace(/\[blue\](.*?)\[\/blue\]/gi,'$1');
+          const itwAuthor = USER.name || 'David Genuth';
+
+          if (!existingITWRefs.has(zRef)) {
+            const colNum = [...zRef.replace(/\d/g,'')].reduce((n,c)=>n*26+c.charCodeAt(0)-64,0);
+            const shapeIds = [...vmlXmlITW.matchAll(/id="_x0000_s(\d+)"/g)].map(m=>parseInt(m[1]));
+            const nextId   = shapeIds.length ? Math.max(...shapeIds)+1 : 18000;
+            const newShape = [
+              '<v:shape id="_x0000_s'+nextId+'" type="#_x0000_t202"',
+              ' style="position:absolute;margin-left:'+(colNum*48)+'pt;margin-top:'+((excelRow-1)*14)+'pt;',
+              'width:200pt;height:100pt;z-index:1;visibility:hidden;mso-wrap-style:tight"',
+              ' fillcolor="infoBackground [80]" strokecolor="none [81]" o:insetmode="auto">\r\n',
+              '  <v:fill color2="infoBackground [80]"/>\r\n',
+              '  <v:shadow color="none [81]" obscured="t"/>\r\n',
+              '  <v:path o:connecttype="none"/>\r\n',
+              '  <v:textbox style="mso-direction-alt:auto"><div style="text-align:left"></div></v:textbox>\r\n',
+              '  <x:ClientData ObjectType="Note">\r\n',
+              '   <x:MoveWithCells/>\r\n   <x:SizeWithCells/>\r\n',
+              '   <x:Anchor>11, 0, '+(excelRow-1)+', 0, 13, 0, '+(excelRow+3)+', 0</x:Anchor>\r\n',
+              '   <x:AutoFill>False</x:AutoFill>\r\n',
+              '   <x:Row>'+(excelRow-1)+'</x:Row>\r\n',
+              '   <x:Column>'+(colNum-1)+'</x:Column>\r\n',
+              '  </x:ClientData>\r\n </v:shape>'
+            ].join('');
+            vmlXmlITW = vmlXmlITW.replace('</xml>', newShape + '\r\n</xml>');
+            existingITWRefs.add(zRef);
+          }
+          commentsXmlITW = upsertComment(commentsXmlITW, zRef, plainITW, itwAuthor);
+        }
+
+        zip.file('xl/sharedStrings.xml', ssXmlITW);
+        zip.file(itwSheetFile, sheetXmlITW);
+        zip.file('xl/comments2.xml', commentsXmlITW);
+        zip.file('xl/drawings/vmlDrawing2.vml', vmlXmlITW);
+        console.log(`[VCS ITW] write complete: ${dirtyITW.length} record(s) written`);
+      } catch(e) {
+        console.error('[VCS ITW] write failed:', e);
+        toast('⚠ ITW notes could not be written to Excel: ' + e.message, '#f59e0b');
+      }
+    }
+
+    // Clear _dirty flags on ITW records
+    (S.itw||[]).forEach(v => { v._dirty = false; });
+    if (S.dirtyITW) S.dirtyITW.clear();
+
     // Old VCS History writer removed — using writeHistoryToExcel instead
 
     // Check if server file is currently open BEFORE generating zip or clearing dirty flags
@@ -2307,6 +2400,12 @@ function markDone(vendor, noteText, followUpDate) {
 function addNote(vendor, text, followUpDate) {
   prependNote(vendor, text);
   if (followUpDate) { vendor.followUp = new Date(followUpDate+'T12:00:00'); markDirty(vendor); }
+  // Mark ITW records dirty for write-back
+  if (vendor.source === 'itw') {
+    vendor._dirty = true;
+    if (!S.dirtyITW) S.dirtyITW = new Set();
+    S.dirtyITW.add(vendor._row);
+  }
   logHistory({date:isoDate(new Date()), time:new Date().toLocaleTimeString(), vendor:vendor.name, action:'Note Added', note:text});
   saveSessionState();
   updateSidebar(); refreshDetailIfOpen(vendor); render(); toast('📝 Note saved!');
@@ -3313,7 +3412,10 @@ function saveSessionState() {
       itw: S.itw.map(v=>({...v})),
       snoozed: Object.fromEntries(Object.entries(S.snoozed).map(([k,v])=>[k,v instanceof Date?v.toISOString():v])),
       dismissed: [...S.dismissed],
-      dirtyReviews: S.reviews.filter(r=>r._dirty).map(r=>({
+      dirtyITW: (S.itw||[]).filter(v=>v._dirty).map(v=>({
+        _row:v._row, name:v.name, notes:v.notes
+      })),
+      dirtyReviews: S.reviews.filter(r=>r._dirty).map(r=>({      dirtyReviews: S.reviews.filter(r=>r._dirty).map(r=>({
         _row: r._row, name: r.name,
         progressNotes: r.progressNotes,
         sfNotes: r.sfNotes,
@@ -5846,7 +5948,7 @@ function updateSidebar() {
   // Save button respects role permission (already set above)
   const dirtyInd=$('dirty-indicator');
   if(dirtyInd){
-    const _vDirty=S.dirty?.size||0; const _rDirty=S.dirtyReviews?.size||0;
+    const _vDirty=S.dirty?.size||0; const _rDirty=S.dirtyReviews?.size||0; const _iDirty=S.dirtyITW?.size||0;
     const hasDirty=isLoaded&&(_vDirty+_rDirty)>0;
     dirtyInd.style.display=hasDirty?'inline':'none';
     if(hasDirty) dirtyInd.title=(_vDirty?_vDirty+' vendor'+(_vDirty!==1?'s':'')+' ':'')+(_rDirty?_rDirty+' review'+(_rDirty!==1?'s':'')+' ':'')+' with unsaved changes';
