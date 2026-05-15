@@ -1570,10 +1570,11 @@ async function loadFile(file) {
 
       openModal(body=>{
         body.appendChild(el('h3',{},'💾 Restore Unsaved Changes?'));
-        body.appendChild(el('p',{style:{fontSize:'11px',lineHeight:'1.6',marginBottom:'8px'}},(()=>{const _vd=saved.dirtyVendors?.length||0;const _rd=saved.dirtyReviews?.length||0;const _parts=[];if(_vd)_parts.push(_vd+' vendor'+(_vd!==1?'s':''));if(_rd)_parts.push(_rd+' review note'+(_rd!==1?'s':''));return'Found '+(_parts.join(' and ')||'0 items')+' with unsaved changes from '+ageMin+' minute'+(ageMin!==1?'s':'')+' ago. Apply them to this file?';})()));
+        body.appendChild(el('p',{style:{fontSize:'11px',lineHeight:'1.6',marginBottom:'8px'}},(()=>{const _vd=saved.dirtyVendors?.length||0;const _rd=saved.dirtyReviews?.length||0;const _id=saved.dirtyITW?.length||0;const _parts=[];if(_vd)_parts.push(_vd+' vendor'+(_vd!==1?'s':''));if(_rd)_parts.push(_rd+' review note'+(_rd!==1?'s':''));if(_id)_parts.push(_id+' ITW note'+(_id!==1?'s':''));return'Found '+(_parts.join(' and ')||'0 items')+' with unsaved changes from '+ageMin+' minute'+(ageMin!==1?'s':'')+' ago. Apply them to this file?';})()));
         const ul=el('ul',{style:{fontSize:'10px',color:'var(--muted)',margin:'0 0 10px 16px',lineHeight:'1.7'}});
-        saved.dirtyVendors.slice(0,8).forEach(v=>ul.appendChild(el('li',{},v.name)));
-        if(saved.dirtyVendors.length>8) ul.appendChild(el('li',{},'...and '+(saved.dirtyVendors.length-8)+' more'));
+        (saved.dirtyVendors||[]).slice(0,8).forEach(v=>ul.appendChild(el('li',{},v.name)));
+        if((saved.dirtyVendors||[]).length>8) ul.appendChild(el('li',{},'...and '+((saved.dirtyVendors||[]).length-8)+' more'));
+        (saved.dirtyITW||[]).slice(0,4).forEach(v=>ul.appendChild(el('li',{},'ITW: '+v.name)));
         body.appendChild(ul);
         const btns=el('div',{class:'modal-btns'});
         btns.appendChild(el('button',{class:'btn-primary',onclick(){
@@ -5939,7 +5940,7 @@ function updateSidebar() {
   const dirtyInd=$('dirty-indicator');
   if(dirtyInd){
     const _vDirty=S.dirty?.size||0; const _rDirty=S.dirtyReviews?.size||0; const _iDirty=S.dirtyITW?.size||0;
-    const hasDirty=isLoaded&&(_vDirty+_rDirty)>0;
+    const hasDirty=isLoaded&&(_vDirty+_rDirty+_iDirty)>0;
     dirtyInd.style.display=hasDirty?'inline':'none';
     if(hasDirty) dirtyInd.title=(_vDirty?_vDirty+' vendor'+(_vDirty!==1?'s':'')+' ':'')+(_rDirty?_rDirty+' review'+(_rDirty!==1?'s':'')+' ':'')+' with unsaved changes';
   }
