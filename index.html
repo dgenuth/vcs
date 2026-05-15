@@ -1913,7 +1913,70 @@ async function executeSave() {
           }
         }
 
-        // Write sharedStrings and sheet only — comments3.xml never touched (no VML corruption risk)
+        // Write L hover comment + VML shape (create if new, replace if existing)
+        let commentsXml = await zip.file('xl/comments3.xml').async('text');
+        let vmlXml      = await zip.file('xl/drawings/vmlDrawing3.vml').async('text');
+        const existingCommentRefs = new Set([...commentsXml.matchAll(/<comment ref="([^"]+)"/g)].map(m => m[1]));
+
+        for (const rev of dirtyReviews) {
+          const excelRow  = rev._row + 1;
+          const cellRef   = `L${excelRow}`;
+          const notes     = (rev.progressNotes || '').trim();
+          if (!notes) continue;
+
+          // Strip markdown for plain readable text in Excel hover
+          const plainText = notes
+            .replace(/\*\*(.*?)\*\*/g,'$1').replace(/_(.*?)_/g,'$1')
+            .replace(/\[u\](.*?)\[\/u\]/gi,'$1').replace(/\[red\](.*?)\[\/red\]/gi,'$1')
+            .replace(/\[green\](.*?)\[\/green\]/gi,'$1').replace(/\[amber\](.*?)\[\/amber\]/gi,'$1')
+            .replace(/\[blue\](.*?)\[\/blue\]/gi,'$1');
+          const authorName = USER.name || 'David Genuth';
+
+          // If no existing comment, also create VML shape (must stay in sync)
+          if (!existingCommentRefs.has(cellRef)) {
+            const colNum = cellRef.replace(/\d/g,'').split('').reduce((n,c)=>n*26+c.charCodeAt(0)-64,0);
+            const shapeIds = [...vmlXml.matchAll(/id="_x0000_s(\d+)"/g)].map(m=>parseInt(m[1]));
+            const nextId   = shapeIds.length ? Math.max(...shapeIds)+1 : 17500;
+            const newShape =
+              '<v:shape id="_x0000_s'+nextId+'" type="#_x0000_t202" '+
+              'style='position:absolute;margin-left:'+(colNum*48)+'pt;margin-top:'+((excelRow-1)*14)+'pt;'+
+              'width:200pt;height:100pt;z-index:1;visibility:hidden;mso-wrap-style:tight' '+
+              'fillcolor="infoBackground [80]" strokecolor="none [81]" o:insetmode="auto">
+'+
+              '  <v:fill color2="infoBackground [80]"/>
+'+
+              '  <v:shadow color="none [81]" obscured="t"/>
+'+
+              '  <v:path o:connecttype="none"/>
+'+
+              '  <v:textbox style='mso-direction-alt:auto'><div style='text-align:left'></div></v:textbox>
+'+
+              '  <x:ClientData ObjectType="Note">
+'+
+              '   <x:MoveWithCells/>
+   <x:SizeWithCells/>
+'+
+              '   <x:Anchor>11, 0, '+(excelRow-1)+', 0, 13, 0, '+(excelRow+3)+', 0</x:Anchor>
+'+
+              '   <x:AutoFill>False</x:AutoFill>
+'+
+              '   <x:Row>'+(excelRow-1)+'</x:Row>
+'+
+              '   <x:Column>'+(colNum-1)+'</x:Column>
+'+
+              '  </x:ClientData>
+ </v:shape>';
+            vmlXml = vmlXml.replace('</xml>', newShape + '\r\n</xml>');
+            existingCommentRefs.add(cellRef); // prevent double-add if same row appears twice
+          }
+
+          commentsXml = upsertComment(commentsXml, cellRef, plainText, authorName);
+        }
+
+        zip.file('xl/comments3.xml', commentsXml);
+        zip.file('xl/drawings/vmlDrawing3.vml', vmlXml);
+
+        // Write sharedStrings and sheet
         zip.file('xl/sharedStrings.xml', ssXml);
         zip.file(S.reviewsSheetFile, sheetXml);
         console.log(`[VCS] Reviews write complete: ${dirtyReviews.length} record(s) written to ${S.reviewsSheetFile}`);
