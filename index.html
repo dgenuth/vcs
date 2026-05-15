@@ -1562,7 +1562,7 @@ async function loadFile(file) {
     // NOTE: clearSessionState() intentionally NOT called here — modal handles it after user decides
     setTimeout(()=>{
       const saved=loadSessionState();
-      if(!saved||(!saved.dirtyVendors?.length&&!saved.dirtyReviews?.length)){ clearSessionState(); return; }
+      if(!saved||(!saved.dirtyVendors?.length&&!saved.dirtyReviews?.length&&!saved.dirtyITW?.length)){ clearSessionState(); return; }
       if(USER._impersonating){ return; } // Never offer restore during View As
       const ageMin=Math.round((Date.now()-new Date(saved.ts))/60000);
       if(ageMin>24*60){clearSessionState();return;}
@@ -1604,6 +1604,17 @@ async function loadFile(file) {
               if (sr.contractNotes!== undefined) live.contractNotes = sr.contractNotes;
               live._dirty = true;
               S.dirtyReviews.add(live._row);
+            }
+          }
+          // Restore dirty ITW records
+          if (saved.dirtyITW && saved.dirtyITW.length) {
+            if (!S.dirtyITW) S.dirtyITW = new Set();
+            for (const si of saved.dirtyITW) {
+              const live = S.itw.find(v => v._row === si._row);
+              if (!live) continue;
+              if (si.notes !== undefined) live.notes = si.notes;
+              live._dirty = true;
+              S.dirtyITW.add(live._row);
             }
           }
           clearSessionState();
@@ -2051,8 +2062,6 @@ async function executeSave() {
         toast('\u26a0 ITW notes could not be written to Excel: ' + e.message, '#f59e0b');
       }
     }
-    (S.itw||[]).forEach(v => { v._dirty = false; });
-    if (S.dirtyITW) S.dirtyITW.clear();
 
     // Old VCS History writer removed — using writeHistoryToExcel instead
 
@@ -2093,6 +2102,9 @@ async function executeSave() {
     // Clear _dirty flags on review records
     S.reviews.forEach(r => { r._dirty = false; });
     if (S.dirtyReviews) S.dirtyReviews.clear();
+    // Clear _dirty flags on ITW records (after successful save)
+    (S.itw||[]).forEach(v => { v._dirty = false; });
+    if (S.dirtyITW) S.dirtyITW.clear();
     updateSidebar();
     logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:'System',action:'File exported: '+outName+' ('+dirtyVendors.length+' vendors updated)'});
     const mergeMsg = fetchedFresh ? '☁ Merged & saved' : '⚠ Saved (local only — Drive fetch failed)';
