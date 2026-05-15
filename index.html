@@ -1382,10 +1382,8 @@ function parseReviews(sheet) {
       continue;
     }
     // Review Progress Notes: Q col comment = raw VCS markdown (source of truth)
-    // Falls back to L comment (plain text) then L cell value
-    // Q cell value (r[16]) = full VCS markdown. Falls back to L comment then L cell.
-    const qCell = String(r[16]||'').trim();
-    const progressNotes = qCell || cm[lRef] || String(r[11]||'').trim();
+    // L hover comment = full note history (source of truth). Falls back to L cell value.
+    const progressNotes = cm[lRef] || String(r[11]||'').trim();
     // SF Notes: prefer hover comment (full text) over truncated cell value
     const sfNotes = cm[mRef] || String(r[12]||'').trim();
     // Contract Notes: plain cell value only
@@ -1894,22 +1892,6 @@ async function executeSave() {
             const rowM  = sheetXml.match(rowRe);
             if (rowM) { sheetXml = sheetXml.replace(rowRe, rowM[1] + rowM[2] + newCell + rowM[3]); }
             else { sheetXml = sheetXml.replace('</sheetData>', `<row r="${excelRow}" spans="1:17">${newCell}</row></sheetData>`); }
-          }
-
-          // 2. Write full VCS markdown to Q cell (no comment, no VML risk)
-          const qCellRef  = `Q${excelRow}`;
-          const qSsResult = upsertSharedString(ssXml, notes);
-          ssXml = qSsResult.xml;
-          const qSsIndex  = qSsResult.index;
-          const existingQRe   = new RegExp(`<c r="${qCellRef}"([^>]*)>.*?</c>`, 's');
-          const existingQCell = sheetXml.match(existingQRe);
-          const qNewCell = `<c r="${qCellRef}" s="109" t="s"><v>${qSsIndex}</v></c>`;
-          if (existingQCell) {
-            sheetXml = sheetXml.replace(existingQRe, qNewCell);
-          } else {
-            const qRowRe = new RegExp(`(<row r="${excelRow}"[^>]*>)([\s\S]*?)(</row>)`);
-            const qRowM  = sheetXml.match(qRowRe);
-            if (qRowM) { sheetXml = sheetXml.replace(qRowRe, qRowM[1] + qRowM[2] + qNewCell + qRowM[3]); }
           }
         }
 
