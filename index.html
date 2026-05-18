@@ -1541,6 +1541,11 @@ async function loadFile(file) {
           );
           if (_curScKey) {
             USER.hiddenFields = scHiddenFields[_curScKey];
+            // Re-apply always-hidden tier/days for non-admin after SC overwrite
+            if (USER.role !== 'admin') {
+              var _rh = ['tier','days'];
+              _rh.forEach(function(f){ if (USER.hiddenFields.indexOf(f)===-1) USER.hiddenFields.push(f); });
+            }
             console.log('[VCS] Updated current user hiddenFields from Share Criteria:', USER.hiddenFields.length, 'hidden fields');
           }
         }
