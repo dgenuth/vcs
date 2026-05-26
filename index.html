@@ -7065,6 +7065,14 @@ function sendEventToOutlook(event) {
           throw new Error('Not connected to Microsoft. Go to Settings → Microsoft 365 and click Connect.');
         }
 
+        // Read values from form inputs
+        const subject   = subjectIn.value.trim() || ('Meeting: ' + (event.vendorName || 'Vendor'));
+        const date      = dateIn.value;
+        const start     = startIn.value;
+        const end       = endIn.value;
+        const notesList = bodyTa.value.trim();
+        const withTeams = teamsCb.checked;
+
         // Build event body
         const eventBody = {
           subject: subject,
