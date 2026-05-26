@@ -833,7 +833,7 @@ S = {
     showDismissedDefault: false,
     emailSignature: '',
     sfClientId: '', sfRedirectUri: '', sfLoginUrl: 'https://login.salesforce.com',
-    composioKey: '', driveFileId: '', driveAutoSync: false,
+    msGraphClientId: '', msGraphTenantId: '', driveFileId: '', driveAutoSync: false,
     closedDays: JSON.parse(localStorage.getItem('vcs_closed_days')||'[]'),
     oooDays: JSON.parse(localStorage.getItem('vcs_ooo_days')||'[]'),
   },
@@ -1541,11 +1541,6 @@ async function loadFile(file) {
           );
           if (_curScKey) {
             USER.hiddenFields = scHiddenFields[_curScKey];
-            // Re-apply always-hidden tier/days for non-admin after SC overwrite
-            if (USER.role !== 'admin') {
-              var _rh = ['tier','days'];
-              _rh.forEach(function(f){ if (USER.hiddenFields.indexOf(f)===-1) USER.hiddenFields.push(f); });
-            }
             console.log('[VCS] Updated current user hiddenFields from Share Criteria:', USER.hiddenFields.length, 'hidden fields');
           }
         }
@@ -2513,24 +2508,35 @@ function openDoneModal(vendor) {
 }
 
 // Shared note toolbar builder - used by all note-editing modals
-function buildNoteToolbar(ta) {
+function buildNoteToolbar(ta, onChangeCb) {
   const toolbar=el('div',{class:'note-toolbar'});
-  const insertAtCursor=(text)=>{ta.focus();const ok=document.execCommand('insertText',false,text);if(!ok){const s=ta.selectionStart;ta.setRangeText(text,s,ta.selectionEnd,'end');}};
+  // Use execCommand to preserve browser undo stack
+  const insertAtCursor=(text)=>{
+    ta.focus();
+    const supported=document.execCommand('insertText',false,text);
+    if(!supported){const s=ta.selectionStart;ta.setRangeText(text,s,ta.selectionEnd,'end');}
+    if(onChangeCb)onChangeCb();
+  };
   const applyWrap=(pre,suf)=>{
-    if(!ta)return;const s=ta.selectionStart,e=ta.selectionEnd,sel=ta.value.slice(s,e);
+    if(!ta)return;
+    const s=ta.selectionStart,e=ta.selectionEnd,sel=ta.value.slice(s,e);
     if(!sel){toast('Select text first','#f59e0b');return;}
     if(sel.startsWith(pre)&&sel.endsWith(suf)){
-      ta.selectionStart=s;ta.selectionEnd=e;
-      ta.focus();document.execCommand('insertText',false,sel.slice(pre.length,sel.length-suf.length));
+      insertAtCursor(''); // deselect then handle
+      ta.selectionStart=s; ta.selectionEnd=e;
+      const inner=sel.slice(pre.length,sel.length-suf.length);
+      ta.focus(); document.execCommand('insertText',false,inner);
     } else {
-      const COLOR_TAGS=['red','green','amber','blue'];let cleaned=sel;
+      const COLOR_TAGS=['red','green','amber','blue'];
+      let cleaned=sel;
       COLOR_TAGS.forEach(c=>{cleaned=cleaned.replace(new RegExp('\\['+c+'\\](.*?)\\[/'+c+'\\]','gi'),'$1');});
-      ta.focus();document.execCommand('insertText',false,pre+cleaned+suf);
+      ta.focus(); document.execCommand('insertText',false,pre+cleaned+suf);
     }
+    if(onChangeCb)onChangeCb();
     ta.focus();
   };
-  const applyPrefix=(prefix)=>{if(!ta)return;const s=ta.selectionStart,ls=ta.value.lastIndexOf('\n',s-1)+1;ta.setRangeText(prefix,ls,ls,'end');ta.focus();};
-  const insert=(t)=>{if(!ta)return;ta.focus();document.execCommand('insertText',false,t);};
+  const applyPrefix=(prefix)=>{if(!ta)return;const s=ta.selectionStart,ls=ta.value.lastIndexOf('\n',s-1)+1;ta.setRangeText(prefix,ls,ls,'end');if(onChangeCb)onChangeCb();ta.focus();};
+  const insert=(t)=>{if(!ta)return;ta.focus();document.execCommand('insertText',false,t);if(onChangeCb)onChangeCb();};
   [['𝐁',()=>applyWrap('**','**'),'Bold'],['𝐼',()=>applyWrap('_','_'),'Italic'],['U͟',()=>applyWrap('[u]','[/u]'),'Underline'],
    ['• Bullet',()=>applyPrefix('• '),'Bullet'],
    ['🔴',()=>applyWrap('[red]','[/red]'),'Red text'],['🟢',()=>applyWrap('[green]','[/green]'),'Green text'],
@@ -2547,8 +2553,18 @@ function openNoteModal(vendor) {
     body.appendChild(el('h3',{},`📝 Add Note — ${vendor.name}`));
     body.appendChild(el('p',{class:'modal-sub'},'Use toolbar to format. Entry will be prepended to notes.'));
     const ta = el('textarea',{class:'modal-textarea notes-editor',placeholder:'What happened? Key takeaways, next steps...'});
-    body.appendChild(buildNoteToolbar(ta));
-    body.appendChild(ta);
+    const previewDiv2=el('div',{});
+    const updatePreview2=()=>{previewDiv2.innerHTML='';renderNotesStr(previewDiv2,ta.value);};
+    ta.addEventListener('input',updatePreview2);
+    ta.style.flex='0 0 48%';
+    body.appendChild(buildNoteToolbar(ta, updatePreview2));
+    const splitWrap=el('div',{style:{display:'flex',gap:'8px',alignItems:'flex-start'}});
+    splitWrap.appendChild(ta);
+    const prevPanel=el('div',{style:{flex:'0 0 48%',minHeight:'100px',maxHeight:'200px',overflowY:'auto',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'8px 10px',fontSize:'11px',lineHeight:'1.6'}});
+    prevPanel.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'4px'}},'Preview:'));
+    prevPanel.appendChild(previewDiv2);
+    splitWrap.appendChild(prevPanel);
+    body.appendChild(splitWrap);
     body.appendChild(el('label',{style:{marginTop:'8px',display:'block'}},'Optional follow-up date:'));
     const dateIn=el('input',{type:'date',class:'modal-input'});
     body.appendChild(dateIn);
@@ -3514,8 +3530,7 @@ const PERSONAL_SETTING_KEYS = ['theme','fontSize','compactRows','defaultView','s
   'showHebrew','autoSortByScore','showSnoozed','showDismissedDefault','animateBadges',
   'emailSignature','cols','dbHiddenCols','sidebarWidth','closedDays','oooDays'];
 // Global settings — stored once, admin-controlled, apply to all sessions
-const GLOBAL_SETTING_KEYS = ['sfClientId','sfRedirectUri','sfLoginUrl','composioKey',
-  'driveFileId','driveFileName','driveAutoSync','googleClientId'];
+const GLOBAL_SETTING_KEYS = ['sfClientId','sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId'];
 const PERSIST_KEYS = [...PERSONAL_SETTING_KEYS, ...GLOBAL_SETTING_KEYS];
 
 function saveSettings() {
@@ -6446,7 +6461,7 @@ function renderITW(c) {
 
       // Note preview — split by pipe, show latest entry
       const notes=String(v.notes||'');
-      const latestNote=notes.split(/\n\s*\n/).map(e=>e.trim()).filter(Boolean)[0]||notes.split('\n')[0]||'';
+      const latestNote=notes.split('|').map(e=>e.trim()).filter(Boolean).pop()||'';
       const noteEl=latestNote
         ? el('span',{class:'note-preview clickable',title:'Click to view/edit notes',onclick(e){e.stopPropagation();showNotePopup(v.name,v.notes,v);}},
             latestNote.split('\n')[0].slice(0,80)+(latestNote.length>80?' …':''))
@@ -6573,22 +6588,52 @@ function makeReviewNoteCell(r, txt, fieldName, label) {
       const toolbar=el('div',{class:'note-toolbar'});
       const ta=el('textarea',{class:'modal-textarea notes-editor'});
       ta.value=String(r[fieldName]||'');
+      // applyWrap with color conflict resolution and undo support
       const applyWrap=(pre,suf)=>{
         const s=ta.selectionStart,e=ta.selectionEnd,sel=ta.value.slice(s,e);
         if(!sel){toast('Select text first','#f59e0b');return;}
+        // Toggle off if already wrapped
         if(sel.startsWith(pre)&&sel.endsWith(suf)){
-          ta.setRangeText(sel.slice(pre.length,sel.length-suf.length),s,e,'select');
+          const inner=sel.slice(pre.length,sel.length-suf.length);
+          ta.setRangeText(inner,s,e,'select');
         } else {
-          const COLOR_TAGS=['red','green','amber','blue'];let cleaned=sel;
-          COLOR_TAGS.forEach(c=>{cleaned=cleaned.replace(new RegExp('\\['+c+'\\](.*?)\\[/'+c+'\\]','gi'),'$1');});
+          // Strip conflicting color wrappers before applying new color
+          const COLOR_TAGS=['red','green','amber','blue'];
+          let cleaned=sel;
+          COLOR_TAGS.forEach(c=>{
+            cleaned=cleaned.replace(new RegExp('\\['+c+'\\](.*?)\\[/'+c+'\\]','gi'),'$1');
+          });
           ta.setRangeText(pre+cleaned+suf,s,e,'select');
         }
-        ta.focus();
+        updatePreview(); ta.focus();
       };
-      const insertText=(t)=>{const s=ta.selectionStart;ta.setRangeText(t,s,ta.selectionEnd,'end');ta.focus();};
+      const insertText=(t)=>{const s=ta.selectionStart;ta.setRangeText(t,s,ta.selectionEnd,'end');updatePreview();ta.focus();};
+
+      // Live preview panel
+      const previewWrap=el('div',{style:{display:'flex',gap:'8px',alignItems:'flex-start'}});
+      previewWrap.appendChild(ta);
+      const previewPanel=el('div',{style:{
+        flex:'0 0 48%',minHeight:'120px',maxHeight:'240px',overflowY:'auto',
+        background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',
+        padding:'8px 10px',fontSize:'11px',lineHeight:'1.6'
+      }});
+      const previewLabel=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'4px'}},'Preview:');
+      const previewDiv=el('div',{});
+      previewPanel.appendChild(previewLabel);
+      previewPanel.appendChild(previewDiv);
+      previewWrap.appendChild(previewPanel);
+
+      function updatePreview(){
+        previewDiv.innerHTML='';
+        renderNotesStr(previewDiv, ta.value);
+      }
+      ta.addEventListener('input', updatePreview);
+      ta.style.flex='0 0 48%';
+
       [['𝐁 Bold',()=>applyWrap('**','**')],['𝐼 Italic',()=>applyWrap('_','_')],['U͟ Underline',()=>applyWrap('[u]','[/u]')],['• Bullet',()=>insertText('\n• ')],['🔴 Red',()=>applyWrap('[red]','[/red]')],['🟢 Green',()=>applyWrap('[green]','[/green]')],['🟡 Amber',()=>applyWrap('[amber]','[/amber]')],['🔵 Blue',()=>applyWrap('[blue]','[/blue]')],['📅 Today',()=>insertText(isoDate(new Date())+': ')],].forEach(([lbl,fn])=>toolbar.appendChild(el('button',{class:'note-tb-btn',onclick:fn},lbl)));
       body.appendChild(toolbar);
-      body.appendChild(ta);
+      body.appendChild(previewWrap);
+      setTimeout(()=>updatePreview(),10);
       const btns=el('div',{class:'modal-btns'});
       btns.appendChild(el('button',{class:'btn-primary',onclick(){r[fieldName]=ta.value;r._dirty=true;if(!S.dirtyReviews)S.dirtyReviews=new Set();S.dirtyReviews.add(r._row);logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:r.name,action:`Updated Review ${label}`,to:ta.value.slice(0,60)});saveSessionState();updateSidebar();render();closeModal();toast('✓ Saved');}},'Save'));
       btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
@@ -7013,52 +7058,50 @@ function sendEventToOutlook(event) {
       statusDiv.textContent='Adding to your Outlook calendar...';
       statusDiv.style.color='var(--blue)';
       try {
-        const composioKey=S.settings.composioKey;
-        if(!composioKey){
-          throw new Error('Add your Composio API key in Settings → Integrations to enable direct Outlook calendar creation. Your Composio key is free and never uses AI tokens.');
+        // Microsoft Graph API — use stored token or trigger OAuth
+        const msToken = localStorage.getItem('vcs_ms_token');
+        const msTokenExp = parseInt(localStorage.getItem('vcs_ms_token_exp') || '0');
+        if (!msToken || Date.now() > msTokenExp) {
+          throw new Error('Not connected to Microsoft. Go to Settings → Microsoft 365 and click Connect.');
         }
 
-        // Call Composio REST API directly — no Anthropic key, no tokens
-        const resp=await fetch('https://backend.composio.dev/api/v2/actions/OUTLOOK_CALENDAR_CREATE_EVENT/execute',{
-          method:'POST',
-          headers:{'Content-Type':'text/plain','x-api-key':composioKey},
-          body:JSON.stringify({
-            input:{
-              subject,
-              start_datetime:date+'T'+start+':00',
-              end_datetime:date+'T'+end+':00',
-              time_zone:'Eastern Standard Time',
-              body:notesList,
-              is_online_meeting:withTeams,
-              online_meeting_provider:withTeams?'teamsForBusiness':undefined,
-              user_id:'me',
-              // No attendees — user adds them in Outlook before sending
-            },
-            connected_account_id:'outlook_carbon-strial'
-          })
-        });
-        const data=await resp.json();
-        const text=data.content?.map(b=>b.type==='text'?b.text:'').join('')||JSON.stringify(data);
-        const clean=text.replace(/```json|```/g,'').trim();
-        let result;
-        // Composio returns data.response or data.data for success
-        if(data.data||data.response){
-          result={success:true, eventId:data.data?.id||data.response?.id, webLink:data.data?.webLink||data.response?.webLink, teamsLink:data.data?.onlineMeeting?.joinUrl||data.response?.onlineMeeting?.joinUrl};
-        } else {
-          try{result=JSON.parse(clean);}catch(e){
-            result={success:false,error:data.message||data.error||('Unexpected response: '+clean.slice(0,100))};
-          }
+        // Build event body
+        const eventBody = {
+          subject: subject,
+          body: { contentType: 'Text', content: notesList },
+          start: { dateTime: date + 'T' + start + ':00', timeZone: 'Eastern Standard Time' },
+          end:   { dateTime: date + 'T' + end   + ':00', timeZone: 'Eastern Standard Time' },
+          isReminderOn: true,
+          reminderMinutesBeforeStart: 1440
+        };
+        if (withTeams) {
+          eventBody.isOnlineMeeting = true;
+          eventBody.onlineMeetingProvider = 'teamsForBusiness';
         }
-        if(result.success){
+
+        const resp = await fetch('https://graph.microsoft.com/v1.0/me/events', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + msToken,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(eventBody)
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.error?.message || ('Graph API error ' + resp.status));
+        }
+        const result = await resp.json();
+        if (result.id) {
           statusDiv.style.color='var(--green)';
           statusDiv.textContent='✅ Event created in your Outlook calendar!';
-          if(withTeams&&result.teamsLink) statusDiv.textContent+=' Teams link auto-generated.';
+          if(withTeams&&result.onlineMeeting?.joinUrl) statusDiv.textContent+=' Teams link auto-generated.';
           closeModal();
           toast('📅 Meeting added to your Outlook calendar'+(withTeams?' with Teams link':''));
         } else {
-          throw new Error(result.error||'Event creation failed');
+          throw new Error('Unexpected response from Graph API');
         }
-      } catch(e) {
+} catch(e) {
         btn.disabled=false; btn.textContent='📅 Add to My Outlook Calendar';
         statusDiv.style.color='var(--red)';
         statusDiv.textContent='Error: '+e.message;
@@ -8314,19 +8357,80 @@ function renderSettings(c) {
   c.appendChild(secDrive);
   } // end configDrive admin block
 
-  // ── Composio Key (Admin only) ──
+  // ── Microsoft 365 / Outlook Calendar Integration ──
   if(hasPermission('configDrive')) {
-  const secComposio=el('div',{class:'settings-section'});
-  secComposio.appendChild(el('h3',{},'🔗 Composio API Key (Outlook Calendar)'));
-  secComposio.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px',lineHeight:'1.5'}},'Enables the "Add to My Outlook Calendar" button. Free — no AI tokens used. Get yours at composio.dev → API Keys.'));
-  const compRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center'}});
-  const compIn=el('input',{type:'password',class:'modal-input',style:{flex:'1'},placeholder:'composio_xxxxxxxxxx',value:S.settings.composioKey||''});
-  compIn.addEventListener('change',()=>{S.settings.composioKey=compIn.value.trim();debouncedSaveSettings();});
-  compRow.appendChild(compIn);
-  compRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){compIn.type=compIn.type==='password'?'text':'password';}},'👁'));
-  secComposio.appendChild(compRow);
-  c.appendChild(secComposio);
-    } // end composio admin block
+  const secMS = el('div',{class:'settings-section'});
+  secMS.appendChild(el('h3',{},'📅 Microsoft 365 — Outlook Calendar'));
+
+  // Status indicator
+  const msStatus = el('div',{style:{fontSize:'10px',marginBottom:'8px',padding:'6px 8px',borderRadius:'4px',background:'var(--card)'}});
+  const updateMSStatus = () => {
+    const tok = localStorage.getItem('vcs_ms_token');
+    const exp = parseInt(localStorage.getItem('vcs_ms_token_exp') || '0');
+    const name = localStorage.getItem('vcs_ms_user_name') || '';
+    if (tok && Date.now() < exp) {
+      msStatus.textContent = '✅ Connected' + (name ? ' as ' + name : '') + ' — expires ' + new Date(exp).toLocaleTimeString();
+      msStatus.style.color = 'var(--green)';
+    } else {
+      msStatus.textContent = '⚫ Not connected — click Connect to sign in with Microsoft';
+      msStatus.style.color = 'var(--muted)';
+    }
+  };
+  updateMSStatus();
+  secMS.appendChild(msStatus);
+
+  // Client ID + Tenant ID inputs (admin stores these once)
+  const msDesc = el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},
+    'Enter your Azure App Client ID and Tenant ID, then click Connect to sign in with your Microsoft account. Credentials are stored only in this browser.');
+  secMS.appendChild(msDesc);
+
+  const msGrid = el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'6px',marginBottom:'8px'}});
+  const cidIn = el('input',{type:'text',class:'modal-input',placeholder:'Azure Client ID (xxxxxxxx-xxxx-...)',
+    value: S.settings.msGraphClientId || ''});
+  cidIn.addEventListener('change', () => { S.settings.msGraphClientId = cidIn.value.trim(); debouncedSaveSettings(); });
+  const tidIn = el('input',{type:'text',class:'modal-input',placeholder:'Azure Tenant ID (xxxxxxxx-xxxx-...)',
+    value: S.settings.msGraphTenantId || ''});
+  tidIn.addEventListener('change', () => { S.settings.msGraphTenantId = tidIn.value.trim(); debouncedSaveSettings(); });
+  msGrid.appendChild(cidIn);
+  msGrid.appendChild(tidIn);
+  secMS.appendChild(msGrid);
+
+  // Connect / Disconnect buttons
+  const msBtns = el('div',{style:{display:'flex',gap:'6px'}});
+  msBtns.appendChild(el('button',{class:'btn-primary btn-sm', onclick() {
+    const clientId = S.settings.msGraphClientId || cidIn.value.trim();
+    const tenantId = S.settings.msGraphTenantId || tidIn.value.trim();
+    if (!clientId || !tenantId) { toast('Enter Client ID and Tenant ID first','#f59e0b'); return; }
+    const redirectUri = encodeURIComponent(window.location.origin + window.location.pathname);
+    const scope = encodeURIComponent('Calendars.ReadWrite offline_access openid profile');
+    const state = btoa(JSON.stringify({ ts: Date.now() }));
+    localStorage.setItem('vcs_ms_oauth_state', state);
+    localStorage.setItem('vcs_ms_clientid_temp', clientId);
+    localStorage.setItem('vcs_ms_tenantid_temp', tenantId);
+    const authUrl =
+      'https://login.microsoftonline.com/' + tenantId +
+      '/oauth2/v2.0/authorize?client_id=' + clientId +
+      '&response_type=code&redirect_uri=' + redirectUri +
+      '&scope=' + scope +
+      '&state=' + encodeURIComponent(state) +
+      '&prompt=select_account';
+    window.location.href = authUrl;
+  }},'🔗 Connect Microsoft Account'));
+  msBtns.appendChild(el('button',{class:'btn-xs btn-ghost', onclick() {
+    localStorage.removeItem('vcs_ms_token');
+    localStorage.removeItem('vcs_ms_token_exp');
+    localStorage.removeItem('vcs_ms_refresh_token');
+    localStorage.removeItem('vcs_ms_user_name');
+    updateMSStatus();
+    toast('Disconnected from Microsoft','#f59e0b');
+  }},'Disconnect'));
+  secMS.appendChild(msBtns);
+
+  secMS.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'6px',lineHeight:'1.4'}},
+    'Redirect URI to register in Azure: ' + window.location.origin + window.location.pathname));
+
+  c.appendChild(secMS);
+  } // end MS admin block
 
   if (hasPermission('configAI')) {
   const secAI=el('div',{class:'settings-section'});
@@ -9122,6 +9226,44 @@ function init() {
   }
   updateClock(); setInterval(updateClock, 1000); // every second for live seconds display
 }
+// ── Microsoft Graph OAuth2 callback handler ──────────────────────────────
+(async function handleMSCallback() {
+  const params = new URLSearchParams(window.location.search);
+  const code  = params.get('code');
+  const state = params.get('state');
+  const error = params.get('error');
+  if (!code && !error) return;
+  window.history.replaceState({}, '', window.location.pathname);
+  if (error) { console.warn('[VCS] MS OAuth error:', error); return; }
+  const savedState = localStorage.getItem('vcs_ms_oauth_state');
+  if (decodeURIComponent(state) !== savedState) { console.warn('[VCS] MS OAuth state mismatch'); return; }
+  localStorage.removeItem('vcs_ms_oauth_state');
+  const clientId   = localStorage.getItem('vcs_ms_clientid_temp') || '';
+  const tenantId   = localStorage.getItem('vcs_ms_tenantid_temp') || '';
+  const redirectUri = window.location.origin + window.location.pathname;
+  try {
+    const tokenResp = await fetch(
+      'https://login.microsoftonline.com/' + tenantId + '/oauth2/v2.0/token',
+      { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({client_id:clientId, grant_type:'authorization_code',
+          code, redirect_uri:redirectUri, scope:'Calendars.ReadWrite offline_access openid profile'}) }
+    );
+    const td = await tokenResp.json();
+    if (td.access_token) {
+      localStorage.setItem('vcs_ms_token', td.access_token);
+      localStorage.setItem('vcs_ms_token_exp', String(Date.now() + (td.expires_in - 60) * 1000));
+      if (td.refresh_token) localStorage.setItem('vcs_ms_refresh_token', td.refresh_token);
+      const meResp = await fetch('https://graph.microsoft.com/v1.0/me',
+        {headers:{'Authorization':'Bearer '+td.access_token}});
+      const me = await meResp.json();
+      if (me.displayName) localStorage.setItem('vcs_ms_user_name', me.displayName);
+      console.log('[VCS] Microsoft 365 connected:', me.displayName || 'OK');
+    } else {
+      console.warn('[VCS] MS token exchange failed:', td.error_description || JSON.stringify(td));
+    }
+  } catch(e) { console.warn('[VCS] MS OAuth error:', e.message); }
+})();
+
 init();
 </script>
 </body>
