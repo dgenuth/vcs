@@ -6852,8 +6852,42 @@ function renderCalendar(c) {
           titleEl.appendChild(document.createTextNode(mev.title||mev.vendorName||'Meeting'));
           const mbtns=el('div',{style:{display:'flex',gap:'3px'}});
           mbtns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){openCalendarLogModal(S.selectedDay,idx);}}, '📝 Log Outcome'));
-          mbtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Send to Outlook calendar as .ics',onclick(){sendEventToOutlook({...mev,date:S.selectedDay});}}, '📅 Outlook'));
-          mbtns.appendChild(el('button',{class:'btn-xs btn-danger',onclick(){S.calEvents[S.selectedDay].splice(idx,1);if(!S.calEvents[S.selectedDay].length)delete S.calEvents[S.selectedDay];render();}}, '✕'));
+          mbtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Send to Outlook calendar as .ics',onclick(){sendEventToOutlook({...mev, _calDate:S.selectedDay, _calIdx:idx});}}, '📅 Outlook'));
+          if (mev.outlookEventId) {
+            mbtns.appendChild(el('button',{class:'btn-xs btn-danger',title:'Remove from Outlook calendar',onclick:async function(){
+              const tok=localStorage.getItem('vcs_ms_token');
+              if(!tok){toast('Not connected to Microsoft','#f59e0b');return;}
+              try{
+                const r=await fetch('https://graph.microsoft.com/v1.0/me/events/'+mev.outlookEventId,
+                  {method:'DELETE',headers:{'Authorization':'Bearer '+tok}});
+                if(r.ok||r.status===404){
+                  delete mev.outlookEventId; saveSessionState(); render();
+                  toast('🗑 Removed from Outlook calendar');
+                } else {
+                  const e=await r.json().catch(()=>({}));
+                  toast('Error: '+(e.error?.message||r.status),'#ef4444');
+                }
+              }catch(e){toast('Error: '+e.message,'#ef4444');}
+            }},'📅 ✕'));
+          }
+          mbtns.appendChild(el('button',{class:'btn-xs btn-danger',onclick:async function(){
+            if (mev.outlookEventId) {
+              const choice = confirm('This event is also in your Outlook calendar.\n\nClick OK to remove from BOTH VCS and Outlook.\nClick Cancel to remove from VCS only.');
+              if (choice) {
+                // Remove from Outlook first
+                const tok = localStorage.getItem('vcs_ms_token');
+                if (tok) {
+                  try {
+                    await fetch('https://graph.microsoft.com/v1.0/me/events/'+mev.outlookEventId,
+                      {method:'DELETE',headers:{'Authorization':'Bearer '+tok}});
+                  } catch(e) { /* proceed with local delete even if Outlook delete fails */ }
+                }
+              }
+            }
+            S.calEvents[S.selectedDay].splice(idx,1);
+            if(!S.calEvents[S.selectedDay].length) delete S.calEvents[S.selectedDay];
+            render();
+          }}, '✕'));
           mhdr.append(titleEl, mbtns); mrow.appendChild(mhdr);
           if (mev.vendorName) {
             const psd=findPSDVendor(mev.vendorName);
@@ -7101,11 +7135,17 @@ function sendEventToOutlook(event) {
         }
         const result = await resp.json();
         if (result.id) {
+          // Save the Graph event ID so we can delete it from Outlook later
+          if (event._calDate && event._calIdx !== undefined) {
+            const calEv = (S.calEvents[event._calDate] || [])[event._calIdx];
+            if (calEv) { calEv.outlookEventId = result.id; saveSessionState(); }
+          }
           statusDiv.style.color='var(--green)';
           statusDiv.textContent='✅ Event created in your Outlook calendar!';
           if(withTeams&&result.onlineMeeting?.joinUrl) statusDiv.textContent+=' Teams link auto-generated.';
           closeModal();
           toast('📅 Meeting added to your Outlook calendar'+(withTeams?' with Teams link':''));
+          render();
         } else {
           throw new Error('Unexpected response from Graph API');
         }
