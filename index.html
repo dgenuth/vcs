@@ -8407,14 +8407,24 @@ function renderSettings(c) {
     localStorage.setItem('vcs_ms_oauth_state', state);
     localStorage.setItem('vcs_ms_clientid_temp', clientId);
     localStorage.setItem('vcs_ms_tenantid_temp', tenantId);
-    const authUrl =
-      'https://login.microsoftonline.com/' + tenantId +
-      '/oauth2/v2.0/authorize?client_id=' + clientId +
-      '&response_type=code&redirect_uri=' + redirectUri +
-      '&scope=' + scope +
-      '&state=' + encodeURIComponent(state) +
-      '&prompt=select_account';
-    window.location.href = authUrl;
+    // PKCE: generate code verifier and challenge
+    const arr = crypto.getRandomValues(new Uint8Array(32));
+    const codeVerifier = Array.from(arr).map(b=>b.toString(16).padStart(2,'0')).join('');
+    localStorage.setItem('vcs_ms_code_verifier', codeVerifier);
+    crypto.subtle.digest('SHA-256', new TextEncoder().encode(codeVerifier)).then(digest => {
+      const codeChallenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+        .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+      const authUrl =
+        'https://login.microsoftonline.com/' + tenantId +
+        '/oauth2/v2.0/authorize?client_id=' + clientId +
+        '&response_type=code&redirect_uri=' + redirectUri +
+        '&scope=' + scope +
+        '&state=' + encodeURIComponent(state) +
+        '&code_challenge=' + codeChallenge +
+        '&code_challenge_method=S256' +
+        '&prompt=select_account';
+      window.location.href = authUrl;
+    });
   }},'🔗 Connect Microsoft Account'));
   msBtns.appendChild(el('button',{class:'btn-xs btn-ghost', onclick() {
     localStorage.removeItem('vcs_ms_token');
@@ -9246,8 +9256,10 @@ function init() {
       'https://login.microsoftonline.com/' + tenantId + '/oauth2/v2.0/token',
       { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
         body: new URLSearchParams({client_id:clientId, grant_type:'authorization_code',
-          code, redirect_uri:redirectUri, scope:'Calendars.ReadWrite offline_access openid profile'}) }
+          code, redirect_uri:redirectUri, scope:'Calendars.ReadWrite offline_access openid profile',
+          code_verifier: localStorage.getItem('vcs_ms_code_verifier') || ''}) }
     );
+    localStorage.removeItem('vcs_ms_code_verifier');
     const td = await tokenResp.json();
     if (td.access_token) {
       localStorage.setItem('vcs_ms_token', td.access_token);
