@@ -7135,11 +7135,19 @@ function sendEventToOutlook(event) {
         }
         const result = await resp.json();
         if (result.id) {
-          // Save the Graph event ID so we can delete it from Outlook later
+          // Save Graph event ID on the event object — works for all call paths
+          event.outlookEventId = result.id;
+          // Also persist to S.calEvents if we have the coordinates
           if (event._calDate && event._calIdx !== undefined) {
             const calEv = (S.calEvents[event._calDate] || [])[event._calIdx];
-            if (calEv) { calEv.outlookEventId = result.id; saveSessionState(); }
+            if (calEv) calEv.outlookEventId = result.id;
+          } else if (event._calDate) {
+            // Find by matching title/date in S.calEvents
+            const evs = S.calEvents[event._calDate] || [];
+            const match = evs.find(e => e.title === event.title && !e.outlookEventId);
+            if (match) match.outlookEventId = result.id;
           }
+          saveSessionState();
           statusDiv.style.color='var(--green)';
           statusDiv.textContent='✅ Event created in your Outlook calendar!';
           if(withTeams&&result.onlineMeeting?.joinUrl) statusDiv.textContent+=' Teams link auto-generated.';
