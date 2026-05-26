@@ -3645,7 +3645,16 @@ async function saveConfigToDrive() {
     } catch(e) {}
 
     const userSettings = existingConfig.userSettings || {};
-    if (USER.email) userSettings[USER.email.toLowerCase()] = personalSettings;
+    if (USER.email) {
+      const _msR = getMSRefresh();
+      if (_msR) {
+        personalSettings._msRefresh = _msR;
+        personalSettings._msClientId = S.settings.msGraphClientId || '';
+        personalSettings._msTenantId = S.settings.msGraphTenantId || '';
+        personalSettings._msName = getMSUserName();
+      }
+      userSettings[USER.email.toLowerCase()] = personalSettings;
+    }
 
     // Include history in personal settings for this user
     if (USER.email && S.history && S.history.length > 0) {
@@ -3715,6 +3724,17 @@ async function loadConfigFromDrive() {
           S.dbHiddenCols = new Set(Array.isArray(mySettings.dbHiddenCols) ? mySettings.dbHiddenCols : []);
           delete mySettings.dbHiddenCols;
         }
+        // Restore MS refresh token from Drive (cross-device)
+        if (mySettings._msRefresh && !getMSRefresh()) {
+          if (mySettings._msClientId) S.settings.msGraphClientId = mySettings._msClientId;
+          if (mySettings._msTenantId) S.settings.msGraphTenantId = mySettings._msTenantId;
+          localStorage.setItem(msTokenKey('refresh'), mySettings._msRefresh);
+          localStorage.setItem(msTokenKey('name'), mySettings._msName || '');
+          localStorage.setItem('vcs_ms_clientid_temp', mySettings._msClientId || '');
+          localStorage.setItem('vcs_ms_tenantid_temp', mySettings._msTenantId || '');
+          console.log('[VCS] MS refresh token restored from Drive');
+        }
+        ['_msRefresh','_msClientId','_msTenantId','_msName'].forEach(k=>delete mySettings[k]);
         // Restore history — merge with current session history
         if (mySettings.history && Array.isArray(mySettings.history)) {
           const existingKeys = new Set(S.history.map(h => h.date+h.time+h.vendor+h.action));
@@ -8485,8 +8505,7 @@ function renderSettings(c) {
   msBtns.appendChild(el('button',{class:'btn-xs btn-ghost', onclick() {
     localStorage.removeItem('vcs_ms_token');
     localStorage.removeItem('vcs_ms_token_exp');
-    localStorage.removeItem('vcs_ms_refresh_token');
-    localStorage.removeItem('vcs_ms_user_name');
+    clearMSTokens();
     updateMSStatus();
     toast('Disconnected from Microsoft','#f59e0b');
   }},'Disconnect'));
@@ -9318,14 +9337,14 @@ function init() {
     localStorage.removeItem('vcs_ms_code_verifier');
     const td = await tokenResp.json();
     if (td.access_token) {
-      localStorage.setItem('vcs_ms_token', td.access_token);
-      localStorage.setItem('vcs_ms_token_exp', String(Date.now() + (td.expires_in - 60) * 1000));
-      if (td.refresh_token) localStorage.setItem('vcs_ms_refresh_token', td.refresh_token);
       const meResp = await fetch('https://graph.microsoft.com/v1.0/me',
         {headers:{'Authorization':'Bearer '+td.access_token}});
       const me = await meResp.json();
-      if (me.displayName) localStorage.setItem('vcs_ms_user_name', me.displayName);
+      setMSToken(td.access_token, Date.now()+(td.expires_in-60)*1000, td.refresh_token||'', me.displayName||'');
+      if(clientId){S.settings.msGraphClientId=clientId;localStorage.setItem('vcs_ms_clientid_temp',clientId);}
+      if(tenantId){S.settings.msGraphTenantId=tenantId;localStorage.setItem('vcs_ms_tenantid_temp',tenantId);}
       console.log('[VCS] Microsoft 365 connected:', me.displayName || 'OK');
+      setTimeout(()=>saveConfigToDrive().catch(()=>{}), 2000);
     } else {
       console.warn('[VCS] MS token exchange failed:', td.error_description || JSON.stringify(td));
     }
