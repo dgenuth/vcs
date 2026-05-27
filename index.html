@@ -1541,6 +1541,10 @@ async function loadFile(file) {
           );
           if (_curScKey) {
             USER.hiddenFields = scHiddenFields[_curScKey];
+            // Re-apply tier/days hide for non-admin after SC overwrites hiddenFields
+            if (USER.role !== 'admin') {
+              ['tier','days'].forEach(function(f){ if(USER.hiddenFields.indexOf(f)===-1) USER.hiddenFields.push(f); });
+            }
             console.log('[VCS] Updated current user hiddenFields from Share Criteria:', USER.hiddenFields.length, 'hidden fields');
           }
         }
@@ -4304,6 +4308,8 @@ async function sfQuery(soql){
 
 const STATIC_PICKLISTS = {
   autoRenew:      ['Yes','No'],
+  autoRenewal:    ['Yes','No','Yes - By Term','Yes - By Year','Year to Year','Unknown'],
+  autoRenewalType:['By Term','By Year','Year to Year','Annual','Semi-Annual','Automatic','Manual'],
   autoRenewType:  ['Annual','Semi-Annual','Monthly','Quarterly','2 Years','3 Years','Month-to-Month','Other'],
   agreementType:  ['Participation Agreement','Pricing Agreement','Distribution Agreement','Service Agreement','Letter of Intent','MOU','Amendment','GPO Agreement','Other'],
   status:         ['Active','Inactive','Expired','Pending','In Renewal','Terminated','On Hold','Cancelled'],
@@ -7113,9 +7119,8 @@ function sendEventToOutlook(event) {
       statusDiv.style.color='var(--blue)';
       try {
         // Microsoft Graph API — use stored token or trigger OAuth
-        const msToken = localStorage.getItem('vcs_ms_token');
-        const msTokenExp = parseInt(localStorage.getItem('vcs_ms_token_exp') || '0');
-        if (!msToken || Date.now() > msTokenExp) {
+        const msToken = await ensureMSToken();
+        if (!msToken) {
           throw new Error('Not connected to Microsoft. Go to Settings → Microsoft 365 and click Connect.');
         }
 
@@ -8441,12 +8446,15 @@ function renderSettings(c) {
   // Status indicator
   const msStatus = el('div',{style:{fontSize:'10px',marginBottom:'8px',padding:'6px 8px',borderRadius:'4px',background:'var(--card)'}});
   const updateMSStatus = () => {
-    const tok = localStorage.getItem('vcs_ms_token');
-    const exp = parseInt(localStorage.getItem('vcs_ms_token_exp') || '0');
-    const name = localStorage.getItem('vcs_ms_user_name') || '';
-    if (tok && Date.now() < exp) {
-      msStatus.textContent = '✅ Connected' + (name ? ' as ' + name : '') + ' — expires ' + new Date(exp).toLocaleTimeString();
+    const tok = getMSToken();
+    const hasRefresh = !!getMSRefresh();
+    const name = getMSUserName();
+    if (tok && Date.now() < getMSTokenExp()) {
+      msStatus.textContent = '✅ Connected' + (name ? ' as ' + name : '') + (hasRefresh ? ' — auto-renews' : '');
       msStatus.style.color = 'var(--green)';
+    } else if (hasRefresh) {
+      msStatus.textContent = '🔄 Will auto-refresh on next use' + (name ? ' (' + name + ')' : '');
+      msStatus.style.color = 'var(--amber)';
     } else {
       msStatus.textContent = '⚫ Not connected — click Connect to sign in with Microsoft';
       msStatus.style.color = 'var(--muted)';
@@ -9311,6 +9319,72 @@ function init() {
   }
   updateClock(); setInterval(updateClock, 1000); // every second for live seconds display
 }
+
+// ── Microsoft token storage — per VCS user, cross-device via Drive ──────────
+function msTokenKey(suffix) {
+  // Use email if logged in, fall back to 'shared' so callback tokens are findable
+  const u = (USER.loggedIn && USER.email) ? USER.email.toLowerCase().replace(/[^a-z0-9]/g,'_') : 'shared';
+  return 'vcs_ms_' + suffix + '_' + u;
+}
+function getMSToken()    { 
+  // Check user-keyed first, then shared (set during OAuth callback before login)
+  return localStorage.getItem(msTokenKey('token')) || localStorage.getItem('vcs_ms_token_shared') || null;
+}
+function getMSTokenExp() { 
+  return parseInt(localStorage.getItem(msTokenKey('token_exp')) || localStorage.getItem('vcs_ms_token_exp_shared') || '0');
+}
+function getMSRefresh()  { 
+  return localStorage.getItem(msTokenKey('refresh')) || localStorage.getItem('vcs_ms_refresh_shared') || null;
+}
+function getMSUserName() { 
+  return localStorage.getItem(msTokenKey('name')) || localStorage.getItem('vcs_ms_name_shared') || '';
+}
+function setMSToken(tok, exp, refresh, name) {
+  // Store under both user-keyed and shared so it's found regardless of login state
+  const key = msTokenKey('token');
+  localStorage.setItem(key, tok);
+  localStorage.setItem('vcs_ms_token_shared', tok);
+  localStorage.setItem(msTokenKey('token_exp'), String(exp));
+  localStorage.setItem('vcs_ms_token_exp_shared', String(exp));
+  if (refresh) { localStorage.setItem(msTokenKey('refresh'), refresh); localStorage.setItem('vcs_ms_refresh_shared', refresh); }
+  if (name)    { localStorage.setItem(msTokenKey('name'), name);    localStorage.setItem('vcs_ms_name_shared', name); }
+}
+function clearMSTokens() {
+  ['token','token_exp','refresh','name'].forEach(s => {
+    localStorage.removeItem(msTokenKey(s));
+    localStorage.removeItem('vcs_ms_' + s + '_shared');
+  });
+  // Also clear legacy keys
+  ['vcs_ms_token','vcs_ms_token_exp','vcs_ms_refresh_token','vcs_ms_user_name'].forEach(k => localStorage.removeItem(k));
+}
+
+// Auto-refresh MS token silently using stored refresh token
+async function ensureMSToken() {
+  const tok = getMSToken();
+  const exp = getMSTokenExp();
+  if (tok && Date.now() < exp - 60000) return tok;
+  const refresh = getMSRefresh();
+  if (!refresh) return null;
+  const clientId = S.settings.msGraphClientId || localStorage.getItem('vcs_ms_clientid_temp') || '';
+  const tenantId = S.settings.msGraphTenantId || localStorage.getItem('vcs_ms_tenantid_temp') || '';
+  if (!clientId || !tenantId) return null;
+  try {
+    const resp = await fetch(
+      'https://login.microsoftonline.com/' + tenantId + '/oauth2/v2.0/token',
+      { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({ client_id:clientId, grant_type:'refresh_token',
+          refresh_token:refresh, scope:'Calendars.ReadWrite offline_access openid profile' }) }
+    );
+    const td = await resp.json();
+    if (td.access_token) {
+      setMSToken(td.access_token, Date.now()+(td.expires_in-60)*1000, td.refresh_token||refresh, getMSUserName());
+      console.log('[VCS] MS token silently refreshed');
+      return td.access_token;
+    }
+  } catch(e) { console.warn('[VCS] MS token refresh failed:', e.message); }
+  return null;
+}
+
 // ── Microsoft Graph OAuth2 callback handler ──────────────────────────────
 (async function handleMSCallback() {
   const params = new URLSearchParams(window.location.search);
