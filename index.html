@@ -3044,8 +3044,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   addEditableSection(body,'Contract',vendor,[
     ['Contract No.','contractNo'],['Agreement Type','agreementType'],
     ['In Contract Since','inContractSince',true],['Latest Contract Effective Date','contractEffective',true],
-    ['Latest Contract Expiration Date','contractExpiry',true],['Auto-renewal','autoRenewal'],
-    ['Auto-renewal / By Term or Year','autoRenewalType'],['Termination Notice (Days)','terminationNotice'],
+    ['Latest Contract Expiration Date','contractExpiry',true],['Auto-renewal','autoRenew'],
+    ['Auto-renewal / By Term or Year','autoRenewType'],['Termination Notice (Days)','terminationNotice'],
     ['Contract Term','contractTerm'],['Current Term','currentTerm'],
     ['Latest Term Effective Date','termEffective',true],['Latest Term Expiration Date','termExpiry',true],
     ['Assingment (Allowed, Not Allowed)','assignment'],['Exclusivity (Y/N)','exclusivity'],
@@ -4310,6 +4310,8 @@ const STATIC_PICKLISTS = {
   autoRenew:      ['Yes','No'],
   autoRenewal:    ['Yes','No','Yes - By Term','Yes - By Year','Year to Year','Unknown'],
   autoRenewalType:['By Term','By Year','Year to Year','Annual','Semi-Annual','Automatic','Manual'],
+  autoRenew:      ['Yes','No','Yes - By Term','Yes - By Year','Year to Year','Unknown'],
+  autoRenewType:  ['By Term','By Year','Year to Year','Annual','Semi-Annual','Automatic','Manual'],
   autoRenewType:  ['Annual','Semi-Annual','Monthly','Quarterly','2 Years','3 Years','Month-to-Month','Other'],
   agreementType:  ['Participation Agreement','Pricing Agreement','Distribution Agreement','Service Agreement','Letter of Intent','MOU','Amendment','GPO Agreement','Other'],
   status:         ['Active','Inactive','Expired','Pending','In Renewal','Terminated','On Hold','Cancelled'],
@@ -4959,6 +4961,7 @@ function renderVendorDB(c) {
   });
   if (canEditCols) {
     colToggleBar.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',marginLeft:'4px'},onclick(){S.dbHiddenCols=new Set();debouncedSaveSettings();render();}},'Show All'));
+    colToggleBar.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',marginLeft:'2px'},onclick(){S.dbHiddenCols=new Set(myAllowedCols);debouncedSaveSettings();render();}},'Hide All'));
   }
   c.appendChild(colToggleBar);
 
@@ -6383,6 +6386,7 @@ function renderITW(c) {
   const addBar=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'8px'}});
   addBar.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},S.itw.length+' vendors in pipeline'));
   addBar.appendChild(el('button',{class:'btn-blue btn-action',onclick(){openAddToITWModal();}}, '+ Add to Pipeline'));
+  addBar.appendChild(el('button',{class:'btn-green btn-action',onclick(){openAddNewVendorModal();}}, '+ Add to Vendor DB'));
   c.appendChild(addBar);
 
   // Highlight color map — these come from Excel cell fill colors (col A row keys)
@@ -6520,6 +6524,58 @@ function renderITW(c) {
 }
 
 // Make a Reviews date cell inline-editable (click to open date picker)
+function openAddReviewModal() {
+  openModal(body => {
+    body.appendChild(el('h3',{},'+ Add Review Record'));
+    body.appendChild(el('p',{class:'modal-sub'},'Add a new vendor to the Reviews tab for tracking.'));
+    body.appendChild(el('label',{},'Vendor Name *'));
+    const nameIn=el('input',{type:'text',class:'modal-input',placeholder:'e.g. HD Supply'});
+    body.appendChild(nameIn);
+    // Auto-suggest from PSD vendors
+    const suggestDiv=el('div',{style:{maxHeight:'80px',overflowY:'auto',display:'none',border:'1px solid var(--border)',borderRadius:'4px',marginTop:'-6px',marginBottom:'6px',background:'var(--card)'}});
+    nameIn.addEventListener('input',()=>{
+      const q=nameIn.value.toLowerCase(); suggestDiv.innerHTML='';
+      if(q.length<2){suggestDiv.style.display='none';return;}
+      const matches=S.vendors.filter(v=>v.name.toLowerCase().includes(q)).slice(0,6);
+      if(!matches.length){suggestDiv.style.display='none';return;}
+      suggestDiv.style.display='block';
+      matches.forEach(v=>{
+        const item=el('div',{style:{padding:'4px 8px',cursor:'pointer',fontSize:'10px'},onclick(){nameIn.value=v.name;suggestDiv.style.display='none';}},v.name);
+        item.addEventListener('mouseover',()=>item.style.background='rgba(255,255,255,.06)');
+        item.addEventListener('mouseout',()=>item.style.background='');
+        suggestDiv.appendChild(item);
+      });
+    });
+    body.appendChild(suggestDiv);
+    body.appendChild(el('label',{style:{marginTop:'6px',display:'block'}},'Review Date'));
+    const dateIn=el('input',{type:'date',class:'modal-input',value:isoDate(new Date())});
+    body.appendChild(dateIn);
+    body.appendChild(el('label',{style:{marginTop:'6px',display:'block'}},'Initial Notes (optional)'));
+    const notesIn=el('textarea',{class:'modal-textarea',style:{height:'70px'},placeholder:'Key discussion points, outcomes...'});
+    body.appendChild(notesIn);
+    const btns=el('div',{class:'modal-btns'});
+    btns.appendChild(el('button',{class:'btn-primary',onclick(){
+      const name=nameIn.value.trim();
+      if(!name){toast('Enter a vendor name','#f59e0b');return;}
+      const newRev={
+        _row: S.reviews.length + 1000,
+        name, date: dateIn.value ? new Date(dateIn.value) : new Date(),
+        services:'', action:'', progressNotes: notesIn.value.trim(),
+        sfNotes:'', contractNotes:'', source:'review', _dirty:true,
+      };
+      S.reviews.unshift(newRev);
+      if (!S.dirtyReviews) S.dirtyReviews = new Set();
+      S.dirtyReviews.add(newRev._row);
+      logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:name,action:'New review record created'});
+      saveSessionState(); updateSidebar(); render(); closeModal();
+      toast('✓ '+name+' added to Reviews');
+    }},'Add Record'));
+    btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
+    body.appendChild(btns);
+    setTimeout(()=>nameIn.focus(),50);
+  });
+}
+
 function makeReviewDateCell(r) {
   const display = fmtDate(r.date) || String(r.date||'');
   const span = el('span', {
@@ -6562,6 +6618,15 @@ function makeReviewActionCell(r) {
 }
 
 function renderReviews(c) {
+  // Action bar
+  const revBar=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'8px'}});
+  revBar.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},(S.reviews.length||0)+' review records'));
+  const revBtns=el('div',{style:{display:'flex',gap:'6px'}});
+  revBtns.appendChild(el('button',{class:'btn-green btn-action',onclick(){openAddReviewModal();}},'+ Add Review Record'));
+  revBtns.appendChild(el('button',{class:'btn-blue btn-action',onclick(){openTalkingPointsModal();}},'🎯 Meeting Mode'));
+  revBar.appendChild(revBtns);
+  c.appendChild(revBar);
+
   if (!S.reviews.length&&!S.reviewTPs.length) {
     c.appendChild(el('p',{class:'muted',style:{marginBottom:'8px'}},`No review data found. Available sheets: ${S.wb?S.wb.SheetNames.join(', '):'none'}`));
     return;
