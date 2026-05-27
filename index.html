@@ -2890,6 +2890,14 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   if (_canAct && vendor.source==='psd'&&!findITWVendor(vendor.name)) {
     acts.appendChild(el('button',{class:'btn-ghost btn-action',style:{color:'var(--green)'},title:'Add to In The Works pipeline',onclick(){openAddToITWModal(vendor.name);}},'+ Pipeline'));
   }
+  if (_canAct) {
+    const _inReview = findReviewRecord(vendor.name);
+    if (!_inReview) {
+      acts.appendChild(el('button',{class:'btn-ghost btn-action',style:{color:'#a78bfa'},title:'Add to Reviews tab',onclick(){openAddReviewModal(vendor.name);}},'+ Review'));
+    } else {
+      acts.appendChild(el('button',{class:'btn-ghost btn-action',style:{color:'#a78bfa'},title:'View in Reviews tab',onclick(){S.view='reviews';updateSidebar();render();closeDetail();}},'📝 Reviews'));
+    }
+  }
   if (_canAct) { if (isDismissed) acts.appendChild(el('button',{class:'btn-blue btn-action',onclick(){undismissVendor(vendor);closeDetail();}}, '↩ Restore'));
   else acts.appendChild(el('button',{class:'btn-ghost btn-action',onclick(){openDismissConfirm(vendor);}}, '✕ Dismiss')); }
   body.appendChild(acts);
@@ -5019,6 +5027,7 @@ function renderVendorDB(c) {
     openBulkEmailModal(sel);
   }},'✉ Bulk Email (checked or all)'));
   actionBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){exportCSV(vendors,'vendor_db_'+isoDate(new Date()));}}, '⬇ CSV'));
+  actionBar.appendChild(el('button',{class:'btn-xs btn-green',onclick(){openAddNewVendorModal();}}, '+ New Vendor'));
   actionBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Click ▼ on any column header to filter • Click label to sort • Drag border to resize'));
   c.appendChild(actionBar);
 
@@ -6207,7 +6216,6 @@ function renderToday(c) {
     openBulkEmailModal(sel);
   }},'✉ Bulk Email '+(S.filter?'(filtered)':'All')));
   tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){exportCSV(vendors,'today_filtered');}}, '⬇ CSV'));
-  tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--green)'},onclick(){openAddNewVendorModal();}}, '+ New Vendor'));
   c.appendChild(tableBar);
 
   // Build column-aware table using settings.cols visibility
@@ -6524,12 +6532,12 @@ function renderITW(c) {
 }
 
 // Make a Reviews date cell inline-editable (click to open date picker)
-function openAddReviewModal() {
+function openAddReviewModal(prefillName) {
   openModal(body => {
     body.appendChild(el('h3',{},'+ Add Review Record'));
     body.appendChild(el('p',{class:'modal-sub'},'Add a new vendor to the Reviews tab for tracking.'));
     body.appendChild(el('label',{},'Vendor Name *'));
-    const nameIn=el('input',{type:'text',class:'modal-input',placeholder:'e.g. HD Supply'});
+    const nameIn=el('input',{type:'text',class:'modal-input',placeholder:'e.g. HD Supply',value:prefillName||''});
     body.appendChild(nameIn);
     // Auto-suggest from PSD vendors
     const suggestDiv=el('div',{style:{maxHeight:'80px',overflowY:'auto',display:'none',border:'1px solid var(--border)',borderRadius:'4px',marginTop:'-6px',marginBottom:'6px',background:'var(--card)'}});
