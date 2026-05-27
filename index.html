@@ -2057,6 +2057,39 @@ async function executeSave() {
           commentsXmlITW = upsertComment(commentsXmlITW, zRef, plainITW, itwAuthor);
         }
 
+        // ── Write NEW ITW rows (_isNew:true) — append to sheetData ──
+        const newITWVendors = dirtyITW.filter(v => v._isNew);
+        if (newITWVendors.length > 0) {
+          // Find highest existing row number in the sheet
+          const existingRows = [...sheetXmlITW.matchAll(/<row r="(\d+)"/g)].map(m=>parseInt(m[1]));
+          let nextRow = existingRows.length ? Math.max(...existingRows)+1 : 3;
+          for (const nv of newITWVendors) {
+            nv._row = nextRow - 1; // sync JS index (0-based from rows array)
+            const colMap = [
+              [22,'W',nv.name], [25,'Z',nv.notes||''], [26,'AA',nv.category||''],
+              [27,'AB',nv.subCategory||''], [28,'AC',nv.product||''],
+              [29,'AD',nv.markets||''], [30,'AE',nv.website||''],
+              [32,'AG',nv.addedValue||''], [33,'AH',nv.contact||''],
+              [35,'AJ',nv.phone||''], [36,'AK',nv.mobile||''],
+              [37,'AL',nv.email||''], [42,'AQ',nv.about||''],
+              [52,'BA',nv.notes||''],
+            ];
+            let rowCells = '';
+            for (const [,col,val] of colMap) {
+              if (!val) continue;
+              const ssR = upsertSharedString(ssXmlITW, val);
+              ssXmlITW = ssR.xml;
+              rowCells += `<c r="${col}${nextRow}" t="s"><v>${ssR.index}</v></c>`;
+            }
+            if (rowCells) {
+              sheetXmlITW = sheetXmlITW.replace('</sheetData>', `<row r="${nextRow}" spans="1:52">${rowCells}</row></sheetData>`);
+            }
+            nv._isNew = false; // clear flag after write
+            nextRow++;
+          }
+          console.log(`[VCS ITW] appended ${newITWVendors.length} new row(s)`);
+        }
+
         zip.file('xl/sharedStrings.xml', ssXmlITW);
         zip.file(itwSheetFile, sheetXmlITW);
         zip.file('xl/comments2.xml', commentsXmlITW);
@@ -2953,6 +2986,14 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       ['Status','vendorStatus'],['Section','section'],['Category','category'],
       ['Contact','contact'],['Phone','phone'],['Email','email'],
     ]);
+    // Promote to Vendor DB button — only if not already in PSD
+    if (!psdVendor) {
+      const promoSec=el('div',{class:'detail-section'});
+      const promoBtn=el('button',{class:'btn-xs',style:{background:'rgba(139,92,246,.12)',color:'#a78bfa',border:'1px solid rgba(139,92,246,.25)',borderRadius:'4px',padding:'5px 12px',cursor:'pointer',fontSize:'11px',fontWeight:'600',width:'100%',marginBottom:'4px'},onclick(){openPromoteToVendorDBModal(vendor);}}, '⬆ Promote to Vendor Database');
+      promoSec.appendChild(promoBtn);
+      promoSec.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',margin:'2px 0 0 0',textAlign:'center'}},'Pre-fills all fields — completes the contract record in Vendor DB'));
+      body.appendChild(promoSec);
+    }
     if (hasPermission('editNotes') || ['admin','procurement','manager','cro'].includes(USER.role)) addNotesSection(body, vendor, '📋 Pipeline Notes (In The Works)');
     if (psdVendor) {
       // Show contract summary inline
@@ -5027,7 +5068,7 @@ function renderVendorDB(c) {
     openBulkEmailModal(sel);
   }},'✉ Bulk Email (checked or all)'));
   actionBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){exportCSV(vendors,'vendor_db_'+isoDate(new Date()));}}, '⬇ CSV'));
-  actionBar.appendChild(el('button',{class:'btn-xs btn-green',onclick(){openAddNewVendorModal();}}, '+ New Vendor'));
+  actionBar.appendChild(el('button',{class:'btn-xs btn-green',onclick(){openAddVendorRecordModal({destination:'psd'});}},'+ Add Vendor Record'));
   actionBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Click ▼ on any column header to filter • Click label to sort • Drag border to resize'));
   c.appendChild(actionBar);
 
@@ -6053,15 +6094,52 @@ function updateSidebar() {
 }
 
 // ─── Views ────────────────────────────────────────────────────────────────────
-// ─── Add New Vendor from scratch ─────────────────────────────────────────────
-function openAddNewVendorModal() {
+// ─── Unified Add Vendor Record Modal ────────────────────────────────────────
+// opts: { destination: 'psd'|'itw', prefillName, prefillData, promoteMode }
+// destination defaults to 'psd'. promoteMode = true skips duplicate check on ITW.
+function openAddVendorRecordModal(opts) {
+  opts = opts || {};
   if (!hasPermission('addVendor')) { toast('⚠ You don\'t have permission to add vendors (Viewer role)','#f59e0b'); return; }
   openModal(body=>{
-    body.appendChild(el('h3',{},'+ Add New Vendor'));
-    body.appendChild(el('p',{class:'modal-sub'},'Create a new contract record in this session. Will be included in all views and can be saved to the spreadsheet.'));
+    // ── Destination selector ──
+    let dest = opts.destination || 'psd';
+    const destRow = el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'10px',paddingBottom:'8px',borderBottom:'1px solid var(--border)'}});
+    destRow.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'700',color:'var(--muted)',marginRight:'4px'}},'ADD TO:'));
+    const destBtns = {};
+    [['psd','📄 Vendor Database'],['itw','🔄 Pipeline (In The Works)']].forEach(([key,label])=>{
+      const b=el('button',{class:'col-toggle-btn'+(dest===key?' on':''),onclick(){
+        dest=key;
+        Object.entries(destBtns).forEach(([k,btn])=>btn.classList.toggle('on',k===dest));
+        updateVisibility();
+      }},label);
+      destBtns[key]=b;
+      destRow.appendChild(b);
+    });
+    body.appendChild(destRow);
 
-    // Group fields in sections
-    const SECTIONS=[
+    body.appendChild(el('h3',{style:{marginTop:'0',marginBottom:'4px'}},opts.promoteMode ? '⬆ Promote to Vendor Database' : '+ Add Vendor Record'));
+    body.appendChild(el('p',{class:'modal-sub'},opts.promoteMode
+      ? 'Pre-filled from Pipeline record. Complete contract fields and save to Vendor Database.'
+      : 'Create a new vendor record. Choose destination above.'));
+
+    // ── Pipeline section selector (ITW only) ──
+    let selectedSec = opts.prefillData?.section || 'New';
+    const secWrap = el('div',{style:{marginBottom:'8px'}});
+    secWrap.appendChild(el('div',{style:{fontSize:'10px',fontWeight:'700',color:'var(--blue)',marginBottom:'4px',paddingBottom:'3px',borderBottom:'1px solid var(--border)'}},'Pipeline Section'));
+    const secRow=el('div',{style:{display:'flex',gap:'5px',flexWrap:'wrap',marginBottom:'4px'}});
+    ['New','Existing','AI','Pipe Line'].forEach(sec=>{
+      const btn=el('button',{class:'col-toggle-btn'+(sec===selectedSec?' on':''),onclick(){
+        selectedSec=sec;
+        secRow.querySelectorAll('button').forEach(b=>b.classList.remove('on'));
+        btn.classList.add('on');
+      }},sec);
+      secRow.appendChild(btn);
+    });
+    secWrap.appendChild(secRow);
+
+    // ── Field sections ──
+    const PF = opts.prefillData || {};
+    const PSD_SECTIONS=[
       {title:'Vendor Identity', fields:[
         ['Vendor Name *','name','text'],
         ['Category','category','picklist:category'],
@@ -6070,6 +6148,8 @@ function openAddNewVendorModal() {
         ['GPO','gpo','picklist:gpo'],
         ['Markets Serviced','markets','picklist:markets'],
         ['Website','website','text'],
+        ['Added Value','addedValue','text'],
+        ['About / Background','about','text'],
       ]},
       {title:'Contract', fields:[
         ['Contract No.','contractNo','text'],
@@ -6098,62 +6178,192 @@ function openAddNewVendorModal() {
       {title:'Notes & Follow-up', fields:[
         ['Initial Notes','notes','text'],
         ['Follow-up Date','followUp','date'],
-        ['Added Value / What they offer','addedValue','text'],
+      ]},
+    ];
+    const ITW_SECTIONS=[
+      {title:'Vendor Identity', fields:[
+        ['Vendor Name *','name','text'],
+        ['Category','category','picklist:category'],
+        ['Sub-Category','subCategory','text'],
+        ['Product / Description','product','text'],
+        ['Markets Serviced','markets','picklist:markets'],
+        ['Website','website','text'],
+        ['Added Value','addedValue','text'],
         ['About / Background','about','text'],
+      ]},
+      {title:'Contact', fields:[
+        ['Contact Name','contact','text'],
+        ['Business Phone','phone','text'],
+        ['Mobile','mobile','text'],
+        ['Email','email','text'],
+      ]},
+      {title:'Pipeline Notes', fields:[
+        ['Initial Note','notes','text'],
       ]},
     ];
 
-    const data={source:'psd',_row:99999+S.vendors.length,gpoSource:'Prime Source Direct'};
     const inputs={};
+    const sectionEls={psd:[],itw:[]};
 
-    SECTIONS.forEach(sec=>{
-      body.appendChild(el('div',{style:{fontSize:'10px',fontWeight:'700',color:'var(--blue)',marginTop:'10px',marginBottom:'4px',paddingBottom:'3px',borderBottom:'1px solid var(--border)'}},sec.title));
+    // Build PSD sections
+    PSD_SECTIONS.forEach(sec=>{
+      const secEl=el('div',{});
+      secEl.appendChild(el('div',{style:{fontSize:'10px',fontWeight:'700',color:'var(--blue)',marginTop:'10px',marginBottom:'4px',paddingBottom:'3px',borderBottom:'1px solid var(--border)'}},sec.title));
       sec.fields.forEach(([label,field,type])=>{
         const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'4px'}});
         row.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',width:'140px',flexShrink:'0'}},label));
         let inp;
-        if(type.startsWith('picklist:')) {
+        if(type.startsWith('picklist:')){
           const key=type.split(':')[1];
-          const opts=FIELD_PICKLISTS[key]||[];
           inp=el('select',{class:'detail-edit-field',style:{flex:'1',height:'22px'}});
           inp.appendChild(el('option',{value:''},'— Select —'));
-          opts.forEach(o=>inp.appendChild(el('option',{value:o},o)));
-        } else if(type==='date') {
+          (FIELD_PICKLISTS[key]||[]).forEach(o=>inp.appendChild(el('option',{value:o},o)));
+        } else if(type==='date'){
           inp=el('input',{type:'date',class:'detail-edit-field',style:{flex:'1'}});
         } else {
           inp=el('input',{type:'text',class:'detail-edit-field',style:{flex:'1'},placeholder:field==='name'?'Required':'Optional'});
         }
-        inputs[field]=inp; row.appendChild(inp); body.appendChild(row);
+        // Pre-fill: map ITW contact→procContact, phone→bizPhone
+        const fillKey = field==='procContact'?'contact': field==='bizPhone'?'phone': field;
+        const fillVal = PF[fillKey]||PF[field]||'';
+        if(fillVal) inp.value=fillVal;
+        inputs['psd_'+field]=inp; row.appendChild(inp); secEl.appendChild(row);
       });
+      sectionEls.psd.push(secEl);
+      body.appendChild(secEl);
     });
 
-    const btns=el('div',{class:'modal-btns',style:{marginTop:'12px'}});
-    btns.appendChild(el('button',{class:'btn-primary',onclick(){
-      const name=String(inputs.name?.value||'').trim();
-      if(!name){toast('Vendor name is required','#f59e0b');return;}
-      if(S.vendors.find(v=>v.name.toLowerCase()===name.toLowerCase())) {
-        toast('A vendor with this name already exists','#f59e0b');return;
-      }
-      // Build vendor object
-      Object.keys(inputs).forEach(field=>{
-        const val=inputs[field]?.value?.trim()||'';
-        if(val) data[field]=val;
+    // Build ITW sections
+    ITW_SECTIONS.forEach(sec=>{
+      const secEl=el('div',{});
+      secEl.appendChild(el('div',{style:{fontSize:'10px',fontWeight:'700',color:'var(--blue)',marginTop:'10px',marginBottom:'4px',paddingBottom:'3px',borderBottom:'1px solid var(--border)'}},sec.title));
+      sec.fields.forEach(([label,field,type])=>{
+        const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'4px'}});
+        row.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',width:'140px',flexShrink:'0'}},label));
+        let inp;
+        if(type.startsWith('picklist:')){
+          const key=type.split(':')[1];
+          inp=el('select',{class:'detail-edit-field',style:{flex:'1',height:'22px'}});
+          inp.appendChild(el('option',{value:''},'— Select —'));
+          (FIELD_PICKLISTS[key]||[]).forEach(o=>inp.appendChild(el('option',{value:o},o)));
+        } else if(type==='date'){
+          inp=el('input',{type:'date',class:'detail-edit-field',style:{flex:'1'}});
+        } else if(field==='notes'){
+          inp=el('textarea',{class:'modal-textarea',style:{height:'70px',flex:'1'},placeholder:'Why is this vendor in the pipeline? Key opportunity details...'});
+        } else {
+          inp=el('input',{type:'text',class:'detail-edit-field',style:{flex:'1'},placeholder:'Optional'});
+        }
+        const fillVal = PF[field]||'';
+        if(fillVal) inp.value=fillVal;
+        inputs['itw_'+field]=inp; row.appendChild(inp); secEl.appendChild(row);
       });
-      data.name=name;
-      data.score=calcScore(data);
-      data.tier=getActionTier(data);
-      data._added=isoDate(new Date());
-      S.vendors.push(data);
-      S.dirty.add(name);
-      logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:name,action:'New vendor created manually',note:(data.category?'Category: '+data.category:'')});
-      render(); closeModal();
-      toast('✓ '+name+' added — click to open and complete the record');
-      // Open the detail panel
-      setTimeout(()=>openDetail(data),200);
-    }},'Create Vendor'));
+      sectionEls.itw.push(secEl);
+      body.appendChild(secEl);
+    });
+
+    // Pipeline section selector goes right after the first ITW section
+    sectionEls.itw[0].insertBefore(secWrap, sectionEls.itw[0].querySelector('div[style*="border-bottom"]').nextSibling);
+
+    // Pre-fill vendor name in both sets
+    const prefillName = opts.prefillName || PF.name || '';
+    if(prefillName){
+      if(inputs['psd_name']) inputs['psd_name'].value=prefillName;
+      if(inputs['itw_name']) inputs['itw_name'].value=prefillName;
+    }
+
+    function updateVisibility(){
+      sectionEls.psd.forEach(s=>s.style.display=dest==='psd'?'':'none');
+      sectionEls.itw.forEach(s=>s.style.display=dest==='itw'?'':'none');
+      saveBtn.textContent = dest==='psd' ? (opts.promoteMode?'⬆ Promote to Vendor DB':'Create Vendor Record') : 'Add to Pipeline';
+    }
+    updateVisibility();
+
+    const btns=el('div',{class:'modal-btns',style:{marginTop:'12px'}});
+    const saveBtn=el('button',{class:'btn-primary',onclick(){
+      if(dest==='psd'){
+        const name=String(inputs['psd_name']?.value||'').trim();
+        if(!name){toast('Vendor name is required','#f59e0b');return;}
+        if(!opts.promoteMode && S.vendors.find(v=>v.name.toLowerCase()===name.toLowerCase())){
+          toast('A vendor with this name already exists','#f59e0b');return;
+        }
+        const data={source:'psd',_row:99999+S.vendors.length,gpoSource:'Prime Source Direct'};
+        PSD_SECTIONS.forEach(sec=>sec.fields.forEach(([,field])=>{
+          const val=(inputs['psd_'+field]?.value||'').trim();
+          if(val) data[field]=val;
+        }));
+        data.name=name;
+        data.score=calcScore(data); data.tier=getActionTier(data); data._added=isoDate(new Date());
+        S.vendors.push(data); S.dirty.add(name);
+        if(opts.promoteMode && opts.prefillData){
+          // Mark ITW vendor as promoted
+          const itwV=S.itw.find(v=>v.name.toLowerCase()===name.toLowerCase());
+          if(itwV){ itwV.section='Done for now'; itwV.isInactive=true; itwV._dirty=true; if(!S.dirtyITW)S.dirtyITW=new Set(); S.dirtyITW.add(itwV._row); }
+        }
+        logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:name,action:opts.promoteMode?'Promoted from Pipeline to Vendor DB':'New vendor created manually',note:(data.category?'Category: '+data.category:'')});
+        render(); closeModal(); toast('✓ '+name+(opts.promoteMode?' promoted to Vendor DB':' added')+' — click to open and complete the record');
+        setTimeout(()=>openDetail(data),200);
+      } else {
+        const name=String(inputs['itw_name']?.value||'').trim();
+        if(!name){toast('Enter a vendor name','#f59e0b');return;}
+        if(S.itw.some(v=>v.name.toLowerCase()===name.toLowerCase())){toast('Vendor already in pipeline','#f59e0b');return;}
+        const notes=(inputs['itw_notes']?.value||'').trim();
+        const newV={
+          _row:S.itw.length+1000, source:'itw', name,
+          section:selectedSec,
+          category:(inputs['itw_category']?.value||'').trim(),
+          subCategory:(inputs['itw_subCategory']?.value||'').trim(),
+          product:(inputs['itw_product']?.value||'').trim(),
+          markets:(inputs['itw_markets']?.value||'').trim(),
+          website:(inputs['itw_website']?.value||'').trim(),
+          addedValue:(inputs['itw_addedValue']?.value||'').trim(),
+          about:(inputs['itw_about']?.value||'').trim(),
+          contact:(inputs['itw_contact']?.value||'').trim(),
+          phone:(inputs['itw_phone']?.value||'').trim(),
+          mobile:(inputs['itw_mobile']?.value||'').trim(),
+          email:(inputs['itw_email']?.value||'').trim(),
+          notes, vendorStatus:'', isInactive:false, _added:isoDate(new Date()), _dirty:true, _isNew:true,
+        };
+        S.itw.unshift(newV);
+        if(!S.dirtyITW)S.dirtyITW=new Set();
+        S.dirtyITW.add(newV._row);
+        logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:name,action:'Added to Pipeline: '+selectedSec});
+        S.view='itw'; S.itwSection=selectedSec; render(); closeModal();
+        toast('✓ '+name+' added to '+selectedSec+' pipeline');
+      }
+    }},'Create Vendor Record');
+    btns.appendChild(saveBtn);
     btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
     body.appendChild(btns);
+    updateVisibility();
   });
+}
+
+// Convenience wrappers — preserve existing call sites
+function openAddNewVendorModal() { openAddVendorRecordModal({destination:'psd'}); }
+function openAddToITWModal(prefillName) { openAddVendorRecordModal({destination:'itw',prefillName}); }
+
+// Promote ITW vendor to Vendor DB — pre-fills all known fields
+function openPromoteToVendorDBModal(itwVendor) {
+  if (!hasPermission('addVendor')) { toast('⚠ No permission to add vendors','#f59e0b'); return; }
+  // Map ITW fields → PSD field names for pre-fill
+  const prefill = {
+    name: itwVendor.name,
+    category: itwVendor.category||'',
+    subCategory: itwVendor.subCategory||'',
+    product: itwVendor.product||'',
+    markets: itwVendor.markets||'',
+    website: itwVendor.website||'',
+    addedValue: itwVendor.addedValue||'',
+    about: itwVendor.about||'',
+    // contact fields — ITW uses contact/phone, PSD uses procContact/bizPhone
+    contact: itwVendor.contact||'',
+    phone: itwVendor.phone||'',
+    mobile: itwVendor.mobile||'',
+    email: itwVendor.email||'',
+    notes: itwVendor.notes||'',
+    section: itwVendor.section||'New',
+  };
+  openAddVendorRecordModal({destination:'psd', promoteMode:true, prefillName:itwVendor.name, prefillData:prefill});
 }
 
 function renderToday(c) {
@@ -6342,48 +6552,7 @@ function renderExpiring(c) {
   ));
 }
 
-function openAddToITWModal(prefillName) {
-  openModal(body=>{
-    body.appendChild(el('h3',{},'+ Add Vendor to Pipeline'));
-    body.appendChild(el('p',{class:'modal-sub'},'Add a new or existing vendor to the In The Works tracking pipeline.'));
-    body.appendChild(el('label',{},'Vendor name:'));
-    const nameIn=el('input',{type:'text',class:'modal-input',placeholder:'Vendor name'});
-    if(prefillName) nameIn.value=prefillName;
-    body.appendChild(nameIn);
-    body.appendChild(el('label',{style:{marginTop:'6px',display:'block'}},'Pipeline section:'));
-    const secRow=el('div',{style:{display:'flex',gap:'5px',flexWrap:'wrap',marginBottom:'8px'}});
-    let selectedSec='New';
-    ['New','Existing','AI','Pipe Line'].forEach(sec=>{
-      const btn=el('button',{class:'col-toggle-btn'+(sec==='New'?' on':''),onclick(){selectedSec=sec;secRow.querySelectorAll('button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');}},sec);
-      secRow.appendChild(btn);
-    });
-    body.appendChild(secRow);
-    body.appendChild(el('label',{},'Category (optional):'));
-    const catIn=el('input',{type:'text',class:'modal-input',placeholder:'e.g. Food Service, Medical'});
-    body.appendChild(catIn);
-    body.appendChild(el('label',{style:{marginTop:'6px',display:'block'}},'Initial note (optional):'));
-    const noteIn=el('textarea',{class:'modal-textarea',style:{height:'70px'},placeholder:'Why is this vendor in the pipeline? Key opportunity details...'});
-    body.appendChild(noteIn);
-    const btns=el('div',{class:'modal-btns'});
-    btns.appendChild(el('button',{class:'btn-primary',onclick(){
-      const name=nameIn.value.trim();
-      if(!name){toast('Enter a vendor name','#f59e0b');return;}
-      if(S.itw.some(v=>v.name.toLowerCase()===name.toLowerCase())){toast('Vendor already in pipeline','#f59e0b');return;}
-      const newV={
-        _row:S.itw.length+1000, source:'itw', name,
-        section:selectedSec, category:catIn.value.trim(),
-        notes:noteIn.value.trim(), vendorStatus:'', isInactive:false,
-        _added:isoDate(new Date()),
-      };
-      S.itw.unshift(newV);
-      logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:name,action:'Added to Pipeline: '+selectedSec});
-      S.view='itw'; S.itwSection=selectedSec; render(); closeModal();
-      toast('✓ '+name+' added to '+selectedSec+' pipeline');
-    }},'Add to Pipeline'));
-    btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
-    body.appendChild(btns);
-  });
-}
+
 
 function renderITW(c) {
   const ACTIVE_SECTIONS = ['New','Existing','AI','Pipe Line'];
@@ -6393,8 +6562,7 @@ function renderITW(c) {
   // Quick-add bar
   const addBar=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'8px'}});
   addBar.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},S.itw.length+' vendors in pipeline'));
-  addBar.appendChild(el('button',{class:'btn-blue btn-action',onclick(){openAddToITWModal();}}, '+ Add to Pipeline'));
-  addBar.appendChild(el('button',{class:'btn-green btn-action',onclick(){openAddNewVendorModal();}}, '+ Add to Vendor DB'));
+  addBar.appendChild(el('button',{class:'btn-blue btn-action',onclick(){openAddVendorRecordModal({destination:'itw'});}}, '+ Add Vendor Record'));
   c.appendChild(addBar);
 
   // Highlight color map — these come from Excel cell fill colors (col A row keys)
