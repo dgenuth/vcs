@@ -3244,8 +3244,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     body.appendChild(qcSec);
   }
 
-  // Relationship first — GPO/Channel and Status are the first things you check
-  addEditableSection(body,'Relationship',vendor,[
+  // Contract Basics — GPO/Channel and Status
+  addEditableSection(body,'Contract Basics',vendor,[
     ['GPO / Channel','gpo'],['Status','status'],
   ]);
   // Details — vendor identity and categorization
@@ -4617,7 +4617,7 @@ function addEditableSection(body, title, vendor, fields) {
   const allFields = [...nonEmpty, ...withPicklist];
   if (!allFields.length) return;
   const sec=el('div',{class:'detail-section'});
-  const _SCOL={'Relationship':'#4f7cff','Details':'#22c55e','Contacts':'#f59e0b','Contract':'#a855f7'};
+  const _SCOL={'Contract Basics':'#4f7cff','Relationship':'#4f7cff','Details':'#22c55e','Contacts':'#f59e0b','Contract':'#a855f7'};
   if (title) {
     const _c=_SCOL[title]||'#94a3b8';
     const hdr=el('h4',{class:'detail-sec-title',style:{background:_c+'18',color:_c,borderLeft:'3px solid '+_c}});
@@ -7751,8 +7751,12 @@ function renderITW(c) {
       const autoStatus=getITWAutoStatus(v);
       const ind=INDICATOR_COLORS[autoStatus];
       const nameColor = ind ? ind.dot : 'var(--text)';
+      // If this ITW vendor has a PSD match, open the full PSD record (shows merged view)
+      const psdMatch = findPSDVendor(v.name);
       const link=el('span',{class:'vendor-link',style:{color:nameColor,fontWeight:ind?'600':'500'},
-        title:ind?ind.label:'',onclick(){openDetail(v);}},v.name);
+        title:ind?ind.label:'',onclick(){openDetail(psdMatch||v);}},v.name);
+      // Show a small "In DB" badge if PSD match exists
+      if(psdMatch) link.appendChild(el('span',{style:{fontSize:'7px',background:'rgba(34,197,94,.15)',color:'var(--green)',padding:'0 3px',borderRadius:'2px',marginLeft:'4px',verticalAlign:'middle'}},'DB'));
 
       // Indicator badge
       const indBadge=ind?el('span',{style:{fontSize:'8px',padding:'1px 5px',borderRadius:'3px',background:ind.bg,color:ind.dot,fontWeight:'600'}},autoStatus):el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'—');
@@ -9320,8 +9324,216 @@ function renderDataCheck(c) {
   }
 }
 
+function generateHandoverDoc() {
+  const now = new Date();
+  const etOpts = {timeZone:'America/New_York',weekday:'short',year:'numeric',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:true};
+  const timestamp = now.toLocaleString('en-US',etOpts).replace(',','').replace(/(\d+:\d+\s[AP]M)/,'— $1 ET');
+
+  const totalVendors = S.vendors.length;
+  const itwCount = S.itw.length;
+  const reviewCount = S.reviews.length;
+  const dirtyVendors = S.dirty?.size||0;
+  const dirtyITW = S.dirtyITW?.size||0;
+  const recentHistory = (S.history||[]).slice(0,10).map(h=>`  - ${h.date} ${h.time}: [${h.vendor}] ${h.action}${h.note?' — '+h.note:''}`).join('\n');
+  const aliasCount = Object.keys(S.vendorAliases||{}).length;
+  const fileName = S.fileName||'(file not loaded)';
+
+  const doc = `# VCS SESSION HANDOVER DOCUMENT
+**Generated:** ${timestamp}
+
+---
+
+## CRITICAL RULES FOR THIS PROJECT
+
+1. **Timestamps:** ALWAYS run \`TZ='America/New_York' date\` via bash_tool at the start of every response. Never estimate or calculate. Format: \`Wed May 27, 2026 — 4:43 AM ET\`
+2. **Never push to GitHub via bash** — GitHub API is blocked from bash_tool. Always use present_files → user uploads manually to https://github.com/dgenuth/vcs
+3. **Working file:** \`/home/claude/vcs_working.html\` — always read/edit this file. Copy to \`/mnt/user-data/outputs/index.html\` when ready to present.
+4. **Always syntax-check** before presenting: extract scripts with regex, write to \`/tmp/check.js\`, run \`node --check /tmp/check.js\`
+5. **VCS proxy is Google Apps Script** — not Composio, never expires, no API key needed
+
+---
+
+## PROJECT OVERVIEW
+
+**VCS (Vendor Contract Scheduler)** — single HTML file app deployed at https://dgenuth.github.io/vcs/
+
+- Reads/writes \`Vendor_Catalogue.xlsm\` via Google Apps Script proxy
+- All VCS data lives in that Excel file on a server, synced to Google Drive via Google Drive for Desktop
+- One file = entire app (HTML + CSS + JS, no build system)
+- GitHub repo: dgenuth/vcs, file: index.html
+
+---
+
+## CURRENT SESSION STATE (as of handover)
+
+- **File loaded:** ${fileName}
+- **Vendors (PSD):** ${totalVendors}
+- **In The Works:** ${itwCount}
+- **Reviews:** ${reviewCount}
+- **Vendor Aliases defined:** ${aliasCount}
+- **Unsaved changes:** ${dirtyVendors} vendor(s), ${dirtyITW} ITW change(s)
+
+---
+
+## RECENT ACTIVITY (last 10 history entries)
+
+${recentHistory||'  (no recent history)'}
+
+---
+
+## KEY FILE IDs (GOOGLE DRIVE)
+
+| File | Drive ID |
+|------|----------|
+| Vendor_Catalogue.xlsm | \`1iCWvkBCi36jc6p0AI-ZRjUll0cWADWD1\` |
+| GitHub token | \`1jQ6Bc72W_yLxHk8w6WrilgqhBW5rtiAfvR0wCC7BGYs\` |
+| vcs_lock_status.json | \`1F8Gg1Y4Y9Y7h9rDvUgHobQ0YfDgvcDeO\` |
+| DonaldBrain | \`1hvxilp7hmFlbXrYfxvP36YpYTaBlT1ei\` |
+
+---
+
+## EXCEL SHEET MAPPING
+
+| Sheet Name | Sheet File | Purpose |
+|------------|-----------|---------|
+| Prime Source Direct | sheet7.xml | Main vendor database (PSD) |
+| In the works | sheet14.xml | Pipeline/ITW vendors |
+| Reviews | sheet15.xml | Vendor review records |
+| WellLink | sheet8.xml | **NEVER TOUCH** |
+| Share Criteria | sheet5.xml | Field visibility per user role |
+| User Accounts | sheet6.xml | VCS user logins |
+
+---
+
+## PSD COLUMN MAP (key fields)
+
+\`\`\`
+C=Vendor, D=Category, E=Sub-Category, F=Product, G=Class of Trade, H=Markets, I=Added Value
+J=Website, K=Contract Name, S=Contact, U=Title, V=Business#, W=Mobile, X=Email
+Y=Shared2, AA=Title2, AB=Mobile2, AC=Email2
+AF=Expiry, AG=Auto-Renew, AH=AR Type, AI=Status, AM=Contract Term, AN=Current Term
+AO=Termination Notice, AZ=Admin Fee, BA=Admin Fee Notes, BB=Tiers, BC=Perpetuity
+BD=Tail, BF=Contract No., BH=Agreement Type, BI=Comments, BJ=Notes, BK=Last Comm
+BL=About, BM=Follow-Up, BN=AKA/Previously Named, BO=Priority
+BT=Trainual URL, BU=Vendor Alias Of, BV=Extra Contacts (JSON), BW=Vendor Relationships (JSON)
+\`\`\`
+
+## ITW COLUMN MAP (key fields)
+
+\`\`\`
+W=Vendor, Z=Latest, AA=Category, AB=Sub-Cat, AC=Product, AD=Markets, AE=Website
+AG=Added Value, AH=Contact, AJ=Business#, AK=Mobile, AL=Email, BA=Notes (r[52])
+\`\`\`
+
+---
+
+## MICROSOFT AZURE APP (OUTLOOK CALENDAR)
+
+- App Name: VCS - Vendor Contract Scheduler
+- Client ID: \`717ba339-9c8f-4521-b86d-b3e91dcaed4a\`
+- Tenant ID: \`8363e2da-e1a6-4296-98df-020abbd50ab4\`
+- Redirect URI: \`https://dgenuth.github.io/vcs/\` (Single-page application type)
+- Connected as: DGenuth@PrimeSourceX.com
+- Status: ✅ Connected — auto-renews
+
+---
+
+## VCS_WATCHER STATUS
+
+- Purpose: Detects if Vendor_Catalogue.xlsm is open in Excel on server
+- Writes to \`vcs_lock_status.json\` in Drive every ~30 seconds
+- AtStartup trigger confirmed added
+- **Pending fix:** username shows "unknown" — corrected PS1 script was generated; needs deployment on server
+
+---
+
+## FEATURES COMPLETED (cumulative)
+
+- ✅ Unified "Add Vendor Record" modal (destination selector: PSD or ITW)
+- ✅ "Promote to Vendor Database" button on ITW detail panel
+- ✅ Exact name matching (fuzzy matching removed — was causing false links)
+- ✅ Table-safe row insertion for both PSD and ITW sheets
+- ✅ Non-dismissible promote follow-up modal (lockDismiss)
+- ✅ W-Update / M-Update status expiry (Friday noon / last Thursday of month)
+- ✅ Dirty counter shows count + breakdown by type
+- ✅ Notes editor — split-pane with live preview, keyboard shortcuts (Ctrl+B/I/U/S)
+- ✅ Trainual link field (col BT)
+- ✅ Vendor Alias Linking — manual link for differently-named same-vendor records
+- ✅ Multiple contacts per vendor — unlimited dynamic rows, stored in col BV as JSON
+- ✅ Vendor Relationship system (col BW) — linked records with type + description, reciprocal
+- ✅ Contract Comparison Tool (⚖️ Compare tab) — Claude API, color-coded table, Word export
+- ✅ "Contract Basics" section rename (was "Relationship" — conflicted with new Relationships section)
+- ✅ ITW → DB badge: vendors in ITW that match PSD show green "DB" indicator
+- ✅ Session Handover Generator (this feature)
+- ✅ vendorAliases persisted in session state
+- ✅ saveSessionState called after all dirty-producing actions
+- ✅ mammoth.js CDN for DOCX text extraction in Compare tool
+
+---
+
+## ROADMAP (remaining, priority order)
+
+### 🟠 Short Term
+- Rich text editor (full contenteditable — current split-pane is markdown-based)
+- Reviews tab: edit notes inline without modal
+- VCS Watcher username fix (PS1 corrected, needs server deployment)
+- "Who has it open" — show actual Windows username in lock warning
+
+### 🟡 Medium Term  
+- Vendor Alias: persist alias links to spreadsheet on save (currently session-only)
+- Full field editing from ITW and Reviews tabs (not just detail panel)
+- Callsheet improvements
+
+### 🔵 Major Projects
+- Unified vendor record architecture (ITW + Reviews + DB as one entity)
+- VCS → Command Center integration
+- Salesforce integration
+- Contract module (OCR upload, auto-fill, version history)
+- Notes restructure (timestamped structured model)
+- Contract Comparison: PDF.js integration for better PDF text extraction
+
+---
+
+## HOW TO CONTINUE
+
+1. Start new chat
+2. Paste this entire document as the first message
+3. Confirm Claude understands state before proceeding
+4. First task: \`wget https://raw.githubusercontent.com/dgenuth/vcs/main/index.html -O /home/claude/vcs_working.html\`
+
+**Source of truth:** https://github.com/dgenuth/vcs (whatever was last uploaded)
+`;
+
+  // Show in a copyable textarea in settings
+  const handoverOut = document.querySelector('.settings-section div[style*="display:none"]');
+  if(handoverOut){
+    handoverOut.style.display='';
+    handoverOut.innerHTML='';
+    handoverOut.appendChild(el('div',{style:{display:'flex',gap:'6px',marginBottom:'6px',alignItems:'center'}}, [
+      el('span',{style:{fontSize:'10px',fontWeight:'600'}},'Handover document generated — copy all and paste into new chat:'),
+      el('button',{class:'btn-xs btn-primary',onclick(){navigator.clipboard.writeText(doc).then(()=>toast('✓ Copied to clipboard'));}}, '📋 Copy All'),
+    ]));
+    const ta=el('textarea',{style:{width:'100%',height:'320px',fontSize:'9px',fontFamily:'monospace',background:'var(--sb)',color:'var(--text)',border:'1px solid var(--border)',borderRadius:'4px',padding:'8px',resize:'vertical',lineHeight:'1.4'}});
+    ta.value=doc;
+    handoverOut.appendChild(ta);
+  } else {
+    // Fallback: copy directly
+    navigator.clipboard.writeText(doc).then(()=>toast('✓ Handover doc copied to clipboard'));
+  }
+}
+
 function renderSettings(c) {
   c.innerHTML = ''; // CRITICAL: clear before re-rendering to prevent duplication
+
+  // ── Session Handover Generator ──
+  const secHandover=el('div',{class:'settings-section'});
+  secHandover.appendChild(el('h3',{},'📋 Session Handover Generator'));
+  secHandover.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Generate a complete handover document for the next Claude session. Captures current VCS state, recent changes, and pending work. Paste into a new chat to continue seamlessly.'));
+  const handoverBtn=el('button',{class:'btn-primary',onclick(){generateHandoverDoc();}}, '📋 Generate Handover Document');
+  secHandover.appendChild(handoverBtn);
+  const handoverOut=el('div',{style:{display:'none',marginTop:'10px'}});
+  secHandover.appendChild(handoverOut);
+  c.appendChild(secHandover);
 
   // ── User Management (Admin only) ──
   if (hasPermission('manageUsers')) {
