@@ -2533,6 +2533,14 @@ function updateVendorField(vendor, field, value) {
   const oldVal = vendor[field];
   const oldDisplay = oldVal instanceof Date ? fmtDate(oldVal) : String(oldVal||'—');
   vendor[field] = value; markDirty(vendor);
+  // Track when timed statuses are set so expiry logic works correctly
+  if (field === 'vendorStatus') {
+    if (value === 'W-Update' || value === 'M-Update') {
+      vendor.vendorStatusSetDate = isoDate(new Date());
+    } else {
+      vendor.vendorStatusSetDate = null;
+    }
+  }
   if (['expiry','autoRenew','autoRenewType','terminationNotice','adminFee','contractTerm','currentTerm'].includes(field)) {
     vendor.score = calcScore(vendor); vendor.tier = getActionTier(vendor);
   }
@@ -6140,9 +6148,17 @@ function updateSidebar() {
   const dirtyInd=$('dirty-indicator');
   if(dirtyInd){
     const _vDirty=S.dirty?.size||0; const _rDirty=S.dirtyReviews?.size||0; const _iDirty=S.dirtyITW?.size||0;
-    const hasDirty=isLoaded&&(_vDirty+_rDirty+_iDirty)>0;
+    const _total=_vDirty+_rDirty+_iDirty;
+    const hasDirty=isLoaded&&_total>0;
     dirtyInd.style.display=hasDirty?'inline':'none';
-    if(hasDirty) dirtyInd.title=(_vDirty?_vDirty+' vendor'+(_vDirty!==1?'s':'')+' ':'')+(_rDirty?_rDirty+' review'+(_rDirty!==1?'s':'')+' ':'')+' with unsaved changes';
+    dirtyInd.textContent='● '+_total+' unsaved';
+    if(hasDirty){
+      const parts=[];
+      if(_vDirty) parts.push(_vDirty+' vendor'+(_vDirty!==1?'s':''));
+      if(_iDirty) parts.push(_iDirty+' ITW change'+(_iDirty!==1?'s':''));
+      if(_rDirty) parts.push(_rDirty+' review note'+(_rDirty!==1?'s':''));
+      dirtyInd.title=parts.join(', ')+' with unsaved changes — click Save to persist';
+    }
   }
   // Get effective tabs — role defaults + per-user overrides
   const _roleBaseTabs = (ROLE_PERMS[USER.role||'viewer']||ROLE_PERMS.viewer).tabs || NAV_DEFS.map(n=>n[0]);
@@ -6381,7 +6397,8 @@ function openAddVendorRecordModal(opts) {
         }));
         data.name=name;
         data.score=calcScore(data); data.tier=getActionTier(data); data._added=isoDate(new Date());
-        S.vendors.push(data); S.dirty.add(name);
+        S.vendors.push(data);
+        markDirty(data); // use markDirty — sets S.dirty + vendor._dirty + S.dirtyRows
         if(opts.promoteMode && opts.prefillData){
           // Ask user if they want to move ITW vendor section
           const itwV=S.itw.find(v=>normName(v.name)===normName(name));
@@ -6396,15 +6413,15 @@ function openAddVendorRecordModal(opts) {
                 btnRow.appendChild(el('button',{class:'btn-secondary',style:{textAlign:'left',padding:'8px 12px'},onclick(){
                   itwV.section='Done for now'; itwV.isInactive=true; itwV._dirty=true;
                   if(!S.dirtyITW)S.dirtyITW=new Set(); S.dirtyITW.add(itwV._row);
-                  closeModal(); render(); toast('✓ In the Works record moved to Done for Now');
+                  saveSessionState(); closeModal(); render(); updateSidebar(); toast('✓ In the Works record moved to Done for Now');
                 }},'📁 Move the In the Works record to "Done for Now" — remove from active view'));
                 btnRow.appendChild(el('button',{class:'btn-secondary',style:{textAlign:'left',padding:'8px 12px'},onclick(){
-                  itwV.vendorStatus='M-Update'; itwV._dirty=true;
+                  itwV.vendorStatus='M-Update'; itwV.vendorStatusSetDate=isoDate(new Date()); itwV._dirty=true;
                   if(!S.dirtyITW)S.dirtyITW=new Set(); S.dirtyITW.add(itwV._row);
-                  closeModal(); render(); toast('✓ In the Works record kept as Monthly Update');
+                  saveSessionState(); closeModal(); render(); updateSidebar(); toast('✓ In the Works record kept as Monthly Update');
                 }},'🔵 Keep the In the Works record active as Monthly Update — for onboarding & follow-up tasks'));
                 btnRow.appendChild(el('button',{class:'btn-secondary',style:{textAlign:'left',padding:'8px 12px'},onclick(){
-                  closeModal(); render();
+                  saveSessionState(); closeModal(); render(); updateSidebar();
                 }},'✓ Leave the In the Works record exactly as-is'));
                 body2.appendChild(btnRow);
               }, {lockDismiss:true});
@@ -6413,7 +6430,7 @@ function openAddVendorRecordModal(opts) {
         }
         logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:name,action:opts.promoteMode?'Promoted from In the Works to Vendor Database':'New vendor created manually',note:(data.category?'Category: '+data.category:'')});
         saveSessionState();
-        render(); closeModal(); toast('✓ '+name+(opts.promoteMode?' promoted to Vendor Database':' added')+' — open record to complete contract details');
+        render(); updateSidebar(); closeModal(); toast('✓ '+name+(opts.promoteMode?' promoted to Vendor Database':' added')+' — open record to complete contract details');
         setTimeout(()=>openDetail(data),200);
       } else {
         const name=String(inputs['itw_name']?.value||'').trim();
@@ -6716,27 +6733,84 @@ function renderITW(c) {
   c.appendChild(legend);
 
   // ── ITW indicator: compute auto-color based on actual data, overriding spreadsheet manual colors ──
-  // W-Update = had a note/activity this week (7 days)
-  // M-Update = newly active/signed this calendar month
+  // ── Status expiry helpers ──────────────────────────────────────────────────
+  // W-Update: expires at the NEXT Friday 12:00 PM ET after the status was set
+  // M-Update: expires after the last Thursday of the month the status was set in
+  function getNextFridayNoon(fromDate) {
+    const d = new Date(fromDate);
+    // 0=Sun,1=Mon,...,5=Fri,6=Sat
+    const day = d.getDay();
+    const daysUntilFriday = day <= 5 ? 5 - day : 6; // if already Fri, same day
+    d.setDate(d.getDate() + (day === 5 ? 0 : daysUntilFriday));
+    d.setHours(12, 0, 0, 0); // noon ET (server runs in ET timezone context)
+    return d;
+  }
+  function getLastThursdayOfMonth(year, month) {
+    // month is 0-based. Find last Thursday.
+    const d = new Date(year, month + 1, 0); // last day of month
+    while (d.getDay() !== 4) d.setDate(d.getDate() - 1); // 4 = Thursday
+    d.setHours(23, 59, 59, 0);
+    return d;
+  }
+  function isStatusStillActive(v) {
+    // Returns the effective status accounting for expiry rules
+    // If no vendorStatus or not a timed status, return as-is
+    const status = v.vendorStatus;
+    if (!status) return '';
+    const now = new Date();
+    if (status === 'W-Update') {
+      const setDate = v.vendorStatusSetDate ? new Date(v.vendorStatusSetDate) : (v._added ? new Date(v._added) : null);
+      if (!setDate) return status; // no set date, keep showing
+      const expiry = getNextFridayNoon(setDate);
+      if (now > expiry) {
+        // Auto-clear: status has expired — clear it so it stops showing
+        v.vendorStatus = ''; v.vendorStatusSetDate = null;
+        v._dirty = true;
+        if (!S.dirtyITW) S.dirtyITW = new Set();
+        S.dirtyITW.add(v._row);
+        return '';
+      }
+      return 'W-Update';
+    }
+    if (status === 'M-Update') {
+      const setDate = v.vendorStatusSetDate ? new Date(v.vendorStatusSetDate) : null;
+      if (!setDate) return status; // no set date, keep showing
+      const expiry = getLastThursdayOfMonth(setDate.getFullYear(), setDate.getMonth());
+      if (now > expiry) {
+        v.vendorStatus = ''; v.vendorStatusSetDate = null;
+        v._dirty = true;
+        if (!S.dirtyITW) S.dirtyITW = new Set();
+        S.dirtyITW.add(v._row);
+        return '';
+      }
+      return 'M-Update';
+    }
+    return status; // Get to!, Expiring!, Done, Remove — no expiry
+  }
+
+  // W-Update = had a note/activity since last Friday noon, OR manually set and not expired
+  // M-Update = manually set and not expired (clears after last Thursday of set month)
   // Get to! = score >= 7 in PSD but not yet signed
   // Expiring! = matched vendor in PSD expiring within 60d
   // Done, Remove = section is Fell off/Done for now
   function getITWAutoStatus(v) {
     const today=new Date();
-    // Check session history for this vendor in last 7 days
-    const recentActivity=S.history.filter(h=>h.vendor===v.name&&dayDiff(today,new Date(h.date))<=7);
+    // Check if manually-set timed status is still active
+    const manualStatus = isStatusStillActive(v);
+    if (manualStatus === 'W-Update' || manualStatus === 'M-Update') return manualStatus;
+    // Auto W-Update: activity in session history since last Friday noon
+    const lastFridayNoon = getNextFridayNoon(new Date(today.getTime() - 7*24*60*60*1000));
+    const recentActivity=S.history.filter(h=>h.vendor===v.name&&new Date(h.date)>=lastFridayNoon);
     if (recentActivity.length>0) return 'W-Update';
     // Check if PSD vendor was recently added/modified this month
     const psd=findPSDVendor(v.name);
     if (psd) {
-      const lc=parseDate(psd.lastComm);
-      if (lc&&lc.getMonth()===today.getMonth()&&lc.getFullYear()===today.getFullYear()) return 'M-Update';
       const exp=getCurrentExpiry(psd);
       if (exp&&dayDiff(exp,today)>=0&&dayDiff(exp,today)<=60) return 'Expiring!';
       if (psd.score>=7&&v.section==='New') return 'Get to!';
     }
-    // Fallback to spreadsheet value if it's in a valid flag
-    const VALID_FLAGS=new Set(['W-Update','M-Update','Get to!','Expiring!','Done, Remove']);
+    // Fallback to spreadsheet value if it's in a valid non-timed flag
+    const VALID_FLAGS=new Set(['Get to!','Expiring!','Done, Remove']);
     if (v.vendorStatus&&VALID_FLAGS.has(v.vendorStatus)) return v.vendorStatus;
     return ''; // no indicator
   }
