@@ -15,6 +15,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://unpkg.com/mammoth@1.8.0/mammoth.browser.min.js" async defer></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -814,6 +815,7 @@ S = {
   snoozed: {}, dismissed: new Set(), history: [],
   itwSection: 'All', showDismissed: false, itwShowInactive: false, itwColorFilter: 'All', historyFilter: 'All',
   dirty: new Set(),
+  vendorAliases: {}, // { 'aliasName' → 'canonicalVendorName' } — user-created manual links
   dbSort: {col:'Expiry', dir:1},
   dbFilters: {},
   dbShowAll: false,
@@ -1303,6 +1305,8 @@ function parsePSD(sheet, sourceName) {
       comments:r[60], notes:r[61], lastComm:r[62], about:r[63],
       followUp:r[64], aka:r[65],
       priority: String(r[66]||'').trim(), // Column BO — populated by VBA macro from green highlights
+      trainualUrl: String(r[71]||'').trim(), // Column BT — Trainual record URL
+      vendorAliasOf: String(r[72]||'').trim(), // Column BU — canonical vendor name this is aliased to
       _dirty:false,
     };
     v.score = isDirect ? calcScore(v) : 0;
@@ -1622,6 +1626,8 @@ async function loadFile(file) {
               S.dirtyITW.add(live._row);
             }
           }
+          // Restore vendor aliases
+          if (saved.vendorAliases) Object.assign(S.vendorAliases, saved.vendorAliases);
           clearSessionState();
           render(); updateSidebar(); closeModal();
           toast('✓ Restored '+applied+' vendor'+(applied!==1?'s':'')+(skipped?' ('+skipped+' not found in this file)':''));
@@ -1846,7 +1852,7 @@ async function executeSave() {
       adminFee:'AZ', adminFeeNotes:'BA', tiers:'BB', perpetuity:'BC',
       tail:'BD', contractNo:'BF', agreementType:'BH', comments:'BI',
       notes:'BJ', lastComm:'BK', about:'BL', followUp:'BM', aka:'BN',
-      priority:'BO',
+      priority:'BO', trainualUrl:'BT', vendorAliasOf:'BU',
     };
 
     // Date fields — must be written as Excel serial numbers, not ISO strings
@@ -1905,6 +1911,7 @@ async function executeSave() {
           adminFee:'AZ', adminFeeNotes:'BA', tiers:'BB', perpetuity:'BC',
           tail:'BD', contractNo:'BF', agreementType:'BH', comments:'BI',
           notes:'BJ', lastComm:'BK', about:'BL', followUp:'BM', aka:'BN',
+          trainualUrl:'BT', vendorAliasOf:'BU',
         };
 
         for (const nv of newPSDVendors) {
@@ -2722,58 +2729,91 @@ function openNoteModal(vendor) {
 
 function openEditNotesModal(vendor) {
   openModal(body => {
-    body.appendChild(el('h3',{},`✏️ Edit Notes — ${vendor.name}`));
-    body.appendChild(el('p',{class:'modal-sub'},'Pipe | separates entries, newest first. Use toolbar to format selected text.'));
-    const ta = el('textarea',{class:'modal-textarea notes-editor'});
-    ta.value = String(vendor.notes||'');
+    body.appendChild(el('h3',{style:{marginBottom:'4px'}},`✏️ Notes — ${vendor.name}`));
+    body.appendChild(el('p',{class:'modal-sub',style:{marginBottom:'6px'}},'Keyboard: Ctrl+B bold, Ctrl+I italic, Ctrl+S save. Live preview on right.'));
 
     // Formatting toolbar
-    const toolbar = el('div',{class:'note-toolbar'});
+    const toolbar = el('div',{class:'note-toolbar',style:{marginBottom:'5px'}});
+    const ta = el('textarea',{class:'modal-textarea notes-editor',style:{height:'280px',fontFamily:'var(--font)',lineHeight:'1.6',resize:'vertical',tabSize:'2'}});
+    ta.value = String(vendor.notes||'');
+
     const applyWrap = (pre, suf) => {
-      const start=ta.selectionStart, end=ta.selectionEnd;
-      const sel = ta.value.slice(start, end);
+      const start=ta.selectionStart, end=ta.selectionEnd, sel=ta.value.slice(start,end);
       if (!sel) { toast('Select text first','#f59e0b'); return; }
       if (sel.startsWith(pre) && sel.endsWith(suf)) {
-        const inner = sel.slice(pre.length, sel.length - suf.length);
-        ta.setRangeText(inner, start, end, 'select');
+        ta.setRangeText(sel.slice(pre.length, sel.length-suf.length), start, end, 'select');
       } else {
-        ta.setRangeText(pre + sel + suf, start, end, 'select');
+        ta.setRangeText(pre+sel+suf, start, end, 'select');
       }
-      ta.focus();
+      ta.focus(); updatePreview();
     };
     const applyLinePrefix = (prefix) => {
       const start=ta.selectionStart;
-      const lineStart = ta.value.lastIndexOf('\n', start-1)+1;
-      ta.setRangeText(prefix, lineStart, lineStart, 'end');
-      ta.focus();
+      const lineStart=ta.value.lastIndexOf('\n',start-1)+1;
+      const lineEnd=ta.value.indexOf('\n',start); const end=lineEnd===-1?ta.value.length:lineEnd;
+      const line=ta.value.slice(lineStart,end);
+      if(line.startsWith(prefix)){ta.setRangeText(line.slice(prefix.length),lineStart,end,'end');}
+      else{ta.setRangeText(prefix+line,lineStart,end,'end');}
+      ta.focus(); updatePreview();
     };
     const insertText = (text) => {
-      const start=ta.selectionStart;
-      ta.setRangeText(text, start, ta.selectionEnd, 'end');
-      ta.focus();
+      ta.setRangeText(text, ta.selectionStart, ta.selectionEnd, 'end');
+      ta.focus(); updatePreview();
     };
 
     const tbDefs = [
-      ['𝐁 Bold', () => applyWrap('**','**')],
-      ['𝐼 Italic', () => applyWrap('_','_')],
-      ['U͟ Underline', () => applyWrap('[u]','[/u]')],
-      ['• Bullet', () => applyLinePrefix('• ')],
-      ['🔴 Red', () => applyWrap('[red]','[/red]')],
-      ['🟢 Green', () => applyWrap('[green]','[/green]')],
-      ['🟡 Amber', () => applyWrap('[amber]','[/amber]')],
-      ['🔵 Blue', () => applyWrap('[blue]','[/blue]')],
-      ['📅 Today', () => insertText(isoDate(new Date())+': ')],
-      ['─ Divider', () => insertText('\n───────────\n')],
+      ['𝐁', () => applyWrap('**','**'), 'Bold (Ctrl+B)'],
+      ['𝐼', () => applyWrap('_','_'), 'Italic (Ctrl+I)'],
+      ['U͟', () => applyWrap('[u]','[/u]'), 'Underline (Ctrl+U)'],
+      ['•', () => applyLinePrefix('• '), 'Bullet point'],
+      ['🔴', () => applyWrap('[red]','[/red]'), 'Red text'],
+      ['🟢', () => applyWrap('[green]','[/green]'), 'Green text'],
+      ['🟡', () => applyWrap('[amber]','[/amber]'), 'Amber text'],
+      ['🔵', () => applyWrap('[blue]','[/blue]'), 'Blue text'],
+      ['📅', () => insertText(isoDate(new Date())+': '), 'Insert today\'s date'],
+      ['─', () => insertText('\n───────────\n'), 'Divider'],
     ];
-    for (const [label, fn] of tbDefs) toolbar.appendChild(el('button',{class:'note-tb-btn',onclick:fn},label));
-    body.appendChild(toolbar);
-    body.appendChild(ta);
+    for (const [label, fn, tip] of tbDefs) {
+      const btn = el('button',{class:'note-tb-btn',title:tip,onclick:fn},label);
+      toolbar.appendChild(btn);
+    }
 
-    const btns=el('div',{class:'modal-btns'});
-    btns.appendChild(el('button',{class:'btn-primary',onclick(){editNotes(vendor,ta.value);closeModal();}},'Save'));
+    // Split pane layout
+    const pane = el('div',{style:{display:'flex',gap:'8px',alignItems:'flex-start'}});
+    const leftCol = el('div',{style:{flex:'1',minWidth:'0'}});
+    leftCol.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'3px'}},'EDITOR'));
+    leftCol.appendChild(ta);
+    const rightCol = el('div',{style:{flex:'1',minWidth:'0'}});
+    rightCol.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'3px'}},'PREVIEW'));
+    const preview = el('div',{style:{minHeight:'280px',background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'4px',padding:'7px 9px',fontSize:'11px',lineHeight:'1.6',overflowY:'auto'}});
+    rightCol.appendChild(preview);
+    pane.appendChild(leftCol);
+    pane.appendChild(rightCol);
+
+    function updatePreview() {
+      preview.innerHTML = '';
+      renderNotesStr(preview, ta.value);
+    }
+    ta.addEventListener('input', updatePreview);
+    updatePreview();
+
+    // Keyboard shortcuts
+    ta.addEventListener('keydown', e => {
+      if ((e.ctrlKey||e.metaKey) && e.key==='b') { e.preventDefault(); applyWrap('**','**'); }
+      if ((e.ctrlKey||e.metaKey) && e.key==='i') { e.preventDefault(); applyWrap('_','_'); }
+      if ((e.ctrlKey||e.metaKey) && e.key==='u') { e.preventDefault(); applyWrap('[u]','[/u]'); }
+      if ((e.ctrlKey||e.metaKey) && e.key==='s') { e.preventDefault(); saveAndClose(); }
+    });
+
+    body.appendChild(toolbar);
+    body.appendChild(pane);
+
+    function saveAndClose() { editNotes(vendor,ta.value); closeModal(); }
+    const btns=el('div',{class:'modal-btns',style:{marginTop:'10px'}});
+    btns.appendChild(el('button',{class:'btn-primary',onclick:saveAndClose},'Save'));
     btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
     body.appendChild(btns);
-    setTimeout(()=>ta.focus(),50);
+    setTimeout(()=>{ ta.focus(); ta.setSelectionRange(0,0); },50);
   });
 }
 
@@ -3042,10 +3082,32 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   else acts.appendChild(el('button',{class:'btn-ghost btn-action',onclick(){openDismissConfirm(vendor);}}, '✕ Dismiss')); }
   body.appendChild(acts);
 
-  // Find cross-tab data for this vendor using fuzzy name matching
+  // Find cross-tab data for this vendor using exact name matching + aliases
   const psdVendor = vendor.source==='psd' ? vendor : findPSDVendor(vendor.name);
   const itwVendor = vendor.source==='itw' ? vendor : findITWVendor(vendor.name);
   const reviewRecord = findReviewRecord(vendor.name);
+
+  // ── Alias notice ── if this vendor has a known alias link, show it
+  const _aliasKey = normName(vendor.name);
+  const _linkedToName = S.vendorAliases[_aliasKey];
+  const _linkedPSD = _linkedToName ? S.vendors.find(v=>vendorNamesMatch(v.name,_linkedToName)) : null;
+  if (_linkedPSD && vendor.source !== 'psd') {
+    const aliasNotice=el('div',{style:{background:'rgba(99,102,241,.08)',border:'1px solid rgba(99,102,241,.2)',borderRadius:'5px',padding:'7px 10px',marginBottom:'8px',display:'flex',gap:'8px',alignItems:'center'}});
+    aliasNotice.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},'🔗 Linked to:'));
+    aliasNotice.appendChild(el('span',{class:'vendor-link',style:{fontWeight:'600',color:'var(--blue)'},onclick(){openDetail(_linkedPSD);}},_linkedPSD.name));
+    const unlinkBtn=el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'auto',fontSize:'9px'},onclick(){
+      delete S.vendorAliases[_aliasKey];
+      saveSessionState(); openDetail(vendor,fromAnalytics,false); toast('✓ Link removed');
+    }},'✕ Unlink');
+    aliasNotice.appendChild(unlinkBtn);
+    body.appendChild(aliasNotice);
+  } else if (!psdVendor && vendor.source !== 'psd' && _canAct) {
+    // No PSD match — offer to link
+    const linkBanner=el('div',{style:{background:'rgba(245,158,11,.06)',border:'1px solid rgba(245,158,11,.2)',borderRadius:'5px',padding:'7px 10px',marginBottom:'8px',display:'flex',gap:'8px',alignItems:'center'}});
+    linkBanner.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',flex:'1'}},'No Vendor Database record found for this name.'));
+    linkBanner.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--blue)',border:'1px solid rgba(59,130,246,.3)'},onclick(){openVendorAliasModal(vendor);}}, '🔗 Link to Vendor DB Record'));
+    body.appendChild(linkBanner);
+  }
 
   // Health panel for PSD vendors — only for roles with financials access
   const _canSeeHealth = ['admin','procurement','manager','cro','finance_sr','finance_jr'].includes(USER.role);
@@ -3208,6 +3270,38 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     ['Admin Fee','adminFee'],['Admin Fee Notes','adminFeeNotes'],
     ['Tiers?','tiers'],['Perpetuity','perpetuity'],['Tail (# years)','tail'],
   ]);
+
+  // ── Trainual Link ──
+  const trainSec=el('div',{class:'detail-section'});
+  const trainHdr=el('div',{class:'detail-sec-hdr'});
+  trainHdr.appendChild(el('h4',{class:'detail-sec-title',style:{marginBottom:'0'}},'🎓 Trainual'));
+  trainSec.appendChild(trainHdr);
+  const trainBody=el('div',{style:{marginTop:'4px',display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap'}});
+  const trainUrl=vendor.trainualUrl||'';
+  if(trainUrl){
+    trainBody.appendChild(el('a',{href:trainUrl,target:'_blank',class:'btn-xs btn-ghost',style:{color:'var(--blue)',textDecoration:'none'}},'🔗 Open Trainual Record'));
+    trainBody.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},trainUrl));
+  } else {
+    trainBody.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},'No Trainual link set'));
+  }
+  if(hasPermission('editContract')){
+    const editBtn=el('button',{class:'btn-xs btn-ghost',onclick(){
+      const inp=el('input',{type:'url',class:'detail-edit-field',value:trainUrl,placeholder:'https://app.trainual.com/...',style:{flex:'1',minWidth:'200px'}});
+      trainBody.innerHTML='';
+      trainBody.appendChild(inp);
+      const saveBtn2=el('button',{class:'btn-xs btn-primary',onclick(){
+        const v=inp.value.trim();
+        updateVendorField(vendor,'trainualUrl',v);
+        closeDetail(); setTimeout(()=>openDetail(vendor),100);
+      }},'Save');
+      const cancel=el('button',{class:'btn-xs btn-ghost',onclick(){closeDetail();setTimeout(()=>openDetail(vendor),100);}},'✕');
+      trainBody.appendChild(saveBtn2); trainBody.appendChild(cancel);
+      inp.focus();
+    }}, trainUrl ? '✏' : '+ Add Link');
+    trainBody.appendChild(editBtn);
+  }
+  trainSec.appendChild(trainBody);
+  body.appendChild(trainSec);
 
   // All notes sources
   // Only show notes to roles with editNotes permission
@@ -3599,6 +3693,7 @@ function saveSessionState() {
       itw: S.itw.map(v=>({...v})),
       snoozed: Object.fromEntries(Object.entries(S.snoozed).map(([k,v])=>[k,v instanceof Date?v.toISOString():v])),
       dismissed: [...S.dismissed],
+      vendorAliases: S.vendorAliases||{},
       dirtyITW: (S.itw||[]).filter(v=>v._dirty).map(v=>({_row:v._row, name:v.name, notes:v.notes})),
       dirtyReviews: S.reviews.filter(r=>r._dirty).map(r=>({
         _row: r._row, name: r.name,
@@ -3996,13 +4091,13 @@ const ROLE_PERMS = {
     editAll:true,manageUsers:true,deleteHistory:true,configAI:true,configDrive:true,configSF:true,
     exportData:true,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,
     viewFees:true,viewContacts:true,viewFinancials:true,canCopy:true,
-    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings'],
+    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'compare', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings'],
   },
   procurement: {
     editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,
     exportData:false,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,
     viewFees:true,viewContacts:true,viewFinancials:true,canCopy:false,
-    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings'],settingsPersonalOnly:true,
+    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'compare', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings'],settingsPersonalOnly:true,
   },
   cro: {
     editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,
@@ -4907,16 +5002,101 @@ function vendorNamesMatch(a, b) {
   return na === nb;
 }
 function findPSDVendor(name) {
-  return S.vendors.find(v=>vendorNamesMatch(v.name, name));
+  if (!name) return null;
+  const direct = S.vendors.find(v=>vendorNamesMatch(v.name, name));
+  if (direct) return direct;
+  // Check user-created aliases
+  const canonicalName = S.vendorAliases[normName(name)];
+  if (canonicalName) return S.vendors.find(v=>vendorNamesMatch(v.name, canonicalName)) || null;
+  // Check vendorAliasOf field — vendor itself says it's an alias of another
+  const aliasedVendor = S.vendors.find(v => v.vendorAliasOf && vendorNamesMatch(v.vendorAliasOf, name));
+  return aliasedVendor || null;
 }
 function findITWVendor(name) {
-  return S.itw.find(v=>vendorNamesMatch(v.name, name));
+  if (!name) return null;
+  const direct = S.itw.find(v=>vendorNamesMatch(v.name, name));
+  if (direct) return direct;
+  const canonicalName = S.vendorAliases[normName(name)];
+  if (canonicalName) return S.itw.find(v=>vendorNamesMatch(v.name, canonicalName)) || null;
+  return null;
 }
 function findReviewRecord(name) {
-  return S.reviews.find(r=>vendorNamesMatch(r.name, name));
+  if (!name) return null;
+  const direct = S.reviews.find(r=>vendorNamesMatch(r.name, name));
+  if (direct) return direct;
+  const canonicalName = S.vendorAliases[normName(name)];
+  if (canonicalName) return S.reviews.find(r=>vendorNamesMatch(r.name, canonicalName)) || null;
+  return null;
 }
 
-// ─── Vendor Database ───────────────────────────────────────────────────────────
+// ── Vendor Alias Link Modal ───────────────────────────────────────────────────
+// Links a Review/ITW vendor name to a differently-named PSD vendor record.
+// Stored in S.vendorAliases and persisted to session. User-reversible.
+function openVendorAliasModal(vendor) {
+  openModal(body => {
+    body.appendChild(el('h3',{style:{marginTop:'0'}},'🔗 Link to Vendor Database Record'));
+    body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--muted)',marginBottom:'8px'}},[
+      '"'+vendor.name+'" doesn\'t exactly match any record in the Vendor Database. ',
+      'Search below to find the correct record and link them. ',
+      'Once linked, VCS will treat them as the same vendor across all tabs.'
+    ].join('')));
+    body.appendChild(el('p',{style:{fontSize:'10px',color:'rgba(245,158,11,.9)',background:'rgba(245,158,11,.08)',padding:'5px 8px',borderRadius:'4px',marginBottom:'10px'}},'⚠ This is a manual link you create. It can be removed at any time from the vendor detail panel. The original record names are not changed.'));
+
+    const searchIn=el('input',{type:'text',class:'modal-input',placeholder:'Search Vendor Database... (e.g. Performance Food, Ecolab)',style:{marginBottom:'6px'}});
+    const resultsList=el('div',{style:{maxHeight:'200px',overflowY:'auto',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--sb)'}});
+    body.appendChild(searchIn);
+    body.appendChild(resultsList);
+
+    let selectedVendor=null;
+
+    function updateResults() {
+      const q=normName(searchIn.value);
+      resultsList.innerHTML='';
+      const matches=q.length<2 ? S.vendors.slice(0,20) : S.vendors.filter(v=>normName(v.name).includes(q)||normName(v.aka||'').includes(q));
+      if(!matches.length){resultsList.appendChild(el('p',{style:{padding:'8px',fontSize:'10px',color:'var(--muted)'}},'No matches.'));return;}
+      matches.slice(0,30).forEach(v=>{
+        const row=el('div',{style:{padding:'6px 10px',cursor:'pointer',borderBottom:'1px solid var(--border)',fontSize:'11px',display:'flex',gap:'8px',alignItems:'center'}});
+        row.appendChild(el('span',{style:{fontWeight:'600',flex:'1'}},v.name));
+        if(v.category) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},v.category));
+        row.onmouseenter=()=>row.style.background='var(--hover)';
+        row.onmouseleave=()=>row.style.background='';
+        row.onclick=()=>{
+          selectedVendor=v;
+          resultsList.querySelectorAll('div').forEach(r=>r.style.background='');
+          row.style.background='rgba(59,130,246,.15)';
+          row.style.border='1px solid rgba(59,130,246,.3)';
+          confirmBtn.disabled=false;
+          confirmBtn.style.opacity='1';
+          selectedLabel.textContent='Selected: '+v.name;
+        };
+        resultsList.appendChild(row);
+      });
+    }
+    searchIn.addEventListener('input', updateResults);
+    updateResults();
+
+    const selectedLabel=el('p',{style:{fontSize:'10px',color:'var(--blue)',marginTop:'6px',minHeight:'14px'}},'');
+    body.appendChild(selectedLabel);
+
+    const btns=el('div',{class:'modal-btns',style:{marginTop:'10px'}});
+    const confirmBtn=el('button',{class:'btn-primary',disabled:true,style:{opacity:'0.5'},onclick(){
+      if(!selectedVendor) return;
+      const aliasKey=normName(vendor.name);
+      S.vendorAliases[aliasKey]=selectedVendor.name;
+      // Also store in vendor.vendorAliasOf if vendor is in PSD (for persistence to spreadsheet)
+      const vendorInPSD=S.vendors.find(v=>vendorNamesMatch(v.name,vendor.name));
+      if(vendorInPSD){ vendorInPSD.vendorAliasOf=selectedVendor.name; markDirty(vendorInPSD); }
+      saveSessionState();
+      closeModal();
+      openDetail(vendor, false, false);
+      toast('✓ "'+vendor.name+'" linked to "'+selectedVendor.name+'"');
+    }},'✓ Confirm Link');
+    btns.appendChild(confirmBtn);
+    btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
+    body.appendChild(btns);
+    setTimeout(()=>searchIn.focus(),50);
+  });
+}
 // ─── Vendor Database — Excel-style multi-select column filters ─────────────────
 function renderVendorDB(c) {
   if (!S.loaded) { c.appendChild(el('p',{class:'muted',style:{padding:'16px'}},'Load a file first — upload your XLSM to see all contracts here.')); return; }
@@ -5461,6 +5641,457 @@ ${section('📋 All Active Vendors','#2563eb',vs)}
 }
 
 function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+// ─── Contract Comparison Tool ─────────────────────────────────────────────────
+// State persists within session
+const CMP = {
+  docAName:'', docAText:'', docBName:'', docBText:'',
+  result: null, // array of comparison row objects
+  loading: false, error: '',
+};
+
+async function extractFileText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    // PDF: use pdfjs if available, else send as base64 to Claude
+    if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+      reader.onload = async (e) => {
+        try {
+          // Use PDF.js if loaded, otherwise fallback to base64 extraction via Claude
+          const pdfLib = window.pdfjsLib;
+          if (pdfLib) {
+            const pdf = await pdfLib.getDocument({data: new Uint8Array(e.target.result)}).promise;
+            let text = '';
+            for (let i = 1; i <= pdf.numPages; i++) {
+              const page = await pdf.getPage(i);
+              const content = await page.getTextContent();
+              text += content.items.map(s => s.str).join(' ') + '\n';
+            }
+            resolve(text.trim());
+          } else {
+            // Fallback: send as base64 doc to Claude API
+            const base64 = btoa(String.fromCharCode(...new Uint8Array(e.target.result)));
+            resolve({__pdf_base64__: base64});
+          }
+        } catch(err) { reject(err); }
+      };
+      reader.readAsArrayBuffer(file);
+    } else if (file.name.endsWith('.docx')) {
+      reader.onload = async (e) => {
+        try {
+          // Use mammoth.js if available for DOCX text extraction
+          if (window.mammoth) {
+            const result = await window.mammoth.extractRawText({arrayBuffer: e.target.result});
+            resolve(result.value);
+          } else {
+            // Fallback: ZIP parse and extract document.xml text
+            const zip = await JSZip.loadAsync(e.target.result);
+            const docXml = await zip.file('word/document.xml').async('string');
+            const text = docXml.replace(/<\/w:p>/gi, '\n').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+            resolve(text);
+          }
+        } catch(err) { reject(err); }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      // Plain text
+      reader.onload = (e) => resolve(e.target.result);
+      reader.readAsText(file);
+    }
+  });
+}
+
+async function runContractComparison(vendorName) {
+  if (!CMP.docAText || !CMP.docBText) { toast('Load both documents first','#f59e0b'); return; }
+  CMP.loading = true; CMP.result = null; CMP.error = '';
+  render();
+
+  const systemPrompt = `You are a contract analysis expert for a healthcare purchasing organization (Prime Source Expense Experts). You compare two vendor agreements and produce a structured, actionable cheat sheet for executive review and negotiation prep.
+
+CRITICAL: Respond ONLY with valid JSON. No preamble, no explanation, no markdown fences. Pure JSON object.
+
+Analyze both contracts and return this exact JSON structure:
+{
+  "vendorName": "string",
+  "docALabel": "short descriptive label for Document A (e.g. 'Current Agreement 2022')",
+  "docBLabel": "short descriptive label for Document B (e.g. 'Proposed Renewal 2025')",
+  "rows": [
+    {
+      "section": "section name (one of: Term and Renewal, Pricing, Tier Structure, Admin Fees, Legal Terms, Operational Terms, New Clauses)",
+      "topic": "specific topic name",
+      "ref_a": "section reference in Doc A (e.g. §3.1, Exhibit B) or empty string",
+      "text_a": "the actual language or value from Doc A, or 'Not addressed'",
+      "ref_b": "section reference in Doc B or empty string",
+      "text_b": "the actual language or value from Doc B, or 'Not addressed' or 'NEW' if only in B",
+      "status": "one of: win, loss, warning, neutral, new_win",
+      "note": "one sentence explaining why this is a win/loss/warning, or empty string"
+    }
+  ],
+  "priority": {
+    "must_get": ["concise bullet point", ...],
+    "push_for": ["concise bullet point", ...],
+    "accept": ["concise bullet point", ...]
+  }
+}
+
+STATUS RULES:
+- "win" = Doc B is more favorable than Doc A (green)
+- "loss" = Doc B is less favorable, a regression (red)
+- "warning" = missing, unclear, or needs attention (amber)
+- "neutral" = no meaningful change (gray)
+- "new_win" = new clause in Doc B that benefits Prime Source (green)
+
+SECTIONS TO ALWAYS COVER (in order):
+1. Term and Renewal — contract length, renewal type, notice periods, auto-renewal terms
+2. Pricing — price locks, CPI caps, price increase limits, waivers
+3. Tier Structure — volume tiers, commitment levels, rebate tiers
+4. Admin Fees — percentage, calculation basis, payment timing, perpetuity
+5. Legal Terms — governing law, venue, jury waiver, liability caps, indemnification
+6. Operational Terms — order minimums, member eligibility, exclusivity, assignment
+7. New Clauses — anything material in Doc B not present in Doc A
+
+Include every meaningful difference. Do not summarize away important details. If a section doesn't apply, omit it.`;
+
+  const userMsg = `Vendor: ${vendorName || 'Unknown Vendor'}
+
+DOCUMENT A (${CMP.docAName}):
+${typeof CMP.docAText === 'string' ? CMP.docAText.slice(0, 18000) : '[PDF uploaded]'}
+
+DOCUMENT B (${CMP.docBName}):
+${typeof CMP.docBText === 'string' ? CMP.docBText.slice(0, 18000) : '[PDF uploaded]'}`;
+
+  // Build messages — handle PDF base64 case
+  let messages;
+  if (CMP.docAText?.__pdf_base64__ || CMP.docBText?.__pdf_base64__) {
+    const contentParts = [{type:'text',text:`Vendor: ${vendorName||'Unknown'}\n\nAnalyze both contract documents below and compare them according to the system instructions.`}];
+    if (CMP.docAText?.__pdf_base64__) contentParts.push({type:'document',source:{type:'base64',media_type:'application/pdf',data:CMP.docAText.__pdf_base64__}});
+    else contentParts.push({type:'text',text:'DOCUMENT A ('+CMP.docAName+'):\n'+CMP.docAText.slice(0,18000)});
+    if (CMP.docBText?.__pdf_base64__) contentParts.push({type:'document',source:{type:'base64',media_type:'application/pdf',data:CMP.docBText.__pdf_base64__}});
+    else contentParts.push({type:'text',text:'DOCUMENT B ('+CMP.docBName+'):\n'+CMP.docBText.slice(0,18000)});
+    messages = [{role:'user',content:contentParts}];
+  } else {
+    messages = [{role:'user',content:userMsg}];
+  }
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:4000,
+        system: systemPrompt,
+        messages,
+      })
+    });
+    const data = await resp.json();
+    const raw = data.content?.find(b=>b.type==='text')?.text || '';
+    const clean = raw.replace(/^```[a-z]*\n?/,'').replace(/```$/,'').trim();
+    CMP.result = JSON.parse(clean);
+    CMP.loading = false;
+    logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendorName||'Unknown',action:'Contract comparison run',note:CMP.docAName+' vs '+CMP.docBName});
+  } catch(e) {
+    CMP.loading = false;
+    CMP.error = 'Comparison failed: '+e.message;
+  }
+  render();
+}
+
+function renderContractCompare(c) {
+  c.innerHTML='';
+  const wrap = el('div',{style:{maxWidth:'1100px',margin:'0 auto',padding:'12px 0'}});
+
+  // Header
+  const hdr = el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px'}});
+  hdr.appendChild(el('div',{},[
+    el('h2',{style:{margin:'0 0 2px 0',fontSize:'16px',fontWeight:'700'}},'⚖️ Contract Comparison Tool'),
+    el('p',{style:{margin:'0',fontSize:'10px',color:'var(--muted)'}},'Upload two agreements. Claude analyzes every clause and produces a color-coded negotiation cheat sheet.'),
+  ]));
+  wrap.appendChild(hdr);
+
+  // Upload zone
+  const uploadRow = el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',marginBottom:'12px'}});
+  ['A','B'].forEach(side => {
+    const isA = side==='A';
+    const docName = isA ? CMP.docAName : CMP.docBName;
+    const card = el('div',{style:{background:'var(--sb)',border:'2px dashed '+(docName?'var(--green)':'var(--border)'),borderRadius:'6px',padding:'14px 16px',textAlign:'center',cursor:'pointer',transition:'border-color .2s'}});
+    const label = el('div',{style:{fontWeight:'600',fontSize:'12px',marginBottom:'4px'}}, 'Document '+side+(isA?' — Baseline / Existing':' — Proposed / New'));
+    const sub = el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'PDF or DOCX');
+    const statusEl = el('div',{style:{fontSize:'10px',fontWeight:'600',color:docName?'var(--green)':'var(--muted)'}}, docName ? '✓ '+docName : 'Click or drag to upload');
+    const inp = el('input',{type:'file',accept:'.pdf,.docx,.txt',style:{display:'none'},onchange:async(e)=>{
+      const file = e.target.files[0]; if(!file) return;
+      statusEl.textContent='⏳ Reading...'; statusEl.style.color='var(--amber)';
+      try {
+        const text = await extractFileText(file);
+        if(isA){CMP.docAName=file.name; CMP.docAText=text;}
+        else{CMP.docBName=file.name; CMP.docBText=text;}
+        CMP.result=null; CMP.error='';
+        render();
+      } catch(err){
+        statusEl.textContent='⚠ Read error: '+err.message; statusEl.style.color='var(--red)';
+      }
+    }});
+    card.onclick = () => inp.click();
+    card.ondragover = e => {e.preventDefault();card.style.borderColor='var(--blue)';};
+    card.ondragleave = () => {card.style.borderColor=docName?'var(--green)':'var(--border)';};
+    card.ondrop = async e => {
+      e.preventDefault(); card.style.borderColor=docName?'var(--green)':'var(--border)';
+      const file=e.dataTransfer.files[0]; if(!file) return;
+      statusEl.textContent='⏳ Reading...'; statusEl.style.color='var(--amber)';
+      try {
+        const text=await extractFileText(file);
+        if(isA){CMP.docAName=file.name;CMP.docAText=text;}
+        else{CMP.docBName=file.name;CMP.docBText=text;}
+        CMP.result=null;CMP.error='';render();
+      } catch(err){statusEl.textContent='⚠ '+err.message;}
+    };
+    card.appendChild(label); card.appendChild(sub); card.appendChild(statusEl); card.appendChild(inp);
+    if(docName){
+      const clear=el('button',{class:'btn-xs btn-ghost',style:{marginTop:'6px',fontSize:'9px'},onclick(e){
+        e.stopPropagation();
+        if(isA){CMP.docAName='';CMP.docAText='';}else{CMP.docBName='';CMP.docBText='';}
+        CMP.result=null;render();
+      }},'✕ Clear');
+      card.appendChild(clear);
+    }
+    uploadRow.appendChild(card);
+  });
+  wrap.appendChild(uploadRow);
+
+  // Vendor name field + run button
+  const controlRow = el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'12px'}});
+  const vendorIn = el('input',{type:'text',class:'modal-input',placeholder:'Vendor name (e.g. Sysco, McKesson)',style:{flex:'1',marginBottom:'0'},value:S._cmpVendor||''});
+  vendorIn.addEventListener('input',()=>{S._cmpVendor=vendorIn.value;});
+  const runBtn = el('button',{class:'btn-primary',style:{padding:'6px 18px',fontSize:'12px'},onclick(){
+    runContractComparison(vendorIn.value.trim());
+  }});
+  runBtn.textContent = CMP.loading ? '⏳ Analyzing...' : '⚖ Run Comparison';
+  runBtn.disabled = CMP.loading || !CMP.docAText || !CMP.docBText;
+  if(CMP.loading||!CMP.docAText||!CMP.docBText) runBtn.style.opacity='0.6';
+  controlRow.appendChild(vendorIn);
+  controlRow.appendChild(runBtn);
+  wrap.appendChild(controlRow);
+
+  if(CMP.error) wrap.appendChild(el('div',{style:{color:'var(--red)',fontSize:'11px',padding:'8px',background:'rgba(239,68,68,.08)',borderRadius:'4px',marginBottom:'10px'}},CMP.error));
+  if(CMP.loading) {
+    const loader=el('div',{style:{textAlign:'center',padding:'40px',color:'var(--muted)'}});
+    loader.appendChild(el('div',{style:{fontSize:'28px',marginBottom:'8px'}},'⚖️'));
+    loader.appendChild(el('div',{style:{fontSize:'12px',fontWeight:'600'}},'Analyzing contracts...'));
+    loader.appendChild(el('div',{style:{fontSize:'10px',marginTop:'4px'}},'Claude is reviewing every clause. This takes 15–30 seconds.'));
+    wrap.appendChild(loader);
+    c.appendChild(wrap); return;
+  }
+
+  if(CMP.result) {
+    const res = CMP.result;
+    // Export button
+    const exportRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'10px'}});
+    exportRow.appendChild(el('div',{style:{fontWeight:'700',fontSize:'14px',flex:'1'}},res.vendorName||vendorIn.value||'Vendor',' Contract Comparison'));
+    exportRow.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)'}},[
+      el('span',{style:{color:'var(--green)',fontWeight:'600'}},'■ Win / Preserved  '),
+      el('span',{style:{color:'var(--red)',fontWeight:'600'}},'■ Loss / Regression  '),
+      el('span',{style:{color:'var(--amber)',fontWeight:'600'}},'■ Warning / Review  '),
+      el('span',{style:{color:'var(--muted)',fontWeight:'600'}},'■ No Change'),
+    ]));
+    exportRow.appendChild(el('button',{class:'btn-xs btn-blue',onclick:()=>exportComparisonDocx(res)},'⬇ Export to Word'));
+    wrap.appendChild(exportRow);
+
+    // Doc A / Doc B labels
+    const labRow=el('div',{style:{display:'grid',gridTemplateColumns:'180px 1fr 1fr',gap:'0',marginBottom:'4px',fontSize:'9px',fontWeight:'700',color:'var(--muted)',paddingLeft:'4px'}});
+    labRow.appendChild(el('span',{},'TOPIC'));
+    labRow.appendChild(el('span',{style:{paddingLeft:'8px'}},res.docALabel||CMP.docAName||'Document A'));
+    labRow.appendChild(el('span',{style:{paddingLeft:'8px'}},res.docBLabel||CMP.docBName||'Document B'));
+    wrap.appendChild(labRow);
+
+    // Group rows by section
+    const sections = ['Term and Renewal','Pricing','Tier Structure','Admin Fees','Legal Terms','Operational Terms','New Clauses'];
+    const grouped = {};
+    (res.rows||[]).forEach(row => {
+      const sec = row.section||'Other';
+      if(!grouped[sec]) grouped[sec]=[];
+      grouped[sec].push(row);
+    });
+
+    const STATUS_COLORS = {
+      win:    {border:'#16a34a',bg:'rgba(34,197,94,.06)',label:'✓'},
+      new_win:{border:'#16a34a',bg:'rgba(34,197,94,.08)',label:'★'},
+      loss:   {border:'#dc2626',bg:'rgba(239,68,68,.06)',label:'✗'},
+      warning:{border:'#d97706',bg:'rgba(245,158,11,.06)',label:'⚠'},
+      neutral:{border:'var(--border)',bg:'transparent',label:'–'},
+    };
+
+    const allSections=[...sections,...Object.keys(grouped).filter(s=>!sections.includes(s))];
+    allSections.forEach(secName => {
+      const rows = grouped[secName];
+      if(!rows||!rows.length) return;
+      // Section header
+      const secHdr=el('div',{style:{background:'var(--sb)',borderLeft:'3px solid var(--blue)',padding:'4px 8px',fontSize:'10px',fontWeight:'700',color:'var(--blue)',marginTop:'8px',marginBottom:'2px',borderRadius:'0 3px 3px 0'}},secName.toUpperCase());
+      wrap.appendChild(secHdr);
+
+      rows.forEach(row => {
+        const sc = STATUS_COLORS[row.status]||STATUS_COLORS.neutral;
+        const rowEl=el('div',{style:{display:'grid',gridTemplateColumns:'180px 1fr 1fr',gap:'0',borderLeft:'3px solid '+sc.border,background:sc.bg,marginBottom:'1px',borderRadius:'0 3px 3px 0',fontSize:'10px',lineHeight:'1.45'}});
+
+        // Topic cell
+        const topicCell=el('div',{style:{padding:'5px 8px',borderRight:'1px solid var(--border)',display:'flex',flexDirection:'column',justifyContent:'center',gap:'2px'}});
+        topicCell.appendChild(el('span',{style:{fontWeight:'600',fontSize:'10px'}},row.topic));
+        if(row.note) topicCell.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',fontStyle:'italic'}},row.note));
+        rowEl.appendChild(topicCell);
+
+        // Doc A cell
+        const aCell=el('div',{style:{padding:'5px 8px',borderRight:'1px solid var(--border)'}});
+        aCell.appendChild(el('span',{},row.text_a||'—'));
+        if(row.ref_a) aCell.appendChild(el('span',{style:{display:'block',fontSize:'9px',color:'var(--muted)',fontStyle:'italic',marginTop:'1px'}},row.ref_a));
+        rowEl.appendChild(aCell);
+
+        // Doc B cell
+        const bCell=el('div',{style:{padding:'5px 8px'}});
+        bCell.appendChild(el('span',{style:{color:row.status==='loss'?'var(--red)':row.status==='win'||row.status==='new_win'?'var(--green)':row.status==='warning'?'var(--amber)':''}},row.text_b||'—'));
+        if(row.ref_b) bCell.appendChild(el('span',{style:{display:'block',fontSize:'9px',color:'var(--muted)',fontStyle:'italic',marginTop:'1px'}},row.ref_b));
+        rowEl.appendChild(bCell);
+
+        wrap.appendChild(rowEl);
+      });
+    });
+
+    // Call Priority Summary
+    if(res.priority) {
+      const pSec=el('div',{style:{marginTop:'16px',borderRadius:'5px',overflow:'hidden',border:'1px solid var(--border)'}});
+      pSec.appendChild(el('div',{style:{padding:'7px 10px',fontWeight:'700',fontSize:'12px',background:'var(--sb)',borderBottom:'1px solid var(--border)'}},'📋 Call / Negotiation Priority Summary'));
+      const rows2=[
+        {label:'🔴 MUST GET',key:'must_get',bg:'rgba(239,68,68,.1)',border:'rgba(239,68,68,.3)',color:'var(--red)'},
+        {label:'🟡 PUSH FOR',key:'push_for',bg:'rgba(245,158,11,.1)',border:'rgba(245,158,11,.3)',color:'var(--amber)'},
+        {label:'✅ ACCEPT AS-IS',key:'accept',bg:'rgba(34,197,94,.08)',border:'rgba(34,197,94,.3)',color:'var(--green)'},
+      ];
+      rows2.forEach(({label,key,bg,border,color})=>{
+        const items=res.priority[key]||[];
+        const row2=el('div',{style:{display:'grid',gridTemplateColumns:'140px 1fr',borderBottom:'1px solid var(--border)',background:bg}});
+        row2.appendChild(el('div',{style:{padding:'8px 10px',fontWeight:'700',fontSize:'10px',color,borderRight:'1px solid '+border,display:'flex',alignItems:'center'}},label));
+        const itemsDiv=el('div',{style:{padding:'6px 10px'}});
+        if(items.length){
+          items.forEach(item=>itemsDiv.appendChild(el('div',{style:{fontSize:'10px',marginBottom:'2px',display:'flex',gap:'5px'}},[el('span',{style:{color,fontWeight:'700'}},'•'),el('span',{},item)])));
+        } else {
+          itemsDiv.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',fontStyle:'italic'}},'None identified'));
+        }
+        row2.appendChild(itemsDiv);
+        pSec.appendChild(row2);
+      });
+      wrap.appendChild(pSec);
+    }
+  }
+
+  c.appendChild(wrap);
+}
+
+async function exportComparisonDocx(res) {
+  if (!res) return;
+  toast('⏳ Generating Word document...','#3b82f6');
+  try {
+    // Load docx library from CDN if not already loaded
+    if (!window.docx) {
+      await new Promise((resolve,reject)=>{
+        const s=document.createElement('script');
+        s.src='https://unpkg.com/docx@8.5.0/build/index.js';
+        s.onload=resolve; s.onerror=reject;
+        document.head.appendChild(s);
+      });
+    }
+    const {Document,Packer,Paragraph,TextRun,Table,TableRow,TableCell,
+           BorderStyle,WidthType,ShadingType,AlignmentType,PageOrientation,HeadingLevel} = window.docx;
+
+    const CONTENT_WIDTH = 13680; // landscape US Letter (11") - 1" margins each side
+    const COL_W = [2600, 5540, 5540];
+    const bdr = (color='CCCCCC') => ({style:BorderStyle.SINGLE,size:1,color});
+    const borders = c => ({top:bdr(c),bottom:bdr(c),left:bdr(c),right:bdr(c)});
+
+    const STATUS_FILL = {win:'DCF5E3',new_win:'DCF5E3',loss:'FDE8E8',warning:'FEF3C7',neutral:'F5F5F5'};
+    const STATUS_COLOR = {win:'166534',new_win:'166534',loss:'991B1B',warning:'92400E',neutral:'6B7280'};
+
+    const sections_order = ['Term and Renewal','Pricing','Tier Structure','Admin Fees','Legal Terms','Operational Terms','New Clauses'];
+    const grouped = {};
+    (res.rows||[]).forEach(row=>{const s=row.section||'Other';if(!grouped[s])grouped[s]=[];grouped[s].push(row);});
+
+    const children = [];
+
+    // Title
+    children.push(new Paragraph({children:[new TextRun({text:`${res.vendorName||'Vendor'} — Contract Comparison`,bold:true,size:32,font:'Arial'})],spacing:{after:120}}));
+    children.push(new Paragraph({children:[
+      new TextRun({text:`Document A: ${res.docALabel||'Baseline'}    `,size:18,font:'Arial',color:'555555'}),
+      new TextRun({text:`Document B: ${res.docBLabel||'Proposed'}`,size:18,font:'Arial',color:'555555'}),
+    ],spacing:{after:240}}));
+
+    const makeCell=(text,refText,fill,textColor,bold,width)=>new TableCell({
+      width:{size:width,type:WidthType.DXA},
+      shading:{fill:fill||'FFFFFF',type:ShadingType.CLEAR},
+      margins:{top:80,bottom:80,left:120,right:120},
+      borders:borders('DDDDDD'),
+      children:[
+        new Paragraph({children:[new TextRun({text:String(text||'—'),bold:!!bold,font:'Arial',size:18,color:textColor||'000000'})],spacing:{after:0}}),
+        ...(refText?[new Paragraph({children:[new TextRun({text:refText,font:'Arial',size:14,color:'888888',italics:true})],spacing:{after:0}})]:[]),
+      ]
+    });
+
+    const allSecs=[...sections_order,...Object.keys(grouped).filter(s=>!sections_order.includes(s))];
+    allSecs.forEach(secName=>{
+      const rows=grouped[secName];
+      if(!rows||!rows.length) return;
+      // Section header row
+      children.push(new Paragraph({children:[new TextRun({text:secName.toUpperCase(),bold:true,size:20,font:'Arial',color:'1D4ED8'})],spacing:{before:240,after:60},border:{bottom:{style:BorderStyle.SINGLE,size:4,color:'1D4ED8',space:1}}}));
+      const tableRows=[
+        new TableRow({children:[
+          makeCell('Topic','','1E3A5F','FFFFFF',true,COL_W[0]),
+          makeCell(res.docALabel||'Document A','','1E3A5F','FFFFFF',true,COL_W[1]),
+          makeCell(res.docBLabel||'Document B','','1E3A5F','FFFFFF',true,COL_W[2]),
+        ],tableHeader:true}),
+        ...rows.map(row=>new TableRow({children:[
+          makeCell(row.topic+(row.note?'\n'+row.note:''),null,STATUS_FILL[row.status]||'F5F5F5',null,true,COL_W[0]),
+          makeCell(row.text_a,row.ref_a,null,null,false,COL_W[1]),
+          makeCell(row.text_b,row.ref_b,STATUS_FILL[row.status]||'F5F5F5',STATUS_COLOR[row.status]||'000000',row.status!=='neutral',COL_W[2]),
+        ]})),
+      ];
+      children.push(new Table({width:{size:CONTENT_WIDTH,type:WidthType.DXA},columnWidths:COL_W,rows:tableRows}));
+      children.push(new Paragraph({children:[],spacing:{after:120}}));
+    });
+
+    // Priority Summary
+    if(res.priority){
+      children.push(new Paragraph({children:[new TextRun({text:'Call / Negotiation Priority Summary',bold:true,size:24,font:'Arial',color:'1D4ED8'})],spacing:{before:360,after:80},border:{bottom:{style:BorderStyle.SINGLE,size:4,color:'1D4ED8',space:1}}}));
+      const prioRows=[
+        {label:'🔴 MUST GET',key:'must_get',fill:'FEE2E2',tcolor:'991B1B'},
+        {label:'🟡 PUSH FOR',key:'push_for',fill:'FEF3C7',tcolor:'92400E'},
+        {label:'✅ ACCEPT AS-IS',key:'accept',fill:'DCFCE7',tcolor:'166534'},
+      ];
+      prioRows.forEach(({label,key,fill,tcolor})=>{
+        const items=res.priority[key]||[];
+        const rows3=[new TableRow({children:[
+          new TableCell({width:{size:2200,type:WidthType.DXA},shading:{fill,type:ShadingType.CLEAR},margins:{top:80,bottom:80,left:120,right:120},borders:borders('CCCCCC'),
+            children:[new Paragraph({children:[new TextRun({text:label,bold:true,font:'Arial',size:18,color:tcolor})],spacing:{after:0}})]}),
+          new TableCell({width:{size:11480,type:WidthType.DXA},shading:{fill:'FAFAFA',type:ShadingType.CLEAR},margins:{top:80,bottom:80,left:120,right:120},borders:borders('CCCCCC'),
+            children:items.length?items.map(i=>new Paragraph({children:[new TextRun({text:'• '+i,font:'Arial',size:18,color:tcolor})],spacing:{after:60}})):[new Paragraph({children:[new TextRun({text:'None identified',font:'Arial',size:18,color:'888888',italics:true})],spacing:{after:0}})]})
+        ]})];
+        children.push(new Table({width:{size:CONTENT_WIDTH,type:WidthType.DXA},columnWidths:[2200,11480],rows:rows3}));
+        children.push(new Paragraph({children:[],spacing:{after:40}}));
+      });
+    }
+
+    const doc = new Document({
+      sections:[{
+        properties:{page:{size:{width:12240,height:15840,orientation:PageOrientation.LANDSCAPE},margin:{top:720,right:720,bottom:720,left:720}}},
+        children
+      }]
+    });
+    const buffer = await Packer.toBuffer(doc);
+    const blob = new Blob([buffer],{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href=url; a.download=(res.vendorName||'Comparison').replace(/[^a-z0-9]/gi,'_')+'_Contract_Compare.docx';
+    a.click(); URL.revokeObjectURL(url);
+    toast('✓ Word document downloaded');
+  } catch(e) {
+    toast('⚠ Export failed: '+e.message,'#f59e0b');
+    console.error('docx export error:',e);
+  }
+}
 
 function renderReports(c) {
   const today=new Date();
@@ -6125,6 +6756,7 @@ const NAV_DEFS=[
   ['vendordb','🗂','Vendor DB'],['network','🔗','Network Intel'],
   ['economics','💰','Contract Economics'],['tiers','📶','Tier Tracker'],
   ['itw','🔧','In The Works'],['reviews','📝','Reviews'],
+  ['compare','⚖️','Compare'],
   ['calendar','📅','Calendar'],['forecast','📆','Forecast'],['analytics','📊','Analytics'],
   ['reports','📑','Reports'],['summary','📈','Summary'],['history','🕐','History'],
   ['datacheck','✅','Data Check'],['settings','⚙','Settings'],
@@ -9372,6 +10004,7 @@ function render() {
     case 'economics':renderContractEconomics(content);break;
     case 'tiers':renderTierTracker(content);break;
     case 'itw':renderITW(content);break;case 'reviews':renderReviews(content);break;case 'calendar':renderCalendar(content);break;
+    case 'compare':renderContractCompare(content);break;
     case 'forecast':renderForecast(content);break;case 'analytics':renderAnalytics(content);break;case 'summary':renderSummary(content);break;
     case 'reports':renderReports(content);break;
     case 'history':renderHistory(content);break;case 'datacheck':renderDataCheck(content);break;case 'settings':renderSettings(content);break;
