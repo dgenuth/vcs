@@ -6347,9 +6347,9 @@ function openAddVendorRecordModal(opts) {
     function updateVisibility(){
       sectionEls.psd.forEach(s=>s.style.display=dest==='psd'?'':'none');
       sectionEls.itw.forEach(s=>s.style.display=dest==='itw'?'':'none');
-      saveBtn.textContent = dest==='psd' ? (opts.promoteMode?'⬆ Promote to Vendor DB':'Create Vendor Record') : 'Add to Pipeline';
+      if(saveBtn) saveBtn.textContent = dest==='psd' ? (opts.promoteMode?'⬆ Promote to Vendor DB':'Create Vendor Record') : 'Add to Pipeline';
     }
-    updateVisibility();
+    // NOTE: updateVisibility() called AFTER saveBtn is defined below
 
     const btns=el('div',{class:'modal-btns',style:{marginTop:'12px'}});
     const saveBtn=el('button',{class:'btn-primary',onclick(){
@@ -6373,26 +6373,23 @@ function openAddVendorRecordModal(opts) {
           if(itwV){
             setTimeout(()=>{
               openModal(body2=>{
-                body2.appendChild(el('h3',{style:{marginTop:'0'}},'Pipeline Status'));
-                body2.appendChild(el('p',{style:{fontSize:'12px',color:'var(--muted)',marginBottom:'12px'}},
-                  name+' has been added to Vendor Database. What should happen to this vendor in the Pipeline?'));
+                body2.appendChild(el('h3',{style:{marginTop:'0'}},'✅ '+name+' promoted to Vendor Database'));
+                body2.appendChild(el('p',{style:{fontSize:'12px',color:'var(--muted)',marginBottom:'4px'}},'The vendor record has been added to Prime Source Direct.'));
+                body2.appendChild(el('p',{style:{fontSize:'12px',fontWeight:'600',color:'var(--text)',marginBottom:'12px'}},'What would you like to do with the original Pipeline (In The Works) record?'));
                 const btnRow=el('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}});
-                // Option 1: Move to Done for Now
                 btnRow.appendChild(el('button',{class:'btn-secondary',style:{textAlign:'left',padding:'8px 12px'},onclick(){
                   itwV.section='Done for now'; itwV.isInactive=true; itwV._dirty=true;
                   if(!S.dirtyITW)S.dirtyITW=new Set(); S.dirtyITW.add(itwV._row);
-                  closeModal(); render(); toast('✓ Moved to Done for Now in Pipeline');
-                }},'📁 Move to "Done for Now" — hide from active Pipeline'));
-                // Option 2: Keep as Monthly Update (blue)
+                  closeModal(); render(); toast('✓ Pipeline record moved to Done for Now');
+                }},'📁 Move the Pipeline record to "Done for Now" — remove from active view'));
                 btnRow.appendChild(el('button',{class:'btn-secondary',style:{textAlign:'left',padding:'8px 12px'},onclick(){
                   itwV.vendorStatus='M-Update'; itwV._dirty=true;
                   if(!S.dirtyITW)S.dirtyITW=new Set(); S.dirtyITW.add(itwV._row);
-                  closeModal(); render(); toast('✓ Kept in Pipeline as Monthly Update');
-                }},'🔵 Keep in Pipeline as Monthly Update — for onboarding tasks'));
-                // Option 3: Keep as-is
+                  closeModal(); render(); toast('✓ Pipeline record kept as Monthly Update');
+                }},'🔵 Keep the Pipeline record active as Monthly Update — for onboarding tasks'));
                 btnRow.appendChild(el('button',{class:'btn-secondary',style:{textAlign:'left',padding:'8px 12px'},onclick(){
                   closeModal(); render();
-                }},'✓ Keep in Pipeline unchanged'));
+                }},'✓ Leave the Pipeline record exactly as-is'));
                 body2.appendChild(btnRow);
               });
             },300);
