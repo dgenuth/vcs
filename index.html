@@ -1307,6 +1307,8 @@ function parsePSD(sheet, sourceName) {
       priority: String(r[66]||'').trim(), // Column BO — populated by VBA macro from green highlights
       trainualUrl: String(r[71]||'').trim(), // Column BT — Trainual record URL
       vendorAliasOf: String(r[72]||'').trim(), // Column BU — canonical vendor name this is aliased to
+      extraContacts: parseExtraContacts(r[73]), // Column BV — JSON array of contacts 3+
+      vendorRelationships: parseVendorRelationships(r[74]), // Column BW — JSON array of related vendor links
       _dirty:false,
     };
     v.score = isDirect ? calcScore(v) : 0;
@@ -1852,7 +1854,7 @@ async function executeSave() {
       adminFee:'AZ', adminFeeNotes:'BA', tiers:'BB', perpetuity:'BC',
       tail:'BD', contractNo:'BF', agreementType:'BH', comments:'BI',
       notes:'BJ', lastComm:'BK', about:'BL', followUp:'BM', aka:'BN',
-      priority:'BO', trainualUrl:'BT', vendorAliasOf:'BU',
+      priority:'BO', trainualUrl:'BT', vendorAliasOf:'BU', extraContacts:'BV', vendorRelationships:'BW',
     };
 
     // Date fields — must be written as Excel serial numbers, not ISO strings
@@ -1861,11 +1863,14 @@ async function executeSave() {
     for (const v of dirtyVendors) {
       const rowNum = v._row + 1; // Excel is 1-based
       for (const [field, col] of Object.entries(COL_MAP)) {
-        const val = v[field];
+        let val = v[field];
         if (val === undefined || val === null || val === '') continue;
+        // Serialize array fields to JSON string
+        if (field === 'extraContacts') val = serializeExtraContacts(val);
+        if (field === 'vendorRelationships') val = serializeVendorRelationships(val);
+        if (!val && val !== 0) continue;
         let strVal;
         if (DATE_FIELDS.has(field)) {
-          // Write as Excel serial number so Excel recognizes it as a date
           const d = val instanceof Date ? val : parseDate(val);
           const serial = d ? dateToExcelSerial(d) : null;
           if (!serial) continue;
@@ -1911,7 +1916,7 @@ async function executeSave() {
           adminFee:'AZ', adminFeeNotes:'BA', tiers:'BB', perpetuity:'BC',
           tail:'BD', contractNo:'BF', agreementType:'BH', comments:'BI',
           notes:'BJ', lastComm:'BK', about:'BL', followUp:'BM', aka:'BN',
-          trainualUrl:'BT', vendorAliasOf:'BU',
+          trainualUrl:'BT', vendorAliasOf:'BU', extraContacts:'BV', vendorRelationships:'BW',
         };
 
         for (const nv of newPSDVendors) {
@@ -2820,9 +2825,10 @@ function openEditNotesModal(vendor) {
 function openEmailModal(vendor) {
   openModal(body => {
     body.appendChild(el('h3',{},`✉️ Draft Email — ${vendor.name}`));
-    const emails=[];
-    if (vendor.email) emails.push({label:vendor.procContact||'Primary',addr:vendor.email,checked:true});
-    if (vendor.email2) emails.push({label:vendor.shared2||'Secondary',addr:vendor.email2,checked:false});
+    // Build email list from all contacts dynamically
+    const emails = getAllContacts(vendor)
+      .filter(c=>c.email)
+      .map((c,i)=>({label:c.name||(i===0?'Primary':'Contact '+(i+1)),addr:c.email,checked:i===0}));
 
     // Multi-recipient checkboxes
     if (emails.length > 0) {
@@ -3207,36 +3213,33 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
   // ── Quick Contact Bar — only for roles with contact access ──
   const _canSeeContact = !['sales_rep','restricted'].includes(USER.role);
-  if (_canSeeContact && (vendor.procContact||vendor.email||vendor.bizPhone||vendor.mobile)) {
+  const _allContacts = getAllContacts(vendor);
+  if (_canSeeContact && _allContacts.length > 0) {
     const qcSec=el('div',{class:'detail-section'});
     qcSec.appendChild(el('h4',{class:'detail-sec-title'},'👤 Quick Contact'));
-    const qcRow=el('div',{style:{display:'flex',gap:'5px',flexWrap:'wrap',alignItems:'center'}});
-    if(vendor.procContact) {
-      const nameEl=el('span',{style:{fontWeight:'600',fontSize:'11px'}},vendor.procContact+(vendor.title?' — '+vendor.title:''));
-      qcRow.appendChild(nameEl);
-    }
-    const makeBtn=(icon,val,type,label)=>{
+    const makeBtn2=(icon,val,type,label)=>{
       const btn=el('button',{class:'btn-xs btn-ghost',title:label+': '+val,onclick(){
         if(type==='email') launchMailto(val,'Following up — '+vendor.name,'');
         else if(type==='phone') window.open('tel:'+val.replace(/\D/g,''));
         else navigator.clipboard.writeText(val).then(()=>toast('📋 Copied: '+val));
       }},icon+' '+val.slice(0,22)+(val.length>22?'…':''));
-      // Copy button alongside
       const copyBtn=el('span',{style:{cursor:'pointer',fontSize:'8px',color:'var(--muted)',marginLeft:'2px'},title:'Copy',onclick(e){e.stopPropagation();navigator.clipboard.writeText(val).then(()=>toast('📋 Copied'));}}, '📋');
       const wrap=el('span',{style:{display:'inline-flex',alignItems:'center',gap:'1px'}});
       wrap.append(btn,copyBtn); return wrap;
     };
-    if(vendor.email) qcRow.appendChild(makeBtn('✉',vendor.email,'email','Email'));
-    if(vendor.bizPhone) qcRow.appendChild(makeBtn('📞',vendor.bizPhone,'phone','Call'));
-    else if(vendor.mobile) qcRow.appendChild(makeBtn('📱',vendor.mobile,'phone','Mobile'));
-    if(vendor.website) qcRow.appendChild(el('a',{href:vendor.website.startsWith('http')?vendor.website:'https://'+vendor.website,target:'_blank',class:'btn-xs btn-ghost',style:{textDecoration:'none'}},'🌐 Website'));
-    qcSec.appendChild(qcRow);
-    if(vendor.email2||vendor.mobile2) {
-      const qcRow2=el('div',{style:{display:'flex',gap:'5px',flexWrap:'wrap',marginTop:'4px',paddingTop:'4px',borderTop:'1px solid var(--border)'}});
-      qcRow2.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',width:'100%'}},'Secondary: '+(vendor.shared2||'')));
-      if(vendor.email2) qcRow2.appendChild(makeBtn('✉',vendor.email2,'email','Email 2'));
-      if(vendor.mobile2) qcRow2.appendChild(makeBtn('📱',vendor.mobile2,'phone','Mobile 2'));
-      qcSec.appendChild(qcRow2);
+    _allContacts.slice(0,3).forEach((contact,ci)=>{
+      const row=el('div',{style:{display:'flex',gap:'5px',flexWrap:'wrap',alignItems:'center',paddingTop:ci>0?'4px':'0',marginTop:ci>0?'4px':'0',borderTop:ci>0?'1px solid var(--border)':'none'}});
+      if(contact.name) row.appendChild(el('span',{style:{fontWeight:'600',fontSize:'11px',flex:'0 0 auto'}},contact.name+(contact.title?' — '+contact.title:'')));
+      if(contact.email) row.appendChild(makeBtn2('✉',contact.email,'email','Email'));
+      if(contact.phone) row.appendChild(makeBtn2('📞',contact.phone,'phone','Call'));
+      if(contact.mobile) row.appendChild(makeBtn2('📱',contact.mobile,'phone','Mobile'));
+      qcSec.appendChild(row);
+    });
+    if(_allContacts.length > 3) qcSec.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'4px'}},'+'+(_allContacts.length-3)+' more — see Contacts section below'));
+    if(vendor.website) {
+      const wRow=el('div',{style:{marginTop:'4px'}});
+      wRow.appendChild(el('a',{href:vendor.website.startsWith('http')?vendor.website:'https://'+vendor.website,target:'_blank',class:'btn-xs btn-ghost',style:{textDecoration:'none'}},'🌐 Website'));
+      qcSec.appendChild(wRow);
     }
     body.appendChild(qcSec);
   }
@@ -3252,12 +3255,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     ['Markets','markets'],['Previously Named','aka'],['Contract Name','contractName'],
   ]);
   // Contacts second
-  addEditableSection(body,'Contacts',vendor,[
-    ['Contact','procContact'],['Title','title'],
-    ['Business Phone','bizPhone'],['Mobile','mobile'],['Email','email'],
-    ['2nd Contact','shared2'],['2nd Title','title2'],
-    ['2nd Mobile','mobile2'],['2nd Email','email2'],['Website','website'],
-  ]);
+  // ── Dynamic Contacts Section ──
+  renderContactsSection(body, vendor);
   // Contract last
   addEditableSection(body,'Contract',vendor,[
     ['Contract No.','contractNo'],['Agreement Type','agreementType'],
@@ -3302,6 +3301,9 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   }
   trainSec.appendChild(trainBody);
   body.appendChild(trainSec);
+
+  // ── Vendor Relationships ──
+  if (vendor.source === 'psd') renderRelationshipsSection(body, vendor);
 
   // All notes sources
   // Only show notes to roles with editNotes permission
@@ -4731,6 +4733,277 @@ function makeValSpan(displayVal, field, label, vendor, isDate) {
     if(newValEl) {try{span.replaceWith(newValEl);}catch(e){} newValEl.click();}
   });
   return span;
+}
+
+// ─── Multi-Contact System ──────────────────────────────────────────────────────
+function parseExtraContacts(raw) {
+  if (!raw) return [];
+  try { return JSON.parse(String(raw)); } catch { return []; }
+}
+function serializeExtraContacts(arr) {
+  if (!arr || !arr.length) return '';
+  return JSON.stringify(arr.filter(c=>c.name||c.email||c.phone));
+}
+function parseVendorRelationships(raw) {
+  if (!raw) return [];
+  try { return JSON.parse(String(raw)); } catch { return []; }
+}
+function serializeVendorRelationships(arr) {
+  if (!arr || !arr.length) return '';
+  return JSON.stringify(arr);
+}
+
+// Build contact objects from vendor fields for display/edit
+function getAllContacts(vendor) {
+  const contacts = [];
+  // Contact 1 — legacy fields
+  if(vendor.procContact||vendor.email||vendor.bizPhone||vendor.mobile||vendor.title) {
+    contacts.push({name:vendor.procContact||'',title:vendor.title||'',type:vendor.contactType||'',phone:vendor.bizPhone||'',mobile:vendor.mobile||'',email:vendor.email||'',_slot:'primary'});
+  }
+  // Contact 2 — legacy fields
+  if(vendor.shared2||vendor.email2||vendor.mobile2||vendor.title2) {
+    contacts.push({name:vendor.shared2||'',title:vendor.title2||'',type:vendor.contactType2||'',phone:'',mobile:vendor.mobile2||'',email:vendor.email2||'',_slot:'secondary'});
+  }
+  // Extra contacts
+  (vendor.extraContacts||[]).forEach((c,i)=>contacts.push({...c,_slot:'extra_'+i}));
+  return contacts;
+}
+
+function saveContactBack(vendor, contact, idx) {
+  if(idx===0){ vendor.procContact=contact.name;vendor.title=contact.title;vendor.contactType=contact.type;vendor.bizPhone=contact.phone;vendor.mobile=contact.mobile;vendor.email=contact.email; }
+  else if(idx===1){ vendor.shared2=contact.name;vendor.title2=contact.title;vendor.contactType2=contact.type;vendor.mobile2=contact.mobile;vendor.email2=contact.email; }
+  else {
+    if(!vendor.extraContacts) vendor.extraContacts=[];
+    vendor.extraContacts[idx-2]={name:contact.name,title:contact.title,type:contact.type,phone:contact.phone,mobile:contact.mobile,email:contact.email};
+    vendor.extraContacts=vendor.extraContacts.filter(c=>c.name||c.email||c.phone);
+  }
+  markDirty(vendor);
+  saveSessionState();
+}
+
+function renderContactsSection(body, vendor) {
+  const canEdit = hasPermission('editContact') || hasPermission('editAll') || !USER.loggedIn;
+  const sec = el('div',{class:'detail-section'});
+  const hdr = el('div',{class:'detail-sec-hdr'});
+  hdr.appendChild(el('h4',{class:'detail-sec-title',style:{marginBottom:'0'}},'👤 Contacts'));
+  if(canEdit) {
+    const addBtn=el('button',{class:'btn-xs btn-green',onclick(){
+      if(!vendor.extraContacts) vendor.extraContacts=[];
+      vendor.extraContacts.push({name:'',title:'',type:'',phone:'',mobile:'',email:''});
+      markDirty(vendor); saveSessionState();
+      closeDetail(); setTimeout(()=>openDetail(vendor),80);
+      toast('Contact row added — fill in and it saves automatically');
+    }}, '+ Add Contact');
+    hdr.appendChild(addBtn);
+  }
+  sec.appendChild(hdr);
+
+  const contacts = getAllContacts(vendor);
+  if(!contacts.length) { sec.appendChild(el('p',{class:'muted',style:{padding:'4px 0 0 0',fontSize:'10px'}},'No contacts on record.')); body.appendChild(sec); return; }
+
+  const grid = el('div',{style:{display:'flex',flexDirection:'column',gap:'6px',marginTop:'4px'}});
+  contacts.forEach((contact, idx) => {
+    const card = el('div',{style:{background:idx===0?'rgba(59,130,246,.05)':'var(--sb)',border:'1px solid var(--border)',borderRadius:'4px',padding:'7px 10px'}});
+    const cardHdr = el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:contact.title||contact.type?'4px':'0'}});
+    cardHdr.appendChild(el('span',{style:{fontWeight:'600',fontSize:'11px',flex:'1'}},contact.name||'(Unnamed contact)'));
+    if(contact.title) cardHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},contact.title));
+    if(contact.type) cardHdr.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(99,102,241,.12)',color:'#818cf8',padding:'1px 5px',borderRadius:'3px'}},contact.type));
+    if(idx===0) cardHdr.appendChild(el('span',{style:{fontSize:'8px',background:'rgba(59,130,246,.15)',color:'var(--blue)',padding:'1px 5px',borderRadius:'3px',fontWeight:'700'}},'PRIMARY'));
+    if(canEdit) {
+      const editBtn=el('button',{class:'btn-xs btn-ghost',onclick(e){e.stopPropagation();openEditContactModal(vendor,idx,contact);}}, '✏');
+      cardHdr.appendChild(editBtn);
+      if(idx>0){
+        const delBtn=el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'},onclick(e){
+          e.stopPropagation();
+          if(!confirm('Remove this contact?')) return;
+          if(idx===1){vendor.shared2='';vendor.title2='';vendor.contactType2='';vendor.mobile2='';vendor.email2='';}
+          else if(vendor.extraContacts){vendor.extraContacts.splice(idx-2,1);}
+          markDirty(vendor);saveSessionState();closeDetail();setTimeout(()=>openDetail(vendor),80);
+        }}, '✕');
+        cardHdr.appendChild(delBtn);
+      }
+    }
+    card.appendChild(cardHdr);
+
+    // Contact buttons row
+    const btns = el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap'}});
+    if(contact.email) btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){launchMailto(contact.email,'Re: '+vendor.name,'');}}, '✉ '+contact.email.slice(0,28)+(contact.email.length>28?'…':'')));
+    if(contact.phone) btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){window.open('tel:'+contact.phone.replace(/\D/g,''));}}, '📞 '+contact.phone));
+    if(contact.mobile) btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){window.open('tel:'+contact.mobile.replace(/\D/g,''));}}, '📱 '+contact.mobile));
+    if(btns.children.length) card.appendChild(btns);
+    grid.appendChild(card);
+  });
+  sec.appendChild(grid);
+  // Website at bottom of section
+  if(vendor.website) {
+    const wRow=el('div',{style:{marginTop:'5px',paddingTop:'5px',borderTop:'1px solid var(--border)'}});
+    wRow.appendChild(el('a',{href:vendor.website.startsWith('http')?vendor.website:'https://'+vendor.website,target:'_blank',class:'btn-xs btn-ghost',style:{textDecoration:'none'}},'🌐 '+vendor.website));
+    sec.appendChild(wRow);
+  }
+  body.appendChild(sec);
+}
+
+function openEditContactModal(vendor, idx, contact) {
+  openModal(body => {
+    body.appendChild(el('h3',{style:{marginTop:'0',marginBottom:'6px'}},(idx===0?'Primary':'Contact '+(idx+1))+' — '+vendor.name));
+    const fields=[['Name','name'],['Title / Role','title'],['Contact Type','type'],['Business Phone','phone'],['Mobile','mobile'],['Email','email']];
+    const inputs={};
+    fields.forEach(([label,key])=>{
+      const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'4px'}});
+      row.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',width:'110px',flexShrink:'0'}},label));
+      let inp;
+      if(key==='type'){
+        inp=el('select',{class:'detail-edit-field',style:{flex:'1',height:'22px'}});
+        inp.appendChild(el('option',{value:''},'— Select —'));
+        ['Primary','Secondary','Billing','Legal','Operations','Sales','Support','Executive'].forEach(o=>inp.appendChild(el('option',{value:o,selected:contact.type===o},o)));
+      } else if(key==='email'){
+        inp=el('input',{type:'email',class:'detail-edit-field',style:{flex:'1'},value:contact[key]||''});
+      } else {
+        inp=el('input',{type:'text',class:'detail-edit-field',style:{flex:'1'},value:contact[key]||''});
+      }
+      inputs[key]=inp; row.appendChild(inp); body.appendChild(row);
+    });
+    const btns=el('div',{class:'modal-btns',style:{marginTop:'10px'}});
+    btns.appendChild(el('button',{class:'btn-primary',onclick(){
+      const updated={name:inputs.name.value.trim(),title:inputs.title.value.trim(),type:inputs.type.value,phone:inputs.phone.value.trim(),mobile:inputs.mobile.value.trim(),email:inputs.email.value.trim()};
+      saveContactBack(vendor,updated,idx);
+      closeModal(); closeDetail(); setTimeout(()=>openDetail(vendor),80);
+      toast('✓ Contact updated');
+    }},'Save'));
+    btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
+    body.appendChild(btns);
+    setTimeout(()=>inputs.name.focus(),50);
+  });
+}
+
+// ─── Vendor Relationship System ────────────────────────────────────────────────
+// Relationships are stored as JSON in column BW of PSD
+// Each relationship: { relatedVendorName, type, description, direction }
+// direction: 'both' | 'from' | 'to'
+const RELATIONSHIP_TYPES = [
+  'Direct + Indirect (stacked admin fee)',
+  'Parent / Subsidiary',
+  'Same manufacturer, different GPO',
+  'Exclusive channel partner',
+  'Competing contract — monitor',
+  'Referral relationship',
+  'Joint proposal / co-selling',
+  'Acquired / merged',
+  'Other',
+];
+
+function renderRelationshipsSection(body, vendor) {
+  const canEdit = hasPermission('editContract') || hasPermission('editAll');
+  const rels = vendor.vendorRelationships || [];
+  const sec = el('div',{class:'detail-section'});
+  const hdr = el('div',{class:'detail-sec-hdr'});
+  hdr.appendChild(el('h4',{class:'detail-sec-title',style:{marginBottom:'0'}},'🔀 Vendor Relationships'));
+  if(canEdit) {
+    hdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--blue)'},onclick(){openAddRelationshipModal(vendor);}}, '+ Link'));
+  }
+  sec.appendChild(hdr);
+
+  if(!rels.length) {
+    sec.appendChild(el('p',{class:'muted',style:{padding:'4px 0 0 0',fontSize:'10px'}},'No relationships defined. Use + Link to connect related vendor records.'));
+    body.appendChild(sec); return;
+  }
+
+  rels.forEach((rel,idx)=>{
+    const related = S.vendors.find(v=>vendorNamesMatch(v.name,rel.relatedVendorName));
+    const card=el('div',{style:{display:'flex',gap:'8px',alignItems:'flex-start',padding:'6px 8px',background:'rgba(99,102,241,.05)',border:'1px solid rgba(99,102,241,.15)',borderRadius:'4px',marginTop:'4px'}});
+    const info=el('div',{style:{flex:'1'}});
+    const nameRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center'}});
+    if(related){
+      nameRow.appendChild(el('span',{class:'vendor-link',style:{fontWeight:'600',color:'var(--blue)'},onclick(){openDetail(related);}},rel.relatedVendorName));
+    } else {
+      nameRow.appendChild(el('span',{style:{fontWeight:'600',color:'var(--muted)'}},rel.relatedVendorName+' (not in DB)'));
+    }
+    nameRow.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(99,102,241,.15)',color:'#818cf8',padding:'1px 6px',borderRadius:'3px'}},rel.type||'Related'));
+    info.appendChild(nameRow);
+    if(rel.description) info.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',margin:'2px 0 0 0'}},rel.description));
+    card.appendChild(info);
+    if(canEdit){
+      const delBtn=el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',flexShrink:'0'},onclick(){
+        if(!confirm('Remove this relationship?')) return;
+        vendor.vendorRelationships=rels.filter((_,i)=>i!==idx);
+        vendor.vendorRelationships=serializeVendorRelationships(vendor.vendorRelationships);
+        vendor.vendorRelationships=parseVendorRelationships(vendor.vendorRelationships);
+        // Also remove reciprocal
+        if(related){
+          related.vendorRelationships=(related.vendorRelationships||[]).filter(r=>!vendorNamesMatch(r.relatedVendorName,vendor.name));
+          markDirty(related);
+        }
+        markDirty(vendor); saveSessionState();
+        closeDetail(); setTimeout(()=>openDetail(vendor),80); toast('✓ Relationship removed');
+      }},'✕');
+      card.appendChild(delBtn);
+    }
+    sec.appendChild(card);
+  });
+  body.appendChild(sec);
+}
+
+function openAddRelationshipModal(vendor) {
+  openModal(body=>{
+    body.appendChild(el('h3',{style:{marginTop:'0'}},'🔀 Link Related Vendor'));
+    body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'Create a relationship between "'+vendor.name+'" and another vendor record. Both records will show the link.'));
+
+    body.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'2px'}},'Search for related vendor:'));
+    const searchIn=el('input',{type:'text',class:'modal-input',placeholder:'Type vendor name...',style:{marginBottom:'6px'}});
+    const resultsList=el('div',{style:{maxHeight:'160px',overflowY:'auto',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--sb)',marginBottom:'8px'}});
+    let selectedVendor=null;
+
+    function updateResults(){
+      const q=normName(searchIn.value);
+      resultsList.innerHTML='';
+      const matches=q.length<2?S.vendors.filter(v=>v.name!==vendor.name).slice(0,15):S.vendors.filter(v=>v.name!==vendor.name&&normName(v.name).includes(q));
+      matches.slice(0,20).forEach(v=>{
+        const row=el('div',{style:{padding:'5px 10px',cursor:'pointer',borderBottom:'1px solid var(--border)',fontSize:'11px',display:'flex',gap:'8px',alignItems:'center'}});
+        row.appendChild(el('span',{style:{flex:'1',fontWeight:'600'}},v.name));
+        if(v.category) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},v.category));
+        row.onmouseenter=()=>row.style.background='var(--hover)';
+        row.onmouseleave=()=>row.style.background='';
+        row.onclick=()=>{selectedVendor=v;resultsList.querySelectorAll('div').forEach(r=>r.style.background='');row.style.background='rgba(59,130,246,.15)';selectedLabel.textContent='Selected: '+v.name;confirmBtn.disabled=false;confirmBtn.style.opacity='1';};
+        resultsList.appendChild(row);
+      });
+      if(!matches.length) resultsList.appendChild(el('p',{style:{padding:'8px',fontSize:'10px',color:'var(--muted)'}},'No matches.'));
+    }
+    searchIn.addEventListener('input',updateResults); updateResults();
+
+    const selectedLabel=el('p',{style:{fontSize:'10px',color:'var(--blue)',minHeight:'14px'}});
+    body.appendChild(searchIn); body.appendChild(resultsList); body.appendChild(selectedLabel);
+
+    body.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'2px',marginTop:'6px'}},'Relationship type:'));
+    const typeSelect=el('select',{class:'detail-edit-field',style:{width:'100%',height:'24px',marginBottom:'6px'}});
+    RELATIONSHIP_TYPES.forEach(t=>typeSelect.appendChild(el('option',{value:t},t)));
+    body.appendChild(typeSelect);
+
+    body.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'2px'}},'Description (optional):'));
+    const descIn=el('input',{type:'text',class:'detail-edit-field',style:{width:'100%'},placeholder:'e.g. McKesson pays Provista 3% + direct additional 1% to Prime Source'});
+    body.appendChild(descIn);
+
+    const btns=el('div',{class:'modal-btns',style:{marginTop:'10px'}});
+    const confirmBtn=el('button',{class:'btn-primary',disabled:true,style:{opacity:'0.5'},onclick(){
+      if(!selectedVendor) return;
+      const rel={relatedVendorName:selectedVendor.name,type:typeSelect.value,description:descIn.value.trim()};
+      const relRecip={relatedVendorName:vendor.name,type:typeSelect.value,description:descIn.value.trim()};
+      // Add to this vendor
+      if(!vendor.vendorRelationships) vendor.vendorRelationships=[];
+      vendor.vendorRelationships.push(rel);
+      markDirty(vendor);
+      // Add reciprocal to related vendor
+      if(!selectedVendor.vendorRelationships) selectedVendor.vendorRelationships=[];
+      selectedVendor.vendorRelationships.push(relRecip);
+      markDirty(selectedVendor);
+      saveSessionState();
+      closeModal(); closeDetail(); setTimeout(()=>openDetail(vendor),80);
+      toast('✓ Relationship created — visible on both vendor records');
+    }},'✓ Create Relationship');
+    btns.appendChild(confirmBtn);
+    btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
+    body.appendChild(btns);
+    setTimeout(()=>searchIn.focus(),50);
+  });
 }
 
 function addNotesSection(body, vendor, title) {
