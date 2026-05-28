@@ -1873,6 +1873,82 @@ async function executeSave() {
 
     zip.file(sheetFile, sheetXml);
 
+    // ── Expand PSD table ref if new vendors were added ──────────────────────────
+    // New vendors have _row >= 99999. We need to: (1) find the real last data row in sheetXml,
+    // (2) append new vendor rows into sheetData after it, (3) update tbl_PrimeSourceDirect ref.
+    const newPSDVendors = dirtyVendors.filter(v => v._row >= 99999);
+    if (newPSDVendors.length > 0) {
+      try {
+        let sXml = await zip.file(sheetFile).async('text');
+        let ssXmlPSD = await zip.file('xl/sharedStrings.xml').async('text');
+
+        // Find last real row with data in sheetData
+        const existingRowNums = [...sXml.matchAll(/<row r="(\d+)"/g)].map(m=>parseInt(m[1]));
+        let lastDataRow = existingRowNums.length ? Math.max(...existingRowNums) : 2;
+
+        // Also read and update table1.xml to extend the ref
+        const tableFilePath = 'xl/tables/table1.xml';
+        let tableXml = await zip.file(tableFilePath).async('text');
+        const tableRefMatch = tableXml.match(/ref="([A-Z]+\d+):([A-Z]+)(\d+)"/);
+        const tableStartRef = tableRefMatch ? tableRefMatch[1] : 'A2';
+        const tableEndCol   = tableRefMatch ? tableRefMatch[2] : 'BS';
+        let tableEndRow     = tableRefMatch ? parseInt(tableRefMatch[3]) : lastDataRow;
+
+        const DATE_FIELDS_PSD = new Set(['expiry','effectiveDate','inContractSince','lastComm','followUp']);
+        const COL_MAP_NEW = {
+          name:'C', gpo:'A', category:'D', subCategory:'E', product:'F',
+          classOfTrade:'G', markets:'H', website:'J', contractName:'K',
+          procContact:'S', title:'U', bizPhone:'V', mobile:'W', email:'X',
+          shared2:'Y', title2:'AA', mobile2:'AB', email2:'AC',
+          expiry:'AF', autoRenew:'AG', autoRenewType:'AH', status:'AI',
+          contractTerm:'AM', currentTerm:'AN', terminationNotice:'AO',
+          adminFee:'AZ', adminFeeNotes:'BA', tiers:'BB', perpetuity:'BC',
+          tail:'BD', contractNo:'BF', agreementType:'BH', comments:'BI',
+          notes:'BJ', lastComm:'BK', about:'BL', followUp:'BM', aka:'BN',
+        };
+
+        for (const nv of newPSDVendors) {
+          const newRow = lastDataRow + 1;
+          nv._row = newRow - 1; // sync to real row
+          let rowCells = '';
+          for (const [field, col] of Object.entries(COL_MAP_NEW)) {
+            const val = nv[field];
+            if (val === undefined || val === null || val === '') continue;
+            let cellXml;
+            if (DATE_FIELDS_PSD.has(field)) {
+              const d = val instanceof Date ? val : parseDate(val);
+              const serial = d ? dateToExcelSerial(d) : null;
+              if (!serial) continue;
+              cellXml = `<c r="${col}${newRow}" s="8"><v>${serial}</v></c>`;
+            } else {
+              const ssR = upsertSharedString(ssXmlPSD, String(val));
+              ssXmlPSD = ssR.xml;
+              cellXml = `<c r="${col}${newRow}" t="s"><v>${ssR.index}</v></c>`;
+            }
+            rowCells += cellXml;
+          }
+          if (rowCells) {
+            // Insert before </sheetData> — table-safe append
+            sXml = sXml.replace('</sheetData>', `<row r="${newRow}" spans="1:71">${rowCells}</row></sheetData>`);
+          }
+          lastDataRow = newRow;
+          tableEndRow = newRow;
+        }
+
+        // Update table ref to cover new rows
+        if (tableRefMatch) {
+          tableXml = tableXml.replace(/ref="[^"]+"/, `ref="${tableStartRef}:${tableEndCol}${tableEndRow}"`);
+          zip.file(tableFilePath, tableXml);
+        }
+        zip.file(sheetFile, sXml);
+        zip.file('xl/sharedStrings.xml', ssXmlPSD);
+        console.log(`[VCS PSD] appended ${newPSDVendors.length} new vendor row(s), table ref now ${tableStartRef}:${tableEndCol}${tableEndRow}`);
+      } catch(e) {
+        console.error('[VCS PSD] new row append failed:', e);
+        toast('⚠ New vendor rows could not be written to Excel: '+e.message, '#f59e0b');
+      }
+    }
+
     // ── Write dirty review notes back to Reviews sheet ──────────────────────────
     const dirtyReviews = S.reviews.filter(r => r._dirty);
     console.log(`[VCS Reviews] dirtyReviews count: ${dirtyReviews.length}, reviewsSheetFile: ${S.reviewsSheetFile}`);
@@ -2057,35 +2133,43 @@ async function executeSave() {
           commentsXmlITW = upsertComment(commentsXmlITW, zRef, plainITW, itwAuthor);
         }
 
-        // ── Write NEW ITW rows (_isNew:true) — append to sheetData ──
+        // ── Write NEW ITW rows (_isNew:true) — insert after last data row ──
         const newITWVendors = dirtyITW.filter(v => v._isNew);
         if (newITWVendors.length > 0) {
-          // Find highest existing row number in the sheet
-          const existingRows = [...sheetXmlITW.matchAll(/<row r="(\d+)"/g)].map(m=>parseInt(m[1]));
-          let nextRow = existingRows.length ? Math.max(...existingRows)+1 : 3;
+          // Find highest row that actually has vendor data (col W)
+          const wCellRows = [...sheetXmlITW.matchAll(/<c r="W(\d+)"/g)].map(m=>parseInt(m[1]));
+          let lastITWRow = wCellRows.length ? Math.max(...wCellRows) : 2;
+
           for (const nv of newITWVendors) {
-            nv._row = nextRow - 1; // sync JS index (0-based from rows array)
+            const newRow = lastITWRow + 1;
+            nv._row = newRow - 1; // sync JS index
             const colMap = [
-              [22,'W',nv.name], [25,'Z',nv.notes||''], [26,'AA',nv.category||''],
-              [27,'AB',nv.subCategory||''], [28,'AC',nv.product||''],
-              [29,'AD',nv.markets||''], [30,'AE',nv.website||''],
-              [32,'AG',nv.addedValue||''], [33,'AH',nv.contact||''],
-              [35,'AJ',nv.phone||''], [36,'AK',nv.mobile||''],
-              [37,'AL',nv.email||''], [42,'AQ',nv.about||''],
-              [52,'BA',nv.notes||''],
+              ['W', nv.name],
+              ['Z', nv.notes||''],
+              ['AA', nv.category||''],
+              ['AB', nv.subCategory||''],
+              ['AC', nv.product||''],
+              ['AD', nv.markets||''],
+              ['AE', nv.website||''],
+              ['AG', nv.addedValue||''],
+              ['AH', nv.contact||''],
+              ['AJ', nv.phone||''],
+              ['AK', nv.mobile||''],
+              ['AL', nv.email||''],
+              ['BA', nv.notes||''],
             ];
             let rowCells = '';
-            for (const [,col,val] of colMap) {
+            for (const [col, val] of colMap) {
               if (!val) continue;
               const ssR = upsertSharedString(ssXmlITW, val);
               ssXmlITW = ssR.xml;
-              rowCells += `<c r="${col}${nextRow}" t="s"><v>${ssR.index}</v></c>`;
+              rowCells += `<c r="${col}${newRow}" t="s"><v>${ssR.index}</v></c>`;
             }
             if (rowCells) {
-              sheetXmlITW = sheetXmlITW.replace('</sheetData>', `<row r="${nextRow}" spans="1:52">${rowCells}</row></sheetData>`);
+              sheetXmlITW = sheetXmlITW.replace('</sheetData>', `<row r="${newRow}" spans="1:52">${rowCells}</row></sheetData>`);
             }
-            nv._isNew = false; // clear flag after write
-            nextRow++;
+            nv._isNew = false;
+            lastITWRow = newRow;
           }
           console.log(`[VCS ITW] appended ${newITWVendors.length} new row(s)`);
         }
@@ -4793,22 +4877,11 @@ function normName(n) {
     .replace(/\b(inc|llc|ltd|co|corp|the|and|&)\b/g,' ')
     .replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim();
 }
+// Exact normalized match only — fuzzy matching causes false cross-links between similar vendor names
 function vendorNamesMatch(a, b) {
   const na=normName(a), nb=normName(b);
   if (!na || !nb) return false;
-  if (na===nb) return true;
-  if (na.startsWith(nb)||nb.startsWith(na)) return true;
-  // First meaningful word matches (len>2)
-  const wa=na.split(' ').find(w=>w.length>2), wb=nb.split(' ').find(w=>w.length>2);
-  if (wa && wb && wa===wb && wa.length>3) return true;
-  // Word overlap: if 2+ significant words in common, it's a match
-  const wordsA=new Set(na.split(' ').filter(w=>w.length>3));
-  const wordsB=nb.split(' ').filter(w=>w.length>3);
-  const overlap=wordsB.filter(w=>wordsA.has(w));
-  if (overlap.length>=2) return true;
-  // One significant word each and they match (single-word vendors like "Staples", "Nestle")
-  if (overlap.length>=1 && wordsA.size===1 && wordsB.length===1) return true;
-  return false;
+  return na === nb;
 }
 function findPSDVendor(name) {
   return S.vendors.find(v=>vendorNamesMatch(v.name, name));
@@ -6295,9 +6368,35 @@ function openAddVendorRecordModal(opts) {
         data.score=calcScore(data); data.tier=getActionTier(data); data._added=isoDate(new Date());
         S.vendors.push(data); S.dirty.add(name);
         if(opts.promoteMode && opts.prefillData){
-          // Mark ITW vendor as promoted
-          const itwV=S.itw.find(v=>v.name.toLowerCase()===name.toLowerCase());
-          if(itwV){ itwV.section='Done for now'; itwV.isInactive=true; itwV._dirty=true; if(!S.dirtyITW)S.dirtyITW=new Set(); S.dirtyITW.add(itwV._row); }
+          // Ask user if they want to move ITW vendor section
+          const itwV=S.itw.find(v=>normName(v.name)===normName(name));
+          if(itwV){
+            setTimeout(()=>{
+              openModal(body2=>{
+                body2.appendChild(el('h3',{style:{marginTop:'0'}},'Pipeline Status'));
+                body2.appendChild(el('p',{style:{fontSize:'12px',color:'var(--muted)',marginBottom:'12px'}},
+                  name+' has been added to Vendor Database. What should happen to this vendor in the Pipeline?'));
+                const btnRow=el('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}});
+                // Option 1: Move to Done for Now
+                btnRow.appendChild(el('button',{class:'btn-secondary',style:{textAlign:'left',padding:'8px 12px'},onclick(){
+                  itwV.section='Done for now'; itwV.isInactive=true; itwV._dirty=true;
+                  if(!S.dirtyITW)S.dirtyITW=new Set(); S.dirtyITW.add(itwV._row);
+                  closeModal(); render(); toast('✓ Moved to Done for Now in Pipeline');
+                }},'📁 Move to "Done for Now" — hide from active Pipeline'));
+                // Option 2: Keep as Monthly Update (blue)
+                btnRow.appendChild(el('button',{class:'btn-secondary',style:{textAlign:'left',padding:'8px 12px'},onclick(){
+                  itwV.vendorStatus='M-Update'; itwV._dirty=true;
+                  if(!S.dirtyITW)S.dirtyITW=new Set(); S.dirtyITW.add(itwV._row);
+                  closeModal(); render(); toast('✓ Kept in Pipeline as Monthly Update');
+                }},'🔵 Keep in Pipeline as Monthly Update — for onboarding tasks'));
+                // Option 3: Keep as-is
+                btnRow.appendChild(el('button',{class:'btn-secondary',style:{textAlign:'left',padding:'8px 12px'},onclick(){
+                  closeModal(); render();
+                }},'✓ Keep in Pipeline unchanged'));
+                body2.appendChild(btnRow);
+              });
+            },300);
+          }
         }
         logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:name,action:opts.promoteMode?'Promoted from Pipeline to Vendor DB':'New vendor created manually',note:(data.category?'Category: '+data.category:'')});
         render(); closeModal(); toast('✓ '+name+(opts.promoteMode?' promoted to Vendor DB':' added')+' — click to open and complete the record');
