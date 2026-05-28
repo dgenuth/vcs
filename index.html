@@ -2579,10 +2579,25 @@ function refreshDetailIfOpen(vendor) {
 }
 
 // ─── Modals ───────────────────────────────────────────────────────────────────
-function openModal(buildFn) {
+function openModal(buildFn, opts) {
+  opts = opts || {};
   $('modal-body').innerHTML = '';
   buildFn($('modal-body'));
   $('modal-wrap').style.display = 'flex';
+  // lockDismiss: backdrop click does nothing — modal must be closed via a button
+  if (opts.lockDismiss) {
+    $('modal-bg')._lockedHandler = function(e){ e.stopPropagation(); };
+    $('modal-bg').removeEventListener('click', closeModal);
+    $('modal-bg').addEventListener('click', $('modal-bg')._lockedHandler);
+  } else {
+    // Restore normal dismiss behavior if a previous modal had it locked
+    if ($('modal-bg')._lockedHandler) {
+      $('modal-bg').removeEventListener('click', $('modal-bg')._lockedHandler);
+      $('modal-bg')._lockedHandler = null;
+    }
+    $('modal-bg').removeEventListener('click', closeModal);
+    $('modal-bg').addEventListener('click', closeModal);
+  }
 }
 function closeModal() { $('modal-wrap').style.display = 'none'; }
 
@@ -6375,28 +6390,30 @@ function openAddVendorRecordModal(opts) {
               openModal(body2=>{
                 body2.appendChild(el('h3',{style:{marginTop:'0'}},'✅ '+name+' promoted to Vendor Database'));
                 body2.appendChild(el('p',{style:{fontSize:'12px',color:'var(--muted)',marginBottom:'4px'}},'The vendor record has been added to Prime Source Direct.'));
-                body2.appendChild(el('p',{style:{fontSize:'12px',fontWeight:'600',color:'var(--text)',marginBottom:'12px'}},'What would you like to do with the original Pipeline (In The Works) record?'));
+                body2.appendChild(el('p',{style:{fontSize:'12px',fontWeight:'600',color:'var(--text)',marginBottom:'4px'}},'What would you like to do with the original In the Works record?'));
+                body2.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',fontStyle:'italic',marginBottom:'12px'}},'A selection is required — this dialog will not close until you choose.'));
                 const btnRow=el('div',{style:{display:'flex',flexDirection:'column',gap:'8px'}});
                 btnRow.appendChild(el('button',{class:'btn-secondary',style:{textAlign:'left',padding:'8px 12px'},onclick(){
                   itwV.section='Done for now'; itwV.isInactive=true; itwV._dirty=true;
                   if(!S.dirtyITW)S.dirtyITW=new Set(); S.dirtyITW.add(itwV._row);
-                  closeModal(); render(); toast('✓ Pipeline record moved to Done for Now');
-                }},'📁 Move the Pipeline record to "Done for Now" — remove from active view'));
+                  closeModal(); render(); toast('✓ In the Works record moved to Done for Now');
+                }},'📁 Move the In the Works record to "Done for Now" — remove from active view'));
                 btnRow.appendChild(el('button',{class:'btn-secondary',style:{textAlign:'left',padding:'8px 12px'},onclick(){
                   itwV.vendorStatus='M-Update'; itwV._dirty=true;
                   if(!S.dirtyITW)S.dirtyITW=new Set(); S.dirtyITW.add(itwV._row);
-                  closeModal(); render(); toast('✓ Pipeline record kept as Monthly Update');
-                }},'🔵 Keep the Pipeline record active as Monthly Update — for onboarding tasks'));
+                  closeModal(); render(); toast('✓ In the Works record kept as Monthly Update');
+                }},'🔵 Keep the In the Works record active as Monthly Update — for onboarding & follow-up tasks'));
                 btnRow.appendChild(el('button',{class:'btn-secondary',style:{textAlign:'left',padding:'8px 12px'},onclick(){
                   closeModal(); render();
-                }},'✓ Leave the Pipeline record exactly as-is'));
+                }},'✓ Leave the In the Works record exactly as-is'));
                 body2.appendChild(btnRow);
-              });
+              }, {lockDismiss:true});
             },300);
           }
         }
-        logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:name,action:opts.promoteMode?'Promoted from Pipeline to Vendor DB':'New vendor created manually',note:(data.category?'Category: '+data.category:'')});
-        render(); closeModal(); toast('✓ '+name+(opts.promoteMode?' promoted to Vendor DB':' added')+' — click to open and complete the record');
+        logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:name,action:opts.promoteMode?'Promoted from In the Works to Vendor Database':'New vendor created manually',note:(data.category?'Category: '+data.category:'')});
+        saveSessionState();
+        render(); closeModal(); toast('✓ '+name+(opts.promoteMode?' promoted to Vendor Database':' added')+' — open record to complete contract details');
         setTimeout(()=>openDetail(data),200);
       } else {
         const name=String(inputs['itw_name']?.value||'').trim();
@@ -9542,6 +9559,7 @@ function init() {
   });
   $('detail-close-btn').addEventListener('click',closeDetail);
   $('detail-overlay').addEventListener('click',closeDetail);
+  // Modal backdrop click is managed per-call in openModal() via lockDismiss option
   $('modal-bg').addEventListener('click',closeModal);
   $('modal').addEventListener('click',e=>e.stopPropagation());
   $('analytics-popup-bg').addEventListener('click',closeAnalyticsPopup);
