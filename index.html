@@ -3471,12 +3471,22 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     const sfSec=el('div',{class:'detail-section'});
     const sfHdr=el('div',{class:'detail-sec-hdr'});
     sfHdr.appendChild(el('h4',{class:'detail-sec-title',style:{marginBottom:'0'}},'☁ Salesforce'));
-    if(USER.sfToken) {
-      const sfRefresh=el('button',{class:'btn-xs btn-ghost',onclick(e){e.stopPropagation();sfContent.innerHTML='';sfStatus.textContent='⏳ Loading...';sfContent.appendChild(sfStatus);loadSFData();}}, '↻');
-      sfHdr.appendChild(sfRefresh);
-    }
     sfSec.appendChild(sfHdr);
     const sfContent=el('div',{class:'sf-content',style:{marginTop:'6px'}});
+    // sfStatus declared here so it's in scope for all button handlers
+    const sfStatus=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'4px 0'}});
+
+    if(USER.sfToken) {
+      // Refresh button — uses sfContent and sfStatus which are now in scope
+      const sfRefresh=el('button',{class:'btn-xs btn-ghost',onclick(e){
+        e.stopPropagation();
+        sfContent.innerHTML='';
+        sfStatus.textContent='⏳ Loading...';
+        sfContent.appendChild(sfStatus);
+        loadSFData();
+      }}, '↻');
+      sfHdr.appendChild(sfRefresh);
+    }
 
     if (!USER.sfToken) {
       // Not connected — show connect prompt inline
