@@ -2510,9 +2510,68 @@ function markDirty(vendor) {
   if (vendor._row) S.dirtyRows.set(vendor._row, vendor.name);
 }
 
+// ─── Structured Notes System ──────────────────────────────────────────────────
+// Notes stored as plain text with structured entries separated by "---" or double newline
+// Entry format: "YYYY-MM-DD [Tag] Author: content" OR legacy free text
+// Backward compatible — legacy entries display as-is
+
+const NOTE_TAGS = ['Call','Email','Meeting','Contract','Internal','Follow-up','Other'];
+const NOTE_TAG_COLORS = {
+  'Call':'#22c55e', 'Email':'#3b82f6', 'Meeting':'#a855f7',
+  'Contract':'#f59e0b', 'Internal':'#6b7280', 'Follow-up':'#f97316', 'Other':'#94a3b8'
+};
+
+function parseNoteEntries(notesStr) {
+  if (!notesStr || !String(notesStr).trim()) return [];
+  const raw = String(notesStr);
+  // Split on "---" separator OR double newline if entries look date-prefixed
+  const parts = raw.split(/\n---\n|\n─+\n/).map(p=>p.trim()).filter(Boolean);
+  if (parts.length === 1) {
+    // Legacy single blob — try to split on dated entries
+    const dated = raw.split(/(?=\d{4}-\d{2}-\d{2}[:\s\[])/);
+    if (dated.length > 1) return dated.map(p=>p.trim()).filter(Boolean).map(p=>parseNoteEntry(p));
+    return [{date:null,tag:null,author:null,content:raw.trim(),legacy:true}];
+  }
+  return parts.map(p=>parseNoteEntry(p));
+}
+
+function parseNoteEntry(text) {
+  // Try to parse: "YYYY-MM-DD [Tag] Author: content" or "YYYY-MM-DD: content"
+  const dateMatch = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  const tagMatch = text.match(/\[([^\]]+)\]/);
+  const authorMatch = text.match(/\]\s+([^:]+):/);
+  const date = dateMatch ? dateMatch[1] : null;
+  const tag = tagMatch ? tagMatch[1] : null;
+  const author = authorMatch ? authorMatch[1].trim() : null;
+  // Strip the header prefix to get just the content
+  let content = text;
+  if (date) content = content.replace(/^\d{4}-\d{2}-\d{2}/, '').trim();
+  if (tag) content = content.replace(/\[[^\]]+\]/, '').trim();
+  if (author) content = content.replace(author+':', '').trim();
+  content = content.replace(/^[:\s]+/, '').trim();
+  return {date, tag, author, content, legacy: !date};
+}
+
+function formatNewNoteEntry(content, tag, author) {
+  const date = isoDate(new Date());
+  const time = new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
+  const tagStr = tag ? ` [${tag}]` : '';
+  const authorStr = author ? ` ${author}:` : ':';
+  return `${date} ${time}${tagStr}${authorStr} ${content}`;
+}
+
+function prependStructuredNote(vendor, content, tag) {
+  const author = USER.name || USER.email || '';
+  const entry = formatNewNoteEntry(content, tag, author);
+  const sep = vendor.notes && vendor.notes.trim() ? '\n---\n' : '';
+  vendor.notes = entry + sep + (vendor.notes || '');
+}
+
+// ─── Original note functions (updated to use structured format) ───────────────
 function prependNote(vendor, text) {
   const entry = `${isoDate(new Date())}: ${text}`;
-  vendor.notes = vendor.notes ? `${entry}\n\n${vendor.notes}` : entry;
+  const sep = vendor.notes && vendor.notes.trim() ? '\n---\n' : '';
+  vendor.notes = entry + sep + (vendor.notes || '');
   if (vendor.source !== 'itw') markDirty(vendor);
 }
 
@@ -3188,8 +3247,17 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
   if (vendor.source==='itw') {
     addEditableSection(body,'Pipeline Details',vendor,[
-      ['Status','vendorStatus'],['Section','section'],['Category','category'],
-      ['Contact','contact'],['Phone','phone'],['Email','email'],
+      ['Vendor Status','vendorStatus'],['Section','section'],
+      ['Category','category'],['Sub-Category','subCategory'],
+      ['Product / Description','product'],
+      ['Markets Serviced','markets'],
+      ['Website','website'],
+      ['Added Value','addedValue'],
+      ['About / Background','about'],
+    ]);
+    addEditableSection(body,'Contact (In The Works)',vendor,[
+      ['Contact Name','contact'],['Business Phone','phone'],
+      ['Mobile','mobile'],['Email','email'],
     ]);
     // Promote to Vendor DB button — only if not already in PSD
     if (!psdVendor) {
@@ -4252,13 +4320,13 @@ const ROLE_PERMS = {
     editAll:true,manageUsers:true,deleteHistory:true,configAI:true,configDrive:true,configSF:true,
     exportData:true,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,
     viewFees:true,viewContacts:true,viewFinancials:true,canCopy:true,
-    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'compare', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings'],
+    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'compare', 'sfboard', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings'],
   },
   procurement: {
     editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,
     exportData:false,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,
     viewFees:true,viewContacts:true,viewFinancials:true,canCopy:false,
-    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'compare', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings'],settingsPersonalOnly:true,
+    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'compare', 'sfboard', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings'],settingsPersonalOnly:true,
   },
   cro: {
     editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,
@@ -5188,13 +5256,143 @@ function addNotesSection(body, vendor, title) {
   hdr.appendChild(el('h4',{class:'detail-sec-title',style:{marginBottom:'0'}},title||'📝 Notes'));
   if (hasPermission('editNotes')) {
     const btnGrp=el('div',{style:{display:'flex',gap:'3px'}});
-    btnGrp.appendChild(el('button',{class:'btn-xs btn-green',onclick(){openNoteModal(vendor);}},'+ Add'));
-    btnGrp.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){openEditNotesModal(vendor);}},'✏ Edit'));
+    btnGrp.appendChild(el('button',{class:'btn-xs btn-green',onclick(){openStructuredNoteModal(vendor);}},'+ Add'));
+    btnGrp.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){openEditNotesModal(vendor);}},'✏ Edit Raw'));
     hdr.appendChild(btnGrp);
-  } sec.appendChild(hdr);
-  const nd=el('div',{class:'notes-area',style:{marginTop:'4px'}});
-  renderNotesStr(nd, vendor.notes);
-  sec.appendChild(nd); body.appendChild(sec);
+  }
+  sec.appendChild(hdr);
+
+  const entries = parseNoteEntries(vendor.notes);
+  if (!entries.length) {
+    sec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',padding:'6px 0',fontStyle:'italic'}},'No notes yet. Click + Add to start tracking activity.'));
+    body.appendChild(sec); return;
+  }
+
+  const list=el('div',{style:{marginTop:'4px',display:'flex',flexDirection:'column',gap:'4px'}});
+
+  entries.forEach((entry,idx)=>{
+    const isFirst = idx===0;
+    const card=el('div',{style:{
+      border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden',
+      borderLeft:'3px solid '+(entry.tag?NOTE_TAG_COLORS[entry.tag]||'var(--border)':'var(--border)'),
+    }});
+
+    // Entry header (always visible)
+    const entryHdr=el('div',{style:{
+      display:'flex',gap:'6px',alignItems:'center',padding:'5px 8px',
+      background:isFirst?'rgba(34,197,94,.04)':'var(--sb)',cursor:'pointer',
+      userSelect:'none',
+    }});
+
+    if(entry.date){
+      entryHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'70px'}},entry.date));
+    } else {
+      entryHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'70px'}},'(no date)'));
+    }
+    if(entry.tag){
+      const tagEl=el('span',{style:{fontSize:'8px',fontWeight:'700',padding:'1px 5px',borderRadius:'3px',background:(NOTE_TAG_COLORS[entry.tag]||'#94a3b8')+'22',color:NOTE_TAG_COLORS[entry.tag]||'#94a3b8'}},entry.tag.toUpperCase());
+      entryHdr.appendChild(tagEl);
+    }
+    if(entry.author){
+      entryHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},entry.author));
+    }
+
+    // Preview — first line of content
+    const previewText = entry.content.split('\n')[0].slice(0,80)+(entry.content.length>80||entry.content.includes('\n')?'…':'');
+    const preview=el('span',{style:{fontSize:'10px',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text)'}},previewText);
+    entryHdr.appendChild(preview);
+
+    const chevron=el('span',{style:{fontSize:'9px',color:'var(--muted)',flexShrink:'0'}},isFirst?'▼':'▶');
+    entryHdr.appendChild(chevron);
+
+    // Entry body (collapsible, first entry expanded)
+    const entryBody=el('div',{style:{padding:'6px 10px',background:'var(--bg)',display:isFirst?'block':'none'}});
+    const nd=el('div',{class:'notes-area',style:{fontSize:'10px',lineHeight:'1.6'}});
+    renderNotesStr(nd, entry.content);
+    entryBody.appendChild(nd);
+
+    entryHdr.onclick=()=>{
+      const open=entryBody.style.display!=='none';
+      entryBody.style.display=open?'none':'block';
+      chevron.textContent=open?'▶':'▼';
+    };
+
+    card.appendChild(entryHdr);
+    card.appendChild(entryBody);
+    list.appendChild(card);
+  });
+
+  // Show/hide older entries if more than 3
+  if(entries.length>3){
+    const showBtn=el('button',{class:'btn-xs btn-ghost',style:{width:'100%',marginTop:'2px',fontSize:'9px'},onclick(){
+      const allCards=[...list.querySelectorAll('div[style*="border-left"]')];
+      const hidden=allCards.slice(3);
+      const anyHidden=hidden[0]?.style.display==='none';
+      hidden.forEach(c=>c.style.display=anyHidden?'':'none');
+      showBtn.textContent=anyHidden?'▲ Show less':'▼ Show '+(entries.length-3)+' older entries';
+    }},'▼ Show '+(entries.length-3)+' older entries');
+    // Hide entries after 3 by default
+    [...list.querySelectorAll('div[style*="border-left"]')].slice(3).forEach(c=>c.style.display='none');
+    list.appendChild(showBtn);
+  }
+
+  sec.appendChild(list);
+  body.appendChild(sec);
+}
+
+// Structured note add modal — tag picker + content + optional follow-up
+function openStructuredNoteModal(vendor) {
+  openModal(body=>{
+    body.appendChild(el('h3',{style:{marginTop:'0',marginBottom:'4px'}},'+ Add Note — '+vendor.name));
+
+    // Tag picker
+    body.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'4px'}},'Type:'));
+    let selectedTag='Call';
+    const tagRow=el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'8px'}});
+    NOTE_TAGS.forEach(tag=>{
+      const color=NOTE_TAG_COLORS[tag];
+      const btn=el('button',{
+        class:'col-toggle-btn'+(tag===selectedTag?' on':''),
+        style:{borderColor:tag===selectedTag?color:'',color:tag===selectedTag?color:''},
+        onclick(){
+          selectedTag=tag;
+          tagRow.querySelectorAll('button').forEach(b=>{b.classList.remove('on');b.style.borderColor='';b.style.color='';});
+          btn.classList.add('on'); btn.style.borderColor=color; btn.style.color=color;
+        }
+      },tag);
+      tagRow.appendChild(btn);
+    });
+    body.appendChild(tagRow);
+
+    // Note content
+    body.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'4px'}},'Note:'));
+    const ta=el('textarea',{class:'modal-textarea',style:{height:'120px'},placeholder:'What happened? Key points, outcomes, next steps...'});
+    body.appendChild(ta);
+
+    // Follow-up date
+    const fuRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginTop:'8px',marginBottom:'4px'}});
+    fuRow.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'Set follow-up:'));
+    const fuIn=el('input',{type:'date',class:'detail-edit-field',style:{flex:'1'}});
+    fuIn.value=vendor.followUp?isoDate(parseDate(vendor.followUp)):'';
+    fuRow.appendChild(fuIn);
+    body.appendChild(fuRow);
+
+    const btns=el('div',{class:'modal-btns',style:{marginTop:'10px'}});
+    btns.appendChild(el('button',{class:'btn-primary',onclick(){
+      const content=ta.value.trim();
+      if(!content){toast('Enter a note first','#f59e0b');return;}
+      prependStructuredNote(vendor, content, selectedTag);
+      if(fuIn.value){vendor.followUp=new Date(fuIn.value+'T12:00:00');}
+      if(vendor.source==='itw'){vendor._dirty=true;if(!S.dirtyITW)S.dirtyITW=new Set();S.dirtyITW.add(vendor._row);}
+      else{markDirty(vendor);}
+      logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendor.name,action:'Note Added ['+selectedTag+']',note:content.slice(0,60)});
+      saveSessionState(); updateSidebar(); refreshDetailIfOpen(vendor); render(); closeModal();
+      toast('📝 '+selectedTag+' note saved');
+    }},'Save Note'));
+    btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
+    body.appendChild(btns);
+    setTimeout(()=>ta.focus(),50);
+  });
 }
 
 function showDetailPanel() {
@@ -6091,6 +6289,162 @@ ${section('📋 All Active Vendors','#2563eb',vs)}
 }
 
 function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+// ─── Salesforce Dashboard Board ───────────────────────────────────────────────
+function renderSFBoard(c) {
+  c.innerHTML='';
+  const wrap=el('div',{style:{maxWidth:'1100px',margin:'0 auto',padding:'12px 0'}});
+  wrap.appendChild(el('h2',{style:{margin:'0 0 4px 0',fontSize:'16px',fontWeight:'700'}},'☁ Salesforce Board'));
+  wrap.appendChild(el('p',{style:{margin:'0 0 12px 0',fontSize:'10px',color:'var(--muted)'}},'Live view across all vendors — open opportunities, cases, and tasks pulled from Salesforce.'));
+
+  if(!USER.sfToken){
+    const banner=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'6px',padding:'20px',textAlign:'center'}});
+    banner.appendChild(el('div',{style:{fontSize:'24px',marginBottom:'8px'}},'☁'));
+    banner.appendChild(el('p',{style:{fontWeight:'600',marginBottom:'4px'}},'Connect Salesforce to use this view'));
+    banner.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'12px'}},'Set up your Connected App Client ID in Settings, then connect.'));
+    const row=el('div',{style:{display:'flex',gap:'8px',justifyContent:'center'}});
+    row.appendChild(el('button',{class:'btn-primary',onclick(){if(!S.settings.sfClientId){S.view='settings';render();toast('Set your Salesforce Client ID in Settings first','#f59e0b');}else{sfConnect();}}},'🔗 Connect Salesforce'));
+    row.appendChild(el('button',{class:'btn-secondary',onclick(){S.view='settings';render();}},'⚙ Settings'));
+    banner.appendChild(row); wrap.appendChild(banner); c.appendChild(wrap); return;
+  }
+
+  // State for SF board
+  if(!S._sfBoard) S._sfBoard={loading:false,data:null,error:null,lastLoaded:null};
+  const sb=S._sfBoard;
+
+  const toolbar=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'12px'}});
+  const loadBtn=el('button',{class:'btn-primary',onclick(){loadSFBoard();}},sb.loading?'⏳ Loading...':'🔄 Load / Refresh');
+  if(sb.loading) loadBtn.disabled=true;
+  toolbar.appendChild(loadBtn);
+  if(sb.lastLoaded) toolbar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Last loaded: '+sb.lastLoaded));
+  wrap.appendChild(toolbar);
+
+  if(sb.error) wrap.appendChild(el('div',{style:{color:'var(--red)',fontSize:'10px',padding:'8px',background:'rgba(239,68,68,.06)',borderRadius:'4px',marginBottom:'8px'}},sb.error));
+
+  if(sb.data){
+    const {opps,cases,tasks}=sb.data;
+    const _fin=['admin','procurement','manager','cro','finance_sr','finance_jr'].includes(USER.role);
+
+    // KPI row
+    const kpiRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'8px',marginBottom:'16px'}});
+    const totalOppVal=opps.reduce((s,o)=>s+(o.Amount||0),0);
+    [
+      {label:'Open Opportunities',val:opps.length,color:'var(--blue)',show:_fin},
+      {label:'Pipeline Value',val:_fin?'$'+totalOppVal.toLocaleString():'—',color:'var(--green)',show:true},
+      {label:'Open Cases',val:cases.length,color:cases.filter(c=>c.Priority==='High').length?'var(--red)':'var(--amber)',show:true},
+      {label:'Open Tasks',val:tasks.length,color:'var(--muted)',show:true},
+    ].filter(k=>k.show).forEach(k=>{
+      const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px',textAlign:'center'}});
+      card.appendChild(el('div',{style:{fontSize:'22px',fontWeight:'700',color:k.color}},k.val));
+      card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px'}},k.label));
+      kpiRow.appendChild(card);
+    });
+    wrap.appendChild(kpiRow);
+
+    // Columns layout
+    const cols=el('div',{style:{display:'grid',gridTemplateColumns:_fin?'1fr 1fr 1fr':'1fr 1fr',gap:'12px'}});
+
+    if(_fin && opps.length){
+      const col=el('div',{});
+      col.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'6px',color:'var(--blue)'}},'💰 Open Opportunities ('+opps.length+')'));
+      opps.sort((a,b)=>(b.Amount||0)-(a.Amount||0)).forEach(opp=>{
+        const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'4px',padding:'8px',marginBottom:'4px',cursor:'pointer'},onclick(){
+          const v=S.vendors.find(v=>v.sfAccountId===opp._accountId||findPSDVendor(opp._accountName));
+          if(v) openDetail(v);
+        }});
+        card.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px'}},opp.Name));
+        card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},[
+          opp._accountName?el('span',{style:{color:'var(--blue)'}},opp._accountName+' · '):'',
+          opp.StageName,
+          opp.Amount?el('span',{style:{color:'var(--green)',marginLeft:'8px',fontWeight:'600'}},' $'+Number(opp.Amount).toLocaleString()):'',
+          opp.CloseDate?el('span',{style:{color:'var(--muted)',marginLeft:'8px',fontSize:'8px'}},' closes '+new Date(opp.CloseDate).toLocaleDateString()):'',
+        ].filter(Boolean)));
+        col.appendChild(card);
+      });
+      cols.appendChild(col);
+    }
+
+    if(cases.length){
+      const col=el('div',{});
+      col.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'6px',color:'var(--amber)'}},'🎫 Open Cases ('+cases.length+')'));
+      const sortedCases=[...cases].sort((a,b)=>{const p={High:0,Medium:1,Low:2};return (p[a.Priority]??3)-(p[b.Priority]??3);});
+      sortedCases.forEach(c2=>{
+        const prioColor=c2.Priority==='High'?'var(--red)':c2.Priority==='Medium'?'var(--amber)':'var(--muted)';
+        const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderLeft:'3px solid '+(prioColor),borderRadius:'4px',padding:'8px',marginBottom:'4px'}});
+        card.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px'}},c2.Subject||c2.CaseNumber));
+        const meta=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px',display:'flex',gap:'8px'}});
+        if(c2._accountName) meta.appendChild(el('span',{style:{color:'var(--blue)'}},c2._accountName));
+        meta.appendChild(el('span',{},c2.Status));
+        if(c2.Priority) meta.appendChild(el('span',{style:{color:prioColor,fontWeight:'600'}},c2.Priority));
+        card.appendChild(meta);
+        col.appendChild(card);
+      });
+      cols.appendChild(col);
+    }
+
+    if(tasks.length){
+      const col=el('div',{});
+      col.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'6px',color:'var(--muted)'}},'✅ Open Tasks ('+tasks.length+')'));
+      const now=new Date();
+      const sortedTasks=[...tasks].sort((a,b)=>new Date(a.ActivityDate||'2099')-new Date(b.ActivityDate||'2099'));
+      sortedTasks.forEach(task=>{
+        const daysLeft=task.ActivityDate?Math.ceil((new Date(task.ActivityDate)-now)/86400000):null;
+        const urgColor=daysLeft!==null&&daysLeft<0?'var(--red)':daysLeft!==null&&daysLeft<=3?'var(--amber)':'var(--border)';
+        const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderLeft:'3px solid '+urgColor,borderRadius:'4px',padding:'8px',marginBottom:'4px'}});
+        card.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px'}},task.Subject||'(no subject)'));
+        const meta=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px',display:'flex',gap:'8px'}});
+        if(task._accountName) meta.appendChild(el('span',{style:{color:'var(--blue)'}},task._accountName));
+        if(task.ActivityDate) meta.appendChild(el('span',{style:{color:urgColor}},new Date(task.ActivityDate).toLocaleDateString()+(daysLeft<0?' (overdue)':daysLeft===0?' (today)':'')));
+        if(task.Owner?.Name) meta.appendChild(el('span',{},task.Owner.Name));
+        card.appendChild(meta);
+        col.appendChild(card);
+      });
+      cols.appendChild(col);
+    }
+
+    if(!opps.length&&!cases.length&&!tasks.length){
+      wrap.appendChild(el('p',{style:{color:'var(--green)',fontSize:'12px',textAlign:'center',padding:'30px'}},'✅ No open opportunities, cases, or tasks across all vendors.'));
+    } else {
+      wrap.appendChild(cols);
+    }
+  } else if(!sb.loading){
+    wrap.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'11px',textAlign:'center',padding:'30px'}},'Click "Load / Refresh" to fetch live data from Salesforce across all your vendors.'));
+  }
+
+  c.appendChild(wrap);
+
+  async function loadSFBoard(){
+    sb.loading=true; sb.error=null; render();
+    try{
+      // Get active PSD vendors with names
+      const activeVendors=S.vendors.filter(isVisible).slice(0,50); // limit to avoid SOQL length limits
+      const nameList=activeVendors.map(v=>v.name.replace(/'/g,"\\'")).join("','");
+      const [acctResult,openCases,openTasks]=await Promise.all([
+        sfQuery("SELECT Id,Name,(SELECT Id,Name,StageName,Amount,CloseDate FROM Opportunities WHERE IsClosed=false ORDER BY Amount DESC LIMIT 3),(SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Cases WHERE Status!='Closed' ORDER BY CreatedDate DESC LIMIT 3),(SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM OpenActivities ORDER BY ActivityDate ASC LIMIT 3) FROM Account WHERE Name IN ('"+nameList+"') LIMIT 50"),
+        sfQuery("SELECT Id,Subject,Status,Priority,CreatedDate,Account.Name FROM Case WHERE Status!='Closed' AND Account.Name IN ('"+nameList+"') ORDER BY Priority,CreatedDate DESC LIMIT 30"),
+        sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name,Account.Name FROM Task WHERE IsClosed=false AND Account.Name IN ('"+nameList+"') ORDER BY ActivityDate ASC LIMIT 30"),
+      ]);
+
+      const opps=[], cases=[], tasks=[];
+      // Extract from nested query results
+      acctResult?.records?.forEach(acct=>{
+        (acct.Opportunities?.records||[]).forEach(o=>opps.push({...o,_accountName:acct.Name,_accountId:acct.Id}));
+        (acct.Cases?.records||[]).forEach(c2=>cases.push({...c2,_accountName:acct.Name}));
+        (acct.OpenActivities?.records||[]).forEach(t=>tasks.push({...t,_accountName:acct.Name}));
+      });
+      // Also merge flat results
+      openCases?.records?.forEach(c2=>{if(!cases.find(x=>x.Id===c2.Id))cases.push({...c2,_accountName:c2.Account?.Name});});
+      openTasks?.records?.forEach(t=>{if(!tasks.find(x=>x.Id===t.Id))tasks.push({...t,_accountName:t.Account?.Name});});
+
+      sb.data={opps,cases,tasks};
+      sb.lastLoaded=new Date().toLocaleTimeString();
+      sb.loading=false;
+      render();
+    }catch(e){
+      sb.loading=false; sb.error='Failed to load: '+e.message; render();
+    }
+  }
+}
 
 // ─── Contract Comparison Tool ─────────────────────────────────────────────────
 // State persists within session
@@ -7206,7 +7560,7 @@ const NAV_DEFS=[
   ['vendordb','🗂','Vendor DB'],['network','🔗','Network Intel'],
   ['economics','💰','Contract Economics'],['tiers','📶','Tier Tracker'],
   ['itw','🔧','In The Works'],['reviews','📝','Reviews'],
-  ['compare','⚖️','Compare'],
+  ['compare','⚖️','Compare'],['sfboard','☁','SF Board'],
   ['calendar','📅','Calendar'],['forecast','📆','Forecast'],['analytics','📊','Analytics'],
   ['reports','📑','Reports'],['summary','📈','Summary'],['history','🕐','History'],
   ['datacheck','✅','Data Check'],['settings','⚙','Settings'],
@@ -10831,6 +11185,7 @@ function render() {
     case 'economics':renderContractEconomics(content);break;
     case 'tiers':renderTierTracker(content);break;
     case 'itw':renderITW(content);break;case 'reviews':renderReviews(content);break;case 'calendar':renderCalendar(content);break;
+    case 'sfboard':renderSFBoard(content);break;
     case 'compare':renderContractCompare(content);break;
     case 'forecast':renderForecast(content);break;case 'analytics':renderAnalytics(content);break;case 'summary':renderSummary(content);break;
     case 'reports':renderReports(content);break;
