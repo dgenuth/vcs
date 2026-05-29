@@ -3156,6 +3156,27 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     body.appendChild(badge);
   }
 
+  // ── Review-only record (no PSD match, opened from Reviews tab) ──
+  if (vendor.source==='review' && vendor._reviewRecord) {
+    const r = vendor._reviewRecord;
+    const rSec=el('div',{class:'detail-section'});
+    rSec.appendChild(el('h4',{class:'detail-sec-title'},'📝 Review Record'));
+    if(r.date) rSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'4px'}},'Review date: '+fmtDate(r.date)));
+    if(r.progressNotes){
+      rSec.appendChild(el('div',{style:{fontSize:'9px',color:'var(--blue)',fontWeight:'600',marginBottom:'3px'}},'PROGRESS NOTES'));
+      const nd=el('div',{class:'notes-area'});renderNotesStr(nd,r.progressNotes);rSec.appendChild(nd);
+    }
+    if(r.sfNotes){
+      rSec.appendChild(el('div',{style:{fontSize:'9px',color:'var(--blue)',fontWeight:'600',margin:'6px 0 3px'}},'SF / MEETING NOTES'));
+      const nd=el('div',{class:'notes-area'});renderNotesStr(nd,r.sfNotes);rSec.appendChild(nd);
+    }
+    if(r.contractNotes){
+      rSec.appendChild(el('div',{style:{fontSize:'9px',color:'var(--blue)',fontWeight:'600',margin:'6px 0 3px'}},'CONTRACT NOTES'));
+      const nd=el('div',{class:'notes-area'});renderNotesStr(nd,r.contractNotes);rSec.appendChild(nd);
+    }
+    body.appendChild(rSec);
+  }
+
   if (vendor.source==='itw') {
     addEditableSection(body,'Pipeline Details',vendor,[
       ['Status','vendorStatus'],['Section','section'],['Category','category'],
@@ -8012,22 +8033,20 @@ function makeReviewNoteCell(r, txt, fieldName, label) {
   return wrap;
 }
 
-// Open a mini detail panel for a review record that has no PSD match
+// Open detail for a review record that has no PSD match — shows alias link option
 function openReviewDetail(r) {
-  openModal(body=>{
-    body.appendChild(el('h3',{},r.name));
-    body.appendChild(el('p',{class:'modal-sub'},`Review record — no contract found in Prime Source Direct`));
-    if (r.date) body.appendChild(el('p',{style:{fontSize:'11px',marginBottom:'6px'}},`Review date: ${fmtDate(r.date)}`));
-    if (r.sfNotes) {
-      body.appendChild(el('h4',{style:{fontSize:'10px',color:'var(--muted)',margin:'8px 0 3px'}},'SF / Meeting Notes'));
-      const nd=el('div',{class:'notes-area'});renderNotesStr(nd,r.sfNotes);body.appendChild(nd);
-    }
-    if (r.contractNotes) {
-      body.appendChild(el('h4',{style:{fontSize:'10px',color:'var(--muted)',margin:'8px 0 3px'}},'Contract Notes'));
-      const nd=el('div',{class:'notes-area'});renderNotesStr(nd,r.contractNotes);body.appendChild(nd);
-    }
-    body.appendChild(el('div',{class:'modal-btns'},el('button',{class:'btn-secondary',onclick:closeModal},'Close')));
-  });
+  // Build a minimal vendor-shaped object from the review record so openDetail can render it
+  // This gives the alias banner, link button, and notes all in one panel
+  const asVendor = {
+    name: r.name,
+    source: 'review',
+    _reviewRecord: r,
+    notes: r.sfNotes || r.contractNotes || r.progressNotes || '',
+    category: r.category || '',
+    _row: r._row,
+    _dirty: false,
+  };
+  openDetail(asVendor);
 }
 
 // ─── iCal Export (.ics) ───────────────────────────────────────────────────────
