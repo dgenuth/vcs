@@ -3100,15 +3100,22 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   const _linkedToName = S.vendorAliases[_aliasKey];
   const _linkedPSD = _linkedToName ? S.vendors.find(v=>vendorNamesMatch(v.name,_linkedToName)) : null;
   if (_linkedPSD && vendor.source !== 'psd') {
+    // Already linked — open the full PSD record directly instead of this wrapper
+    // (This handles the case where openDetail was called with the review/ITW object)
+    // Show a brief redirect notice then open the full record
     const aliasNotice=el('div',{style:{background:'rgba(99,102,241,.08)',border:'1px solid rgba(99,102,241,.2)',borderRadius:'5px',padding:'7px 10px',marginBottom:'8px',display:'flex',gap:'8px',alignItems:'center'}});
     aliasNotice.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},'🔗 Linked to:'));
     aliasNotice.appendChild(el('span',{class:'vendor-link',style:{fontWeight:'600',color:'var(--blue)'},onclick(){openDetail(_linkedPSD);}},_linkedPSD.name));
-    const unlinkBtn=el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'auto',fontSize:'9px'},onclick(){
+    aliasNotice.appendChild(el('button',{class:'btn-xs btn-primary',style:{marginLeft:'auto',fontSize:'9px'},onclick(){openDetail(_linkedPSD);}}, '→ Open Full Record'));
+    const unlinkBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){
       delete S.vendorAliases[_aliasKey];
-      saveSessionState(); openDetail(vendor,fromAnalytics,false); toast('✓ Link removed');
+      saveSessionState(); render(); closeDetail(); toast('✓ Link removed');
     }},'✕ Unlink');
     aliasNotice.appendChild(unlinkBtn);
     body.appendChild(aliasNotice);
+    // Auto-redirect to full record after a brief moment
+    setTimeout(()=>{ closeDetail(); openDetail(_linkedPSD); }, 150);
+    return; // Don't render the stub panel — redirect immediately
   } else if (!psdVendor && vendor.source !== 'psd' && _canAct) {
     // No PSD match — offer to link
     const linkBanner=el('div',{style:{background:'rgba(245,158,11,.06)',border:'1px solid rgba(245,158,11,.2)',borderRadius:'5px',padding:'7px 10px',marginBottom:'8px',display:'flex',gap:'8px',alignItems:'center'}});
@@ -5432,8 +5439,9 @@ function openVendorAliasModal(vendor) {
       if(vendorInPSD){ vendorInPSD.vendorAliasOf=selectedVendor.name; markDirty(vendorInPSD); }
       saveSessionState();
       closeModal();
-      openDetail(vendor, false, false);
-      toast('✓ "'+vendor.name+'" linked to "'+selectedVendor.name+'"');
+      render(); // Redraw so Reviews/ITW tabs immediately show the linked state
+      openDetail(selectedVendor, false, false); // Open the FULL PSD record directly
+      toast('✓ "'+vendor.name+'" linked to "'+selectedVendor.name+'" — showing full record');
     }},'✓ Confirm Link');
     btns.appendChild(confirmBtn);
     btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
@@ -8084,19 +8092,34 @@ function renderReviews(c) {
     ['Vendor','Date','Action','Review Progress Notes','SF / Meeting Notes','Contract Notes'],
     reviews,
     r=>{
-      // Use fuzzy match — "Nestle" finds "Nestle Health Science"
-      const psd=findPSDVendor(r.name);
-      // Always make name clickable; if PSD found, open full detail; else open review mini-panel
-      const nameEl = psd
-        ? vLink(psd, r.name)
-        : el('span',{class:'vendor-link',style:{color:'var(--muted)'},onclick(){openReviewDetail(r);}},r.name);
-      if (psd && psd.name !== r.name) {
-        // Show matched name hint
-        const hint=el('div',{style:{fontSize:'8px',color:'var(--muted)'}},`→ ${psd.name}`);
-        const wrap=el('span',{}); wrap.appendChild(nameEl); wrap.appendChild(hint);
-        // Re-package
-        const noteCell=(txt,fieldName,label)=>makeReviewNoteCell(r,txt,fieldName,label);
-        return [wrap,makeReviewDateCell(r),makeReviewActionCell(r),noteCell(r.progressNotes,'progressNotes','Progress Notes'),noteCell(r.sfNotes,'sfNotes','SF Notes'),noteCell(r.contractNotes,'contractNotes','Contract Notes')];
+      // Check exact match first, then alias resolution
+      const psd = findPSDVendor(r.name);
+      // Check if there's an alias link even if findPSDVendor returned null
+      const aliasKey = normName(r.name);
+      const aliasedName = S.vendorAliases[aliasKey];
+      const aliasedPSD = !psd && aliasedName ? S.vendors.find(v=>vendorNamesMatch(v.name,aliasedName)) : null;
+      const resolvedPSD = psd || aliasedPSD;
+
+      let nameEl;
+      if (resolvedPSD) {
+        // Known vendor — show in normal color, open full detail on click
+        nameEl = vLink(resolvedPSD, r.name);
+        if (aliasedPSD) {
+          // Show alias indicator
+          const wrap=el('span',{});
+          wrap.appendChild(nameEl);
+          wrap.appendChild(el('div',{style:{fontSize:'8px',color:'var(--blue)'}},'🔗 → '+aliasedPSD.name));
+          nameEl = wrap;
+        } else if (resolvedPSD.name !== r.name) {
+          const wrap=el('span',{});
+          wrap.appendChild(nameEl);
+          wrap.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)'}},'→ '+resolvedPSD.name));
+          nameEl = wrap;
+        }
+      } else {
+        // No match — gray, opens review detail with alias link option
+        nameEl = el('span',{class:'vendor-link',style:{color:'var(--muted)'},onclick(){openReviewDetail(r);}},r.name);
+        nameEl.title = 'No Vendor DB match — click to link';
       }
       const noteCell=(txt,fieldName,label)=>makeReviewNoteCell(r,txt,fieldName,label);
       return [nameEl,makeReviewDateCell(r),makeReviewActionCell(r),noteCell(r.progressNotes,'progressNotes','Progress Notes'),noteCell(r.sfNotes,'sfNotes','SF Notes'),noteCell(r.contractNotes,'contractNotes','Contract Notes')];
