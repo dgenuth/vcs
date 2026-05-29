@@ -3499,10 +3499,13 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       console.log('[VCS SF] Loading:', vendor.name, '| ID:', vendor.sfAccountId||'none');
 
       let result=null;
-      if(vendor.sfAccountId) result=await sfQuery("SELECT Id,Name,Type,Phone,BillingCity,BillingState,AnnualRevenue,NumberOfEmployees,Owner.Name,LastModifiedDate FROM Account WHERE Id='"+vendor.sfAccountId+"' LIMIT 1");
-      if(!result?.records?.length) result=await sfQuery("SELECT Id,Name,Type,Phone,BillingCity,BillingState,AnnualRevenue,NumberOfEmployees,Owner.Name,LastModifiedDate FROM Account WHERE Name='"+nameEsc+"' LIMIT 3");
-      if(!result?.records?.length) result=await sfQuery("SELECT Id,Name,Type,Phone,BillingCity,BillingState,AnnualRevenue,NumberOfEmployees,Owner.Name,LastModifiedDate FROM Account WHERE Name LIKE '%"+nameEsc+"%' LIMIT 5");
-      if(!result?.records?.length){const fw=nameEsc.split(' ')[0];if(fw&&fw.length>3)result=await sfQuery("SELECT Id,Name,Type,Phone,BillingCity,BillingState,Owner.Name,LastModifiedDate FROM Account WHERE Name LIKE '%"+fw+"%' LIMIT 5");}
+      // Your SF uses custom Vendor__c object, not standard Account
+      const vFields="SELECT Id,Name,Vendor_Type__c,Business_Phone__c,Mobile_Number__c,Vendor_Alias__c,PPD__c,Category_Type__c,Admin_Fee__c,Rebates__c,MFR_Rebates__c,SSA_Notes__c,Notes__c,LastModifiedDate,Owner.Name FROM Vendor__c";
+      if(vendor.sfAccountId) result=await sfQuery(vFields+" WHERE Id='"+vendor.sfAccountId+"' LIMIT 1");
+      if(!result?.records?.length) result=await sfQuery(vFields+" WHERE Name='"+nameEsc+"' LIMIT 3");
+      if(!result?.records?.length) result=await sfQuery(vFields+" WHERE Name LIKE '%"+nameEsc+"%' LIMIT 5");
+      if(!result?.records?.length) result=await sfQuery(vFields+" WHERE Vendor_Alias__c LIKE '%"+nameEsc+"%' LIMIT 5");
+      if(!result?.records?.length){const fw=nameEsc.split(' ')[0];if(fw&&fw.length>3)result=await sfQuery(vFields+" WHERE Name LIKE '%"+fw+"%' LIMIT 5");}
 
       sfWrap.innerHTML='';
 
@@ -3546,34 +3549,46 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
       const acct=result.records[0];
       if(!vendor.sfAccountId&&acct.Id){vendor.sfAccountId=acct.Id;markDirty(vendor);saveSessionState();}
-      console.log('[VCS SF] Matched:', acct.Name);
+      console.log('[VCS SF] Matched Vendor__c:', acct.Name);
 
-      // Matched-as banner
+      // Matched-as banner if name differs
       if(acct.Name&&acct.Name.toLowerCase()!==vendor.name.toLowerCase())
-        sfWrap.appendChild(el('div',{style:{fontSize:'9px',color:'var(--blue)',background:'rgba(59,130,246,.06)',padding:'3px 7px',borderRadius:'3px',marginBottom:'5px'}},'Matched SF Account: "'+acct.Name+'"'));
+        sfWrap.appendChild(el('div',{style:{fontSize:'9px',color:'var(--blue)',background:'rgba(59,130,246,.06)',padding:'3px 7px',borderRadius:'3px',marginBottom:'5px'}},'Matched SF Vendor: "'+acct.Name+'"'));
 
-      // Account card
+      // Vendor card with Vendor__c fields
       const card=el('div',{style:{background:'rgba(79,124,255,.05)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px',padding:'7px 9px',marginBottom:'6px'}});
       const top=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'4px'}});
       top.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',color:'var(--blue)',flex:'1'}},acct.Name));
-      if(acct.Type) top.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(79,124,255,.15)',color:'var(--blue)',padding:'1px 6px',borderRadius:'3px'}},acct.Type));
-      // Refresh button
+      if(acct.Vendor_Type__c) top.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(79,124,255,.15)',color:'var(--blue)',padding:'1px 6px',borderRadius:'3px'}},acct.Vendor_Type__c));
       top.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(e){e.stopPropagation();doLoadSF();}}, '↻'));
       card.appendChild(top);
       const grid=el('div',{class:'detail-grid'});
       const fin=['admin','procurement','manager','cro','finance_sr','finance_jr'].includes(USER.role);
-      [['Phone',acct.Phone],['Location',[acct.BillingCity,acct.BillingState].filter(Boolean).join(', ')],
-       ...(fin?[['Revenue',acct.AnnualRevenue?'$'+Number(acct.AnnualRevenue).toLocaleString():'—'],['Employees',acct.NumberOfEmployees?.toLocaleString()]]:[]),
-       ['Owner',acct.Owner?.Name],['Last Modified',acct.LastModifiedDate?new Date(acct.LastModifiedDate).toLocaleDateString():'—']
+      [
+        ['Phone',acct.Business_Phone__c],
+        ['Mobile',acct.Mobile_Number__c],
+        ['Category',acct.Category_Type__c],
+        ...(fin?[['PPD',acct.PPD__c?'$'+acct.PPD__c:''],['Admin Fee',acct.Admin_Fee__c],['Rebates',acct.Rebates__c?'Yes':''],['MFR Rebates',acct.MFR_Rebates__c]]:[]),
+        ['Owner',acct.Owner?.Name],
+        ['Last Modified',acct.LastModifiedDate?new Date(acct.LastModifiedDate).toLocaleDateString():'—'],
+        ['SF Notes',acct.SSA_Notes__c],
       ].forEach(([l,v])=>{if(v){grid.appendChild(el('span',{class:'detail-label'},l));grid.appendChild(el('span',{class:'detail-value'},String(v)));}});
+      if(acct.Notes__c){
+        grid.appendChild(el('span',{class:'detail-label',style:{gridColumn:'1 / -1'}},'Notes'));
+        grid.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',gridColumn:'1 / -1'}},acct.Notes__c));
+      }
       card.appendChild(grid);
       sfWrap.appendChild(card);
 
       const accId=acct.Id;
+      // Opportunities and Cases link to Vendor__c, not AccountId
       const [opps,cases,tasks,spend]=await Promise.all([
-        sfQuery("SELECT Id,Name,StageName,Amount,CloseDate FROM Opportunity WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 5"),
-        sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Case WHERE AccountId='"+accId+"' ORDER BY CreatedDate DESC LIMIT 5"),
-        sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM Task WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5"),
+        sfQuery("SELECT Id,Name,StageName,Amount__c,CloseDate FROM Opportunity WHERE Vendor__c='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 5").catch(()=>
+          sfQuery("SELECT Id,Name,StageName,Amount,CloseDate FROM Opportunity WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 5")),
+        sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Case WHERE Vendor__c='"+accId+"' ORDER BY CreatedDate DESC LIMIT 5").catch(()=>
+          sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Case WHERE AccountId='"+accId+"' ORDER BY CreatedDate DESC LIMIT 5")),
+        sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM Task WHERE Vendor__c='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5").catch(()=>
+          sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM Task WHERE WhatId='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5")),
         sfQuery("SELECT Id,Name,Reported_Date__c,Category__c,Amount__c FROM Spend__c WHERE Vendor__c='"+accId+"' ORDER BY Reported_Date__c DESC LIMIT 6").catch(()=>({records:[]})),
       ]);
       console.log('[VCS SF] Opps:',opps?.records?.length||0,'Cases:',cases?.records?.length||0,'Tasks:',tasks?.records?.length||0,'Spend:',spend?.records?.length||0);
@@ -6628,24 +6643,22 @@ function renderSFBoard(c) {
     sb.loading=true; sb.error=null; render();
     try{
       // Get active PSD vendors with names
-      const activeVendors=S.vendors.filter(isVisible).slice(0,50); // limit to avoid SOQL length limits
+      const activeVendors=S.vendors.filter(isVisible).slice(0,50);
       const nameList=activeVendors.map(v=>v.name.replace(/'/g,"\\'")).join("','");
-      const [acctResult,openCases,openTasks]=await Promise.all([
-        sfQuery("SELECT Id,Name,(SELECT Id,Name,StageName,Amount,CloseDate FROM Opportunities WHERE IsClosed=false ORDER BY Amount DESC LIMIT 3),(SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Cases WHERE Status!='Closed' ORDER BY CreatedDate DESC LIMIT 3),(SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM OpenActivities ORDER BY ActivityDate ASC LIMIT 3) FROM Account WHERE Name IN ('"+nameList+"') LIMIT 50"),
-        sfQuery("SELECT Id,Subject,Status,Priority,CreatedDate,Account.Name FROM Case WHERE Status!='Closed' AND Account.Name IN ('"+nameList+"') ORDER BY Priority,CreatedDate DESC LIMIT 30"),
-        sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name,Account.Name FROM Task WHERE IsClosed=false AND Account.Name IN ('"+nameList+"') ORDER BY ActivityDate ASC LIMIT 30"),
+      // Query Vendor__c (custom object), with nested Opportunities and Cases
+      const [vendorResult,openCases,openTasks]=await Promise.all([
+        sfQuery("SELECT Id,Name,(SELECT Id,Name,StageName,Amount,CloseDate FROM Opportunities__r WHERE IsClosed=false ORDER BY Amount DESC LIMIT 3),(SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Cases__r WHERE Status!='Closed' ORDER BY CreatedDate DESC LIMIT 3) FROM Vendor__c WHERE Name IN ('"+nameList+"') LIMIT 50"),
+        sfQuery("SELECT Id,Subject,Status,Priority,CreatedDate,Vendor__r.Name FROM Case WHERE Status!='Closed' AND Vendor__r.Name IN ('"+nameList+"') ORDER BY Priority,CreatedDate DESC LIMIT 30").catch(()=>({records:[]})),
+        sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name,Vendor__r.Name FROM Task WHERE IsClosed=false AND Vendor__r.Name IN ('"+nameList+"') ORDER BY ActivityDate ASC LIMIT 30").catch(()=>({records:[]})),
       ]);
 
       const opps=[], cases=[], tasks=[];
-      // Extract from nested query results
-      acctResult?.records?.forEach(acct=>{
-        (acct.Opportunities?.records||[]).forEach(o=>opps.push({...o,_accountName:acct.Name,_accountId:acct.Id}));
-        (acct.Cases?.records||[]).forEach(c2=>cases.push({...c2,_accountName:acct.Name}));
-        (acct.OpenActivities?.records||[]).forEach(t=>tasks.push({...t,_accountName:acct.Name}));
+      vendorResult?.records?.forEach(v=>{
+        (v.Opportunities__r?.records||[]).forEach(o=>opps.push({...o,_accountName:v.Name,_accountId:v.Id}));
+        (v.Cases__r?.records||[]).forEach(c2=>cases.push({...c2,_accountName:v.Name}));
       });
-      // Also merge flat results
-      openCases?.records?.forEach(c2=>{if(!cases.find(x=>x.Id===c2.Id))cases.push({...c2,_accountName:c2.Account?.Name});});
-      openTasks?.records?.forEach(t=>{if(!tasks.find(x=>x.Id===t.Id))tasks.push({...t,_accountName:t.Account?.Name});});
+      openCases?.records?.forEach(c2=>{if(!cases.find(x=>x.Id===c2.Id))cases.push({...c2,_accountName:c2.Vendor__r?.Name});});
+      openTasks?.records?.forEach(t=>{if(!tasks.find(x=>x.Id===t.Id))tasks.push({...t,_accountName:t.Vendor__r?.Name});});
 
       sb.data={opps,cases,tasks};
       sb.lastLoaded=new Date().toLocaleTimeString();
