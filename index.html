@@ -3465,209 +3465,134 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     }
   }
 
-  // ── Salesforce Data (Read-Only) — if connected ──
+  // ── Salesforce Data (Read-Only) — on-demand, click to load ──
   const _canSeeSF = ['admin','procurement','manager','cro','finance_sr','finance_jr'].includes(USER.role);
   if (_canSeeSF && vendor.source==='psd') {
     const sfSec=el('div',{class:'detail-section'});
     const sfHdr=el('div',{class:'detail-sec-hdr'});
     sfHdr.appendChild(el('h4',{class:'detail-sec-title',style:{marginBottom:'0'}},'☁ Salesforce'));
     sfSec.appendChild(sfHdr);
-    const sfContent=el('div',{class:'sf-content',style:{marginTop:'6px'}});
-    // sfStatus declared here so it's in scope for all button handlers
-    const sfStatus=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'4px 0'}});
 
-    if(USER.sfToken) {
-      // Refresh button — uses sfContent and sfStatus which are now in scope
-      const sfRefresh=el('button',{class:'btn-xs btn-ghost',onclick(e){
-        e.stopPropagation();
-        sfContent.innerHTML='';
-        sfStatus.textContent='⏳ Loading...';
-        sfContent.appendChild(sfStatus);
-        loadSFData();
-      }}, '↻');
-      sfHdr.appendChild(sfRefresh);
-    }
-
-    if (!USER.sfToken) {
-      // Not connected — show connect prompt inline
-      const connectRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'8px',background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px'}});
-      connectRow.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',flex:'1'}},'Connect Salesforce to see Account info, Opportunities, Cases, and Tasks for this vendor.'));
-      const connectBtn=el('button',{class:'btn-xs btn-blue',onclick(){
-        if(!S.settings.sfClientId){
-          toast('⚠ Set your Salesforce Client ID in Settings → Salesforce first','#f59e0b');
-          S.view='settings'; render(); return;
-        }
-        sfConnect();
-        toast('Salesforce auth window opened — sign in and this panel will refresh','#4f7cff');
-      }},'🔗 Connect');
-      const settingsBtn=el('button',{class:'btn-xs btn-ghost',onclick(){S.view='settings';render();}},'⚙ Settings');
-      connectRow.appendChild(connectBtn); connectRow.appendChild(settingsBtn);
-      sfContent.appendChild(connectRow);
-    } else {
-      const sfStatus=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'4px 0'}},'⏳ Loading Salesforce data...');
-      sfContent.appendChild(sfStatus);
-      sfSec.appendChild(sfContent);
-      body.appendChild(sfSec);
-
-      async function loadSFData() {
-        sfStatus.textContent='⏳ Loading Salesforce data...';
-        try {
-          const nameEsc=String(vendor.name||'').replace(/'/g,"\'");
-          console.log('[VCS SF] Loading for vendor:', vendor.name, '| Stored ID:', vendor.sfAccountId||'none', '| Token:', USER.sfToken?'yes ('+USER.sfToken.slice(0,8)+'...)':'NO', '| Instance:', USER.sfInstance||'NONE');
-
-          let result=null;
-
-          // If vendor has a manually linked SF Account ID, use it directly
-          if(vendor.sfAccountId){
-            console.log('[VCS SF] Using stored Account ID:', vendor.sfAccountId);
-            result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, AnnualRevenue, NumberOfEmployees, Owner.Name, LastModifiedDate FROM Account WHERE Id='"+vendor.sfAccountId+"' LIMIT 1");
-          }
-          if(!result?.records?.length){
-            result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, AnnualRevenue, NumberOfEmployees, Owner.Name, LastModifiedDate FROM Account WHERE Name='"+nameEsc+"' LIMIT 3");
-          }
-          if(!result?.records?.length){
-            result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, AnnualRevenue, NumberOfEmployees, Owner.Name, LastModifiedDate FROM Account WHERE Name LIKE '%"+nameEsc+"%' LIMIT 5");
-          }
-          if(!result?.records?.length){
-            const firstWord=nameEsc.split(' ')[0];
-            if(firstWord && firstWord.length>3){
-              result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, Owner.Name, LastModifiedDate FROM Account WHERE Name LIKE '%"+firstWord+"%' LIMIT 5");
-            }
-          }
-          sfStatus.innerHTML='';
-
-          // Show errors clearly
-          if(result?._error){
-            const errDiv=el('div',{style:{fontSize:'10px',color:'var(--red)',background:'rgba(239,68,68,.06)',padding:'8px',borderRadius:'4px'}});
-            errDiv.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'3px'}},'Salesforce error ('+result._status+'):'));
-            errDiv.appendChild(el('div',{},String(result._message||'Unknown error')));
-            errDiv.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'4px'}},'Check F12 console. Common fixes: enable "Perform requests at any time (refresh_token, offline_access)" scope in Connected App, or reconnect in Settings.'));
-            sfContent.appendChild(errDiv);
-            return;
-          }
-
-          if(!result?.records?.length){
-            sfStatus.innerHTML='';
-            const noMatchDiv=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'6px 0'}});
-            noMatchDiv.appendChild(el('span',{},'No Account found matching "'+vendor.name+'". '));
-            const linkBtn=el('button',{class:'btn-xs btn-ghost',style:{display:'block',marginTop:'6px'},onclick(){
-              openModal(b=>{
-                b.appendChild(el('h3',{style:{marginTop:'0'}},'Link Salesforce Account'));
-                b.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'Paste the Salesforce Account ID (from the URL when viewing the Account in SF: .../Account/001Dn000...). This will be saved to the vendor record.'));
-                const inp=el('input',{type:'text',class:'modal-input',placeholder:'001Dn000000xxxxx (15 or 18 chars)'});
-                b.appendChild(inp);
-                const btns2=el('div',{class:'modal-btns',style:{marginTop:'8px'}});
-                btns2.appendChild(el('button',{class:'btn-primary',onclick(){
-                  const id=inp.value.trim().replace(/[^a-zA-Z0-9]/g,'');
-                  if(!id||id.length<15){toast('Enter a valid Salesforce Account ID (15+ chars)','#f59e0b');return;}
-                  vendor.sfAccountId=id; markDirty(vendor); saveSessionState();
-                  closeModal(); sfContent.innerHTML=''; sfStatus=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'4px 0'}},'⏳ Loading...'); sfContent.appendChild(sfStatus);
-                  loadSFData(); toast('✓ SF Account ID saved — reloading...');
-                }},'Save & Load'));
-                btns2.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
-                b.appendChild(btns2); setTimeout(()=>inp.focus(),50);
-              });
-            }},'🔗 Manually enter Salesforce Account ID');
-            noMatchDiv.appendChild(linkBtn);
-            sfContent.appendChild(noMatchDiv);
-            return;
-          }
-
-          const acct=result.records[0];
-          // Store matched Account ID permanently
-          if(!vendor.sfAccountId && acct.Id){ vendor.sfAccountId=acct.Id; markDirty(vendor); saveSessionState(); }
-          console.log('[VCS SF] Matched Account:', acct.Name, 'ID:', acct.Id);
-
-          // Show matched-as banner if name differs
-          if(acct.Name && acct.Name.toLowerCase()!==vendor.name.toLowerCase()){
-            sfContent.appendChild(el('div',{style:{fontSize:'9px',color:'var(--blue)',background:'rgba(59,130,246,.06)',padding:'3px 7px',borderRadius:'3px',marginBottom:'5px'}},'Matched: "'+acct.Name+'"'));
-          }
-
-          // Account card
-          const acctCard=el('div',{style:{background:'rgba(79,124,255,.05)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px',padding:'7px 9px',marginBottom:'6px'}});
-          const acctTop=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'4px'}});
-          acctTop.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',color:'var(--blue)',flex:'1'}},acct.Name));
-          if(acct.Type) acctTop.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(79,124,255,.15)',color:'var(--blue)',padding:'1px 6px',borderRadius:'3px'}},acct.Type));
-          acctCard.appendChild(acctTop);
-          const acctGrid=el('div',{class:'detail-grid'});
-          const _sfFin=['admin','procurement','manager','cro','finance_sr','finance_jr'].includes(USER.role);
-          [
-            ['Phone',acct.Phone],
-            ['Location',[acct.BillingCity,acct.BillingState].filter(Boolean).join(', ')],
-            ...(_sfFin?[['Revenue',acct.AnnualRevenue?'$'+Number(acct.AnnualRevenue).toLocaleString():'—'],['Employees',acct.NumberOfEmployees?.toLocaleString()]]:[]),
-            ['Owner',acct.Owner?.Name],
-            ['Last Modified',acct.LastModifiedDate?new Date(acct.LastModifiedDate).toLocaleDateString():'—'],
-          ].forEach(([l,v])=>{if(v){acctGrid.appendChild(el('span',{class:'detail-label'},l));acctGrid.appendChild(el('span',{class:'detail-value'},v||'—'));}});
-          acctCard.appendChild(acctGrid);
-          sfContent.appendChild(acctCard);
-
-          const accId=acct.Id;
-          const [opps,cases,activities,spendRecs]=await Promise.all([
-            sfQuery("SELECT Id,Name,StageName,Amount,CloseDate,Probability FROM Opportunity WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 5"),
-            sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Case WHERE AccountId='"+accId+"' ORDER BY CreatedDate DESC LIMIT 5"),
-            sfQuery("SELECT Id,Subject,ActivityDate,Status,Priority,Owner.Name FROM Task WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5"),
-            sfQuery("SELECT Id,Name,Reported_Date__c,Category__c,Amount__c FROM Spend__c WHERE Vendor__c='"+accId+"' ORDER BY Reported_Date__c DESC LIMIT 6").catch(()=>({records:[]})),
-          ]);
-          console.log('[VCS SF] Opps:', opps?.records?.length||0, '| Cases:', cases?.records?.length||0, '| Tasks:', activities?.records?.length||0, '| Spend:', spendRecs?.records?.length||0);
-
-          if(_sfFin && opps?.records?.length){
-            sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'4px',letterSpacing:'.05em'}},'OPEN OPPORTUNITIES'));
-            opps.records.forEach(opp=>{
-              const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
-              row.appendChild(el('span',{style:{flex:'1',fontWeight:'500'}},opp.Name));
-              row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},opp.StageName));
-              if(opp.Amount) row.appendChild(el('span',{style:{color:'var(--green)',fontWeight:'600'}},'$'+Number(opp.Amount).toLocaleString()));
-              if(opp.CloseDate) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},new Date(opp.CloseDate).toLocaleDateString()));
-              sfContent.appendChild(row);
-            });
-          }
-          if(cases?.records?.length){
-            sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'6px',letterSpacing:'.05em'}},'OPEN CASES ('+cases.records.length+')'));
-            cases.records.forEach(c2=>{
-              const prioColor=c2.Priority==='High'?'var(--red)':c2.Priority==='Medium'?'var(--amber)':'var(--muted)';
-              const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
-              row.appendChild(el('span',{style:{fontWeight:'500',flex:'1'}},c2.Subject||c2.CaseNumber));
-              row.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(0,0,0,.05)',padding:'1px 5px',borderRadius:'3px'}},c2.Status));
-              if(c2.Priority) row.appendChild(el('span',{style:{fontSize:'9px',color:prioColor,fontWeight:'600'}},c2.Priority));
-              sfContent.appendChild(row);
-            });
-          }
-          if(activities?.records?.length){
-            sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'6px',letterSpacing:'.05em'}},'OPEN TASKS'));
-            activities.records.forEach(task=>{
-              const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
-              row.appendChild(el('span',{style:{flex:'1',fontWeight:'500'}},task.Subject||'(no subject)'));
-              if(task.ActivityDate){const daysLeft=Math.ceil((new Date(task.ActivityDate)-new Date())/86400000);row.appendChild(el('span',{style:{fontSize:'9px',color:daysLeft<0?'var(--red)':daysLeft<=3?'var(--amber)':'var(--muted)'}},new Date(task.ActivityDate).toLocaleDateString()+(daysLeft<0?' (overdue)':'')));}
-              if(task.Owner?.Name) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},task.Owner.Name));
-              sfContent.appendChild(row);
-            });
-          }
-          if(spendRecs?.records?.length){
-            sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'6px',letterSpacing:'.05em'}},'RECENT SPEND'));
-            spendRecs.records.forEach(s=>{
-              const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
-              row.appendChild(el('span',{style:{flex:'1',fontWeight:'500'}},s.Name||'Spend Record'));
-              if(s.Category__c) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},s.Category__c));
-              if(s.Amount__c) row.appendChild(el('span',{style:{color:'var(--green)',fontWeight:'600'}},'$'+Number(s.Amount__c).toLocaleString()));
-              if(s.Reported_Date__c) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},new Date(s.Reported_Date__c).toLocaleDateString()));
-              sfContent.appendChild(row);
-            });
-          }
-          if(!opps?.records?.length&&!cases?.records?.length&&!activities?.records?.length&&!spendRecs?.records?.length){
-            sfContent.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',fontStyle:'italic',marginTop:'4px'}},'Account found but no open opportunities, cases, tasks, or spend records.'));
-          }
-
-        } catch(e){sfStatus.textContent='Error: '+e.message;}
-      }
-      // SF data loads on demand — click Load button to fetch
-      const loadSFBtn=el('button',{class:'btn-xs btn-blue',style:{marginTop:'4px'},onclick(){sfStatus.textContent='⏳ Loading...';loadSFData();}}, '☁ Load Salesforce Data');
-      sfStatus.textContent='';
-      sfContent.appendChild(loadSFBtn);
-      // NOTE: do NOT return here — must continue to showDetailPanel() at end of openDetail
-    }
-    sfSec.appendChild(sfContent);
+    const sfWrap=el('div',{style:{marginTop:'4px'}});
+    sfSec.appendChild(sfWrap);
     body.appendChild(sfSec);
+
+    function renderSFPanel() {
+      sfWrap.innerHTML='';
+      if(!USER.sfToken) {
+        const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',padding:'7px',background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px',fontSize:'10px'}});
+        row.appendChild(el('span',{style:{flex:'1',color:'var(--muted)'}},'Connect Salesforce to load vendor data.'));
+        row.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){if(!S.settings.sfClientId){S.view='settings';render();return;}sfConnect();toast('Sign in to Salesforce — then reload this panel','#4f7cff');}},'🔗 Connect'));
+        sfWrap.appendChild(row);
+        return;
+      }
+      const loadBtn=el('button',{class:'btn-xs btn-blue',onclick(){doLoadSF();}}, '☁ Load Salesforce Data');
+      sfWrap.appendChild(loadBtn);
+    }
+
+    async function doLoadSF() {
+      sfWrap.innerHTML='';
+      const statusEl=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'4px 0'}},'⏳ Loading...');
+      sfWrap.appendChild(statusEl);
+
+      const nameEsc=String(vendor.name||'').replace(/'/g,"\'");
+      console.log('[VCS SF] Loading:', vendor.name, '| ID:', vendor.sfAccountId||'none');
+
+      let result=null;
+      if(vendor.sfAccountId) result=await sfQuery("SELECT Id,Name,Type,Phone,BillingCity,BillingState,AnnualRevenue,NumberOfEmployees,Owner.Name,LastModifiedDate FROM Account WHERE Id='"+vendor.sfAccountId+"' LIMIT 1");
+      if(!result?.records?.length) result=await sfQuery("SELECT Id,Name,Type,Phone,BillingCity,BillingState,AnnualRevenue,NumberOfEmployees,Owner.Name,LastModifiedDate FROM Account WHERE Name='"+nameEsc+"' LIMIT 3");
+      if(!result?.records?.length) result=await sfQuery("SELECT Id,Name,Type,Phone,BillingCity,BillingState,AnnualRevenue,NumberOfEmployees,Owner.Name,LastModifiedDate FROM Account WHERE Name LIKE '%"+nameEsc+"%' LIMIT 5");
+      if(!result?.records?.length){const fw=nameEsc.split(' ')[0];if(fw&&fw.length>3)result=await sfQuery("SELECT Id,Name,Type,Phone,BillingCity,BillingState,Owner.Name,LastModifiedDate FROM Account WHERE Name LIKE '%"+fw+"%' LIMIT 5");}
+
+      sfWrap.innerHTML='';
+
+      // Handle expired token
+      if(!USER.sfToken){renderSFPanel();return;}
+
+      // Handle query error
+      if(result?._error){
+        const errDiv=el('div',{style:{fontSize:'10px',color:'var(--red)',background:'rgba(239,68,68,.06)',padding:'8px',borderRadius:'4px'}});
+        errDiv.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'3px'}},'Salesforce error ('+result._status+'):'));
+        errDiv.appendChild(el('div',{},String(result._message||'Unknown error')));
+        sfWrap.appendChild(errDiv);
+        return;
+      }
+
+      // No match found
+      if(!result?.records?.length){
+        const noMatch=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'4px 0'}});
+        noMatch.appendChild(el('span',{},'No Account found for "'+vendor.name+'".  '));
+        const linkBtn=el('button',{class:'btn-xs btn-ghost',onclick(){
+          openModal(b=>{
+            b.appendChild(el('h3',{style:{marginTop:'0'}},'Link Salesforce Account'));
+            b.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'Paste the Account ID from the Salesforce URL (e.g. a0w1K0000088GlsQAE)'));
+            const inp=el('input',{type:'text',class:'modal-input',placeholder:'Salesforce Account ID'});
+            b.appendChild(inp);
+            const btns2=el('div',{class:'modal-btns',style:{marginTop:'8px'}});
+            btns2.appendChild(el('button',{class:'btn-primary',onclick(){
+              const id=inp.value.trim().replace(/[^a-zA-Z0-9]/g,'');
+              if(!id||id.length<15){toast('Enter a valid Account ID (15+ chars)','#f59e0b');return;}
+              vendor.sfAccountId=id; markDirty(vendor); saveSessionState();
+              closeModal(); doLoadSF(); toast('✓ ID saved — loading...');
+            }},'Save & Load'));
+            btns2.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
+            b.appendChild(btns2); setTimeout(()=>inp.focus(),50);
+          });
+        }},'🔗 Enter Account ID manually');
+        noMatch.appendChild(linkBtn);
+        sfWrap.appendChild(noMatch);
+        return;
+      }
+
+      const acct=result.records[0];
+      if(!vendor.sfAccountId&&acct.Id){vendor.sfAccountId=acct.Id;markDirty(vendor);saveSessionState();}
+      console.log('[VCS SF] Matched:', acct.Name);
+
+      // Matched-as banner
+      if(acct.Name&&acct.Name.toLowerCase()!==vendor.name.toLowerCase())
+        sfWrap.appendChild(el('div',{style:{fontSize:'9px',color:'var(--blue)',background:'rgba(59,130,246,.06)',padding:'3px 7px',borderRadius:'3px',marginBottom:'5px'}},'Matched SF Account: "'+acct.Name+'"'));
+
+      // Account card
+      const card=el('div',{style:{background:'rgba(79,124,255,.05)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px',padding:'7px 9px',marginBottom:'6px'}});
+      const top=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'4px'}});
+      top.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',color:'var(--blue)',flex:'1'}},acct.Name));
+      if(acct.Type) top.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(79,124,255,.15)',color:'var(--blue)',padding:'1px 6px',borderRadius:'3px'}},acct.Type));
+      // Refresh button
+      top.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(e){e.stopPropagation();doLoadSF();}}, '↻'));
+      card.appendChild(top);
+      const grid=el('div',{class:'detail-grid'});
+      const fin=['admin','procurement','manager','cro','finance_sr','finance_jr'].includes(USER.role);
+      [['Phone',acct.Phone],['Location',[acct.BillingCity,acct.BillingState].filter(Boolean).join(', ')],
+       ...(fin?[['Revenue',acct.AnnualRevenue?'$'+Number(acct.AnnualRevenue).toLocaleString():'—'],['Employees',acct.NumberOfEmployees?.toLocaleString()]]:[]),
+       ['Owner',acct.Owner?.Name],['Last Modified',acct.LastModifiedDate?new Date(acct.LastModifiedDate).toLocaleDateString():'—']
+      ].forEach(([l,v])=>{if(v){grid.appendChild(el('span',{class:'detail-label'},l));grid.appendChild(el('span',{class:'detail-value'},String(v)));}});
+      card.appendChild(grid);
+      sfWrap.appendChild(card);
+
+      const accId=acct.Id;
+      const [opps,cases,tasks,spend]=await Promise.all([
+        sfQuery("SELECT Id,Name,StageName,Amount,CloseDate FROM Opportunity WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 5"),
+        sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Case WHERE AccountId='"+accId+"' ORDER BY CreatedDate DESC LIMIT 5"),
+        sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM Task WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5"),
+        sfQuery("SELECT Id,Name,Reported_Date__c,Category__c,Amount__c FROM Spend__c WHERE Vendor__c='"+accId+"' ORDER BY Reported_Date__c DESC LIMIT 6").catch(()=>({records:[]})),
+      ]);
+      console.log('[VCS SF] Opps:',opps?.records?.length||0,'Cases:',cases?.records?.length||0,'Tasks:',tasks?.records?.length||0,'Spend:',spend?.records?.length||0);
+
+      function addSubSec(label){sfWrap.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'6px',letterSpacing:'.05em'}},label));}
+      function addRow(cells){const r=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});cells.forEach(([txt,style])=>{if(txt!=null){const s=el('span',style||{});s.textContent=String(txt);r.appendChild(s);}});sfWrap.appendChild(r);}
+
+      if(fin&&opps?.records?.length){addSubSec('OPEN OPPORTUNITIES');opps.records.forEach(o=>addRow([[o.Name,{style:{flex:'1',fontWeight:'500'}}],[o.StageName,{style:{fontSize:'9px',color:'var(--muted)'}}],[o.Amount?'$'+Number(o.Amount).toLocaleString():null,{style:{color:'var(--green)',fontWeight:'600'}}],[o.CloseDate?new Date(o.CloseDate).toLocaleDateString():null,{style:{fontSize:'9px',color:'var(--muted)'}}]]));}
+      if(cases?.records?.length){addSubSec('OPEN CASES ('+cases.records.length+')');cases.records.forEach(c2=>{const pc=c2.Priority==='High'?'var(--red)':c2.Priority==='Medium'?'var(--amber)':'var(--muted)';addRow([[c2.Subject||c2.CaseNumber,{style:{fontWeight:'500',flex:'1'}}],[c2.Status,{style:{fontSize:'9px',background:'rgba(0,0,0,.05)',padding:'1px 5px',borderRadius:'3px'}}],[c2.Priority||null,{style:{fontSize:'9px',color:pc,fontWeight:'600'}}]])});}
+      if(tasks?.records?.length){addSubSec('OPEN TASKS');tasks.records.forEach(t=>{const dl=t.ActivityDate?Math.ceil((new Date(t.ActivityDate)-new Date())/86400000):null;addRow([[t.Subject||'(no subject)',{style:{flex:'1',fontWeight:'500'}}],[t.ActivityDate?new Date(t.ActivityDate).toLocaleDateString()+(dl<0?' (overdue)':''):null,{style:{fontSize:'9px',color:dl<0?'var(--red)':dl<=3?'var(--amber)':'var(--muted)'}}],[t.Owner?.Name||null,{style:{fontSize:'9px',color:'var(--muted)'}}]])});}
+      if(spend?.records?.length){addSubSec('RECENT SPEND');spend.records.forEach(s=>addRow([[s.Name||'Spend',{style:{flex:'1',fontWeight:'500'}}],[s.Category__c||null,{style:{fontSize:'9px',color:'var(--muted)'}}],[s.Amount__c?'$'+Number(s.Amount__c).toLocaleString():null,{style:{color:'var(--green)',fontWeight:'600'}}],[s.Reported_Date__c?new Date(s.Reported_Date__c).toLocaleDateString():null,{style:{fontSize:'9px',color:'var(--muted)'}}]]));}
+      if(!opps?.records?.length&&!cases?.records?.length&&!tasks?.records?.length&&!spend?.records?.length)
+        sfWrap.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',fontStyle:'italic',marginTop:'4px'}},'No open opportunities, cases, tasks, or spend records.'));
+    }
+
+    renderSFPanel();
   }
+
+
 
   if (vendor.comments && String(vendor.comments).trim()) {
     const sec=el('div',{class:'detail-section'});
