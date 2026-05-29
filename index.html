@@ -3445,111 +3445,125 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   }
 
   // ── Salesforce Data (Read-Only) — if connected ──
-  if (USER.sfToken && vendor.source==='psd') {
+  const _canSeeSF = ['admin','procurement','manager','cro','finance_sr','finance_jr'].includes(USER.role);
+  if (_canSeeSF && vendor.source==='psd') {
     const sfSec=el('div',{class:'detail-section'});
     const sfHdr=el('div',{class:'detail-sec-hdr'});
     sfHdr.appendChild(el('h4',{class:'detail-sec-title',style:{marginBottom:'0'}},'☁ Salesforce'));
-    const sfRefresh=el('button',{class:'btn-xs btn-ghost',onclick(e){e.stopPropagation();sfSec.querySelector('.sf-content').innerHTML='';loadSFData();}}, '↻');
-    sfHdr.appendChild(sfRefresh);
+    if(USER.sfToken) {
+      const sfRefresh=el('button',{class:'btn-xs btn-ghost',onclick(e){e.stopPropagation();sfContent.innerHTML='';sfStatus.textContent='⏳ Loading...';sfContent.appendChild(sfStatus);loadSFData();}}, '↻');
+      sfHdr.appendChild(sfRefresh);
+    }
     sfSec.appendChild(sfHdr);
     const sfContent=el('div',{class:'sf-content',style:{marginTop:'6px'}});
-    const sfStatus=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'4px 0'}},'⏳ Loading Salesforce data...');
-    sfContent.appendChild(sfStatus);
+
+    if (!USER.sfToken) {
+      // Not connected — show connect prompt inline
+      const connectRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'8px',background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px'}});
+      connectRow.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',flex:'1'}},'Connect Salesforce to see Account info, Opportunities, Cases, and Tasks for this vendor.'));
+      const connectBtn=el('button',{class:'btn-xs btn-blue',onclick(){
+        if(!S.settings.sfClientId){
+          toast('⚠ Set your Salesforce Client ID in Settings → Salesforce first','#f59e0b');
+          S.view='settings'; render(); return;
+        }
+        sfConnect();
+        toast('Salesforce auth window opened — sign in and this panel will refresh','#4f7cff');
+      }},'🔗 Connect');
+      const settingsBtn=el('button',{class:'btn-xs btn-ghost',onclick(){S.view='settings';render();}},'⚙ Settings');
+      connectRow.appendChild(connectBtn); connectRow.appendChild(settingsBtn);
+      sfContent.appendChild(connectRow);
+    } else {
+      const sfStatus=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'4px 0'}},'⏳ Loading Salesforce data...');
+      sfContent.appendChild(sfStatus);
+      sfSec.appendChild(sfContent);
+      body.appendChild(sfSec);
+
+      async function loadSFData() {
+        sfStatus.textContent='⏳ Loading...';
+        try {
+          const nameEsc=String(vendor.name||'').replace(/'/g,"\\'").replace(/"/g,'\\"');
+          let result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, AnnualRevenue, NumberOfEmployees, Owner.Name, LastModifiedDate FROM Account WHERE Name='"+nameEsc+"' LIMIT 3");
+          if(!result?.records?.length) result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, AnnualRevenue, NumberOfEmployees, Owner.Name, LastModifiedDate FROM Account WHERE Name LIKE '%"+nameEsc+"%' LIMIT 5");
+          sfStatus.innerHTML='';
+          if(!result?.records?.length){
+            sfStatus.innerHTML='<span style="color:var(--muted);font-style:italic;font-size:10px">No Account found for "'+vendor.name+'"</span>';
+            return;
+          }
+          const acct=result.records[0];
+          const acctCard=el('div',{style:{background:'rgba(79,124,255,.05)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px',padding:'7px 9px',marginBottom:'6px'}});
+          const acctTop=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'4px'}});
+          acctTop.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',color:'var(--blue)',flex:'1'}},acct.Name));
+          if(acct.Type) acctTop.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(79,124,255,.15)',color:'var(--blue)',padding:'1px 6px',borderRadius:'3px'}},acct.Type));
+          acctCard.appendChild(acctTop);
+          const acctGrid=el('div',{class:'detail-grid'});
+          // Revenue/employee counts only for financial roles
+          const _sfFinancial=['admin','procurement','manager','cro','finance_sr','finance_jr'].includes(USER.role);
+          const acctFields=[
+            ['Phone',acct.Phone],
+            ['Location',[acct.BillingCity,acct.BillingState].filter(Boolean).join(', ')],
+            ...(_sfFinancial?[['Revenue',acct.AnnualRevenue?'$'+Number(acct.AnnualRevenue).toLocaleString():'—'],['Employees',acct.NumberOfEmployees?.toLocaleString()]]:[]),
+            ['Owner',acct.Owner?.Name],
+            ['Last Modified',acct.LastModifiedDate?new Date(acct.LastModifiedDate).toLocaleDateString():'—'],
+          ];
+          acctFields.forEach(([l,v])=>{if(v){acctGrid.appendChild(el('span',{class:'detail-label'},l));acctGrid.appendChild(el('span',{class:'detail-value'},v||'—'));}});
+          acctCard.appendChild(acctGrid);
+          sfContent.appendChild(acctCard);
+
+          const accId=acct.Id;
+          const [opps,cases,activities]=await Promise.all([
+            sfQuery("SELECT Id,Name,StageName,Amount,CloseDate,Probability FROM Opportunity WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 5"),
+            sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Case WHERE AccountId='"+accId+"' ORDER BY CreatedDate DESC LIMIT 5"),
+            sfQuery("SELECT Id,Subject,ActivityDate,Status,Priority,Owner.Name FROM Task WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5"),
+          ]);
+
+          // Opportunities — financial roles only
+          if(_sfFinancial && opps?.records?.length){
+            sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'4px',letterSpacing:'.05em'}},'OPEN OPPORTUNITIES'));
+            opps.records.forEach(opp=>{
+              const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
+              row.appendChild(el('span',{style:{flex:'1',fontWeight:'500'}},opp.Name));
+              row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},opp.StageName));
+              if(opp.Amount) row.appendChild(el('span',{style:{color:'var(--green)',fontWeight:'600'}},'$'+Number(opp.Amount).toLocaleString()));
+              if(opp.CloseDate) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},new Date(opp.CloseDate).toLocaleDateString()));
+              sfContent.appendChild(row);
+            });
+          }
+
+          // Cases — all financial roles
+          if(cases?.records?.length){
+            sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'6px',letterSpacing:'.05em'}},'OPEN CASES ('+cases.records.length+')'));
+            cases.records.forEach(c2=>{
+              const prioColor=c2.Priority==='High'?'var(--red)':c2.Priority==='Medium'?'var(--amber)':'var(--muted)';
+              const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
+              row.appendChild(el('span',{style:{fontWeight:'500',flex:'1'}},c2.Subject||c2.CaseNumber));
+              row.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(0,0,0,.05)',padding:'1px 5px',borderRadius:'3px'}},c2.Status));
+              if(c2.Priority) row.appendChild(el('span',{style:{fontSize:'9px',color:prioColor,fontWeight:'600'}},c2.Priority));
+              row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},new Date(c2.CreatedDate).toLocaleDateString()));
+              sfContent.appendChild(row);
+            });
+          }
+
+          // Tasks
+          if(activities?.records?.length){
+            sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'6px',letterSpacing:'.05em'}},'OPEN TASKS'));
+            activities.records.forEach(task=>{
+              const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
+              row.appendChild(el('span',{style:{flex:'1',fontWeight:'500'}},task.Subject||'(no subject)'));
+              if(task.ActivityDate){const daysLeft=Math.ceil((new Date(task.ActivityDate)-new Date())/86400000);row.appendChild(el('span',{style:{fontSize:'9px',color:daysLeft<0?'var(--red)':daysLeft<=3?'var(--amber)':'var(--muted)'}},new Date(task.ActivityDate).toLocaleDateString()+(daysLeft<0?' (overdue)':'')));}
+              if(task.Owner?.Name) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},task.Owner.Name));
+              sfContent.appendChild(row);
+            });
+          }
+          if(!opps?.records?.length&&!cases?.records?.length&&!activities?.records?.length){
+            sfContent.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',fontStyle:'italic',marginTop:'4px'}},'No open opportunities, cases, or tasks.'));
+          }
+        } catch(e){sfStatus.textContent='Error: '+e.message;}
+      }
+      setTimeout(()=>loadSFData(),100);
+      return; // early return — sfContent already appended above
+    }
     sfSec.appendChild(sfContent);
     body.appendChild(sfSec);
-
-    async function loadSFData() {
-      sfStatus.textContent='⏳ Loading...';
-      try {
-        const nameEsc=String(vendor.name||'').replace(/'/g,"\\'").replace(/"/g,'\\"');
-        // Search accounts — try exact then LIKE
-        let result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, AnnualRevenue, NumberOfEmployees, OwnerId, Owner.Name, LastModifiedDate FROM Account WHERE Name='"+nameEsc+"' LIMIT 3");
-        if(!result?.records?.length) result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, AnnualRevenue, NumberOfEmployees, Owner.Name, LastModifiedDate FROM Account WHERE Name LIKE '%"+nameEsc+"%' LIMIT 5");
-        sfStatus.innerHTML='';
-
-        if(!result?.records?.length){
-          sfStatus.innerHTML='<span style="color:var(--muted);font-style:italic;font-size:10px">No Account found in Salesforce for "'+vendor.name+'" — <a href="#" style="color:var(--blue)" onclick="event.preventDefault();openSFSearchModal(\''+vendor.name+'\')">Search manually</a></span>';
-          return;
-        }
-
-        const acct=result.records[0];
-        // Account card
-        const acctCard=el('div',{style:{background:'rgba(79,124,255,.05)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px',padding:'7px 9px',marginBottom:'6px'}});
-        const acctTop=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'4px'}});
-        acctTop.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',color:'var(--blue)',flex:'1'}},acct.Name));
-        if(acct.Type) acctTop.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(79,124,255,.15)',color:'var(--blue)',padding:'1px 6px',borderRadius:'3px'}},acct.Type));
-        acctCard.appendChild(acctTop);
-        const acctGrid=el('div',{class:'detail-grid'});
-        const acctFields=[
-          ['Phone',acct.Phone],['Location',[acct.BillingCity,acct.BillingState].filter(Boolean).join(', ')],
-          ['Revenue',acct.AnnualRevenue?'$'+Number(acct.AnnualRevenue).toLocaleString():'—'],
-          ['Employees',acct.NumberOfEmployees?.toLocaleString()],
-          ['Owner',acct.Owner?.Name],['Last Modified',acct.LastModifiedDate?new Date(acct.LastModifiedDate).toLocaleDateString():'—'],
-        ];
-        acctFields.forEach(([l,v])=>{if(v){acctGrid.appendChild(el('span',{class:'detail-label'},l));acctGrid.appendChild(el('span',{class:'detail-value'},v||'—'));}});
-        acctCard.appendChild(acctGrid);
-        sfContent.appendChild(acctCard);
-
-        // Run parallel queries for Opps, Cases, Activities
-        const accId=acct.Id;
-        const [opps,cases,activities]=await Promise.all([
-          sfQuery("SELECT Id,Name,StageName,Amount,CloseDate,Probability FROM Opportunity WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 5"),
-          sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Case WHERE AccountId='"+accId+"' ORDER BY CreatedDate DESC LIMIT 5"),
-          sfQuery("SELECT Id,Subject,ActivityDate,Status,Priority,OwnerId,Owner.Name FROM Task WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5"),
-        ]);
-
-        // Opportunities
-        if(opps?.records?.length){
-          sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'4px',letterSpacing:'.05em'}},'OPEN OPPORTUNITIES'));
-          opps.records.forEach(opp=>{
-            const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
-            row.appendChild(el('span',{style:{flex:'1',fontWeight:'500'}},opp.Name));
-            row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},opp.StageName));
-            if(opp.Amount) row.appendChild(el('span',{style:{color:'var(--green)',fontWeight:'600'}},'$'+Number(opp.Amount).toLocaleString()));
-            if(opp.CloseDate) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},new Date(opp.CloseDate).toLocaleDateString()));
-            sfContent.appendChild(row);
-          });
-        }
-
-        // Cases
-        if(cases?.records?.length){
-          sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'6px',letterSpacing:'.05em'}},'OPEN CASES ('+cases.records.length+')'));
-          cases.records.forEach(c2=>{
-            const priority=c2.Priority;
-            const prioColor=priority==='High'?'var(--red)':priority==='Medium'?'var(--amber)':'var(--muted)';
-            const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
-            row.appendChild(el('span',{style:{fontWeight:'500',flex:'1'}},c2.Subject||c2.CaseNumber));
-            row.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(0,0,0,.05)',padding:'1px 5px',borderRadius:'3px'}},c2.Status));
-            if(priority) row.appendChild(el('span',{style:{fontSize:'9px',color:prioColor,fontWeight:'600'}},priority));
-            row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},new Date(c2.CreatedDate).toLocaleDateString()));
-            sfContent.appendChild(row);
-          });
-        }
-
-        // Open Tasks/Activities
-        if(activities?.records?.length){
-          sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'6px',letterSpacing:'.05em'}},'OPEN TASKS'));
-          activities.records.forEach(task=>{
-            const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
-            row.appendChild(el('span',{style:{flex:'1',fontWeight:'500'}},task.Subject||'(no subject)'));
-            if(task.ActivityDate){
-              const daysLeft=Math.ceil((new Date(task.ActivityDate)-new Date())/86400000);
-              row.appendChild(el('span',{style:{fontSize:'9px',color:daysLeft<0?'var(--red)':daysLeft<=3?'var(--amber)':'var(--muted)'}},new Date(task.ActivityDate).toLocaleDateString()+(daysLeft<0?' (overdue)':'')));
-            }
-            if(task.Owner?.Name) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},task.Owner.Name));
-            sfContent.appendChild(row);
-          });
-        }
-
-        if(!opps?.records?.length && !cases?.records?.length && !activities?.records?.length){
-          sfContent.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',fontStyle:'italic',marginTop:'4px'}},'No open opportunities, cases, or tasks.'));
-        }
-      } catch(e){
-        sfStatus.textContent='Could not load Salesforce data: '+e.message;
-        console.error('[VCS SF]',e);
-      }
-    }
-    setTimeout(()=>loadSFData(), 100);
   }
 
   if (vendor.comments && String(vendor.comments).trim()) {
