@@ -3250,7 +3250,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     const makeBtn2=(icon,val,type,label)=>{
       const btn=el('button',{class:'btn-xs btn-ghost',title:label+': '+val,onclick(){
         if(type==='email') launchMailto(val,'Following up — '+vendor.name,'');
-        else if(type==='phone') window.open('tel:'+val.replace(/\D/g,''));
+        else if(type==='phone') dialPhone(val, vendor.name);
         else navigator.clipboard.writeText(val).then(()=>toast('📋 Copied: '+val));
       }},icon+' '+val.slice(0,22)+(val.length>22?'…':''));
       const copyBtn=el('span',{style:{cursor:'pointer',fontSize:'8px',color:'var(--muted)',marginLeft:'2px'},title:'Copy',onclick(e){e.stopPropagation();navigator.clipboard.writeText(val).then(()=>toast('📋 Copied'));}}, '📋');
@@ -3447,42 +3447,109 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   // ── Salesforce Data (Read-Only) — if connected ──
   if (USER.sfToken && vendor.source==='psd') {
     const sfSec=el('div',{class:'detail-section'});
-    sfSec.appendChild(el('h4',{class:'detail-sec-title'},'☁ Salesforce Data'));
-    sfSec.appendChild(el('div',{style:{fontSize:'9px',color:'var(--green)',marginBottom:'6px'}},'🔒 Read-only — pulled from your Salesforce instance'));
-    const sfStatus=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'6px 0'}},'Loading...');
-    sfSec.appendChild(sfStatus);
+    const sfHdr=el('div',{class:'detail-sec-hdr'});
+    sfHdr.appendChild(el('h4',{class:'detail-sec-title',style:{marginBottom:'0'}},'☁ Salesforce'));
+    const sfRefresh=el('button',{class:'btn-xs btn-ghost',onclick(e){e.stopPropagation();sfSec.querySelector('.sf-content').innerHTML='';loadSFData();}}, '↻');
+    sfHdr.appendChild(sfRefresh);
+    sfSec.appendChild(sfHdr);
+    const sfContent=el('div',{class:'sf-content',style:{marginTop:'6px'}});
+    const sfStatus=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'4px 0'}},'⏳ Loading Salesforce data...');
+    sfContent.appendChild(sfStatus);
+    sfSec.appendChild(sfContent);
     body.appendChild(sfSec);
-    // Async fetch — non-blocking
-    (async()=>{
+
+    async function loadSFData() {
+      sfStatus.textContent='⏳ Loading...';
       try {
-        const nameEsc=String(vendor.name||'').replace(/'/g,"\\'");
-        const result=await sfQuery("SELECT Id, Name, Type, Industry, Phone, Website, BillingCity, BillingState, OwnerId, Owner.Name, LastModifiedDate FROM Account WHERE Name LIKE '%"+nameEsc+"%' LIMIT 3");
+        const nameEsc=String(vendor.name||'').replace(/'/g,"\\'").replace(/"/g,'\\"');
+        // Search accounts — try exact then LIKE
+        let result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, AnnualRevenue, NumberOfEmployees, OwnerId, Owner.Name, LastModifiedDate FROM Account WHERE Name='"+nameEsc+"' LIMIT 3");
+        if(!result?.records?.length) result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, AnnualRevenue, NumberOfEmployees, Owner.Name, LastModifiedDate FROM Account WHERE Name LIKE '%"+nameEsc+"%' LIMIT 5");
         sfStatus.innerHTML='';
-        if(!result||!result.records||!result.records.length){sfStatus.textContent='No matching Account found in Salesforce for "'+vendor.name+'"';return;}
-        result.records.forEach(acct=>{
-          const card=el('div',{style:{background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px',padding:'8px',marginBottom:'6px'}});
-          card.appendChild(el('div',{style:{fontWeight:'600',fontSize:'11px',color:'var(--blue)',marginBottom:'4px'}},acct.Name));
-          const grid=el('div',{class:'detail-grid'});
-          [['Type',acct.Type],['Industry',acct.Industry],['Phone',acct.Phone],['City/State',(acct.BillingCity||'')+(acct.BillingState?', '+acct.BillingState:'')],['Owner',acct.Owner?.Name],['Last Modified',acct.LastModifiedDate?new Date(acct.LastModifiedDate).toLocaleDateString():'—']].forEach(([l,v])=>{if(v){grid.appendChild(el('span',{class:'detail-label'},l));grid.appendChild(el('span',{class:'detail-value'},v));}});
-          card.appendChild(grid);
-          sfStatus.appendChild(card);
-        });
+
+        if(!result?.records?.length){
+          sfStatus.innerHTML='<span style="color:var(--muted);font-style:italic;font-size:10px">No Account found in Salesforce for "'+vendor.name+'" — <a href="#" style="color:var(--blue)" onclick="event.preventDefault();openSFSearchModal(\''+vendor.name+'\')">Search manually</a></span>';
+          return;
+        }
+
+        const acct=result.records[0];
+        // Account card
+        const acctCard=el('div',{style:{background:'rgba(79,124,255,.05)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px',padding:'7px 9px',marginBottom:'6px'}});
+        const acctTop=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'4px'}});
+        acctTop.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',color:'var(--blue)',flex:'1'}},acct.Name));
+        if(acct.Type) acctTop.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(79,124,255,.15)',color:'var(--blue)',padding:'1px 6px',borderRadius:'3px'}},acct.Type));
+        acctCard.appendChild(acctTop);
+        const acctGrid=el('div',{class:'detail-grid'});
+        const acctFields=[
+          ['Phone',acct.Phone],['Location',[acct.BillingCity,acct.BillingState].filter(Boolean).join(', ')],
+          ['Revenue',acct.AnnualRevenue?'$'+Number(acct.AnnualRevenue).toLocaleString():'—'],
+          ['Employees',acct.NumberOfEmployees?.toLocaleString()],
+          ['Owner',acct.Owner?.Name],['Last Modified',acct.LastModifiedDate?new Date(acct.LastModifiedDate).toLocaleDateString():'—'],
+        ];
+        acctFields.forEach(([l,v])=>{if(v){acctGrid.appendChild(el('span',{class:'detail-label'},l));acctGrid.appendChild(el('span',{class:'detail-value'},v||'—'));}});
+        acctCard.appendChild(acctGrid);
+        sfContent.appendChild(acctCard);
+
+        // Run parallel queries for Opps, Cases, Activities
+        const accId=acct.Id;
+        const [opps,cases,activities]=await Promise.all([
+          sfQuery("SELECT Id,Name,StageName,Amount,CloseDate,Probability FROM Opportunity WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 5"),
+          sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Case WHERE AccountId='"+accId+"' ORDER BY CreatedDate DESC LIMIT 5"),
+          sfQuery("SELECT Id,Subject,ActivityDate,Status,Priority,OwnerId,Owner.Name FROM Task WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5"),
+        ]);
+
         // Opportunities
-        const accId=result.records[0].Id;
-        const opps=await sfQuery("SELECT Id, Name, StageName, Amount, CloseDate FROM Opportunity WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 5");
-        if(opps&&opps.records&&opps.records.length){
-          sfStatus.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--blue)',marginTop:'6px',marginBottom:'3px'}},'Open Opportunities ('+opps.records.length+'):'));
+        if(opps?.records?.length){
+          sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'4px',letterSpacing:'.05em'}},'OPEN OPPORTUNITIES'));
           opps.records.forEach(opp=>{
-            const row=el('div',{style:{fontSize:'10px',color:'var(--text)',padding:'2px 0',borderBottom:'1px solid var(--border)'}});
-            row.appendChild(el('span',{style:{fontWeight:'600'}},opp.Name));
-            row.appendChild(el('span',{style:{color:'var(--muted)',marginLeft:'8px'}},opp.StageName||''));
-            if(opp.Amount) row.appendChild(el('span',{style:{color:'var(--green)',marginLeft:'8px'}},'$'+Number(opp.Amount).toLocaleString()));
-            if(opp.CloseDate) row.appendChild(el('span',{style:{color:'var(--muted)',marginLeft:'8px',fontSize:'9px'}},new Date(opp.CloseDate).toLocaleDateString()));
-            sfStatus.appendChild(row);
+            const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
+            row.appendChild(el('span',{style:{flex:'1',fontWeight:'500'}},opp.Name));
+            row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},opp.StageName));
+            if(opp.Amount) row.appendChild(el('span',{style:{color:'var(--green)',fontWeight:'600'}},'$'+Number(opp.Amount).toLocaleString()));
+            if(opp.CloseDate) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},new Date(opp.CloseDate).toLocaleDateString()));
+            sfContent.appendChild(row);
           });
         }
-      } catch(e){sfStatus.textContent='Could not load Salesforce data: '+e.message;}
-    })();
+
+        // Cases
+        if(cases?.records?.length){
+          sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'6px',letterSpacing:'.05em'}},'OPEN CASES ('+cases.records.length+')'));
+          cases.records.forEach(c2=>{
+            const priority=c2.Priority;
+            const prioColor=priority==='High'?'var(--red)':priority==='Medium'?'var(--amber)':'var(--muted)';
+            const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
+            row.appendChild(el('span',{style:{fontWeight:'500',flex:'1'}},c2.Subject||c2.CaseNumber));
+            row.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(0,0,0,.05)',padding:'1px 5px',borderRadius:'3px'}},c2.Status));
+            if(priority) row.appendChild(el('span',{style:{fontSize:'9px',color:prioColor,fontWeight:'600'}},priority));
+            row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},new Date(c2.CreatedDate).toLocaleDateString()));
+            sfContent.appendChild(row);
+          });
+        }
+
+        // Open Tasks/Activities
+        if(activities?.records?.length){
+          sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'6px',letterSpacing:'.05em'}},'OPEN TASKS'));
+          activities.records.forEach(task=>{
+            const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
+            row.appendChild(el('span',{style:{flex:'1',fontWeight:'500'}},task.Subject||'(no subject)'));
+            if(task.ActivityDate){
+              const daysLeft=Math.ceil((new Date(task.ActivityDate)-new Date())/86400000);
+              row.appendChild(el('span',{style:{fontSize:'9px',color:daysLeft<0?'var(--red)':daysLeft<=3?'var(--amber)':'var(--muted)'}},new Date(task.ActivityDate).toLocaleDateString()+(daysLeft<0?' (overdue)':'')));
+            }
+            if(task.Owner?.Name) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},task.Owner.Name));
+            sfContent.appendChild(row);
+          });
+        }
+
+        if(!opps?.records?.length && !cases?.records?.length && !activities?.records?.length){
+          sfContent.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',fontStyle:'italic',marginTop:'4px'}},'No open opportunities, cases, or tasks.'));
+        }
+      } catch(e){
+        sfStatus.textContent='Could not load Salesforce data: '+e.message;
+        console.error('[VCS SF]',e);
+      }
+    }
+    setTimeout(()=>loadSFData(), 100);
   }
 
   if (vendor.comments && String(vendor.comments).trim()) {
@@ -3863,7 +3930,7 @@ const SETTINGS_STORAGE_KEY = 'vcs_user_settings_v2';
 // Personal settings — stored per user email, follow the user across devices
 const PERSONAL_SETTING_KEYS = ['theme','fontSize','compactRows','defaultView','showKPIs',
   'showHebrew','autoSortByScore','showSnoozed','showDismissedDefault','animateBadges',
-  'emailSignature','cols','dbHiddenCols','sidebarWidth','closedDays','oooDays'];
+  'emailSignature','cols','dbHiddenCols','sidebarWidth','closedDays','oooDays','dialerUrl'];
 // Global settings — stored once, admin-controlled, apply to all sessions
 const GLOBAL_SETTING_KEYS = ['sfClientId','sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId'];
 const PERSIST_KEYS = [...PERSONAL_SETTING_KEYS, ...GLOBAL_SETTING_KEYS];
@@ -4578,7 +4645,24 @@ function updateUserBadge(){
   });};
 }
 
-// ─── Salesforce OAuth 2.0 ────────────────────────────────────────────────────
+// ── Configurable Dialer ───────────────────────────────────────────────────────
+// Uses S.settings.dialerUrl as a template with {phone} and {name} placeholders
+// Falls back to tel: if not configured
+function dialPhone(phone, vendorName) {
+  const raw = phone.replace(/\D/g,'');
+  const dialerUrl = S.settings?.dialerUrl;
+  if (dialerUrl && dialerUrl.trim()) {
+    const url = dialerUrl
+      .replace(/\{phone\}/gi, encodeURIComponent(raw))
+      .replace(/\{phone_raw\}/gi, raw)
+      .replace(/\{name\}/gi, encodeURIComponent(vendorName||''))
+      .replace(/\{e164\}/gi, encodeURIComponent('+1'+raw)); // US default
+    window.open(url, '_blank');
+  } else {
+    window.open('tel:'+raw);
+  }
+  logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendorName||'',action:'📞 Dialed: '+phone});
+}
 function showSFSetupGuide(){
   const prompt=`I need to set up a Salesforce Connected App for our Vendor Contract Scheduler (VCS) tool. This is a read-only integration — the app will only query Salesforce data, never create, update, or delete records.
 
@@ -4906,8 +4990,8 @@ function renderContactsSection(body, vendor) {
     // Contact buttons row
     const btns = el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap'}});
     if(contact.email) btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){launchMailto(contact.email,'Re: '+vendor.name,'');}}, '✉ '+contact.email.slice(0,28)+(contact.email.length>28?'…':'')));
-    if(contact.phone) btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){window.open('tel:'+contact.phone.replace(/\D/g,''));}}, '📞 '+contact.phone));
-    if(contact.mobile) btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){window.open('tel:'+contact.mobile.replace(/\D/g,''));}}, '📱 '+contact.mobile));
+    if(contact.phone) btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){dialPhone(contact.phone, vendor.name||'');}}, '📞 '+contact.phone));
+    if(contact.mobile) btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){dialPhone(contact.mobile, vendor.name||'');}}, '📱 '+contact.mobile));
     if(btns.children.length) card.appendChild(btns);
     grid.appendChild(card);
   });
@@ -7639,7 +7723,7 @@ function renderCallSheet(c) {
       const conRow=el('div',{style:{marginTop:'4px',paddingTop:'4px',borderTop:'1px solid var(--border)'}});
       conRow.appendChild(el('div',{style:{fontWeight:'600'}},con.name||'(no name)'));
       if(con.email) conRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginTop:'2px'},onclick(e){e.stopPropagation();launchMailto(con.email,'Following up — '+v.name,'');}},  '✉ '+con.email.slice(0,28)));
-      if(con.phone||con.mobile) conRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginTop:'2px'},onclick(e){e.stopPropagation();window.open('tel:'+((con.phone||con.mobile).replace(/\D/g,'')));}}, '📞 '+(con.phone||con.mobile)));
+      if(con.phone||con.mobile) conRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginTop:'2px'},onclick(e){e.stopPropagation();dialPhone(con.phone||con.mobile, v.name);}}, '📞 '+(con.phone||con.mobile)));
       col2.appendChild(conRow);
     }
     panel.appendChild(col2);
@@ -9646,23 +9730,29 @@ AG=Added Value, AH=Contact, AJ=Business#, AK=Mobile, AL=Email, BA=Notes (r[52])
 
 - ✅ Unified "Add Vendor Record" modal (destination selector: PSD or ITW)
 - ✅ "Promote to Vendor Database" button on ITW detail panel
-- ✅ Exact name matching (fuzzy matching removed — was causing false links)
-- ✅ Table-safe row insertion for both PSD and ITW sheets
+- ✅ Exact name matching (fuzzy matching removed)
+- ✅ Table-safe row insertion for PSD (expands table ref) and ITW
 - ✅ Non-dismissible promote follow-up modal (lockDismiss)
+- ✅ "In the Works record" wording throughout promote flow
 - ✅ W-Update / M-Update status expiry (Friday noon / last Thursday of month)
-- ✅ Dirty counter shows count + breakdown by type
+- ✅ Dirty counter shows count + breakdown (vendor/ITW/review)
 - ✅ Notes editor — split-pane with live preview, keyboard shortcuts (Ctrl+B/I/U/S)
-- ✅ Trainual link field (col BT)
-- ✅ Vendor Alias Linking — manual link for differently-named same-vendor records
+- ✅ Trainual link field (col BT) per vendor
+- ✅ Vendor Alias Linking — link differently-named same-vendor records; aliases persist to spreadsheet via vendorAliasOf (col BU)
+- ✅ Alias auto-redirect — clicking a linked review/ITW vendor opens full PSD record directly
 - ✅ Multiple contacts per vendor — unlimited dynamic rows, stored in col BV as JSON
 - ✅ Vendor Relationship system (col BW) — linked records with type + description, reciprocal
 - ✅ Contract Comparison Tool (⚖️ Compare tab) — Claude API, color-coded table, Word export
-- ✅ "Contract Basics" section rename (was "Relationship" — conflicted with new Relationships section)
-- ✅ ITW → DB badge: vendors in ITW that match PSD show green "DB" indicator
-- ✅ Session Handover Generator (this feature)
-- ✅ vendorAliases persisted in session state
-- ✅ saveSessionState called after all dirty-producing actions
-- ✅ mammoth.js CDN for DOCX text extraction in Compare tool
+- ✅ "Contract Basics" section rename (was "Relationship" — conflicted with Vendor Relationships)
+- ✅ ITW "DB" badge — vendors in ITW that match PSD show green DB indicator; click opens full record
+- ✅ Callsheet pre-call prep panel — expandable row shows contract facts, contact, last note
+- ✅ Salesforce integration — expanded detail panel with Account, Opportunities, Cases, Open Tasks; parallel queries; refresh button
+- ✅ Configurable auto-dialer — Settings preset buttons (Commpeak, Google Voice, Zoom, RingCentral) + custom URL template with {phone}/{name}/{e164} substitution; all phone buttons in app use dialPhone()
+- ✅ Session restore fixes — match by _row fallback, handles name changes, restores ITW/review dirty state, calls saveSessionState after restore
+- ✅ "Discard & Start Fresh" now requires confirmation
+- ✅ VCS Watcher username fix — UTF-16LE parsing of Excel lock file; shows actual Windows username in save warning
+- ✅ Reviews tab — unmatched records route through openDetail for alias banner; linked records auto-redirect to full PSD record
+- ✅ Session Handover Generator (Settings → top section)
 
 ---
 
@@ -10309,6 +10399,49 @@ function renderSettings(c) {
   } // end AI config admin block
 
   // Column visibility
+  // ── Dialer Configuration ──
+  const secDialer=el('div',{class:'settings-section'});
+  secDialer.appendChild(el('h3',{},'📞 Click-to-Call Dialer'));
+  secDialer.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',lineHeight:'1.5',marginBottom:'8px'}},'Configure your preferred dialer. When set, all phone buttons in VCS launch your dialer instead of the default tel: link. Use {phone} for the number, {name} for the vendor name, {e164} for E.164 format (+1XXXXXXXXXX).'));
+  const DIALER_PRESETS=[
+    {name:'Default (tel: link)', url:''},
+    {name:'Commpeak', url:'https://app.commpeak.com/dialer?number={phone}'},
+    {name:'Google Voice', url:'https://voice.google.com/calls?a=nc,+1{phone}'},
+    {name:'Zoom Phone', url:'zoomphonecall:{phone}'},
+    {name:'RingCentral', url:'rcmobile://call?number={e164}'},
+    {name:'Custom…', url:'custom'},
+  ];
+  const presetRow=el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'8px'}});
+  const currentUrl=S.settings.dialerUrl||'';
+  const urlInp=el('input',{type:'url',class:'modal-input',style:{fontSize:'10px',height:'24px'},placeholder:'https://your-dialer.com/call?number={phone}',value:currentUrl});
+  urlInp.addEventListener('change',()=>{S.settings.dialerUrl=urlInp.value.trim();debouncedSaveSettings();});
+  DIALER_PRESETS.forEach(p=>{
+    const active=p.url===''?!currentUrl:p.url!=='custom'&&currentUrl===p.url;
+    const btn=el('button',{class:'col-toggle-btn'+(active?' on':''),onclick(){
+      if(p.url==='custom') return;
+      urlInp.value=p.url; S.settings.dialerUrl=p.url; debouncedSaveSettings();
+      presetRow.querySelectorAll('button').forEach(b=>b.classList.remove('on'));
+      btn.classList.add('on');
+    }},p.name);
+    presetRow.appendChild(btn);
+  });
+  secDialer.appendChild(presetRow);
+  const urlRow=el('div',{style:{marginBottom:'4px'}});
+  urlRow.appendChild(el('label',{style:{fontSize:'9px',color:'var(--muted)',display:'block',marginBottom:'2px'}},'Dialer URL template:'));
+  urlRow.appendChild(urlInp);
+  secDialer.appendChild(urlRow);
+  const dialerTest=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'4px'}});
+  const testPhone='2125551234';
+  function updateDialerPreview(){
+    const url=urlInp.value.trim();
+    if(!url){dialerTest.textContent='Using default tel: link'; return;}
+    const preview=url.replace(/\{phone\}/gi,testPhone).replace(/\{phone_raw\}/gi,testPhone).replace(/\{name\}/gi,'Sysco').replace(/\{e164\}/gi,'+1'+testPhone);
+    dialerTest.textContent='Preview: '+preview.slice(0,80)+(preview.length>80?'…':'');
+  }
+  urlInp.addEventListener('input',updateDialerPreview); updateDialerPreview();
+  secDialer.appendChild(dialerTest);
+  c.appendChild(secDialer);
+
   const sec1=el('div',{class:'settings-section'});
   sec1.appendChild(el('h3',{},'📋 Table Columns (Today view)'));
   const colDefs=[['score','Score'],['vendor','Vendor'],['category','Category'],['contact','Contact'],['phone','Phone'],['email','Email'],['expiry','Expiry'],['days','Days'],['tier','Tier'],['why','Why'],['actions','Actions']];
