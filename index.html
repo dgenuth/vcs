@@ -3500,18 +3500,18 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       body.appendChild(sfSec);
 
       async function loadSFData() {
-        sfStatus.textContent='⏳ Loading...';
+        sfStatus.textContent='⏳ Loading Salesforce data...';
         try {
-          const nameEsc=String(vendor.name||'').replace(/'/g,"\\'");
+          const nameEsc=String(vendor.name||'').replace(/'/g,"\'");
+          console.log('[VCS SF] Loading for vendor:', vendor.name, '| Stored ID:', vendor.sfAccountId||'none', '| Token:', USER.sfToken?'yes ('+USER.sfToken.slice(0,8)+'...)':'NO', '| Instance:', USER.sfInstance||'NONE');
+
           let result=null;
-          let sfObjectType='Account';
 
           // If vendor has a manually linked SF Account ID, use it directly
           if(vendor.sfAccountId){
+            console.log('[VCS SF] Using stored Account ID:', vendor.sfAccountId);
             result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, AnnualRevenue, NumberOfEmployees, Owner.Name, LastModifiedDate FROM Account WHERE Id='"+vendor.sfAccountId+"' LIMIT 1");
           }
-
-          // Otherwise try name matching: exact → LIKE → first word
           if(!result?.records?.length){
             result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, AnnualRevenue, NumberOfEmployees, Owner.Name, LastModifiedDate FROM Account WHERE Name='"+nameEsc+"' LIMIT 3");
           }
@@ -3520,77 +3520,87 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
           }
           if(!result?.records?.length){
             const firstWord=nameEsc.split(' ')[0];
-            if(firstWord.length>3){
+            if(firstWord && firstWord.length>3){
               result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, Owner.Name, LastModifiedDate FROM Account WHERE Name LIKE '%"+firstWord+"%' LIMIT 5");
             }
           }
           sfStatus.innerHTML='';
+
+          // Show errors clearly
+          if(result?._error){
+            const errDiv=el('div',{style:{fontSize:'10px',color:'var(--red)',background:'rgba(239,68,68,.06)',padding:'8px',borderRadius:'4px'}});
+            errDiv.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'3px'}},'Salesforce error ('+result._status+'):'));
+            errDiv.appendChild(el('div',{},String(result._message||'Unknown error')));
+            errDiv.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'4px'}},'Check F12 console. Common fixes: enable "Perform requests at any time (refresh_token, offline_access)" scope in Connected App, or reconnect in Settings.'));
+            sfContent.appendChild(errDiv);
+            return;
+          }
+
           if(!result?.records?.length){
             sfStatus.innerHTML='';
             const noMatchDiv=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'6px 0'}});
-            noMatchDiv.appendChild(el('span',{},'No '+sfObjectType+' found matching "'+vendor.name+'". '));
-            // Manual SF Account ID link option
+            noMatchDiv.appendChild(el('span',{},'No Account found matching "'+vendor.name+'". '));
             const linkBtn=el('button',{class:'btn-xs btn-ghost',style:{display:'block',marginTop:'6px'},onclick(){
               openModal(b=>{
                 b.appendChild(el('h3',{style:{marginTop:'0'}},'Link Salesforce Account'));
-                b.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'Enter the Salesforce Account ID to manually link "'+vendor.name+'" to a specific SF record.'));
-                const inp=el('input',{type:'text',class:'modal-input',placeholder:'Salesforce Account ID (18-char, e.g. 001Dn00000...'});
+                b.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'Paste the Salesforce Account ID (from the URL when viewing the Account in SF: .../Account/001Dn000...). This will be saved to the vendor record.'));
+                const inp=el('input',{type:'text',class:'modal-input',placeholder:'001Dn000000xxxxx (15 or 18 chars)'});
                 b.appendChild(inp);
                 const btns2=el('div',{class:'modal-btns',style:{marginTop:'8px'}});
                 btns2.appendChild(el('button',{class:'btn-primary',onclick(){
-                  const id=inp.value.trim();
-                  if(!id){toast('Enter an Account ID','#f59e0b');return;}
-                  if(!vendor.sfAccountId) vendor.sfAccountId=id;
-                  markDirty(vendor); saveSessionState(); closeModal();
-                  sfContent.innerHTML=''; loadSFData(); toast('✓ SF Account linked — reloading...');
-                }},'Link'));
+                  const id=inp.value.trim().replace(/[^a-zA-Z0-9]/g,'');
+                  if(!id||id.length<15){toast('Enter a valid Salesforce Account ID (15+ chars)','#f59e0b');return;}
+                  vendor.sfAccountId=id; markDirty(vendor); saveSessionState();
+                  closeModal(); sfContent.innerHTML=''; sfStatus=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'4px 0'}},'⏳ Loading...'); sfContent.appendChild(sfStatus);
+                  loadSFData(); toast('✓ SF Account ID saved — reloading...');
+                }},'Save & Load'));
                 btns2.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
-                b.appendChild(btns2);
+                b.appendChild(btns2); setTimeout(()=>inp.focus(),50);
               });
-            }},'🔗 Manually link Salesforce Account ID');
+            }},'🔗 Manually enter Salesforce Account ID');
             noMatchDiv.appendChild(linkBtn);
             sfContent.appendChild(noMatchDiv);
             return;
           }
-          const acct=result.records[0];
-          // Store the matched SF Account ID for future use
-          if(!vendor.sfAccountId && acct.Id){ vendor.sfAccountId=acct.Id; markDirty(vendor); }
 
-          // Show matched-as banner if name differs from vendor name
+          const acct=result.records[0];
+          // Store matched Account ID permanently
+          if(!vendor.sfAccountId && acct.Id){ vendor.sfAccountId=acct.Id; markDirty(vendor); saveSessionState(); }
+          console.log('[VCS SF] Matched Account:', acct.Name, 'ID:', acct.Id);
+
+          // Show matched-as banner if name differs
           if(acct.Name && acct.Name.toLowerCase()!==vendor.name.toLowerCase()){
-            const matchBanner=el('div',{style:{fontSize:'9px',color:'var(--blue)',background:'rgba(59,130,246,.06)',padding:'3px 7px',borderRadius:'3px',marginBottom:'5px'}});
-            matchBanner.textContent='Matched SF Account: "'+acct.Name+'"';
-            sfContent.appendChild(matchBanner);
+            sfContent.appendChild(el('div',{style:{fontSize:'9px',color:'var(--blue)',background:'rgba(59,130,246,.06)',padding:'3px 7px',borderRadius:'3px',marginBottom:'5px'}},'Matched: "'+acct.Name+'"'));
           }
+
+          // Account card
           const acctCard=el('div',{style:{background:'rgba(79,124,255,.05)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px',padding:'7px 9px',marginBottom:'6px'}});
           const acctTop=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'4px'}});
           acctTop.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',color:'var(--blue)',flex:'1'}},acct.Name));
           if(acct.Type) acctTop.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(79,124,255,.15)',color:'var(--blue)',padding:'1px 6px',borderRadius:'3px'}},acct.Type));
           acctCard.appendChild(acctTop);
           const acctGrid=el('div',{class:'detail-grid'});
-          // Revenue/employee counts only for financial roles
-          const _sfFinancial=['admin','procurement','manager','cro','finance_sr','finance_jr'].includes(USER.role);
-          const acctFields=[
+          const _sfFin=['admin','procurement','manager','cro','finance_sr','finance_jr'].includes(USER.role);
+          [
             ['Phone',acct.Phone],
             ['Location',[acct.BillingCity,acct.BillingState].filter(Boolean).join(', ')],
-            ...(_sfFinancial?[['Revenue',acct.AnnualRevenue?'$'+Number(acct.AnnualRevenue).toLocaleString():'—'],['Employees',acct.NumberOfEmployees?.toLocaleString()]]:[]),
+            ...(_sfFin?[['Revenue',acct.AnnualRevenue?'$'+Number(acct.AnnualRevenue).toLocaleString():'—'],['Employees',acct.NumberOfEmployees?.toLocaleString()]]:[]),
             ['Owner',acct.Owner?.Name],
             ['Last Modified',acct.LastModifiedDate?new Date(acct.LastModifiedDate).toLocaleDateString():'—'],
-          ];
-          acctFields.forEach(([l,v])=>{if(v){acctGrid.appendChild(el('span',{class:'detail-label'},l));acctGrid.appendChild(el('span',{class:'detail-value'},v||'—'));}});
+          ].forEach(([l,v])=>{if(v){acctGrid.appendChild(el('span',{class:'detail-label'},l));acctGrid.appendChild(el('span',{class:'detail-value'},v||'—'));}});
           acctCard.appendChild(acctGrid);
           sfContent.appendChild(acctCard);
 
           const accId=acct.Id;
           const [opps,cases,activities,spendRecs]=await Promise.all([
-            sfQuery("SELECT Id,Name,StageName,Amount,CloseDate,Probability,Account.Name FROM Opportunity WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 5"),
+            sfQuery("SELECT Id,Name,StageName,Amount,CloseDate,Probability FROM Opportunity WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 5"),
             sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Case WHERE AccountId='"+accId+"' ORDER BY CreatedDate DESC LIMIT 5"),
             sfQuery("SELECT Id,Subject,ActivityDate,Status,Priority,Owner.Name FROM Task WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5"),
-            sfQuery("SELECT Id,Name,Reported_Date__c,Category__c,Amount__c FROM Spend__c WHERE Vendor__c='"+accId+"' ORDER BY Reported_Date__c DESC LIMIT 6").catch(()=>null),
+            sfQuery("SELECT Id,Name,Reported_Date__c,Category__c,Amount__c FROM Spend__c WHERE Vendor__c='"+accId+"' ORDER BY Reported_Date__c DESC LIMIT 6").catch(()=>({records:[]})),
           ]);
+          console.log('[VCS SF] Opps:', opps?.records?.length||0, '| Cases:', cases?.records?.length||0, '| Tasks:', activities?.records?.length||0, '| Spend:', spendRecs?.records?.length||0);
 
-          // Opportunities — financial roles only
-          if(_sfFinancial && opps?.records?.length){
+          if(_sfFin && opps?.records?.length){
             sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'4px',letterSpacing:'.05em'}},'OPEN OPPORTUNITIES'));
             opps.records.forEach(opp=>{
               const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
@@ -3601,8 +3611,6 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
               sfContent.appendChild(row);
             });
           }
-
-          // Cases — all financial roles
           if(cases?.records?.length){
             sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'6px',letterSpacing:'.05em'}},'OPEN CASES ('+cases.records.length+')'));
             cases.records.forEach(c2=>{
@@ -3611,12 +3619,9 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
               row.appendChild(el('span',{style:{fontWeight:'500',flex:'1'}},c2.Subject||c2.CaseNumber));
               row.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(0,0,0,.05)',padding:'1px 5px',borderRadius:'3px'}},c2.Status));
               if(c2.Priority) row.appendChild(el('span',{style:{fontSize:'9px',color:prioColor,fontWeight:'600'}},c2.Priority));
-              row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},new Date(c2.CreatedDate).toLocaleDateString()));
               sfContent.appendChild(row);
             });
           }
-
-          // Tasks
           if(activities?.records?.length){
             sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'6px',letterSpacing:'.05em'}},'OPEN TASKS'));
             activities.records.forEach(task=>{
@@ -3627,9 +3632,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
               sfContent.appendChild(row);
             });
           }
-          // Spend records (custom object)
           if(spendRecs?.records?.length){
-            sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'6px',letterSpacing:'.05em'}},'💰 RECENT SPEND'));
+            sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'6px',letterSpacing:'.05em'}},'RECENT SPEND'));
             spendRecs.records.forEach(s=>{
               const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
               row.appendChild(el('span',{style:{flex:'1',fontWeight:'500'}},s.Name||'Spend Record'));
@@ -3639,13 +3643,16 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
               sfContent.appendChild(row);
             });
           }
-
-          if(!opps?.records?.length&&!cases?.records?.length&&!activities?.records?.length){
-            sfContent.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',fontStyle:'italic',marginTop:'4px'}},'No open opportunities, cases, or tasks.'));
+          if(!opps?.records?.length&&!cases?.records?.length&&!activities?.records?.length&&!spendRecs?.records?.length){
+            sfContent.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',fontStyle:'italic',marginTop:'4px'}},'Account found but no open opportunities, cases, tasks, or spend records.'));
           }
+
         } catch(e){sfStatus.textContent='Error: '+e.message;}
       }
-      setTimeout(()=>loadSFData(),100);
+      // SF data loads on demand — click Load button to fetch
+      const loadSFBtn=el('button',{class:'btn-xs btn-blue',style:{marginTop:'4px'},onclick(){sfStatus.textContent='⏳ Loading...';loadSFData();}}, '☁ Load Salesforce Data');
+      sfStatus.textContent='';
+      sfContent.appendChild(loadSFBtn);
       // NOTE: do NOT return here — must continue to showDetailPanel() at end of openDetail
     }
     sfSec.appendChild(sfContent);
@@ -4823,9 +4830,28 @@ function sfConnect(){
 }
 function restoreSFSession(){try{const s=JSON.parse(sessionStorage.getItem('vcs_sf_token')||'null');if(s&&s.token){USER.sfToken=s.token;USER.sfInstance=s.instance;}}catch(e){}}
 async function sfQuery(soql){
-  if(!USER.sfToken||!USER.sfInstance)return null;
-  try{const r=await fetch(USER.sfInstance+'/services/data/v59.0/query?q='+encodeURIComponent(soql),{headers:{'Authorization':'Bearer '+USER.sfToken}});
-  if(r.status===401){USER.sfToken=null;toast('SF session expired — reconnect','#f59e0b');return null;}return await r.json();}catch(e){return null;}
+  if(!USER.sfToken||!USER.sfInstance) return null;
+  try {
+    const r=await fetch(USER.sfInstance+'/services/data/v59.0/query?q='+encodeURIComponent(soql),{
+      headers:{'Authorization':'Bearer '+USER.sfToken, 'Content-Type':'application/json'}
+    });
+    if(r.status===401){
+      USER.sfToken=null; USER.sfInstance=null;
+      sessionStorage.removeItem('vcs_sf_token');
+      toast('Salesforce session expired — reconnect in Settings','#f59e0b');
+      return null;
+    }
+    if(!r.ok){
+      const errBody=await r.json().catch(()=>({message:r.statusText}));
+      const msg=Array.isArray(errBody)?errBody[0]?.message:errBody.message;
+      console.warn('[VCS SF] Query error ('+r.status+'):', msg, '\nSOQL:', soql.slice(0,100));
+      return {_error:true, _status:r.status, _message:msg, records:[]};
+    }
+    return await r.json();
+  } catch(e) {
+    console.error('[VCS SF] Network error:', e.message, '\nSOQL:', soql.slice(0,100));
+    return {_error:true, _message:'Network error: '+e.message, records:[]};
+  }
 }
 
 const STATIC_PICKLISTS = {
