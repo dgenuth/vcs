@@ -1309,6 +1309,7 @@ function parsePSD(sheet, sourceName) {
       vendorAliasOf: String(r[72]||'').trim(), // Column BU — canonical vendor name this is aliased to
       extraContacts: parseExtraContacts(r[73]), // Column BV — JSON array of contacts 3+
       vendorRelationships: parseVendorRelationships(r[74]), // Column BW — JSON array of related vendor links
+      sfAccountId: String(r[75]||'').trim(), // Column BX — manual Salesforce Account ID link
       _dirty:false,
     };
     v.score = isDirect ? calcScore(v) : 0;
@@ -1854,7 +1855,7 @@ async function executeSave() {
       adminFee:'AZ', adminFeeNotes:'BA', tiers:'BB', perpetuity:'BC',
       tail:'BD', contractNo:'BF', agreementType:'BH', comments:'BI',
       notes:'BJ', lastComm:'BK', about:'BL', followUp:'BM', aka:'BN',
-      priority:'BO', trainualUrl:'BT', vendorAliasOf:'BU', extraContacts:'BV', vendorRelationships:'BW',
+      priority:'BO', trainualUrl:'BT', vendorAliasOf:'BU', extraContacts:'BV', vendorRelationships:'BW', sfAccountId:'BX',
     };
 
     // Date fields — must be written as Excel serial numbers, not ISO strings
@@ -3501,15 +3502,66 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       async function loadSFData() {
         sfStatus.textContent='⏳ Loading...';
         try {
-          const nameEsc=String(vendor.name||'').replace(/'/g,"\\'").replace(/"/g,'\\"');
-          let result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, AnnualRevenue, NumberOfEmployees, Owner.Name, LastModifiedDate FROM Account WHERE Name='"+nameEsc+"' LIMIT 3");
-          if(!result?.records?.length) result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, AnnualRevenue, NumberOfEmployees, Owner.Name, LastModifiedDate FROM Account WHERE Name LIKE '%"+nameEsc+"%' LIMIT 5");
+          const nameEsc=String(vendor.name||'').replace(/'/g,"\\'");
+          let result=null;
+          let sfObjectType='Account';
+
+          // If vendor has a manually linked SF Account ID, use it directly
+          if(vendor.sfAccountId){
+            result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, AnnualRevenue, NumberOfEmployees, Owner.Name, LastModifiedDate FROM Account WHERE Id='"+vendor.sfAccountId+"' LIMIT 1");
+          }
+
+          // Otherwise try name matching: exact → LIKE → first word
+          if(!result?.records?.length){
+            result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, AnnualRevenue, NumberOfEmployees, Owner.Name, LastModifiedDate FROM Account WHERE Name='"+nameEsc+"' LIMIT 3");
+          }
+          if(!result?.records?.length){
+            result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, AnnualRevenue, NumberOfEmployees, Owner.Name, LastModifiedDate FROM Account WHERE Name LIKE '%"+nameEsc+"%' LIMIT 5");
+          }
+          if(!result?.records?.length){
+            const firstWord=nameEsc.split(' ')[0];
+            if(firstWord.length>3){
+              result=await sfQuery("SELECT Id, Name, Type, Phone, BillingCity, BillingState, Owner.Name, LastModifiedDate FROM Account WHERE Name LIKE '%"+firstWord+"%' LIMIT 5");
+            }
+          }
           sfStatus.innerHTML='';
           if(!result?.records?.length){
-            sfStatus.innerHTML='<span style="color:var(--muted);font-style:italic;font-size:10px">No Account found for "'+vendor.name+'"</span>';
+            sfStatus.innerHTML='';
+            const noMatchDiv=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'6px 0'}});
+            noMatchDiv.appendChild(el('span',{},'No '+sfObjectType+' found matching "'+vendor.name+'". '));
+            // Manual SF Account ID link option
+            const linkBtn=el('button',{class:'btn-xs btn-ghost',style:{display:'block',marginTop:'6px'},onclick(){
+              openModal(b=>{
+                b.appendChild(el('h3',{style:{marginTop:'0'}},'Link Salesforce Account'));
+                b.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'Enter the Salesforce Account ID to manually link "'+vendor.name+'" to a specific SF record.'));
+                const inp=el('input',{type:'text',class:'modal-input',placeholder:'Salesforce Account ID (18-char, e.g. 001Dn00000...'});
+                b.appendChild(inp);
+                const btns2=el('div',{class:'modal-btns',style:{marginTop:'8px'}});
+                btns2.appendChild(el('button',{class:'btn-primary',onclick(){
+                  const id=inp.value.trim();
+                  if(!id){toast('Enter an Account ID','#f59e0b');return;}
+                  if(!vendor.sfAccountId) vendor.sfAccountId=id;
+                  markDirty(vendor); saveSessionState(); closeModal();
+                  sfContent.innerHTML=''; loadSFData(); toast('✓ SF Account linked — reloading...');
+                }},'Link'));
+                btns2.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
+                b.appendChild(btns2);
+              });
+            }},'🔗 Manually link Salesforce Account ID');
+            noMatchDiv.appendChild(linkBtn);
+            sfContent.appendChild(noMatchDiv);
             return;
           }
           const acct=result.records[0];
+          // Store the matched SF Account ID for future use
+          if(!vendor.sfAccountId && acct.Id){ vendor.sfAccountId=acct.Id; markDirty(vendor); }
+
+          // Show matched-as banner if name differs from vendor name
+          if(acct.Name && acct.Name.toLowerCase()!==vendor.name.toLowerCase()){
+            const matchBanner=el('div',{style:{fontSize:'9px',color:'var(--blue)',background:'rgba(59,130,246,.06)',padding:'3px 7px',borderRadius:'3px',marginBottom:'5px'}});
+            matchBanner.textContent='Matched SF Account: "'+acct.Name+'"';
+            sfContent.appendChild(matchBanner);
+          }
           const acctCard=el('div',{style:{background:'rgba(79,124,255,.05)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px',padding:'7px 9px',marginBottom:'6px'}});
           const acctTop=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'4px'}});
           acctTop.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',color:'var(--blue)',flex:'1'}},acct.Name));
@@ -3530,10 +3582,11 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
           sfContent.appendChild(acctCard);
 
           const accId=acct.Id;
-          const [opps,cases,activities]=await Promise.all([
-            sfQuery("SELECT Id,Name,StageName,Amount,CloseDate,Probability FROM Opportunity WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 5"),
+          const [opps,cases,activities,spendRecs]=await Promise.all([
+            sfQuery("SELECT Id,Name,StageName,Amount,CloseDate,Probability,Account.Name FROM Opportunity WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 5"),
             sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Case WHERE AccountId='"+accId+"' ORDER BY CreatedDate DESC LIMIT 5"),
             sfQuery("SELECT Id,Subject,ActivityDate,Status,Priority,Owner.Name FROM Task WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5"),
+            sfQuery("SELECT Id,Name,Reported_Date__c,Category__c,Amount__c FROM Spend__c WHERE Vendor__c='"+accId+"' ORDER BY Reported_Date__c DESC LIMIT 6").catch(()=>null),
           ]);
 
           // Opportunities — financial roles only
@@ -3574,13 +3627,26 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
               sfContent.appendChild(row);
             });
           }
+          // Spend records (custom object)
+          if(spendRecs?.records?.length){
+            sfContent.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'6px',letterSpacing:'.05em'}},'💰 RECENT SPEND'));
+            spendRecs.records.forEach(s=>{
+              const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
+              row.appendChild(el('span',{style:{flex:'1',fontWeight:'500'}},s.Name||'Spend Record'));
+              if(s.Category__c) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},s.Category__c));
+              if(s.Amount__c) row.appendChild(el('span',{style:{color:'var(--green)',fontWeight:'600'}},'$'+Number(s.Amount__c).toLocaleString()));
+              if(s.Reported_Date__c) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},new Date(s.Reported_Date__c).toLocaleDateString()));
+              sfContent.appendChild(row);
+            });
+          }
+
           if(!opps?.records?.length&&!cases?.records?.length&&!activities?.records?.length){
             sfContent.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',fontStyle:'italic',marginTop:'4px'}},'No open opportunities, cases, or tasks.'));
           }
         } catch(e){sfStatus.textContent='Error: '+e.message;}
       }
       setTimeout(()=>loadSFData(),100);
-      return; // early return — sfContent already appended above
+      // NOTE: do NOT return here — must continue to showDetailPanel() at end of openDetail
     }
     sfSec.appendChild(sfContent);
     body.appendChild(sfSec);
@@ -9948,7 +10014,8 @@ function renderSummary(c) {
     const rangeLabel=S.summaryRange==='all'?'All time':S.summaryRange==='custom'?`${S.summaryFrom} – ${S.summaryTo||'today'}`:`Last ${S.summaryRange}d`;
     sec4.appendChild(el('h3',{style:{color:'var(--blue)',marginBottom:'6px'}},`📝 Recently Contacted (${rangeLabel})`));
     sec4.appendChild(buildTable(['Vendor','Last Comm','Note Preview'],notesVendors.sort((a,b)=>(parseDate(b.lastComm)||0)-(parseDate(a.lastComm)||0)).slice(0,30),v=>[vLink(v),fmtDate(parseDate(v.lastComm)),el('span',{class:'note-preview'},String(v.notes||'').split('|')[0]?.slice(0,100)||'')]));
-    c.appendChild(sec4);
+    makeCollapsibleSection(sec4,'🎨 Display Preferences','vcs_s_display',false);
+  c.appendChild(sec4);
   }
 }
 
@@ -10164,6 +10231,27 @@ function renderDataCheck(c) {
       ]
     ));
   }
+}
+
+// Makes a settings section collapsible with a toggle header
+function makeCollapsibleSection(sec, title, storageKey, defaultCollapsed) {
+  const isCollapsed = localStorage.getItem(storageKey) !== null
+    ? localStorage.getItem(storageKey) === '1'
+    : (defaultCollapsed === true);
+  const hdr=el('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',cursor:'pointer',userSelect:'none',padding:'4px 0'},onclick(){
+    const c=body.style.display==='none';
+    body.style.display=c?'':'none';
+    chev.textContent=c?'▼':'▶';
+    localStorage.setItem(storageKey,c?'0':'1');
+  }});
+  const chev=el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'6px'}},isCollapsed?'▶':'▼');
+  hdr.appendChild(chev);
+  hdr.appendChild(el('h3',{style:{margin:'0',display:'inline',fontSize:'13px'}},title));
+  hdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'6px'}},'click to '+(isCollapsed?'expand':'collapse')));
+  // Wrap existing content
+  const body=el('div',{style:{display:isCollapsed?'none':''}});
+  while(sec.firstChild) body.appendChild(sec.firstChild);
+  sec.appendChild(hdr); sec.appendChild(body);
 }
 
 function generateHandoverDoc() {
@@ -10791,6 +10879,7 @@ function renderSettings(c) {
       row.appendChild(inp);
       secSF.appendChild(row);
     });
+    makeCollapsibleSection(secSF,'☁ Salesforce Integration','vcs_s_sf',true);
     c.appendChild(secSF);
   }
 
@@ -10828,6 +10917,7 @@ function renderSettings(c) {
   secDrive.appendChild(syncRow);
 
   secDrive.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.5',marginTop:'4px'}},'VCS connects directly to Google Drive using your Google account. When you click "Load from Google Drive", a Google sign-in popup will appear once per session. Make sure the Google account you sign in with has access to the Vendor Catalogue file.'));
+  makeCollapsibleSection(secDrive,'📁 Google Drive','vcs_s_drive',true);
   c.appendChild(secDrive);
   } // end configDrive admin block
 
@@ -10915,6 +11005,7 @@ function renderSettings(c) {
   secMS.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'6px',lineHeight:'1.4'}},
     'Redirect URI to register in Azure: ' + window.location.origin + window.location.pathname));
 
+  makeCollapsibleSection(secMS,'📅 Microsoft 365 / Outlook Calendar','vcs_s_ms',true);
   c.appendChild(secMS);
   } // end MS admin block
 
@@ -10958,6 +11049,7 @@ function renderSettings(c) {
     statusEl.textContent=hasKey?`✓ ${provider==='grok'?'Grok':'Claude'} API key configured — AI assistant ready`:'⚠ No API key — AI assistant disabled';
     secAI.appendChild(statusEl);
   }
+  makeCollapsibleSection(secAI,'🤖 AI Configuration','vcs_s_ai',true);
   c.appendChild(secAI);
   } // end AI config admin block
 
@@ -11003,6 +11095,7 @@ function renderSettings(c) {
   }
   urlInp.addEventListener('input',updateDialerPreview); updateDialerPreview();
   secDialer.appendChild(dialerTest);
+  makeCollapsibleSection(secDialer,'📞 Click-to-Call Dialer','vcs_s_dialer',false);
   c.appendChild(secDialer);
 
   const sec1=el('div',{class:'settings-section'});
@@ -11014,7 +11107,7 @@ function renderSettings(c) {
     const btn=el('button',{class:'col-toggle-btn'+(on?' on':''),onclick(){S.settings.cols[key]=!on;renderSettings(c);}},label);
     colWrap.appendChild(btn);
   }
-  sec1.appendChild(colWrap); if(['admin','procurement','manager'].includes(USER.role))c.appendChild(sec1);
+  sec1.appendChild(colWrap); if(['admin','procurement','manager'].includes(USER.role)){makeCollapsibleSection(sec1,'📋 Table Columns','vcs_s_cols',false);c.appendChild(sec1);}
 
   // Display preferences
   const sec4=el('div',{class:'settings-section'});
@@ -11160,6 +11253,7 @@ function renderSettings(c) {
     cb.addEventListener('change',()=>{S.settings[key]=cb.checked; onChangeFn(cb.checked); debouncedSaveSettings(); renderSettings(c);});
     row.appendChild(cb); secTheme.appendChild(row);
   }
+  makeCollapsibleSection(secTheme,'🌙 Theme & Font','vcs_s_theme',false);
   c.appendChild(secTheme);
 
   // Email Settings (was sec5 — now properly declared)
