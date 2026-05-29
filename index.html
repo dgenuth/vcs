@@ -7578,6 +7578,81 @@ function renderCallSheet(c) {
     {label:'🟡 EMAIL TODAY — Follow Up',color:'#f59e0b',fn:v=>v.tier==='EMAIL'},
     {label:'🔵 REVIEW THIS WEEK',color:'#4f7cff',fn:v=>v.tier==='REVIEW'},
   ];
+
+  // Pre-call prep panel — expands below a vendor row to show key facts at a glance
+  function buildPrepPanel(v) {
+    const exp=getCurrentExpiry(v); const days=exp?dayDiff(exp,today):null;
+    const lastNote = v.notes ? v.notes.split('\n').filter(l=>l.trim()).slice(0,2).join(' ') : '';
+    const lastComm = v.lastComm ? fmtDate(parseDate(v.lastComm)) : null;
+    const followUp = v.followUp ? fmtDate(parseDate(v.followUp)) : null;
+    const contacts = getAllContacts(v);
+
+    const panel=el('div',{style:{
+      background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.15)',
+      borderRadius:'0 0 5px 5px',padding:'8px 12px',marginTop:'-2px',
+      display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'8px',fontSize:'10px',
+    }});
+
+    // Column 1: Contract facts
+    const col1=el('div',{});
+    col1.appendChild(el('div',{style:{fontWeight:'700',fontSize:'9px',color:'var(--muted)',marginBottom:'4px',letterSpacing:'.05em'}},'CONTRACT'));
+    const facts=[
+      ['Expiry', exp?(days!==null?(days<0?'⚠ Expired '+Math.abs(days)+'d ago':days+'d — '+fmtDate(exp)):'—'):'Not set', days!==null&&days<=60?'var(--red)':days!==null&&days<=90?'var(--amber)':''],
+      ['Auto-Renew', v.autoRenew||'—', ''],
+      ['Admin Fee', v.adminFee||'—', v.adminFee?'var(--green)':''],
+      ['Status', v.status||'—', ''],
+    ];
+    facts.forEach(([label,val,color])=>{
+      const row=el('div',{style:{display:'flex',gap:'4px',marginBottom:'2px'}});
+      row.appendChild(el('span',{style:{color:'var(--muted)',minWidth:'70px'}},label+':'));
+      row.appendChild(el('span',{style:{fontWeight:'600',color:color||'var(--text)'}},val));
+      col1.appendChild(row);
+    });
+    panel.appendChild(col1);
+
+    // Column 2: Communication
+    const col2=el('div',{});
+    col2.appendChild(el('div',{style:{fontWeight:'700',fontSize:'9px',color:'var(--muted)',marginBottom:'4px',letterSpacing:'.05em'}},'COMMUNICATION'));
+    if(lastComm){
+      const row=el('div',{style:{marginBottom:'2px'}});
+      row.appendChild(el('span',{style:{color:'var(--muted)'}},'Last comm: '));
+      row.appendChild(el('span',{style:{fontWeight:'600'}},lastComm));
+      col2.appendChild(row);
+    }
+    if(followUp){
+      const fuDate=parseDate(v.followUp); const fuDays=dayDiff(fuDate,today);
+      const row=el('div',{style:{marginBottom:'2px'}});
+      row.appendChild(el('span',{style:{color:'var(--muted)'}},'Follow-up: '));
+      row.appendChild(el('span',{style:{fontWeight:'600',color:fuDays>0?'var(--red)':fuDays===0?'var(--amber)':''}},followUp+(fuDays>0?' (overdue)':fuDays===0?' (today)':'')));
+      col2.appendChild(row);
+    }
+    if(contacts.length){
+      const con=contacts[0];
+      const conRow=el('div',{style:{marginTop:'4px',paddingTop:'4px',borderTop:'1px solid var(--border)'}});
+      conRow.appendChild(el('div',{style:{fontWeight:'600'}},con.name||'(no name)'));
+      if(con.email) conRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginTop:'2px'},onclick(e){e.stopPropagation();launchMailto(con.email,'Following up — '+v.name,'');}},  '✉ '+con.email.slice(0,28)));
+      if(con.phone||con.mobile) conRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginTop:'2px'},onclick(e){e.stopPropagation();window.open('tel:'+((con.phone||con.mobile).replace(/\D/g,'')));}}, '📞 '+(con.phone||con.mobile)));
+      col2.appendChild(conRow);
+    }
+    panel.appendChild(col2);
+
+    // Column 3: Latest note
+    const col3=el('div',{});
+    col3.appendChild(el('div',{style:{fontWeight:'700',fontSize:'9px',color:'var(--muted)',marginBottom:'4px',letterSpacing:'.05em'}},'LATEST NOTE'));
+    if(lastNote){
+      const nd=el('div',{style:{fontSize:'10px',lineHeight:'1.5',maxHeight:'80px',overflow:'hidden',color:'var(--text)'}});
+      renderNotesStr(nd, lastNote.slice(0, 200));
+      col3.appendChild(nd);
+    } else {
+      col3.appendChild(el('span',{style:{color:'var(--muted)',fontStyle:'italic'}},'No notes yet'));
+    }
+    const noteBtn=el('button',{class:'btn-xs btn-ghost',style:{marginTop:'5px'},onclick(e){e.stopPropagation();openEditNotesModal(v);}}, '📝 Edit Notes');
+    col3.appendChild(noteBtn);
+    panel.appendChild(col3);
+
+    return panel;
+  }
+
   let any=false;
   for (const g of groups) {
     const members=vendors.filter(g.fn); if (!members.length) continue; any=true;
@@ -7585,23 +7660,51 @@ function renderCallSheet(c) {
     hdr.appendChild(el('h3',{class:'group-header',style:{borderLeftColor:g.color,color:g.color,marginBottom:'0'}},g.label+' ('+members.length+')'));
     hdr.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){openBulkEmailModal(members.filter(v=>v.email));}},'✉ Email All'));
     c.appendChild(hdr);
-    c.appendChild(buildTable(
-      ['Score','Vendor','Contact','Phone','Email','Expires','Why','Actions'],
-      members.sort((a,b)=>b.score-a.score),
-      v=>{
-        const exp=getCurrentExpiry(v); const d=exp?dayDiff(exp,today):null;
-        const actBtns=el('div',{style:{display:'flex',gap:'3px'}});
-        actBtns.appendChild(el('button',{class:'btn-xs btn-green',title:'Mark done',onclick(e){e.stopPropagation();openDoneModal(v);}},'✓'));
-        actBtns.appendChild(el('button',{class:'btn-xs btn-blue',title:'Email',onclick(e){e.stopPropagation();openEmailModal(v);}},'✉'));
-        actBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'AI Briefing',onclick(e){e.stopPropagation();openAIBriefingModal(v);}},'🤖'));
-        actBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Schedule',onclick(e){e.stopPropagation();openCalendarEventModal(isoDate(today),v.name);}},'📅'));
-        return [
-          scorePill(v.score), vLink(v), v.procContact||'—', v.bizPhone||v.mobile||'—', v.email||'—',
-          exp?el('span',{style:{color:d!==null&&d<=30?'var(--red)':d<=90?'var(--amber)':''}},fmtDate(exp)+(d!==null?' ('+fmtDuration(Math.abs(d))+(d<0?' ago':'')+')':'')):'—',
-          whyCell(v), actBtns,
-        ];
-      }
-    ));
+
+    // Build table with expandable prep rows
+    const tbl=el('div',{class:'tbl-wrap'});
+    const table=el('table',{class:'data-table'});
+    const thead=el('thead'); const hr=el('tr');
+    ['','Score','Vendor','Contact','Phone','Expires','Why','Actions'].forEach(h=>hr.appendChild(el('th',{},h)));
+    thead.appendChild(hr); table.appendChild(thead);
+    const tbody=el('tbody');
+    members.sort((a,b)=>b.score-a.score).forEach(v=>{
+      const exp=getCurrentExpiry(v); const d=exp?dayDiff(exp,today):null;
+      const tr=el('tr',{style:{cursor:'pointer'},onclick(){
+        // Toggle prep panel
+        const existing=tr.nextSibling;
+        if(existing && existing.dataset.prep==='1'){tbody.removeChild(existing);return;}
+        const prepTr=el('tr',{});
+        prepTr.dataset.prep='1';
+        const td=el('td',{colSpan:'8',style:{padding:'0 8px 8px 8px',background:'transparent'}});
+        td.appendChild(buildPrepPanel(v));
+        prepTr.appendChild(td);
+        tr.after(prepTr);
+      }});
+      const prepToggle=el('td',{style:{color:'var(--muted)',fontSize:'10px',cursor:'pointer',paddingRight:'4px',textAlign:'center'},title:'Expand pre-call brief'},'▶');
+      const actBtns=el('div',{style:{display:'flex',gap:'3px'}});
+      actBtns.appendChild(el('button',{class:'btn-xs btn-green',title:'Mark done',onclick(e){e.stopPropagation();openDoneModal(v);}},'✓'));
+      actBtns.appendChild(el('button',{class:'btn-xs btn-blue',title:'Email',onclick(e){e.stopPropagation();openEmailModal(v);}},'✉'));
+      actBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'AI Briefing',onclick(e){e.stopPropagation();openAIBriefingModal(v);}},'🤖'));
+      actBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Schedule',onclick(e){e.stopPropagation();openCalendarEventModal(isoDate(today),v.name);}},'📅'));
+      [
+        prepToggle,
+        scorePill(v.score),
+        vLink(v),
+        getAllContacts(v)[0]?.name||v.procContact||'—',
+        getAllContacts(v)[0]?.phone||getAllContacts(v)[0]?.mobile||v.bizPhone||v.mobile||'—',
+        exp?el('span',{style:{color:d!==null&&d<=30?'var(--red)':d<=90?'var(--amber)':''}},fmtDate(exp)+(d!==null?' ('+fmtDuration(Math.abs(d))+(d<0?' ago':'')+')':'')):'—',
+        whyCell(v),
+        actBtns,
+      ].forEach(cell=>{
+        const td=el('td',{}); 
+        if(cell instanceof Node) td.appendChild(cell); 
+        else td.textContent=String(cell||'');
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody); tbl.appendChild(table); c.appendChild(tbl);
   }
   if(!any) c.appendChild(el('p',{class:'success'},'✅ Nothing urgent — you\'re all caught up!'));
 }
