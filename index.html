@@ -2600,7 +2600,7 @@ function addNote(vendor, text, followUpDate) {
 function editNotes(vendor, newText) {
   vendor.notes = newText; markDirty(vendor);
   logHistory({date:isoDate(new Date()), time:new Date().toLocaleTimeString(), vendor:vendor.name, action:'Notes Edited'});
-  updateSidebar(); refreshDetailIfOpen(vendor); render(); toast('✎ Notes updated!');
+  updateSidebar(); refreshDetailIfOpen(vendor); render(); toast('Notes updated!');
 }
 function updateVendorField(vendor, field, value) {
   const oldVal = vendor[field];
@@ -2795,7 +2795,7 @@ function openNoteModal(vendor) {
 
 function openEditNotesModal(vendor) {
   openModal(body => {
-    body.appendChild(el('h3',{style:{marginBottom:'4px'}},`✎ Notes — ${vendor.name}`));
+    body.appendChild(el('h3',{style:{marginBottom:'4px'}},`Edit Notes — ${vendor.name}`));
     body.appendChild(el('p',{class:'modal-sub',style:{marginBottom:'6px'}},'Keyboard: Ctrl+B bold, Ctrl+I italic, Ctrl+S save. Live preview on right.'));
 
     // Formatting toolbar
@@ -2966,7 +2966,7 @@ function showNotePopup(title, noteText, vendor) {
     const hdr=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'8px'}});
     hdr.appendChild(el('h3',{},title));
     if (vendor) {
-      const editBtn=el('button',{class:'btn-xs btn-ghost',onclick(){closeModal();openEditNotesModal(vendor);}},'✎ Edit');
+      const editBtn=el('button',{class:'btn-xs btn-ghost',onclick(){closeModal();openEditNotesModal(vendor);}},'Edit');
       hdr.appendChild(editBtn);
     }
     body.appendChild(hdr);
@@ -2988,7 +2988,7 @@ function showNotePopupWithEdit(title, noteText, editFn) {
   openModal(body => {
     const hdr=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'8px'}});
     hdr.appendChild(el('h3',{},title));
-    hdr.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){closeModal();editFn();}},'✎ Edit'));
+    hdr.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){closeModal();editFn();}},'Edit'));
     body.appendChild(hdr);
     const nd=el('div',{class:'notes-area',style:{maxHeight:'400px',overflowY:'auto',padding:'6px 0'}});
     renderNotesStr(nd, noteText);
@@ -3394,7 +3394,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       const cancel=el('button',{class:'btn-xs btn-ghost',onclick(){closeDetail();setTimeout(()=>openDetail(vendor),100);}},'✕');
       trainBody.appendChild(saveBtn2); trainBody.appendChild(cancel);
       inp.focus();
-    }}, trainUrl ? '✎' : '+ Add Link');
+    }}, trainUrl ? 'Edit' : '+ Add Link');
     trainBody.appendChild(editBtn);
   }
   trainSec.appendChild(trainBody);
@@ -3403,10 +3403,22 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   // ── Vendor Relationships ──
   if (vendor.source === 'psd') renderRelationshipsSection(body, vendor);
 
-  // ── Unified Notes Timeline ──
-  // Merges PSD notes, ITW notes, and Review notes into one sorted timeline
+  // ── Notes: PSD contract notes + ITW pipeline notes in unified timeline ──
   if (hasPermission('editNotes') || ['admin','procurement','manager','cro'].includes(USER.role)) {
-    addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord);
+    try {
+      // PSD + ITW notes merged into one timeline
+      addUnifiedNotesSection(body, vendor, itwVendor, null);
+      // Review notes shown separately — three distinct categories, each collapsible
+      if (reviewRecord) addReviewNotesSection(body, reviewRecord, vendor);
+    } catch(noteErr) {
+      console.error('[VCS] Notes section error:', noteErr);
+      // Fallback: show plain notes so detail panel still opens
+      if (vendor.notes) {
+        const fb=el('div',{class:'detail-section'});
+        fb.appendChild(el('h4',{class:'detail-sec-title'},'📝 Notes'));
+        const nd=el('div',{class:'notes-area'});renderNotesStr(nd,vendor.notes);fb.appendChild(nd);body.appendChild(fb);
+      }
+    }
   }
 
   // Related Vendors section — only for roles with access
@@ -4840,7 +4852,7 @@ function addEditableSection(body, title, vendor, fields) {
           inp.appendChild(o);
         });
         // Always add "Other (type custom)..." option for free-text entry
-        const otherOpt=el('option',{value:'__custom__'},'✎ Type custom value...');
+        const otherOpt=el('option',{value:'__custom__'},'Type custom value...');
         inp.appendChild(otherOpt);
         // Allow free-text if current value isn't in list
         if(val && !picklist.includes(String(val))) {
@@ -5001,7 +5013,7 @@ function renderContactsSection(body, vendor) {
     if(contact.type) cardHdr.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(99,102,241,.12)',color:'#818cf8',padding:'1px 5px',borderRadius:'3px'}},contact.type));
     if(idx===0) cardHdr.appendChild(el('span',{style:{fontSize:'8px',background:'rgba(59,130,246,.15)',color:'var(--blue)',padding:'1px 5px',borderRadius:'3px',fontWeight:'700'}},'PRIMARY'));
     if(canEdit) {
-      const editBtn=el('button',{class:'btn-xs btn-ghost',onclick(e){e.stopPropagation();openEditContactModal(vendor,idx,contact);}}, '✎');
+      const editBtn=el('button',{class:'btn-xs btn-ghost',onclick(e){e.stopPropagation();openEditContactModal(vendor,idx,contact);}}, 'Edit');
       cardHdr.appendChild(editBtn);
       if(idx>0){
         const delBtn=el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'},onclick(e){
@@ -5200,6 +5212,86 @@ function openAddRelationshipModal(vendor) {
 // ─── Unified Notes Timeline ────────────────────────────────────────────────────
 // Merges PSD contract notes, ITW pipeline notes, and Review notes into one
 // sorted, collapsible timeline. All sources visible in one place.
+// ─── Review Notes Section ─────────────────────────────────────────────────────
+// Shown in vendor detail panel when a review record is linked or matched.
+// Keeps the three review categories distinct and each independently editable.
+function addReviewNotesSection(body, reviewRecord, vendor) {
+  const sec=el('div',{class:'detail-section'});
+  const hdr=el('div',{class:'detail-sec-hdr'});
+  const totalReviewNotes = [reviewRecord.progressNotes, reviewRecord.sfNotes, reviewRecord.contractNotes].filter(Boolean).length;
+  hdr.appendChild(el('h4',{class:'detail-sec-title',style:{marginBottom:'0'}}, '🔍 Review Notes'+(totalReviewNotes?' ('+totalReviewNotes+' section'+( totalReviewNotes!==1?'s':'')+')'   :'')));
+  sec.appendChild(hdr);
+
+  const REVIEW_SUBSECTIONS = [
+    {key:'progressNotes', label:'📋 Progress Notes', color:'#a855f7'},
+    {key:'sfNotes', label:'☁ SF / Meeting Notes', color:'#3b82f6'},
+    {key:'contractNotes', label:'📄 Contract Notes', color:'#f59e0b'},
+  ];
+
+  let hasAny = false;
+  REVIEW_SUBSECTIONS.forEach(({key, label, color})=>{
+    const text = reviewRecord[key];
+
+    const subSec=el('div',{style:{marginTop:'4px',border:'1px solid var(--border)',borderLeft:'3px solid '+color,borderRadius:'4px',overflow:'hidden'}});
+    const subHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'5px 8px',background:'var(--sb)',cursor:'pointer',userSelect:'none'}});
+    subHdr.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'600',color,flex:'1'}},label));
+
+    const countBadge = text ? el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'has notes') : el('span',{style:{fontSize:'9px',color:'var(--muted)',fontStyle:'italic'}},'empty');
+    subHdr.appendChild(countBadge);
+
+    if(hasPermission('editNotes')){
+      const editBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(e){
+        e.stopPropagation();
+        openModal(body2=>{
+          body2.appendChild(el('h3',{style:{marginTop:'0'}},label+' — '+reviewRecord.name));
+          const toolbar=el('div',{class:'note-toolbar',style:{marginBottom:'5px'}});
+          const ta=el('textarea',{class:'modal-textarea notes-editor',style:{height:'200px'}});
+          ta.value=String(text||'');
+          const applyWrap=(pre,suf)=>{const s=ta.selectionStart,e2=ta.selectionEnd,sel=ta.value.slice(s,e2);if(!sel)return;ta.setRangeText(sel.startsWith(pre)?sel.slice(pre.length,-suf.length):pre+sel+suf,s,e2,'select');ta.focus();};
+          [['B',()=>applyWrap('**','**')],['I',()=>applyWrap('_','_')],['U',()=>applyWrap('[u]','[/u]')],['🔴',()=>applyWrap('[red]','[/red]')],['🟢',()=>applyWrap('[green]','[/green]')],['🟡',()=>applyWrap('[amber]','[/amber]')],['🔵',()=>applyWrap('[blue]','[/blue]')],['📅',()=>{ta.setRangeText(isoDate(new Date())+': ',ta.selectionStart,ta.selectionEnd,'end');}]].forEach(([lbl,fn])=>toolbar.appendChild(el('button',{class:'note-tb-btn',onclick:fn},lbl)));
+          body2.appendChild(toolbar); body2.appendChild(ta);
+          const btns2=el('div',{class:'modal-btns',style:{marginTop:'8px'}});
+          btns2.appendChild(el('button',{class:'btn-primary',onclick(){
+            reviewRecord[key]=ta.value;reviewRecord._dirty=true;
+            if(!S.dirtyReviews)S.dirtyReviews=new Set();S.dirtyReviews.add(reviewRecord._row);
+            logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:reviewRecord.name,action:'Updated '+label});
+            saveSessionState();updateSidebar();refreshDetailIfOpen(vendor||{name:reviewRecord.name});render();closeModal();toast('✓ Saved');
+          }},'Save'));
+          btns2.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
+          body2.appendChild(btns2);
+          setTimeout(()=>ta.focus(),50);
+        });
+      }},'Edit');
+      subHdr.appendChild(editBtn);
+    }
+
+    const chevron=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'▶');
+    subHdr.appendChild(chevron);
+
+    const subBody=el('div',{style:{padding:'7px 10px',background:'var(--bg)',display:'none'}});
+    if(text){
+      const nd=el('div',{class:'notes-area',style:{fontSize:'10px',lineHeight:'1.6'}});
+      renderNotesStr(nd, text); subBody.appendChild(nd);
+      hasAny=true;
+      countBadge.textContent='';
+    } else {
+      subBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',fontStyle:'italic',margin:'0'}},'No notes yet — click Edit to add.'));
+    }
+
+    subHdr.onclick=(e)=>{
+      if(e.target.tagName==='BUTTON') return; // don't toggle on edit button click
+      const open=subBody.style.display!=='none';
+      subBody.style.display=open?'none':'block';
+      chevron.textContent=open?'▶':'▼';
+    };
+
+    subSec.appendChild(subHdr); subSec.appendChild(subBody);
+    sec.appendChild(subSec);
+  });
+
+  body.appendChild(sec);
+}
+
 function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
   const sec=el('div',{class:'detail-section'});
   const hdr=el('div',{class:'detail-sec-hdr'});
@@ -5209,7 +5301,7 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
   if(hasPermission('editNotes')){
     const btnGrp=el('div',{style:{display:'flex',gap:'3px'}});
     btnGrp.appendChild(el('button',{class:'btn-xs btn-green',onclick(){openStructuredNoteModal(vendor);}},'+ Add'));
-    btnGrp.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){openEditNotesModal(vendor);}}, '✎ Edit'));
+    btnGrp.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){openEditNotesModal(vendor);}}, 'Edit'));
     hdr.appendChild(btnGrp);
   }
   sec.appendChild(hdr);
@@ -5235,19 +5327,8 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
     });
   }
 
-  // Review notes — three fields merged
-  if(reviewRecord){
-    [
-      {text:reviewRecord.progressNotes, source:'Review'},
-      {text:reviewRecord.sfNotes, source:'SF Notes'},
-      {text:reviewRecord.contractNotes, source:'Contract'},
-    ].forEach(({text,source})=>{
-      if(!text) return;
-      parseNoteEntries(text).forEach(e=>{
-        allEntries.push({...e, _source:source, _reviewRecord:reviewRecord, _reviewField:source==='Review'?'progressNotes':source==='SF Notes'?'sfNotes':'contractNotes'});
-      });
-    });
-  }
+  // Note: Review notes are shown in a separate section (addReviewNotesSection)
+  // so they stay organized by their three distinct categories
 
   if(!allEntries.length){
     sec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',padding:'6px 0',fontStyle:'italic'}},'No notes yet.'));
@@ -5264,7 +5345,6 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
 
   // Count badge in header
   hdr.querySelector('h4').textContent='📝 Notes & Activity ('+allEntries.length+')';
-
   const list=el('div',{style:{marginTop:'4px',display:'flex',flexDirection:'column',gap:'4px'}});
 
   allEntries.forEach((entry,idx)=>{
@@ -5311,7 +5391,7 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
 
     // Edit button for own-source entries
     if(hasPermission('editNotes') && entry._vendor){
-      entryBody.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginTop:'5px',fontSize:'9px'},onclick(e){e.stopPropagation();openEditNotesModal(entry._vendor);}}, '✎ Edit source'));
+      entryBody.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginTop:'5px',fontSize:'9px'},onclick(e){e.stopPropagation();openEditNotesModal(entry._vendor);}}, 'Edit'));
     }
 
     entryHdr.onclick=()=>{const open=entryBody.style.display!=='none';entryBody.style.display=open?'none':'block';chevron.textContent=open?'▶':'▼';};
@@ -5342,7 +5422,7 @@ function addNotesSection(body, vendor, title) {
   if (hasPermission('editNotes')) {
     const btnGrp=el('div',{style:{display:'flex',gap:'3px'}});
     btnGrp.appendChild(el('button',{class:'btn-xs btn-green',onclick(){openStructuredNoteModal(vendor);}},'+ Add'));
-    btnGrp.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){openEditNotesModal(vendor);}},'✎ Edit Raw'));
+    btnGrp.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){openEditNotesModal(vendor);}},'Edit Raw'));
     hdr.appendChild(btnGrp);
   }
   sec.appendChild(hdr);
@@ -5541,7 +5621,7 @@ function buildTable(headers, rows, rowFn) {
 
 // ─── Common Helpers ───────────────────────────────────────────────────────────
 function vLink(vendor, label) {
-  const span=el('span',{class:'vendor-link',onclick(){openDetail(vendor);}});
+  const span=el('span',{class:'vendor-link',onclick(e){if(e) e.stopPropagation(); openDetail(vendor);}});
   const displayText = label || vendor.name;
   const q = S.search ? S.search.toLowerCase() : '';
   if (q && String(displayText).toLowerCase().includes(q)) {
@@ -5756,8 +5836,21 @@ function findReviewRecord(name) {
   if (!name) return null;
   const direct = S.reviews.find(r=>vendorNamesMatch(r.name, name));
   if (direct) return direct;
+  // Check aliases: user may have linked a review record (e.g. "Nestle") to a PSD vendor (e.g. "Nestle Health Science")
+  // So when looking up "Nestle Health Science", we need to find the review record "Nestle"
   const canonicalName = S.vendorAliases[normName(name)];
-  if (canonicalName) return S.reviews.find(r=>vendorNamesMatch(r.name, canonicalName)) || null;
+  if (canonicalName) {
+    const byCanonical = S.reviews.find(r=>vendorNamesMatch(r.name, canonicalName));
+    if (byCanonical) return byCanonical;
+  }
+  // Reverse lookup: check if any review record has an alias pointing to this name
+  for (const [aliasKey, canonical] of Object.entries(S.vendorAliases)) {
+    if (vendorNamesMatch(canonical, name)) {
+      // aliasKey is the normName of the review record's name — find by re-matching
+      const byAlias = S.reviews.find(r=>normName(r.name)===aliasKey);
+      if (byAlias) return byAlias;
+    }
+  }
   return null;
 }
 
@@ -5815,16 +5908,20 @@ function openVendorAliasModal(vendor) {
       if(!selectedVendor) return;
       const aliasKey=normName(vendor.name);
       S.vendorAliases[aliasKey]=selectedVendor.name;
-      // Also store in vendor.vendorAliasOf if vendor is in PSD (for persistence to spreadsheet)
+      // Write to spreadsheet via dirty: find or create a PSD vendor record for the alias source
+      // If review/ITW vendor exists in PSD by exact match, write vendorAliasOf to col BU
       const vendorInPSD=S.vendors.find(v=>vendorNamesMatch(v.name,vendor.name));
-      if(vendorInPSD){ vendorInPSD.vendorAliasOf=selectedVendor.name; markDirty(vendorInPSD); }
+      if(vendorInPSD){
+        vendorInPSD.vendorAliasOf=selectedVendor.name;
+        markDirty(vendorInPSD);
+      }
+      // Log to history so it appears in audit trail and can be reviewed
+      logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendor.name,action:'Linked alias to "'+selectedVendor.name+'"',note:'Vendor alias created — '+vendor.name+' → '+selectedVendor.name});
       saveSessionState();
-      // Save to Drive so alias persists across sessions
-      saveConfigToDrive().catch(()=>{});
       closeModal();
-      render(); // Redraw so Reviews/ITW tabs immediately show the linked state
-      openDetail(selectedVendor, false, false); // Open the FULL PSD record directly
-      toast('✓ "'+vendor.name+'" linked to "'+selectedVendor.name+'" — saved to Drive');
+      render();
+      openDetail(selectedVendor, false, false);
+      toast('✓ "'+vendor.name+'" linked to "'+selectedVendor.name+'" — save to persist to spreadsheet');
     }},'✓ Confirm Link');
     btns.appendChild(confirmBtn);
     btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
@@ -6268,7 +6365,7 @@ function openBulkEmailModal(vendors) {
 
     // Per-vendor list
     body.appendChild(el('div',{style:{height:'1px',background:'var(--border)',margin:'10px 0'}}));
-    body.appendChild(el('p',{style:{fontSize:'10px',fontWeight:'600',marginBottom:'4px'}},`Recipients — uncheck to exclude, click ✎ to customize individually:`));
+    body.appendChild(el('p',{style:{fontSize:'10px',fontWeight:'600',marginBottom:'4px'}},`Recipients — uncheck to exclude, click Edit to customize individually:`));
     const recipList=el('div',{style:{maxHeight:'200px',overflowY:'auto',border:'1px solid var(--border)',borderRadius:'4px'}});
     const vendorStates=eligible.map(v=>{
       const exp=getCurrentExpiry(v);
@@ -6284,7 +6381,7 @@ function openBulkEmailModal(vendors) {
         const editBtn=el('button',{class:'btn-xs btn-ghost',onclick(){
           // Open individual editor
           openModal(b2=>{
-            b2.appendChild(el('h3',{},`✎ Edit: ${vs.vendor.name}`));
+            b2.appendChild(el('h3',{},`Edit: ${vs.vendor.name}`));
             const exp2=getCurrentExpiry(vs.vendor);
             const defSubj=(vs.customSubj||subjTmpl.value).replace(/{vendor}/g,vs.vendor.name).replace(/{contact}/g,vs.vendor.procContact||'Team').replace(/{expiry}/g,fmtDate(exp2)||'N/A');
             const defBody=(vs.customBody||bodyTmpl.value).replace(/{vendor}/g,vs.vendor.name).replace(/{contact}/g,vs.vendor.procContact||'Team').replace(/{expiry}/g,fmtDate(exp2)||'N/A');
@@ -6296,7 +6393,7 @@ function openBulkEmailModal(vendors) {
             btns2.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
             b2.appendChild(btns2);
           });
-        }},'✎');
+        }},'Edit');
         if (vs.customSubj||vs.customBody) editBtn.style.color='var(--green)';
         row.append(cb,nameSpan,emailSpan,editBtn); recipList.appendChild(row);
       });
@@ -8217,18 +8314,29 @@ function renderCallSheet(c) {
     const tbody=el('tbody');
     members.sort((a,b)=>b.score-a.score).forEach(v=>{
       const exp=getCurrentExpiry(v); const d=exp?dayDiff(exp,today):null;
-      const tr=el('tr',{style:{cursor:'pointer'},onclick(){
-        // Toggle prep panel
+      const tr=el('tr',{style:{cursor:'default'}});
+      const prepToggle=el('td',{style:{
+        color:'var(--muted)',fontSize:'10px',cursor:'pointer',paddingRight:'4px',
+        textAlign:'center',userSelect:'none',transition:'transform .15s'
+      },title:'Expand pre-call brief'});
+      const chevronSpan=el('span',{style:{display:'inline-block',transition:'transform .2s'}},'▶');
+      prepToggle.appendChild(chevronSpan);
+      prepToggle.onclick=(e)=>{
+        e.stopPropagation();
         const existing=tr.nextSibling;
-        if(existing && existing.dataset.prep==='1'){tbody.removeChild(existing);return;}
+        if(existing && existing.dataset.prep==='1'){
+          tbody.removeChild(existing);
+          chevronSpan.style.transform='rotate(0deg)';
+          return;
+        }
         const prepTr=el('tr',{});
         prepTr.dataset.prep='1';
         const td=el('td',{colSpan:'8',style:{padding:'0 8px 8px 8px',background:'transparent'}});
         td.appendChild(buildPrepPanel(v));
         prepTr.appendChild(td);
         tr.after(prepTr);
-      }});
-      const prepToggle=el('td',{style:{color:'var(--muted)',fontSize:'10px',cursor:'pointer',paddingRight:'4px',textAlign:'center'},title:'Expand pre-call brief'},'▶');
+        chevronSpan.style.transform='rotate(90deg)';
+      };
       const actBtns=el('div',{style:{display:'flex',gap:'3px'}});
       actBtns.appendChild(el('button',{class:'btn-xs btn-green',title:'Mark done',onclick(e){e.stopPropagation();openDoneModal(v);}},'✓'));
       actBtns.appendChild(el('button',{class:'btn-xs btn-blue',title:'Email',onclick(e){e.stopPropagation();openEmailModal(v);}},'✉'));
@@ -8682,7 +8790,7 @@ function renderReviews(c) {
 function makeReviewNoteCell(r, txt, fieldName, label) {
   const editFn=()=>{
     openModal(body=>{
-      body.appendChild(el('h3',{},`✎ Edit ${label} — ${r.name}`));
+      body.appendChild(el('h3',{},`Edit: ${label} — ${r.name}`));
       // Formatting toolbar
       const toolbar=el('div',{class:'note-toolbar'});
       const ta=el('textarea',{class:'modal-textarea notes-editor'});
@@ -8744,7 +8852,7 @@ function makeReviewNoteCell(r, txt, fieldName, label) {
   const wrap=el('span',{style:{display:'inline-flex',alignItems:'center',gap:'4px'}});
   const _previewEntry=txt.includes('|')?txt.split('|').map(e=>e.trim()).filter(Boolean).pop():txt;
   wrap.appendChild(el('span',{class:'note-preview clickable',title:'Click to view full note',onclick(e){e.stopPropagation();showNotePopupWithEdit(r.name+' — '+label,txt,editFn);}},_previewEntry.slice(0,70)+(_previewEntry.length>70||txt.includes('|')?' [+]':'')));
-  wrap.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Edit',onclick(e){e.stopPropagation();editFn();}},'✎'));
+  wrap.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Edit',onclick(e){e.stopPropagation();editFn();}},'Edit'));
   return wrap;
 }
 
