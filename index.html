@@ -12722,8 +12722,10 @@ function hideSearchDropdown() {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 function init() {
+  // ── Attach login handlers FIRST — before anything that could throw ──
   // ── Impersonation handler (admin Login As feature) ──
-  // Checks URL hash for #impersonate=KEY, auto-logs in as target user for 5 min
+  // Wrapped in try/catch so errors here don't break login buttons
+  try {
   const hashParams = new URLSearchParams(window.location.hash.slice(1));
   const impKey = hashParams.get('impersonate');
   if(impKey){
@@ -12800,6 +12802,11 @@ function init() {
   } else {
     $('login-screen').style.display='flex';
     $('upload-screen').style.display='none';
+  }
+  } catch(earlyInitErr) {
+    // Auth/impersonation error — show login screen so user can still sign in
+    console.warn('[VCS] Early init error:', earlyInitErr.message);
+    try { $('login-screen').style.display='flex'; $('upload-screen').style.display='none'; } catch(e) {}
   }
   $('ms-login-btn').addEventListener('click', ()=>signInWithMicrosoft());
   $('g-login-btn').addEventListener('click', ()=>signInWithGoogle());
