@@ -537,8 +537,9 @@ var VCS_VERSION = 'v1778431112';
   <div id="ai-messages" class="ai-messages"></div>
   <div id="ai-suggestions" class="ai-suggestions"></div>
   <div class="ai-input-row">
-    <button id="ai-voice-btn" class="ai-voice-btn" title="Click to speak (Web Speech API)" style="display:none">🎤</button>
+    <button id="ai-voice-btn" class="ai-voice-btn" title="Click to start voice (stays on until clicked again)" style="display:none">🎤</button>
     <textarea id="ai-input" class="ai-input" placeholder="Ask anything about your vendors..."></textarea>
+    <button id="ai-stop-btn" class="ai-send-btn" style="display:none;background:var(--red)" onclick="stopAIResponse()">⏹ Stop</button>
     <button id="ai-send-btn" class="ai-send-btn">Send</button>
   </div>
 </div>
@@ -6870,54 +6871,100 @@ async function loadSFSignals() {
 if(!window.S_contractStore) window.S_contractStore = {}; // vendorName → array of contract records
 
 async function extractContractWithClaude(fileText, fileName, vendorName) {
-  const systemPrompt = `You are a contract analysis expert for a healthcare group purchasing organization (Prime Source Expense Experts). You analyze vendor contracts and extract all structured data precisely.
+  const systemPrompt = `You are a contract analysis expert for Prime Source Expense Experts, a healthcare group purchasing organization (GPO). You extract structured data from vendor contracts with surgical precision.
 
-CRITICAL: Respond ONLY with valid JSON. No preamble, no markdown fences. Pure JSON.
+CRITICAL RULES — read these carefully before extracting:
+
+1. DOCUMENT HIERARCHY: The signed agreement body ALWAYS takes precedence over any cover sheet, summary page, or header table. Cover sheets often have typos or shortcuts. Trust the agreement text.
+
+2. DATES: 
+   - The "Effective Date" is the date stated in the agreement body ("This Agreement is made and entered into on this ___ day of ___"), NOT the cover sheet date.
+   - The "Expiration Date" should be CALCULATED: Effective Date + Contract Term. Do NOT blindly copy an end date from a cover sheet if it conflicts with Effective Date + Term.
+   - Example: If effective date is June 1, 2021 and term is 36 months, expiration is May 31, 2024 (not June 1, 2024).
+   - If there is a conflict between cover sheet dates and agreement body dates, note the discrepancy in the "notes" field.
+
+3. AUTO-RENEWAL:
+   - Extract the EXACT renewal period duration (e.g., "Yes — 12 months" if it says "additional terms of 12 months each").
+   - Do NOT use "By Term" unless the contract literally says it renews by the same original term length.
+   - The notice required for non-renewal is a SEPARATE field from general termination notice.
+
+4. TERMINATION NOTICE: 
+   - Extract ALL termination provisions separately — there are usually multiple:
+     - Without cause: X days with mutual consent
+     - Non-renewal: Y days before end of then-current term
+     - For cause/material breach: Z days cure period
+   - Store all of them in the terminationNotice object with their conditions.
+   - terminationNoticeDays should be the most important/prominent notice period.
+
+5. MARKETS field = GEOGRAPHIC COVERAGE ONLY:
+   - This means: is the vendor national, regional, or limited to certain states?
+   - Do NOT put customer segment types (e.g., "long-term care, hospitals") here — those belong in "products" or "notes".
+   - If the contract says "throughout the United States" → markets = "National"
+   - If limited to specific states, list those states.
+
+6. PRODUCTS: Extract from the agreement body's description of covered products/services, not just the cover sheet.
+
+7. PRICE PROTECTION: If the contract mentions competitive pricing language (e.g., "pricing competitive with similarly situated GPOs"), extract that exactly.
+
+CRITICAL: Respond ONLY with valid JSON. No preamble, no markdown fences, no explanation. Pure JSON only.
 
 Extract and return this exact structure:
 {
   "vendorName": "vendor name from contract",
   "contractNumber": "contract or agreement number",
-  "agreementType": "contract type (e.g. Direct Contract, GPO Agreement, Channel Partner)",
-  "effectiveDate": "YYYY-MM-DD or null",
-  "expirationDate": "YYYY-MM-DD or null",
-  "autoRenewal": "Yes/No/Yes - By Term/Yes - By Year",
-  "autoRenewalType": "By Term/By Year/Annual/Manual/null",
-  "terminationNoticeDays": number or null,
-  "contractTermYears": number or null,
+  "agreementType": "contract type (GPO Agreement / Direct Contract / Channel Partner / etc.)",
+  "effectiveDate": "YYYY-MM-DD — from agreement body, not cover sheet",
+  "expirationDate": "YYYY-MM-DD — CALCULATE from effectiveDate + contractTermYears if cover sheet conflicts",
+  "autoRenewal": "Yes — [X months/years] / No / null",
+  "autoRenewalType": "exact renewal period description (e.g. '12 months', '1 year', 'same term')",
+  "autoRenewalNoticeDays": number of days notice required to prevent auto-renewal or null,
+  "terminationNoticeDays": number (primary/most prominent termination notice period),
+  "terminationClauses": {
+    "withoutCause": "X days with mutual consent / null",
+    "nonRenewal": "Y days before end of term / null",
+    "forCause": "Z days cure period / null",
+    "vendorSpecific": "any vendor-only termination rights"
+  },
+  "contractTermYears": number (e.g., 3 for 36 months) or null,
+  "contractTermMonths": number (e.g., 36) or null,
   "perpetuity": "Yes/No/null",
   "adminFee": {
     "percentage": number or null,
-    "basis": "Net Sales/Gross Sales/Invoice/other",
+    "basis": "Qualifying Purchases/Net Sales/Gross Sales/Invoice/other",
+    "frequency": "Quarterly/Monthly/Annual/null",
+    "paymentDays": number of days after period end or null,
     "notes": "any conditions or qualifications"
   },
   "tiers": [
-    { "level": "tier name or number", "threshold": "spend threshold", "rate": "percentage or amount", "notes": "" }
+    { "level": "tier name", "threshold": "spend threshold", "rate": "rate", "notes": "" }
   ],
   "channelPartnerSplits": [
-    { "partner": "GPO or partner name", "theirRate": percentage, "ourRate": percentage, "notes": "" }
+    { "partner": "GPO or partner name", "theirRate": number, "ourRate": number, "notes": "" }
   ],
   "keyTerms": {
     "exclusivity": "Yes/No/Conditional/null",
     "assignment": "Allowed/Not Allowed/Conditional/null",
     "governingLaw": "state or jurisdiction",
-    "venue": "court/venue specification",
-    "liabilityCap": "cap amount or description or null",
+    "venue": "court/venue specification or null",
+    "liabilityCap": "cap description or null",
     "mostFavoredNation": "Yes/No/null",
     "auditRights": "Yes/No/null",
-    "priceProtection": "description or null",
-    "CPIEscalator": "description or null"
+    "priceProtection": "exact quote or description of competitive pricing clause or null",
+    "CPIEscalator": "description or null",
+    "netSalesGrowthClause": "description of any growth targets or termination triggers or null"
   },
   "paymentTerms": {
     "frequency": "Monthly/Quarterly/Annual/null",
     "daysAfterQuarter": number or null,
+    "method": "ACH/Check/Wire/null",
     "currency": "USD"
   },
-  "products": "brief description of covered products/services",
-  "markets": "markets or facilities covered",
-  "notes": "any other important contract details not captured above",
+  "products": "description of covered products and services from the agreement body",
+  "markets": "GEOGRAPHIC coverage only — National / [list of states] / null. NOT customer types.",
+  "dateDiscrepancies": "describe any conflicts found between cover sheet and agreement body",
+  "notes": "any other important contract details",
   "extractionConfidence": "HIGH/MEDIUM/LOW",
-  "missingFields": ["list of fields that could not be found in the document"]
+  "missingFields": ["list of fields not found in the document"]
 }`;
 
   // Handle PDF (base64 object) vs plain text
@@ -7038,21 +7085,32 @@ function loadContractRecords(vendorName) {
 
 // Field mapping from extracted data to vendor fields
 const CONTRACT_FIELD_MAP = [
-  {field:'adminFee',    label:'Admin Fee',          extract:ex=>ex.adminFee?.percentage ? String(ex.adminFee.percentage)+'%' : null},
-  {field:'adminFeeNotes',label:'Admin Fee Notes',   extract:ex=>ex.adminFee?.notes||null},
-  {field:'agreementType',label:'Agreement Type',    extract:ex=>ex.agreementType||null},
-  {field:'contractNo',  label:'Contract #',         extract:ex=>ex.contractNumber||null},
-  {field:'autoRenew',   label:'Auto-Renewal',       extract:ex=>ex.autoRenewal||null},
-  {field:'autoRenewType',label:'Auto-Renewal Type', extract:ex=>ex.autoRenewalType||null},
-  {field:'terminationNotice',label:'Termination Notice (days)', extract:ex=>ex.terminationNoticeDays?String(ex.terminationNoticeDays):null},
-  {field:'contractTerm',label:'Contract Term (years)',extract:ex=>ex.contractTermYears?String(ex.contractTermYears):null},
-  {field:'perpetuity',  label:'Perpetuity',         extract:ex=>ex.perpetuity||null},
-  {field:'expiry',      label:'Expiration Date',    extract:ex=>ex.expirationDate||null},
-  {field:'effectiveDate',label:'Effective Date',    extract:ex=>ex.effectiveDate||null},
-  {field:'markets',     label:'Markets',            extract:ex=>ex.markets||null},
-  {field:'exclusivity', label:'Exclusivity',        extract:ex=>ex.keyTerms?.exclusivity||null},
-  {field:'paymentFreq', label:'Payment Frequency',  extract:ex=>ex.paymentTerms?.frequency||null},
-  {field:'product',     label:'Products/Services',  extract:ex=>ex.products||null},
+  {field:'adminFee',      label:'Admin Fee',              extract:ex=>ex.adminFee?.percentage ? String(ex.adminFee.percentage)+'%' : null},
+  {field:'adminFeeNotes', label:'Admin Fee Notes',        extract:ex=>ex.adminFee?.notes||null},
+  {field:'agreementType', label:'Agreement Type',         extract:ex=>ex.agreementType||null},
+  {field:'contractNo',    label:'Contract #',             extract:ex=>ex.contractNumber||null},
+  {field:'autoRenew',     label:'Auto-Renewal',           extract:ex=>ex.autoRenewal||null},
+  {field:'autoRenewType', label:'Auto-Renewal Period',    extract:ex=>ex.autoRenewalType||null},
+  {field:'terminationNotice',label:'Termination Notice',  extract:ex=>{
+    // Build a comprehensive termination notice string from all clauses
+    if(ex.terminationClauses){
+      const parts=[];
+      if(ex.terminationClauses.withoutCause) parts.push('Without cause: '+ex.terminationClauses.withoutCause);
+      if(ex.terminationClauses.nonRenewal) parts.push('Non-renewal: '+ex.terminationClauses.nonRenewal);
+      if(ex.terminationClauses.forCause) parts.push('For cause: '+ex.terminationClauses.forCause);
+      if(parts.length) return parts.join(' | ');
+    }
+    return ex.terminationNoticeDays?String(ex.terminationNoticeDays)+' days':null;
+  }},
+  {field:'contractTerm',  label:'Contract Term',          extract:ex=>ex.contractTermMonths?ex.contractTermMonths+' months':(ex.contractTermYears?ex.contractTermYears+' years':null)},
+  {field:'perpetuity',    label:'Perpetuity',             extract:ex=>ex.perpetuity||null},
+  {field:'expiry',        label:'Expiration Date',        extract:ex=>ex.expirationDate||null},
+  {field:'effectiveDate', label:'Effective Date',         extract:ex=>ex.effectiveDate||null},
+  {field:'markets',       label:'Markets (Geographic)',   extract:ex=>ex.markets||null},
+  {field:'exclusivity',   label:'Exclusivity',            extract:ex=>ex.keyTerms?.exclusivity||null},
+  {field:'paymentFreq',   label:'Payment Frequency',      extract:ex=>ex.paymentTerms?.frequency||null},
+  {field:'product',       label:'Products/Services',      extract:ex=>ex.products||null},
+  {field:'priceProtection',label:'Price Protection',      extract:ex=>ex.keyTerms?.priceProtection||null},
 ];
 
 function openApplyContractModal(vendor, extracted, onApplied) {
@@ -7381,19 +7439,39 @@ function renderContracts(c) {
       field('Contract #', ex.contractNumber);
       field('Effective Date', ex.effectiveDate);
       field('Expiration Date', ex.expirationDate, ex.expirationDate&&new Date(ex.expirationDate)<new Date()?'var(--red)':ex.expirationDate&&new Date(ex.expirationDate)<new Date(Date.now()+90*86400000)?'var(--amber)':'');
-      field('Admin Fee', ex.adminFee?.percentage?ex.adminFee.percentage+'% — '+ex.adminFee.basis:'', 'var(--green)');
+      field('Admin Fee', ex.adminFee?.percentage?ex.adminFee.percentage+'% — '+(ex.adminFee.basis||''):'', 'var(--green)');
       field('Admin Fee Notes', ex.adminFee?.notes);
       field('Auto-Renewal', ex.autoRenewal);
-      field('Termination Notice', ex.terminationNoticeDays?ex.terminationNoticeDays+' days':null);
-      field('Contract Term', ex.contractTermYears?ex.contractTermYears+' years':null);
+      field('Renewal Period', ex.autoRenewalType);
+      field('Non-Renewal Notice', ex.autoRenewalNoticeDays?ex.autoRenewalNoticeDays+' days':null);
+      // Show all termination clauses
+      if(ex.terminationClauses){
+        const tc=ex.terminationClauses;
+        if(tc.withoutCause) field('Termination w/o Cause', tc.withoutCause);
+        if(tc.nonRenewal) field('Non-Renewal Notice', tc.nonRenewal);
+        if(tc.forCause) field('Termination For Cause', tc.forCause);
+        if(tc.vendorSpecific) field('Vendor Termination', tc.vendorSpecific);
+      } else {
+        field('Termination Notice', ex.terminationNoticeDays?ex.terminationNoticeDays+' days':null);
+      }
+      field('Contract Term', ex.contractTermMonths?ex.contractTermMonths+' months':(ex.contractTermYears?ex.contractTermYears+' years':null));
       field('Perpetuity', ex.perpetuity);
       field('Payment Frequency', ex.paymentTerms?.frequency);
+      field('Payment Method', ex.paymentTerms?.method);
       field('Exclusivity', ex.keyTerms?.exclusivity);
       field('Price Protection', ex.keyTerms?.priceProtection);
       field('MFN Clause', ex.keyTerms?.mostFavoredNation);
       field('Audit Rights', ex.keyTerms?.auditRights);
-      field('Markets', ex.markets);
+      field('Growth Clause', ex.keyTerms?.netSalesGrowthClause);
+      field('Markets (Geographic)', ex.markets);
       field('Products', ex.products);
+
+      // Date discrepancy warning
+      if(ex.dateDiscrepancies){
+        const warn=el('div',{style:{background:'rgba(245,158,11,.08)',border:'1px solid rgba(245,158,11,.3)',borderRadius:'3px',padding:'6px 8px',marginTop:'4px',fontSize:'9px',color:'var(--amber)',lineHeight:'1.5'}});
+        warn.innerHTML='⚠ <strong>Date Discrepancy Detected:</strong> '+ex.dateDiscrepancies;
+        body2.appendChild(warn);
+      }
 
       // Tiers
       if(ex.tiers?.length){
@@ -12436,7 +12514,7 @@ function renderSettings(c) {
     ['Clear Session History','btn-ghost',()=>{if(confirm('Clear all session history?')){S.history=[];toast('History cleared');}}],
     ['Reset Dismissed Vendors','btn-ghost',()=>{if(confirm('Restore all dismissed vendors?')){S.dismissed.clear();render();toast('Vendors restored');}}],
     ['Reset All Snoozes','btn-ghost',()=>{if(confirm('Clear all snoozes?')){S.snoozed={};render();toast('Snoozes cleared');}}],
-    ['Clear AI Chat History','btn-ghost',()=>{aiHistory=[];$('ai-messages').innerHTML='';toast('AI chat cleared');}],
+    ['Clear AI Chat History','btn-ghost',()=>{aiHistory=[];localStorage.removeItem(AI_HISTORY_KEY);$('ai-messages').innerHTML='';toast('AI chat cleared');}],
   ];
   for (const [label,cls,fn] of btns) sec3.appendChild(el('button',{class:`${cls} btn-action`,style:{marginRight:'5px',marginBottom:'5px'},onclick:fn},label));
   if(['admin','procurement','manager'].includes(USER.role))if(['admin','procurement','manager'].includes(USER.role))c.appendChild(sec3);
@@ -12444,7 +12522,57 @@ function renderSettings(c) {
 
 // ─── AI Assistant ─────────────────────────────────────────────────────────────
 let aiHistory = [];
-// Context-aware AI suggestions based on current state
+let _aiAbortController = null; // For stopping mid-response
+const AI_HISTORY_KEY = 'vcs_ai_chat_history';
+
+function saveAIHistory() {
+  try { localStorage.setItem(AI_HISTORY_KEY, JSON.stringify(aiHistory.slice(-50))); } catch(e){}
+}
+function loadAIHistory() {
+  try {
+    const saved = localStorage.getItem(AI_HISTORY_KEY);
+    if(saved) {
+      aiHistory = JSON.parse(saved);
+      // Rebuild message UI from saved history
+      const msgs = $('ai-messages');
+      if(!msgs) return;
+      msgs.innerHTML = '';
+      aiHistory.forEach(msg => {
+        if(msg.role === 'user') appendAIMessage('user', msg.content, msg.timestamp);
+        else if(msg.role === 'assistant') appendAIMessage('assistant', msg.content, msg.timestamp);
+      });
+    }
+  } catch(e) { aiHistory = []; }
+}
+function appendAIMessage(role, content, timestamp) {
+  const msgs = $('ai-messages');
+  if(!msgs) return;
+  const wrap = el('div', {style:{marginBottom:'8px'}});
+  const msgEl = el('div', {class:'ai-msg '+role});
+  msgEl.textContent = content;
+  wrap.appendChild(msgEl);
+  // Timestamp + actions row
+  const meta = el('div', {style:{display:'flex',gap:'8px',alignItems:'center',marginTop:'2px',opacity:'0.6'}});
+  if(timestamp) meta.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}}, timestamp));
+  if(role === 'user') {
+    const editBtn = el('button',{style:{fontSize:'8px',background:'none',border:'none',color:'var(--muted)',cursor:'pointer',padding:'0'},
+      onclick(){
+        $('ai-input').value = content;
+        $('ai-input').focus();
+      }}, '✏ Edit & resend');
+    meta.appendChild(editBtn);
+  }
+  wrap.appendChild(meta);
+  msgs.appendChild(wrap);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+function stopAIResponse() {
+  if(_aiAbortController) { _aiAbortController.abort(); _aiAbortController = null; }
+  const stopBtn = $('ai-stop-btn');
+  const sendBtn = $('ai-send-btn');
+  if(stopBtn) stopBtn.style.display = 'none';
+  if(sendBtn) sendBtn.style.display = '';
+}
 function getAISuggestions() {
   if (!S.loaded) return ['What can you help me with?','How do I load my file?'];
   const today=new Date();
@@ -12531,41 +12659,46 @@ async function sendAIMessage(userMsg) {
   const provider = S.settings.aiProvider || 'anthropic';
   const apiKey = provider==='grok' ? (S.settings.grokKey||'') : (S.settings.apiKey||'');
   if (!apiKey || provider==='none') {
-    const messagesEl = $('ai-messages');
-    messagesEl.appendChild(el('div',{class:'ai-msg assistant'},'⚠️ No AI provider configured. Go to Settings → AI Configuration to set up Anthropic or Grok.'));
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    appendAIMessage('assistant', '⚠️ No AI provider configured. Go to Settings → AI Configuration to set up Anthropic or Grok.');
     return;
   }
+  const ts = new Date().toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true});
   const messagesEl = $('ai-messages');
-  messagesEl.appendChild(el('div',{class:'ai-msg user'},userMsg));
+
+  // Show user message with timestamp
+  appendAIMessage('user', userMsg, ts);
   const thinkEl = el('div',{class:'ai-msg thinking'},'Thinking…');
   messagesEl.appendChild(thinkEl);
   messagesEl.scrollTop = messagesEl.scrollHeight;
-  aiHistory.push({role:'user',content:userMsg});
+
+  // Show stop button
+  const stopBtn = $('ai-stop-btn');
+  const sendBtn = $('ai-send-btn');
+  if(stopBtn) stopBtn.style.display = '';
+  if(sendBtn) sendBtn.style.display = 'none';
+
+  aiHistory.push({role:'user', content:userMsg, timestamp:ts});
+  _aiAbortController = new AbortController();
 
   try {
     let resp, data, reply;
-    const systemPrompt=`You are an AI assistant for Prime Source, a food service GPO/consulting company using a Vendor Contract Scheduler. Help manage vendor contracts, follow-ups, and communications. Be concise, actionable, and professional.\n\n${buildAIContext()}`;
+    const systemPrompt=`You are an AI assistant for Prime Source Expense Experts, a healthcare GPO. Help manage vendor contracts, follow-ups, and communications. Be concise, actionable, and professional.\n\n${buildAIContext()}`;
 
     if (provider==='grok') {
-      // Grok uses OpenAI-compatible API
       resp = await fetch('https://api.x.ai/v1/chat/completions', {
-        method: 'POST',
+        method: 'POST', signal: _aiAbortController.signal,
         headers: {'Content-Type':'text/plain','Authorization':`Bearer ${apiKey}`},
-        body: JSON.stringify({
-          model: 'grok-beta', max_tokens: 1000,
-          messages: [{role:'system',content:systemPrompt},...aiHistory],
-        })
+        body: JSON.stringify({model:'grok-beta', max_tokens:1000, messages:[{role:'system',content:systemPrompt},...aiHistory.filter(m=>!m.timestamp).concat(aiHistory.filter(m=>m.role))].map(m=>({role:m.role,content:m.content}))})
       });
-      if (!resp.ok) throw new Error(`Grok API error: ${resp.status} ${resp.statusText}`);
+      if (!resp.ok) throw new Error(`Grok API error: ${resp.status}`);
       data = await resp.json();
       reply = data.choices?.[0]?.message?.content || 'No response from Grok.';
     } else {
-      // Anthropic API
       resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
+        method: 'POST', signal: _aiAbortController.signal,
         headers: {'Content-Type':'text/plain','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-        body: JSON.stringify({model:'claude-sonnet-4-20250514', max_tokens:1000, system:systemPrompt, messages:aiHistory})
+        body: JSON.stringify({model:'claude-sonnet-4-20250514', max_tokens:1000, system:systemPrompt,
+          messages: aiHistory.map(m=>({role:m.role,content:m.content}))})
       });
       if (!resp.ok) { const err=await resp.json().catch(()=>({})); throw new Error(err.error?.message||`HTTP ${resp.status}`); }
       data = await resp.json();
@@ -12573,12 +12706,21 @@ async function sendAIMessage(userMsg) {
     }
 
     thinkEl.remove();
-    messagesEl.appendChild(el('div',{class:'ai-msg assistant'},reply));
-    aiHistory.push({role:'assistant',content:reply});
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    const replyTs = new Date().toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true});
+    appendAIMessage('assistant', reply, replyTs);
+    aiHistory.push({role:'assistant', content:reply, timestamp:replyTs});
+    saveAIHistory();
   } catch(err) {
-    thinkEl.textContent = '⚠️ Error: '+err.message;
-    thinkEl.classList.remove('thinking');
+    thinkEl.remove();
+    if(err.name === 'AbortError') {
+      appendAIMessage('assistant', '⏹ Response stopped.');
+    } else {
+      appendAIMessage('assistant', '⚠️ Error: '+err.message);
+    }
+  } finally {
+    _aiAbortController = null;
+    if(stopBtn) stopBtn.style.display = 'none';
+    if(sendBtn) sendBtn.style.display = '';
   }
 }
 
@@ -12968,37 +13110,73 @@ function init() {
     S.aiOpen=!S.aiOpen;
     $('ai-panel').style.display=S.aiOpen?'flex':'none';
     $('ai-toggle').classList.toggle('active',S.aiOpen);
-    if (S.aiOpen){renderAISuggestions();if(!aiHistory.length){const m=el('div',{class:'ai-msg assistant'},'Hello! I\'m your VCS AI assistant. Ask me anything about your vendor contracts, or click a suggestion below.');$('ai-messages').appendChild(m);}}
+    if (S.aiOpen){
+      renderAISuggestions();
+      if(!aiHistory.length){
+        // Try to restore from localStorage
+        loadAIHistory();
+        if(!aiHistory.length){
+          const m=el('div',{class:'ai-msg assistant'},'Hello! I\'m your VCS AI assistant. Ask me anything about your vendor contracts, or click a suggestion below.');
+          $('ai-messages').appendChild(m);
+        }
+      }
+    }
   });
   $('ai-close-btn').addEventListener('click',()=>{S.aiOpen=false;$('ai-panel').style.display='none';$('ai-toggle').classList.remove('active');});
   $('ai-send-btn').addEventListener('click',()=>{const msg=$('ai-input').value;$('ai-input').value='';sendAIMessage(msg);});
   $('ai-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();const msg=$('ai-input').value;$('ai-input').value='';sendAIMessage(msg);}});
 
-  // Voice input for AI (Web Speech API — works natively in Chrome)
+  // Voice input for AI — continuous mode: mic stays on until you click again
   const voiceBtn=$('ai-voice-btn');
   if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
     voiceBtn.style.display='block';
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    const recog=new SR(); recog.continuous=false; recog.interimResults=false; recog.lang='en-US';
-    let isRecording=false, isPending=false;
+    const recog=new SR();
+    recog.continuous=true;   // Keep listening until explicitly stopped
+    recog.interimResults=true; // Show live transcript while speaking
+    recog.lang='en-US';
+    let isRecording=false;
+    let finalTranscript='';
+
     recog.onresult=e=>{
-      const transcript=e.results[0][0].transcript;
-      $('ai-input').value=transcript;
-      isRecording=false; isPending=false; voiceBtn.classList.remove('recording'); voiceBtn.textContent='🎤';
-      sendAIMessage(transcript); $('ai-input').value='';
+      let interim='';
+      finalTranscript='';
+      for(let i=0;i<e.results.length;i++){
+        if(e.results[i].isFinal) finalTranscript+=e.results[i][0].transcript+' ';
+        else interim+=e.results[i][0].transcript;
+      }
+      // Show live transcript in input field
+      $('ai-input').value=(finalTranscript+interim).trim();
     };
     recog.onerror=e=>{
-      isRecording=false; isPending=false; voiceBtn.classList.remove('recording'); voiceBtn.textContent='🎤';
+      isRecording=false; voiceBtn.classList.remove('recording'); voiceBtn.textContent='🎤';
+      voiceBtn.title='Click to start voice input';
       if(e.error==='not-allowed') toast('⚠ Microphone access denied — check browser permissions','#f59e0b');
-      else if(e.error==='no-speech') toast('No speech detected — try again','#f59e0b');
-      else if(e.error!=='aborted') toast('Voice error: '+e.error,'#f59e0b');
+      else if(e.error!=='aborted'&&e.error!=='no-speech') toast('Voice error: '+e.error,'#f59e0b');
     };
-    recog.onend=()=>{isRecording=false; isPending=false; voiceBtn.classList.remove('recording'); voiceBtn.textContent='🎤';};
+    recog.onend=()=>{
+      if(isRecording){
+        // Auto-restart if we're still in recording mode (browser stops after silence)
+        try{recog.start();}catch(e){isRecording=false;voiceBtn.classList.remove('recording');voiceBtn.textContent='🎤';}
+      }
+    };
     voiceBtn.addEventListener('click',()=>{
-      if(isRecording||isPending){recog.stop();isRecording=false;isPending=false;voiceBtn.classList.remove('recording');voiceBtn.textContent='🎤';return;}
-      isPending=true; voiceBtn.textContent='...';
-      try{recog.start();isRecording=true;isPending=false;voiceBtn.classList.add('recording');voiceBtn.textContent='⏹';}
-      catch(e){isPending=false;voiceBtn.textContent='🎤';toast('Mic busy — wait a moment and try again','#f59e0b');}
+      if(isRecording){
+        // Stop recording — send whatever is in the input
+        recog.stop(); isRecording=false;
+        voiceBtn.classList.remove('recording'); voiceBtn.textContent='🎤';
+        voiceBtn.title='Click to start voice input';
+        const msg=$('ai-input').value.trim();
+        if(msg){$('ai-input').value=''; sendAIMessage(msg);}
+      } else {
+        // Start recording
+        finalTranscript=''; $('ai-input').value='';
+        try{
+          recog.start(); isRecording=true;
+          voiceBtn.classList.add('recording'); voiceBtn.textContent='⏹ Stop';
+          voiceBtn.title='Click to stop and send';
+        } catch(e){toast('Mic busy — wait a moment','#f59e0b');}
+      }
     });
   }
 
