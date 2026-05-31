@@ -3087,6 +3087,20 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   const isDismissed=S.dismissed.has(vendor.name);
   const snoozedUntil=S.snoozed[vendor.name];
 
+  // ── Sticky header — always visible while scrolling ──
+  const stickyHdr=el('div',{style:{
+    position:'sticky',top:'0',zIndex:'10',
+    background:'var(--sb)',borderBottom:'1px solid var(--border)',
+    padding:'8px 12px 6px',margin:'-12px -12px 8px',
+    display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap',
+    boxShadow:'0 2px 8px rgba(0,0,0,.2)'
+  }});
+  stickyHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'13px',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text)'}},vendor.name));
+  if(tier) stickyHdr.appendChild(el('span',{class:'tier-badge',style:{background:TC[tier]||'#6b7280',flexShrink:'0'}},tier));
+  const closeBtn2=el('button',{class:'btn-ghost',style:{padding:'2px 6px',fontSize:'12px',flexShrink:'0',fontWeight:'700'},onclick(){closeDetailPanel();}}, '✕');
+  stickyHdr.appendChild(closeBtn2);
+  body.appendChild(stickyHdr);
+
   const nameRow=el('div',{style:{display:'flex',alignItems:'center',gap:'5px',flexWrap:'wrap',marginBottom:'4px'}});
   const canEdit = (ROLE_PERMS[USER.role||'restricted']||{}).editNotes;
   if (canEdit && vendor.source === 'psd') {
@@ -3491,7 +3505,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       if(vendor.sfAccountId) result=await sfQuery(vFields+" WHERE Id='"+vendor.sfAccountId+"' LIMIT 1");
       if(!result?.records?.length) result=await sfQuery(vFields+" WHERE Name='"+nameEsc+"' LIMIT 3");
       if(!result?.records?.length) result=await sfQuery(vFields+" WHERE Name LIKE '%"+nameEsc+"%' LIMIT 5");
-      if(!result?.records?.length) result=await sfQuery(vFields+" WHERE Vendor_Alias__c LIKE '%"+nameEsc+"%' LIMIT 5");
+      // Vendor_Alias__c cannot be filtered in SOQL - skip this fallback
       if(!result?.records?.length){const fw=nameEsc.split(' ')[0];if(fw&&fw.length>3)result=await sfQuery(vFields+" WHERE Name LIKE '%"+fw+"%' LIMIT 5");}
 
       sfWrap.innerHTML='';
@@ -3570,13 +3584,13 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       const accId=acct.Id;
       // Opportunities and Cases link to Vendor__c, not AccountId
       const [opps,cases,tasks,spend]=await Promise.all([
-        sfQuery("SELECT Id,Name,StageName,Amount__c,CloseDate FROM Opportunity WHERE Vendor__c='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 5").catch(()=>
+        sfQuery("SELECT Id,Name,StageName,Amount,CloseDate FROM Opportunity WHERE Vendor__c='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 5").catch(()=>
           sfQuery("SELECT Id,Name,StageName,Amount,CloseDate FROM Opportunity WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 5")),
         sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Case WHERE Vendor__c='"+accId+"' ORDER BY CreatedDate DESC LIMIT 5").catch(()=>
           sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Case WHERE AccountId='"+accId+"' ORDER BY CreatedDate DESC LIMIT 5")),
-        sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM Task WHERE Vendor__c='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5").catch(()=>
+        sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM Task WHERE WhatId='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5").catch(()=>
           sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM Task WHERE WhatId='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5")),
-        sfQuery("SELECT Id,Name,Reported_Date__c,Category__c,Amount__c FROM Spend__c WHERE Vendor__c='"+accId+"' ORDER BY Reported_Date__c DESC LIMIT 6").catch(()=>({records:[]})),
+        sfQuery("SELECT Id,Name,Reported_Date__c,Category__c,Amount FROM Spend__c WHERE Vendor__c='"+accId+"' ORDER BY Reported_Date__c DESC LIMIT 6").catch(()=>({records:[]})),
       ]);
       console.log('[VCS SF] Opps:',opps?.records?.length||0,'Cases:',cases?.records?.length||0,'Tasks:',tasks?.records?.length||0,'Spend:',spend?.records?.length||0);
 
@@ -3621,17 +3635,17 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       } else if(tab==="Spend"){
         if(!sp?.records?.length){sfWrap.appendChild(el("p",{style:{fontSize:"10px",color:"var(--muted)",fontStyle:"italic",padding:"4px 0"}},"No spend records."));}
         else{
-          const tot=sp.records.reduce((s2,r)=>s2+Number(r.Amount__c||0),0);
+          const tot=sp.records.reduce((s2,r)=>s2+Number(r.Amount||r.Amount||0),0);
           const pct=parseFloat(String(vendor.adminFee||"").replace(/[^0-9.]/g,""))||0;
           const exp=pct?Math.round(tot*pct/100):null;
           const sr=el("div",{style:{display:"flex",gap:"16px",marginBottom:"8px",padding:"8px",background:"var(--sb)",borderRadius:"4px"}});
           [["Total Spend","$"+tot.toLocaleString(),"var(--blue)"],...(exp?[["Expected Commission","$"+exp.toLocaleString(),"var(--green)"]]:[]),...(pct?[["Admin Fee",pct+"%","var(--muted)"]]:[])].forEach(([l2,v2,c2])=>{const k=el("div",{});k.appendChild(el("div",{style:{fontWeight:"700",fontSize:"13px",color:c2}},v2));k.appendChild(el("div",{style:{fontSize:"8px",color:"var(--muted)"}},l2));sr.appendChild(k);});
           sfWrap.appendChild(sr);
-          sp.records.forEach(s2=>{const row2=el("div",{style:{display:"flex",gap:"6px",alignItems:"center",padding:"3px 0",borderBottom:"1px solid var(--border)",fontSize:"10px"}});row2.appendChild(el("span",{style:{flex:"1"}},s2.Name||"Spend"));if(s2.Category__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},s2.Category__c));row2.appendChild(el("span",{style:{color:"var(--green)",fontWeight:"600"}},"$"+Number(s2.Amount__c||0).toLocaleString()));if(s2.Reported_Date__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},new Date(s2.Reported_Date__c).toLocaleDateString()));sfWrap.appendChild(row2);});
+          sp.records.forEach(s2=>{const row2=el("div",{style:{display:"flex",gap:"6px",alignItems:"center",padding:"3px 0",borderBottom:"1px solid var(--border)",fontSize:"10px"}});row2.appendChild(el("span",{style:{flex:"1"}},s2.Name||"Spend"));if(s2.Category__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},s2.Category__c));row2.appendChild(el("span",{style:{color:"var(--green)",fontWeight:"600"}},"$"+Number(s2.Amount||0).toLocaleString()));if(s2.Reported_Date__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},new Date(s2.Reported_Date__c).toLocaleDateString()));sfWrap.appendChild(row2);});
         }
       } else if(tab==="Opportunities"){
         if(!o?.records?.length){sfWrap.appendChild(el("p",{style:{fontSize:"10px",color:"var(--muted)",fontStyle:"italic",padding:"4px 0"}},"No open opportunities."));}
-        else o.records.forEach(opp=>{const row2=el("div",{style:{border:"1px solid var(--border)",borderRadius:"3px",padding:"6px 8px",marginBottom:"4px"}});const t2=el("div",{style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"3px"}});t2.appendChild(el("span",{style:{flex:"1",fontWeight:"600",fontSize:"10px"}},opp.Name));t2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},opp.StageName));if(opp.Amount||opp.Amount__c)t2.appendChild(el("span",{style:{color:"var(--green)",fontWeight:"700"}},"$"+Number(opp.Amount||opp.Amount__c||0).toLocaleString()));row2.appendChild(t2);if(opp.CloseDate){const dl=Math.ceil((new Date(opp.CloseDate)-new Date())/86400000);row2.appendChild(el("div",{style:{fontSize:"9px",color:dl<0?"var(--red)":dl<30?"var(--amber)":"var(--muted)"}},"Close: "+new Date(opp.CloseDate).toLocaleDateString()+(dl<0?" (overdue)":"")));}sfWrap.appendChild(row2);});
+        else o.records.forEach(opp=>{const row2=el("div",{style:{border:"1px solid var(--border)",borderRadius:"3px",padding:"6px 8px",marginBottom:"4px"}});const t2=el("div",{style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"3px"}});t2.appendChild(el("span",{style:{flex:"1",fontWeight:"600",fontSize:"10px"}},opp.Name));t2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},opp.StageName));if(opp.Amount||opp.Amount)t2.appendChild(el("span",{style:{color:"var(--green)",fontWeight:"700"}},"$"+Number(opp.Amount||opp.Amount||0).toLocaleString()));row2.appendChild(t2);if(opp.CloseDate){const dl=Math.ceil((new Date(opp.CloseDate)-new Date())/86400000);row2.appendChild(el("div",{style:{fontSize:"9px",color:dl<0?"var(--red)":dl<30?"var(--amber)":"var(--muted)"}},"Close: "+new Date(opp.CloseDate).toLocaleDateString()+(dl<0?" (overdue)":"")));}sfWrap.appendChild(row2);});
       } else if(tab==="Cases"){
         if(!cs?.records?.length&&!ts?.records?.length){sfWrap.appendChild(el("p",{style:{fontSize:"10px",color:"var(--muted)",fontStyle:"italic",padding:"4px 0"}},"No open cases or tasks."));}
         else{
@@ -6717,59 +6731,62 @@ function renderSFBoard(c) {
 
   c.appendChild(wrap);
 
-  async function loadSFBoard(){
-    sb.loading=true; sb.error=null; render();
-    try{
-      const today=new Date();
-      const yearStart=today.getFullYear()+'-01-01';
-      const activeVendors=S.vendors.filter(isVisible).slice(0,50);
-      const nameList=activeVendors.map(v=>v.name.replace(/'/g,"\\'"   )).join("','");
 
-      const [vendorResult,openCases,openTasks,spendResult]=await Promise.all([
-        sfQuery("SELECT Id,Name,(SELECT Id,Name,StageName,Amount,CloseDate FROM Opportunities__r WHERE IsClosed=false ORDER BY Amount DESC LIMIT 3),(SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Cases__r WHERE Status!='Closed' ORDER BY CreatedDate DESC LIMIT 3) FROM Vendor__c WHERE Name IN ('"+nameList+"') LIMIT 50"),
-        sfQuery("SELECT Id,Subject,Status,Priority,CreatedDate,Vendor__r.Name FROM Case WHERE Status!='Closed' AND Vendor__r.Name IN ('"+nameList+"') ORDER BY Priority,CreatedDate DESC LIMIT 30").catch(()=>({records:[]})),
-        sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name,Vendor__r.Name FROM Task WHERE IsClosed=false AND Vendor__r.Name IN ('"+nameList+"') ORDER BY ActivityDate ASC LIMIT 30").catch(()=>({records:[]})),
-        sfQuery("SELECT Vendor__c,Vendor__r.Name,SUM(Amount__c) TotalAmt FROM Spend__c WHERE Reported_Date__c >= "+yearStart+" AND Vendor__r.Name IN ('"+nameList+"') GROUP BY Vendor__c,Vendor__r.Name ORDER BY TotalAmt DESC LIMIT 30").catch(()=>({records:[]})),
-      ]);
+}
 
-      const opps=[], cases=[], tasks=[];
-      vendorResult?.records?.forEach(v=>{
-        (v.Opportunities__r?.records||[]).forEach(o=>opps.push({...o,_accountName:v.Name,_accountId:v.Id}));
-        (v.Cases__r?.records||[]).forEach(c2=>cases.push({...c2,_accountName:v.Name}));
-      });
-      openCases?.records?.forEach(c2=>{if(!cases.find(x=>x.Id===c2.Id))cases.push({...c2,_accountName:c2.Vendor__r?.Name});});
-      openTasks?.records?.forEach(t=>{if(!tasks.find(x=>x.Id===t.Id))tasks.push({...t,_accountName:t.Vendor__r?.Name});});
 
-      // Spend leaderboard
-      const spendLeaderboard=(spendResult?.records||[]).map(r=>({name:r['Vendor__r']?.Name||'',spend:Number(r.TotalAmt||0)})).filter(v=>v.name&&v.spend>0);
+async function loadSFBoard(){
+  sb.loading=true; sb.error=null; render();
+  try{
+    const today=new Date();
+    const yearStart=today.getFullYear()+'-01-01';
+    const activeVendors=S.vendors.filter(isVisible).slice(0,50);
+    const nameList=activeVendors.map(v=>v.name.replace(/'/g,"\\'"   )).join("','");
 
-      // True-up alerts: vendors with spend but missing or low admin fee
-      const trueUpAlerts=spendLeaderboard.map(v=>{
-        const vcsV=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
-        const pct=parseFloat(String(vcsV?.adminFee||'').replace(/[^0-9.]/g,''))||0;
-        const expected=pct?Math.round(v.spend*pct/100):0;
-        return {name:v.name,spend:v.spend,expected,adminPct:pct||null};
-      }).filter(v=>v.spend>1000&&(!v.adminPct||v.expected<v.spend*0.01)).sort((a,b)=>b.spend-a.spend);
+    const [vendorResult,openCases,openTasks,spendResult]=await Promise.all([
+      sfQuery("SELECT Id,Name,(SELECT Id,Name,StageName,Amount,CloseDate FROM Opportunities__r WHERE IsClosed=false ORDER BY Amount DESC LIMIT 3),(SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Cases__r WHERE Status!='Closed' ORDER BY CreatedDate DESC LIMIT 3) FROM Vendor__c WHERE Name IN ('"+nameList+"') LIMIT 50"),
+      sfQuery("SELECT Id,Subject,Status,Priority,CreatedDate,Vendor__r.Name FROM Case WHERE Status!='Closed' AND Vendor__r.Name IN ('"+nameList+"') ORDER BY Priority,CreatedDate DESC LIMIT 30").catch(()=>({records:[]})),
+      sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name,Vendor__r.Name FROM Task WHERE IsClosed=false AND Vendor__r.Name IN ('"+nameList+"') ORDER BY ActivityDate ASC LIMIT 30").catch(()=>({records:[]})),
+      sfQuery("SELECT Vendor__c,Vendor__r.Name,SUM(Amount) TotalAmt FROM Spend__c WHERE Reported_Date__c >= "+yearStart+" AND Vendor__r.Name IN ('"+nameList+"' GROUP BY Vendor__c,Vendor__r.Name ORDER BY TotalAmt DESC LIMIT 30").catch(()=>({records:[]})),
+    ]);
 
-      // Expiring contracts with open opportunities
-      const expiringWithOpps=[];
-      activeVendors.forEach(v=>{
-        const exp=getCurrentExpiry(v);
-        if(!exp) return;
-        const days=dayDiff(exp,today);
-        if(days<0||days>120) return;
-        const vendorOpps=opps.filter(o=>o._accountName&&vendorNamesMatch(o._accountName,v.name));
-        vendorOpps.forEach(o=>expiringWithOpps.push({vendorName:v.name,expiresIn:days,oppName:o.Name,oppAmount:o.Amount||o.Amount__c}));
-      });
-      expiringWithOpps.sort((a,b)=>a.expiresIn-b.expiresIn);
+    const opps=[], cases=[], tasks=[];
+    vendorResult?.records?.forEach(v=>{
+      (v.Opportunities__r?.records||[]).forEach(o=>opps.push({...o,_accountName:v.Name,_accountId:v.Id}));
+      (v.Cases__r?.records||[]).forEach(c2=>cases.push({...c2,_accountName:v.Name}));
+    });
+    openCases?.records?.forEach(c2=>{if(!cases.find(x=>x.Id===c2.Id))cases.push({...c2,_accountName:c2.Vendor__r?.Name});});
+    openTasks?.records?.forEach(t=>{if(!tasks.find(x=>x.Id===t.Id))tasks.push({...t,_accountName:t.Vendor__r?.Name});});
 
-      sb.data={opps,cases,tasks,spendLeaderboard,trueUpAlerts,expiringWithOpps};
-      sb.lastLoaded=new Date().toLocaleTimeString();
-      sb.loading=false;
-      render();
-    }catch(e){
-      sb.loading=false; sb.error='Failed to load: '+e.message; render();
-    }
+    // Spend leaderboard
+    const spendLeaderboard=(spendResult?.records||[]).map(r=>({name:r['Vendor__r']?.Name||'',spend:Number(r.TotalAmt||0)})).filter(v=>v.name&&v.spend>0);
+
+    // True-up alerts: vendors with spend but missing or low admin fee
+    const trueUpAlerts=spendLeaderboard.map(v=>{
+      const vcsV=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
+      const pct=parseFloat(String(vcsV?.adminFee||'').replace(/[^0-9.]/g,''))||0;
+      const expected=pct?Math.round(v.spend*pct/100):0;
+      return {name:v.name,spend:v.spend,expected,adminPct:pct||null};
+    }).filter(v=>v.spend>1000&&(!v.adminPct||v.expected<v.spend*0.01)).sort((a,b)=>b.spend-a.spend);
+
+    // Expiring contracts with open opportunities
+    const expiringWithOpps=[];
+    activeVendors.forEach(v=>{
+      const exp=getCurrentExpiry(v);
+      if(!exp) return;
+      const days=dayDiff(exp,today);
+      if(days<0||days>120) return;
+      const vendorOpps=opps.filter(o=>o._accountName&&vendorNamesMatch(o._accountName,v.name));
+      vendorOpps.forEach(o=>expiringWithOpps.push({vendorName:v.name,expiresIn:days,oppName:o.Name,oppAmount:o.Amount||o.Amount}));
+    });
+    expiringWithOpps.sort((a,b)=>a.expiresIn-b.expiresIn);
+
+    sb.data={opps,cases,tasks,spendLeaderboard,trueUpAlerts,expiringWithOpps};
+    sb.lastLoaded=new Date().toLocaleTimeString();
+    sb.loading=false;
+    render();
+  }catch(e){
+    sb.loading=false; sb.error='Failed to load: '+e.message; render();
   }
 }
 
@@ -6784,8 +6801,8 @@ async function loadSFSignals() {
 
     // Parallel: new spend this month, stuck opps, overdue tasks, open high-priority cases
     const [newSpend, stuckOpps, overdueTasks, highCases] = await Promise.all([
-      sfQuery("SELECT Vendor__r.Name,SUM(Amount__c) TotalAmt FROM Spend__c WHERE Reported_Date__c >= "+thisMonthStart+" GROUP BY Vendor__r.Name ORDER BY TotalAmt DESC LIMIT 10"),
-      sfQuery("SELECT Id,Name,StageName,Amount,LastStageChangeDate,Vendor__r.Name FROM Opportunity WHERE IsClosed=false AND LastStageChangeDate <= "+sixtyDaysAgo+" ORDER BY Amount DESC NULLS LAST LIMIT 10"),
+      sfQuery("SELECT Vendor__r.Name,SUM(Amount) TotalAmt FROM Spend__c WHERE Reported_Date__c >= "+thisMonthStart+" GROUP BY Vendor__r.Name ORDER BY TotalAmt DESC LIMIT 10"),
+      sfQuery("SELECT Id,Name,StageName,Amount,LastStageChangeDate,Vendor__r.Name FROM Opportunity WHERE IsClosed=false AND LastStageChangeDate <= "+sixtyDaysAgo+"T00:00:00ZT00:00:00Z ORDER BY Amount DESC NULLS LAST LIMIT 10"),
       sfQuery("SELECT Id,Subject,ActivityDate,Vendor__r.Name,Owner.Name FROM Task WHERE IsClosed=false AND ActivityDate < TODAY ORDER BY ActivityDate ASC LIMIT 10"),
       sfQuery("SELECT Id,Subject,Priority,Status,Vendor__r.Name,CreatedDate FROM Case WHERE Priority='High' AND Status!='Closed' ORDER BY CreatedDate DESC LIMIT 8"),
     ]);
@@ -6912,7 +6929,7 @@ Extract and return this exact structure:
     {type:'text', text:'Extract all contract data from this vendor agreement for '+vendorName+':\n\n'+String(fileText).slice(0,25000)}
   ];
 
-  const apiKey = S.settings?.anthropicApiKey || S.settings?.aiApiKey || '';
+  const apiKey = S.settings?.apiKey || S.settings?.anthropicApiKey || S.settings?.aiApiKey || localStorage.getItem('vcs_api_key') || '';
   if(!apiKey) throw new Error('No Anthropic API key set in Settings → AI Configuration');
 
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -7152,37 +7169,61 @@ function renderContracts(c) {
   const uploadSec=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'14px',marginBottom:'16px'}});
   uploadSec.appendChild(el('h3',{style:{margin:'0 0 8px 0',fontSize:'13px'}},'Upload Contract'));
 
-  const row1=el('div',{style:{display:'flex',gap:'8px',marginBottom:'8px',alignItems:'center'}});
-  row1.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',width:'80px',flexShrink:'0'}},'Vendor:'));
+  const row1=el('div',{style:{display:'flex',gap:'8px',marginBottom:'8px',alignItems:'flex-start'}});
+  row1.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',width:'80px',flexShrink:'0',paddingTop:'7px'}},'Vendor:'));
   const vendorWrap=el('div',{style:{flex:'1',position:'relative'}});
 
-  // Searchable dropdown: combines <select> with live-filter search
-  const vendorSel=el('select',{class:'detail-edit-field',style:{width:'100%',height:'28px'}});
-  vendorSel.appendChild(el('option',{value:''},'— Select or search vendor below —'));
-  [...S.vendors].sort((a,b)=>a.name.localeCompare(b.name)).forEach(v=>vendorSel.appendChild(el('option',{value:v.name},v.name)));
-  vendorWrap.appendChild(vendorSel);
-
-  // Search filter below select
-  const searchRow=el('div',{style:{display:'flex',gap:'4px',marginTop:'4px'}});
-  const searchInp=el('input',{type:'text',class:'detail-edit-field',style:{flex:'1',height:'24px',fontSize:'10px'},placeholder:'Type to filter vendor list...'});
-  searchInp.addEventListener('input',()=>{
-    const q=searchInp.value.toLowerCase();
-    [...vendorSel.options].forEach((opt,i)=>{
-      if(i===0){opt.style.display='';return;} // keep placeholder
-      opt.style.display=(!q||opt.value.toLowerCase().includes(q))?'':'none';
-    });
-    // Auto-select if only one match
-    const visible=[...vendorSel.options].filter((o,i)=>i>0&&o.style.display!=='none');
-    if(visible.length===1){vendorSel.value=visible[0].value;selectedVendorName=visible[0].value;}
-  });
-  searchRow.appendChild(searchInp);
-  const clearBtn=el('button',{class:'btn-xs btn-ghost',onclick(){searchInp.value='';[...vendorSel.options].forEach(o=>o.style.display='');searchInp.focus();}}, '✕');
-  searchRow.appendChild(clearBtn);
-  vendorWrap.appendChild(searchRow);
-
+  // Single combo: text input that filters + shows a live dropdown
   let selectedVendorName='';
-  vendorSel.addEventListener('change',()=>{selectedVendorName=vendorSel.value;});
+  const sortedVendors=[...S.vendors].sort((a,b)=>a.name.localeCompare(b.name));
 
+  const comboInput=el('input',{type:'text',class:'detail-edit-field',style:{width:'100%',height:'30px',paddingRight:'24px'},
+    placeholder:'Type or select vendor...'});
+  const comboArrow=el('span',{style:{position:'absolute',right:'6px',top:'7px',fontSize:'10px',color:'var(--muted)',pointerEvents:'none'}},'▾');
+  const comboDropdown=el('div',{style:{
+    position:'absolute',top:'32px',left:'0',right:'0',
+    background:'var(--sb)',border:'1px solid var(--blue)',borderRadius:'4px',
+    maxHeight:'220px',overflowY:'auto',zIndex:'300',
+    boxShadow:'0 4px 12px rgba(0,0,0,.3)',display:'none'
+  }});
+
+  // "Add new vendor" option always at top
+  const addNewOpt=el('div',{style:{padding:'7px 10px',cursor:'pointer',fontSize:'10px',color:'var(--blue)',fontWeight:'600',borderBottom:'1px solid var(--border)',display:'flex',gap:'6px',alignItems:'center'}});
+  addNewOpt.innerHTML='<span>＋</span><span>Add new vendor</span>';
+  addNewOpt.onclick=()=>{comboDropdown.style.display='none';openAddVendorModal(name=>{comboInput.value=name;selectedVendorName=name;});};
+  comboDropdown.appendChild(addNewOpt);
+
+  function populateCombo(q=''){
+    // Remove all except addNewOpt
+    while(comboDropdown.children.length>1) comboDropdown.removeChild(comboDropdown.lastChild);
+    const matches=q?sortedVendors.filter(v=>v.name.toLowerCase().includes(q.toLowerCase())):sortedVendors;
+    if(!matches.length){
+      const none=el('div',{style:{padding:'8px 10px',fontSize:'10px',color:'var(--muted)',fontStyle:'italic'}},'No matches — type above or add new');
+      comboDropdown.appendChild(none);
+    }
+    matches.slice(0,40).forEach(v=>{
+      const opt=el('div',{style:{padding:'6px 10px',cursor:'pointer',fontSize:'11px',borderBottom:'1px solid rgba(255,255,255,.04)'}});
+      opt.textContent=v.name;
+      opt.addEventListener('mouseenter',()=>{opt.style.background='rgba(79,124,255,.12)';});
+      opt.addEventListener('mouseleave',()=>{opt.style.background='';});
+      opt.onclick=()=>{
+        comboInput.value=v.name; selectedVendorName=v.name;
+        comboDropdown.style.display='none';
+        if(extractBtn){extractBtn.disabled=false;extractBtn.style.opacity='1';}
+      };
+      comboDropdown.appendChild(opt);
+    });
+    if(matches.length>40) comboDropdown.appendChild(el('div',{style:{padding:'4px 10px',fontSize:'9px',color:'var(--muted)',fontStyle:'italic'}},`+${matches.length-40} more — keep typing`));
+  }
+
+  comboInput.addEventListener('focus',()=>{populateCombo(comboInput.value);comboDropdown.style.display='block';});
+  comboInput.addEventListener('input',()=>{populateCombo(comboInput.value);comboDropdown.style.display='block';selectedVendorName=comboInput.value;});
+  comboInput.addEventListener('blur',()=>{setTimeout(()=>{comboDropdown.style.display='none';},180);});
+  comboArrow.onclick=()=>{if(comboDropdown.style.display==='none'){populateCombo(comboInput.value);comboDropdown.style.display='block';comboInput.focus();}else{comboDropdown.style.display='none';}};
+
+  vendorWrap.appendChild(comboInput);
+  vendorWrap.appendChild(comboArrow);
+  vendorWrap.appendChild(comboDropdown);
   row1.appendChild(vendorWrap);
   uploadSec.appendChild(row1);
 
@@ -7563,7 +7604,7 @@ async function loadSpendData(){
     }
 
     // Pull all spend records
-    const spendResult=await sfQuery("SELECT Id,Name,Vendor__c,Vendor__r.Name,Reported_Date__c,Category__c,Amount__c FROM Spend__c WHERE Vendor__c != null"+dateFilter+" ORDER BY Reported_Date__c DESC LIMIT 2000");
+    const spendResult=await sfQuery("SELECT Id,Name,Vendor__c,Vendor__r.Name,Reported_Date__c,Category__c,Amount FROM Spend__c WHERE Vendor__c != null"+dateFilter+" ORDER BY Reported_Date__c DESC LIMIT 2000");
     if(!spendResult?.records){SPEND_STATE.error='No spend records returned. '+(spendResult?._message||'Check SF connection.');SPEND_STATE.loading=false;render();return;}
 
     // Aggregate by vendor
@@ -7572,7 +7613,7 @@ async function loadSpendData(){
       const vName=rec['Vendor__r']?.Name||rec.Vendor__c;
       if(!vName) return;
       if(!byVendor[vName]) byVendor[vName]={name:vName,totalSpend:0,records:[],category:rec.Category__c||''};
-      byVendor[vName].totalSpend+=Number(rec.Amount__c)||0;
+      byVendor[vName].totalSpend+=Number(rec.Amount||0);
       byVendor[vName].records.push(rec);
     });
 
@@ -7595,6 +7636,49 @@ async function loadSpendData(){
     SPEND_STATE.lastLoaded=new Date().toLocaleTimeString();
     render();
   }catch(e){SPEND_STATE.error='Failed to load spend: '+e.message;SPEND_STATE.loading=false;render();}
+}
+
+function openAddVendorModal(onCreated) {
+  openModal(body=>{
+    body.appendChild(el('h3',{style:{marginTop:'0'}},'➕ Add New Vendor'));
+    body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'12px'}},'Create a new vendor entry. You can fill in full details from the vendor detail panel afterwards.'));
+    const fields=[
+      {label:'Vendor Name *',id:'nv_name',type:'text',placeholder:'e.g. Acme Medical Supply'},
+      {label:'Category',id:'nv_cat',type:'text',placeholder:'e.g. Medical/Surgical'},
+      {label:'Contact Name',id:'nv_contact',type:'text',placeholder:''},
+      {label:'Email',id:'nv_email',type:'email',placeholder:''},
+      {label:'Phone',id:'nv_phone',type:'text',placeholder:''},
+    ];
+    const inputs={};
+    fields.forEach(f=>{
+      body.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginTop:'8px',marginBottom:'2px'}},f.label));
+      const inp=el('input',{type:f.type,class:'modal-input',placeholder:f.placeholder,style:{marginBottom:'0'}});
+      inputs[f.id]=inp; body.appendChild(inp);
+    });
+    const btns=el('div',{class:'modal-btns',style:{marginTop:'14px'}});
+    btns.appendChild(el('button',{class:'btn-primary',onclick(){
+      const name=inputs.nv_name.value.trim();
+      if(!name){toast('Vendor name is required','#f59e0b');return;}
+      if(S.vendors.find(v=>v.name.toLowerCase()===name.toLowerCase())){toast('Vendor "'+name+'" already exists','#f59e0b');return;}
+      const newVendor={
+        name, category:inputs.nv_cat.value.trim()||'',
+        procContact:inputs.nv_contact.value.trim()||'',
+        email:inputs.nv_email.value.trim()||'',
+        bizPhone:inputs.nv_phone.value.trim()||'',
+        source:'psd', status:'Active', score:0, tier:'MONITOR',
+        _isNew:true, _dirty:true,
+      };
+      S.vendors.push(newVendor);
+      markDirty(newVendor);
+      updateSidebar();
+      logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:name,action:'Vendor created manually',source:'VCS'});
+      toast('✓ Vendor "'+name+'" created');
+      closeModal();
+      if(onCreated) onCreated(name);
+    }},'Create Vendor'));
+    btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
+    body.appendChild(btns);
+  });
 }
 
 // ─── Contract Comparison Tool ─────────────────────────────────────────────────
@@ -8491,6 +8575,7 @@ function renderContractEconomics(c) {
     saveBtn.textContent='+ Save to Fee History';
     resultBox.appendChild(saveBtn);
   }});
+  calcBtn.textContent = '🔢 Calculate';
   calcSec.appendChild(calcBtn);
   c.appendChild(calcSec);
 
@@ -10857,9 +10942,10 @@ function renderAnalytics(c) {
 
 async function loadAnalyticsSpend() {
   S._analyticsSpendData=null; S._analyticsSpendLoading=true;
-  render(); // re-render via global render, not by passing c
+  render();
   try {
-    const spendResult=await sfQuery("SELECT Vendor__c,Vendor__r.Name,Category__c,SUM(Amount__c) TotalAmt FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= "+new Date().getFullYear()+"-01-01 GROUP BY Vendor__c,Vendor__r.Name,Category__c ORDER BY TotalAmt DESC LIMIT 200");
+    // Query spend - use SUM(Amount) since Amount__c doesn't exist on Spend__c
+    const spendResult=await sfQuery("SELECT Vendor__c,Vendor__r.Name,Category__c,SUM(Amount) TotalAmt FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= "+new Date().getFullYear()+"-01-01 GROUP BY Vendor__c,Vendor__r.Name,Category__c ORDER BY TotalAmt DESC LIMIT 200");
     if(!spendResult?.records){S._analyticsSpendData=[];S._analyticsSpendLoading=false;render();return;}
     const byVendor={};
     spendResult.records.forEach(rec=>{
