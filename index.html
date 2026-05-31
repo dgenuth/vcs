@@ -6670,6 +6670,80 @@ function renderSFBoard(c) {
   }
 }
 
+// ─── SF-Powered Today Page Signals ────────────────────────────────────────────
+async function loadSFSignals() {
+  S._sfSignalLoading=true; render();
+  const signals=[];
+  try {
+    const today=new Date();
+    const thisMonthStart=new Date(today.getFullYear(),today.getMonth(),1).toISOString().split('T')[0];
+    const sixtyDaysAgo=new Date(today-60*86400000).toISOString().split('T')[0];
+
+    // Parallel: new spend this month, stuck opps, overdue tasks, open high-priority cases
+    const [newSpend, stuckOpps, overdueTasks, highCases] = await Promise.all([
+      sfQuery("SELECT Vendor__r.Name,SUM(Amount__c) TotalAmt FROM Spend__c WHERE Reported_Date__c >= "+thisMonthStart+" GROUP BY Vendor__r.Name ORDER BY TotalAmt DESC LIMIT 10"),
+      sfQuery("SELECT Id,Name,StageName,Amount,LastStageChangeDate,Vendor__r.Name FROM Opportunity WHERE IsClosed=false AND LastStageChangeDate <= "+sixtyDaysAgo+" ORDER BY Amount DESC NULLS LAST LIMIT 10"),
+      sfQuery("SELECT Id,Subject,ActivityDate,Vendor__r.Name,Owner.Name FROM Task WHERE IsClosed=false AND ActivityDate < TODAY ORDER BY ActivityDate ASC LIMIT 10"),
+      sfQuery("SELECT Id,Subject,Priority,Status,Vendor__r.Name,CreatedDate FROM Case WHERE Priority='High' AND Status!='Closed' ORDER BY CreatedDate DESC LIMIT 8"),
+    ]);
+
+    // New spend signals
+    newSpend?.records?.forEach(rec=>{
+      const vName=rec['Vendor__r']?.Name||rec.Vendor__r_Name;
+      if(!vName) return;
+      const vendor=S.vendors.find(v=>vendorNamesMatch(v.name,vName));
+      const amt=Number(rec.TotalAmt||0);
+      if(amt>0) signals.push({
+        type:'NEW SPEND',icon:'💰',color:'var(--green)',
+        vendor,vendorName:vName,
+        message:'$'+amt.toLocaleString()+' spend reported this month — good time to reach out and confirm admin fee is being applied',
+      });
+    });
+
+    // Stuck opportunity signals
+    stuckOpps?.records?.forEach(opp=>{
+      const vName=opp['Vendor__r']?.Name;
+      const vendor=vName?S.vendors.find(v=>vendorNamesMatch(v.name,vName)):null;
+      const daysSince=opp.LastStageChangeDate?Math.floor((today-new Date(opp.LastStageChangeDate))/86400000):null;
+      signals.push({
+        type:'STUCK OPP',icon:'🔄',color:'var(--amber)',
+        vendor,vendorName:vName||opp.Name,
+        message:'"'+opp.Name+'" stuck in '+opp.StageName+(daysSince?' for '+daysSince+' days':'')+' — push forward or re-evaluate'+(opp.Amount?' ($'+Number(opp.Amount).toLocaleString()+')':''),
+      });
+    });
+
+    // Overdue task signals
+    overdueTasks?.records?.forEach(task=>{
+      const vName=task['Vendor__r']?.Name;
+      const vendor=vName?S.vendors.find(v=>vendorNamesMatch(v.name,vName)):null;
+      const daysOverdue=task.ActivityDate?Math.floor((today-new Date(task.ActivityDate))/86400000):null;
+      signals.push({
+        type:'OVERDUE TASK',icon:'⚠',color:'var(--red)',
+        vendor,vendorName:vName||'',
+        message:'"'+(task.Subject||'Task')+'" overdue'+(daysOverdue?' by '+daysOverdue+' day'+( daysOverdue!==1?'s':''):'')+' ('+( task.Owner?.Name||'unassigned')+')',
+      });
+    });
+
+    // High priority case signals
+    highCases?.records?.forEach(c2=>{
+      const vName=c2['Vendor__r']?.Name;
+      const vendor=vName?S.vendors.find(v=>vendorNamesMatch(v.name,vName)):null;
+      signals.push({
+        type:'HIGH CASE',icon:'🎫',color:'var(--red)',
+        vendor,vendorName:vName||'',
+        message:'"'+(c2.Subject||c2.CaseNumber)+'" — high priority open case ('+c2.Status+')',
+      });
+    });
+
+  } catch(e) {
+    console.error('[VCS SF Signals]',e);
+  }
+  S._sfSignalData=signals;
+  S._sfSignalLoading=false;
+  S._sfSignalLastLoaded=new Date().toLocaleTimeString();
+  render();
+}
+
 // ─── Contract OCR Module ─────────────────────────────────────────────────────
 // State: contract uploads stored per vendor in S._contractFiles
 // Each entry: { vendorName, fileName, uploadDate, extractedData, rawText, fileBase64 }
@@ -8742,6 +8816,47 @@ function renderToday(c) {
   dimLabel.append(dimCb,' Show dismissed'); tabs.appendChild(dimLabel);
   c.appendChild(tabs);
 
+  // ── SF-Powered Signals (if connected) ──────────────────────────────────────
+  if(USER.sfToken && S._sfSignals !== false) {
+    const sigSec=el('div',{style:{marginBottom:'12px'}});
+    const sigHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'6px'}});
+    sigHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px'}},'☁ Salesforce Signals'));
+    sigHdr.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._sfSignals=false;render();}},'✕ Hide'));
+    if(S._sfSignalData){
+      sigHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Last refreshed: '+(S._sfSignalLastLoaded||'—')));
+      sigHdr.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._sfSignalData=null;render();loadSFSignals();}},'↻ Refresh'));
+    }
+    sigSec.appendChild(sigHdr);
+
+    if(!S._sfSignalData){
+      if(S._sfSignalLoading){
+        sigSec.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'6px 0'}},'⏳ Loading SF signals...'));
+      } else {
+        const loadSignalBtn=el('button',{class:'btn-xs btn-blue',onclick(){loadSFSignals();}}, '☁ Load SF Signals');
+        sigSec.appendChild(loadSignalBtn);
+      }
+    } else {
+      const signals=S._sfSignalData;
+      if(!signals.length){
+        sigSec.appendChild(el('div',{style:{fontSize:'10px',color:'var(--green)',padding:'4px 0'}},'✅ No urgent signals from Salesforce.'));
+      } else {
+        const grid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:'6px'}});
+        signals.forEach(sig=>{
+          const card=el('div',{style:{border:'1px solid var(--border)',borderLeft:'3px solid '+(sig.color||'var(--border)'),borderRadius:'4px',padding:'7px 9px',background:'var(--sb)',cursor:sig.vendor?'pointer':'default'},onclick(){if(sig.vendor)openDetail(sig.vendor);}});
+          const top=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'3px'}});
+          top.appendChild(el('span',{style:{fontSize:'12px'}},sig.icon));
+          top.appendChild(el('span',{style:{fontWeight:'600',fontSize:'10px',flex:'1'}},sig.vendor?sig.vendor.name:sig.vendorName));
+          top.appendChild(el('span',{style:{fontSize:'8px',background:(sig.color||'var(--blue)')+'22',color:sig.color||'var(--blue)',padding:'1px 5px',borderRadius:'3px',fontWeight:'700'}},sig.type));
+          card.appendChild(top);
+          card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.4'}},sig.message));
+          grid.appendChild(card);
+        });
+        sigSec.appendChild(grid);
+      }
+    }
+    c.appendChild(sigSec);
+  }
+
   let vendors=S.vendors.filter(v=>S.showDismissed?!isSnoozed(v):isVisible(v));
   if (S.filter) vendors=vendors.filter(S.filter);
   if (S.search) { const q=S.search.toLowerCase(); vendors=vendors.filter(v=>searchMatch(v,q)); }
@@ -10327,6 +10442,125 @@ function renderAnalytics(c) {
     revSec.appendChild(revGrid);
     c.appendChild(revSec);
   }
+
+  // ── SF Spend Analytics Section ───────────────────────────────────────────
+  if(USER.sfToken){
+    const sfAnalyticsSec=el('div',{style:{marginTop:'16px'}});
+    sfAnalyticsSec.appendChild(el('h3',{style:{fontSize:'13px',fontWeight:'700',marginBottom:'4px'}},'☁ Revenue Intelligence (Salesforce)'));
+    sfAnalyticsSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'Commission benchmarking and spend trends from live Salesforce data.'));
+
+    if(!S._analyticsSpendData){
+      const loadBtn=el('button',{class:'btn-xs btn-blue',onclick(){loadAnalyticsSpend(c);}}, '☁ Load SF Revenue Data');
+      sfAnalyticsSec.appendChild(loadBtn);
+    } else {
+      const spendData=S._analyticsSpendData;
+
+      // Category benchmarking
+      const catBenchmark={};
+      spendData.forEach(v=>{
+        const cat=v.category||'Unknown';
+        if(!catBenchmark[cat]) catBenchmark[cat]={vendors:[],rates:[],totalSpend:0};
+        catBenchmark[cat].vendors.push(v);
+        catBenchmark[cat].totalSpend+=v.totalSpend||0;
+        if(v.adminFeePct) catBenchmark[cat].rates.push(v.adminFeePct);
+      });
+
+      // Render benchmark cards
+      const benchHdr=el('div',{style:{fontWeight:'600',fontSize:'11px',marginBottom:'6px'}});
+      benchHdr.textContent='Commission Rate by Category';
+      sfAnalyticsSec.appendChild(benchHdr);
+
+      const benchGrid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220px,1fr))',gap:'6px',marginBottom:'12px'}});
+      Object.entries(catBenchmark)
+        .filter(([,d])=>d.rates.length>0&&d.totalSpend>0)
+        .sort((a,b)=>b[1].totalSpend-a[1].totalSpend)
+        .slice(0,12)
+        .forEach(([cat,data])=>{
+          const avgRate=data.rates.reduce((s,r)=>s+r,0)/data.rates.length;
+          const maxRate=Math.max(...data.rates);
+          const minRate=Math.min(...data.rates);
+          const totalExpected=data.vendors.reduce((s,v)=>s+(v.expectedRevenue||0),0);
+          const card=el('div',{style:{border:'1px solid var(--border)',borderRadius:'5px',padding:'9px 11px',background:'var(--sb)'}});
+          const top=el('div',{style:{display:'flex',gap:'4px',alignItems:'center',marginBottom:'5px'}});
+          top.appendChild(el('span',{style:{fontWeight:'600',fontSize:'10px',flex:'1'}},cat));
+          top.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},data.vendors.length+' vendors'));
+          card.appendChild(top);
+          const rateRow=el('div',{style:{display:'flex',gap:'8px',marginBottom:'3px',fontSize:'10px'}});
+          rateRow.appendChild(el('span',{style:{color:'var(--muted)'}},'Avg rate:'));
+          rateRow.appendChild(el('span',{style:{fontWeight:'700',color:'var(--blue)'}},avgRate.toFixed(1)+'%'));
+          rateRow.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'('+minRate+'–'+maxRate+'%)'));
+          card.appendChild(rateRow);
+          const spendRow=el('div',{style:{fontSize:'9px',color:'var(--muted)'}});
+          spendRow.textContent='Spend: $'+data.totalSpend.toLocaleString()+' · Expected: $'+totalExpected.toLocaleString();
+          card.appendChild(spendRow);
+          // Rate range bar
+          const barWrap=el('div',{style:{marginTop:'5px',background:'rgba(255,255,255,.07)',borderRadius:'3px',height:'4px',overflow:'hidden'}});
+          const barFill=el('div',{style:{height:'100%',background:'var(--blue)',width:Math.min(100,avgRate/10*100)+'%',borderRadius:'3px'}});
+          barWrap.appendChild(barFill); card.appendChild(barWrap);
+          benchGrid.appendChild(card);
+        });
+      sfAnalyticsSec.appendChild(benchGrid);
+
+      // Top vendors by spend
+      const topBySpend=[...spendData].sort((a,b)=>(b.totalSpend||0)-(a.totalSpend||0)).slice(0,10);
+      if(topBySpend.length){
+        sfAnalyticsSec.appendChild(el('div',{style:{fontWeight:'600',fontSize:'11px',marginBottom:'6px'}},'Top Vendors by Spend'));
+        const tbl=el('div',{class:'tbl-wrap'});
+        const table=el('table',{class:'data-table'});
+        const thead=el('thead'); const hr=el('tr');
+        ['Vendor','Category','Admin Fee %','Total Spend','Expected Commission','Status'].forEach(h=>hr.appendChild(el('th',{},h)));
+        thead.appendChild(hr); table.appendChild(thead);
+        const tbody=el('tbody');
+        topBySpend.forEach(v=>{
+          const vendor=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
+          const tr=el('tr',{style:{cursor:vendor?'pointer':'default'},onclick(){if(vendor)openDetail(vendor);}});
+          const gapColor=v.gap<-100?'var(--red)':v.gap<0?'var(--amber)':'var(--green)';
+          [
+            vendor?vLink(vendor):el('span',{},v.name),
+            el('span',{style:{fontSize:'9px',color:'var(--muted)'}},v.category||'—'),
+            el('span',{style:{color:v.adminFeePct?'var(--green)':'var(--red)',fontWeight:'600'}},v.adminFeePct?(v.adminFeePct+'%'):'⚠ Not set'),
+            '$'+v.totalSpend.toLocaleString(),
+            v.expectedRevenue?'$'+v.expectedRevenue.toLocaleString():'—',
+            el('span',{style:{fontSize:'9px',color:gapColor,fontWeight:'600'}},v.gap<-100?'⚠ Gap':v.adminFeePct?'✓':'—'),
+          ].forEach(cell=>{const td=el('td');if(cell instanceof Node)td.appendChild(cell);else td.textContent=String(cell||'');tr.appendChild(td);});
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody); tbl.appendChild(table);
+        sfAnalyticsSec.appendChild(tbl);
+      }
+
+      const refreshRow=el('div',{style:{marginTop:'8px',display:'flex',gap:'6px',alignItems:'center'}});
+      refreshRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._analyticsSpendData=null;render();loadAnalyticsSpend(c);}}, '↻ Refresh'));
+      if(S._analyticsSpendLoaded) refreshRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Last loaded: '+S._analyticsSpendLoaded));
+      sfAnalyticsSec.appendChild(refreshRow);
+    }
+    c.appendChild(sfAnalyticsSec);
+  }
+}
+
+async function loadAnalyticsSpend(c) {
+  S._analyticsSpendData=null; S._analyticsSpendLoading=true;
+  if(c) renderAnalytics(c);
+  try {
+    const spendResult=await sfQuery("SELECT Vendor__c,Vendor__r.Name,Category__c,SUM(Amount__c) TotalAmt FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= "+new Date().getFullYear()+"-01-01 GROUP BY Vendor__c,Vendor__r.Name,Category__c ORDER BY TotalAmt DESC LIMIT 200");
+    if(!spendResult?.records){S._analyticsSpendData=[];S._analyticsSpendLoading=false;if(c)renderAnalytics(c);return;}
+    const byVendor={};
+    spendResult.records.forEach(rec=>{
+      const vName=rec['Vendor__r']?.Name||'';
+      if(!vName) return;
+      if(!byVendor[vName]) byVendor[vName]={name:vName,totalSpend:0,category:rec.Category__c||''};
+      byVendor[vName].totalSpend+=Number(rec.TotalAmt)||0;
+    });
+    const vendors=Object.values(byVendor).map(v=>{
+      const vcsV=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
+      const pct=parseFloat(String(vcsV?.adminFee||'').replace(/[^0-9.]/g,''))||0;
+      return {...v,adminFeePct:pct||null,expectedRevenue:pct?Math.round(v.totalSpend*pct/100):0,gap:pct?0-Math.round(v.totalSpend*pct/100):0,category:vcsV?.category||v.category};
+    });
+    S._analyticsSpendData=vendors;
+    S._analyticsSpendLoaded=new Date().toLocaleTimeString();
+    S._analyticsSpendLoading=false;
+    if(c) renderAnalytics(c);
+  } catch(e){S._analyticsSpendData=[];S._analyticsSpendLoading=false;if(c)renderAnalytics(c);}
 }
 
 function renderSummary(c) {
