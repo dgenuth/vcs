@@ -7029,9 +7029,17 @@ Extract and return this exact structure:
     {type:'text', text:'Extract all contract data from this vendor agreement for '+vendorName+':\n\n'+String(fileText).slice(0,25000)}
   ];
 
+  const apiKey = S.settings?.anthropicApiKey || S.settings?.aiApiKey || '';
+  if(!apiKey) throw new Error('No Anthropic API key set in Settings → AI Configuration');
+
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method:'POST',
-    headers:{'Content-Type':'application/json'},
+    headers:{
+      'Content-Type':'text/plain',
+      'x-api-key': apiKey,
+      'anthropic-version':'2023-06-01',
+      'anthropic-dangerous-direct-browser-access':'true'
+    },
     body: JSON.stringify({
       model:'claude-sonnet-4-20250514',
       max_tokens:2000,
@@ -7039,6 +7047,7 @@ Extract and return this exact structure:
       messages:[{role:'user',content: userContent}]
     })
   });
+  if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err.error?.message||`HTTP ${resp.status}`);}
   const data = await resp.json();
   const raw = data.content?.find(b=>b.type==='text')?.text||'{}';
   const clean = raw.replace(/^```[a-z]*\n?/,'').replace(/\n?```$/,'').trim();
@@ -7263,29 +7272,34 @@ function renderContracts(c) {
   const row1=el('div',{style:{display:'flex',gap:'8px',marginBottom:'8px',alignItems:'center'}});
   row1.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',width:'80px',flexShrink:'0'}},'Vendor:'));
   const vendorWrap=el('div',{style:{flex:'1',position:'relative'}});
-  const vendorInput=el('input',{type:'text',class:'detail-edit-field',style:{width:'100%',height:'28px'},placeholder:'Type vendor name to search...'});
-  const vendorDropdown=el('div',{style:{position:'absolute',top:'30px',left:'0',right:'0',background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'4px',maxHeight:'180px',overflowY:'auto',zIndex:'200',display:'none',boxShadow:'0 4px 12px rgba(0,0,0,.3)'}});
-  let selectedVendorName='';
-  vendorInput.addEventListener('input',()=>{
-    const q=vendorInput.value.toLowerCase().trim();
-    vendorDropdown.innerHTML='';
-    if(!q){vendorDropdown.style.display='none';return;}
-    const matches=S.vendors.filter(v=>v.name.toLowerCase().includes(q)).slice(0,15);
-    if(!matches.length){vendorDropdown.style.display='none';return;}
-    matches.forEach(v=>{
-      const opt=el('div',{style:{padding:'6px 10px',cursor:'pointer',fontSize:'11px',borderBottom:'1px solid var(--border)'},onclick(){
-        vendorInput.value=v.name; selectedVendorName=v.name;
-        vendorDropdown.style.display='none'; extractBtn.disabled=!selectedFile; extractBtn.style.opacity=selectedFile?'1':'0.5';
-      }});
-      opt.textContent=v.name; opt.style.color='var(--text)';
-      opt.addEventListener('mouseenter',()=>opt.style.background='var(--hover)');
-      opt.addEventListener('mouseleave',()=>opt.style.background='');
-      vendorDropdown.appendChild(opt);
+
+  // Searchable dropdown: combines <select> with live-filter search
+  const vendorSel=el('select',{class:'detail-edit-field',style:{width:'100%',height:'28px'}});
+  vendorSel.appendChild(el('option',{value:''},'— Select or search vendor below —'));
+  [...S.vendors].sort((a,b)=>a.name.localeCompare(b.name)).forEach(v=>vendorSel.appendChild(el('option',{value:v.name},v.name)));
+  vendorWrap.appendChild(vendorSel);
+
+  // Search filter below select
+  const searchRow=el('div',{style:{display:'flex',gap:'4px',marginTop:'4px'}});
+  const searchInp=el('input',{type:'text',class:'detail-edit-field',style:{flex:'1',height:'24px',fontSize:'10px'},placeholder:'Type to filter vendor list...'});
+  searchInp.addEventListener('input',()=>{
+    const q=searchInp.value.toLowerCase();
+    [...vendorSel.options].forEach((opt,i)=>{
+      if(i===0){opt.style.display='';return;} // keep placeholder
+      opt.style.display=(!q||opt.value.toLowerCase().includes(q))?'':'none';
     });
-    vendorDropdown.style.display='block';
+    // Auto-select if only one match
+    const visible=[...vendorSel.options].filter((o,i)=>i>0&&o.style.display!=='none');
+    if(visible.length===1){vendorSel.value=visible[0].value;selectedVendorName=visible[0].value;}
   });
-  vendorInput.addEventListener('blur',()=>{setTimeout(()=>vendorDropdown.style.display='none',150);});
-  vendorWrap.appendChild(vendorInput); vendorWrap.appendChild(vendorDropdown);
+  searchRow.appendChild(searchInp);
+  const clearBtn=el('button',{class:'btn-xs btn-ghost',onclick(){searchInp.value='';[...vendorSel.options].forEach(o=>o.style.display='');searchInp.focus();}}, '✕');
+  searchRow.appendChild(clearBtn);
+  vendorWrap.appendChild(searchRow);
+
+  let selectedVendorName='';
+  vendorSel.addEventListener('change',()=>{selectedVendorName=vendorSel.value;});
+
   row1.appendChild(vendorWrap);
   uploadSec.appendChild(row1);
 
@@ -7650,54 +7664,54 @@ function renderSpend(c) {
 
 
   c.appendChild(wrap);
+}
 
-  async function loadSpendData(){
-    SPEND_STATE.loading=true; SPEND_STATE.error=null; render();
-    try{
-      // Date filter
-      const now=new Date();
-      let dateFilter='';
-      if(SPEND_STATE.period==='thisQ'){
-        const qStart=new Date(now.getFullYear(),Math.floor(now.getMonth()/3)*3,1);
-        dateFilter=" AND Reported_Date__c >= "+qStart.toISOString().split('T')[0];
-      } else if(SPEND_STATE.period==='year'){
-        dateFilter=" AND Reported_Date__c >= "+now.getFullYear()+"-01-01";
-      }
+async function loadSpendData(){
+  SPEND_STATE.loading=true; SPEND_STATE.error=null; render();
+  try{
+    // Date filter
+    const now=new Date();
+    let dateFilter='';
+    if(SPEND_STATE.period==='thisQ'){
+      const qStart=new Date(now.getFullYear(),Math.floor(now.getMonth()/3)*3,1);
+      dateFilter=" AND Reported_Date__c >= "+qStart.toISOString().split('T')[0];
+    } else if(SPEND_STATE.period==='year'){
+      dateFilter=" AND Reported_Date__c >= "+now.getFullYear()+"-01-01";
+    }
 
-      // Pull all spend records
-      const spendResult=await sfQuery("SELECT Id,Name,Vendor__c,Vendor__r.Name,Reported_Date__c,Category__c,Amount__c FROM Spend__c WHERE Vendor__c != null"+dateFilter+" ORDER BY Reported_Date__c DESC LIMIT 2000");
-      if(!spendResult?.records){SPEND_STATE.error='No spend records returned. '+(spendResult?._message||'Check SF connection.');SPEND_STATE.loading=false;render();return;}
+    // Pull all spend records
+    const spendResult=await sfQuery("SELECT Id,Name,Vendor__c,Vendor__r.Name,Reported_Date__c,Category__c,Amount__c FROM Spend__c WHERE Vendor__c != null"+dateFilter+" ORDER BY Reported_Date__c DESC LIMIT 2000");
+    if(!spendResult?.records){SPEND_STATE.error='No spend records returned. '+(spendResult?._message||'Check SF connection.');SPEND_STATE.loading=false;render();return;}
 
-      // Aggregate by vendor
-      const byVendor={};
-      spendResult.records.forEach(rec=>{
-        const vName=rec['Vendor__r']?.Name||rec.Vendor__c;
-        if(!vName) return;
-        if(!byVendor[vName]) byVendor[vName]={name:vName,totalSpend:0,records:[],category:rec.Category__c||''};
-        byVendor[vName].totalSpend+=Number(rec.Amount__c)||0;
-        byVendor[vName].records.push(rec);
-      });
+    // Aggregate by vendor
+    const byVendor={};
+    spendResult.records.forEach(rec=>{
+      const vName=rec['Vendor__r']?.Name||rec.Vendor__c;
+      if(!vName) return;
+      if(!byVendor[vName]) byVendor[vName]={name:vName,totalSpend:0,records:[],category:rec.Category__c||''};
+      byVendor[vName].totalSpend+=Number(rec.Amount__c)||0;
+      byVendor[vName].records.push(rec);
+    });
 
-      // Match to VCS vendors and calculate expected commission
-      const vendorSpend=Object.values(byVendor).map(v=>{
-        const vcsVendor=S.vendors.find(sv=>sv.name.toLowerCase()===v.name.toLowerCase()||vendorNamesMatch(sv.name,v.name));
-        const adminFeeStr=vcsVendor?.adminFee||'';
-        const adminFeePct=parseFloat(String(adminFeeStr).replace(/[^0-9.]/g,''))||0;
-        const expectedRevenue=adminFeePct>0?Math.round(v.totalSpend*adminFeePct/100):0;
-        const gap=expectedRevenue>0?0-expectedRevenue:0; // gap shows if we have expected but no received; extend later with actual payments
-        return {...v,adminFeePct:adminFeePct||null,expectedRevenue,gap,category:vcsVendor?.category||v.category};
-      }).sort((a,b)=>b.totalSpend-a.totalSpend);
+    // Match to VCS vendors and calculate expected commission
+    const vendorSpend=Object.values(byVendor).map(v=>{
+      const vcsVendor=S.vendors.find(sv=>sv.name.toLowerCase()===v.name.toLowerCase()||vendorNamesMatch(sv.name,v.name));
+      const adminFeeStr=vcsVendor?.adminFee||'';
+      const adminFeePct=parseFloat(String(adminFeeStr).replace(/[^0-9.]/g,''))||0;
+      const expectedRevenue=adminFeePct>0?Math.round(v.totalSpend*adminFeePct/100):0;
+      const gap=expectedRevenue>0?0-expectedRevenue:0; // gap shows if we have expected but no received; extend later with actual payments
+      return {...v,adminFeePct:adminFeePct||null,expectedRevenue,gap,category:vcsVendor?.category||v.category};
+    }).sort((a,b)=>b.totalSpend-a.totalSpend);
 
-      const totalSpend=vendorSpend.reduce((s,v)=>s+v.totalSpend,0);
-      const totalExpected=vendorSpend.reduce((s,v)=>s+v.expectedRevenue,0);
-      const totalGap=vendorSpend.reduce((s,v)=>s+v.gap,0);
+    const totalSpend=vendorSpend.reduce((s,v)=>s+v.totalSpend,0);
+    const totalExpected=vendorSpend.reduce((s,v)=>s+v.expectedRevenue,0);
+    const totalGap=vendorSpend.reduce((s,v)=>s+v.gap,0);
 
-      SPEND_STATE.data={vendors:vendorSpend,totals:{totalSpend,totalExpected,totalGap}};
-      SPEND_STATE.loading=false;
-      SPEND_STATE.lastLoaded=new Date().toLocaleTimeString();
-      render();
-    }catch(e){SPEND_STATE.error='Failed to load spend: '+e.message;SPEND_STATE.loading=false;render();}
-  }
+    SPEND_STATE.data={vendors:vendorSpend,totals:{totalSpend,totalExpected,totalGap}};
+    SPEND_STATE.loading=false;
+    SPEND_STATE.lastLoaded=new Date().toLocaleTimeString();
+    render();
+  }catch(e){SPEND_STATE.error='Failed to load spend: '+e.message;SPEND_STATE.loading=false;render();}
 }
 
 // ─── Contract Comparison Tool ─────────────────────────────────────────────────
@@ -13128,7 +13142,17 @@ async function ensureMSToken() {
   } catch(e) { console.warn('[VCS] MS OAuth error:', e.message); }
 })();
 
-init();
+try {
+  init();
+} catch(initErr) {
+  console.error('[VCS] Init failed:', initErr);
+  // Show a recoverable error page instead of looping
+  document.getElementById('login-screen').style.display='flex';
+  const errDiv = document.createElement('div');
+  errDiv.style.cssText='position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(239,68,68,.9);color:white;padding:8px 16px;borderRadius:6px;fontSize:11px;zIndex:9999;maxWidth:500px;textAlign:center;';
+  errDiv.textContent = '⚠ Startup error: ' + initErr.message + ' — Try refreshing or clearing localStorage.';
+  document.body.appendChild(errDiv);
+}
 </script>
 </body>
 </html>
