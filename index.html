@@ -530,14 +530,16 @@ var VCS_VERSION = 'v1778431112';
 </div>
 
 <div id="ai-panel" style="display:none">
-  <div class="ai-panel-header">
-    🤖 AI Assistant
-    <button id="ai-close-btn" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px">✕</button>
+  <div class="ai-panel-header" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px">
+    <span>🤖 AI Assistant</span>
+    <div style="display:flex;gap:4px;align-items:center">
+      <button id="ai-history-btn" title="Chat history" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 4px" onclick="toggleAIHistoryDropdown()">🕐</button>
+      <button onclick="newAISession()" title="New conversation" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 4px">✏</button>
+      <button id="ai-close-btn" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 4px">✕</button>
+    </div>
   </div>
-  <div id="ai-session-bar" style="display:flex;gap:4px;padding:4px 8px;border-bottom:1px solid var(--border);overflow-x:auto;align-items:center;flex-shrink:0">
-    <div id="ai-session-tabs" style="display:flex;gap:3px;flex:1;overflow-x:auto"></div>
-    <button onclick="newAISession()" style="background:rgba(79,124,255,.15);border:1px solid rgba(79,124,255,.3);color:var(--blue);border-radius:3px;padding:2px 7px;cursor:pointer;font-size:9px;white-space:nowrap;flex-shrink:0">＋ New</button>
-  </div>
+  <div id="ai-history-dropdown" style="display:none;position:absolute;right:8px;top:40px;width:220px;background:var(--sb);border:1px solid var(--border);border-radius:5px;z-index:2000;box-shadow:0 4px 12px rgba(0,0,0,.3);max-height:280px;overflow-y:auto"></div>
+  <div id="ai-session-label" style="padding:2px 10px 4px;font-size:9px;color:var(--muted);border-bottom:1px solid var(--border)">New conversation</div>
   <div id="ai-messages" class="ai-messages"></div>
   <div id="ai-suggestions" class="ai-suggestions"></div>
   <div class="ai-input-row">
@@ -3423,6 +3425,12 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   // ── Vendor Relationships ──
   if (vendor.source === 'psd') renderRelationshipsSection(body, vendor);
 
+  // ── Contracts from Drive ──────────────────────────────────────────────────
+  const contractPerms = ['admin','procurement','manager','cro','finance_sr'].includes(USER.role);
+  if (contractPerms) {
+    try { addContractsDrawerSection(body, vendor); } catch(e) { console.warn('[VCS] Contracts drawer error:',e); }
+  }
+
   // ── Notes: PSD contract notes + ITW pipeline notes in unified timeline ──
   if (hasPermission('editNotes') || ['admin','procurement','manager','cro'].includes(USER.role)) {
     try {
@@ -3589,13 +3597,13 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       const accId=acct.Id;
       // Opportunities and Cases link to Vendor__c, not AccountId
       const [opps,cases,tasks,spend]=await Promise.all([
-        sfQuery("SELECT Id,Name,StageName,Amount,CloseDate FROM Opportunity WHERE Vendor__c='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 5").catch(()=>
-          sfQuery("SELECT Id,Name,StageName,Amount,CloseDate FROM Opportunity WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 5")),
-        sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Case WHERE Vendor__c='"+accId+"' ORDER BY CreatedDate DESC LIMIT 5").catch(()=>
-          sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Case WHERE AccountId='"+accId+"' ORDER BY CreatedDate DESC LIMIT 5")),
+        sfQuery("SELECT Id,Name,StageName,Amount,CloseDate,Owner.Name FROM Opportunity WHERE Vendor__c='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 20").catch(()=>
+          sfQuery("SELECT Id,Name,StageName,Amount,CloseDate FROM Opportunity WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 20")),
+        sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,Owner.Name,CreatedDate FROM Case WHERE Vendor__c='"+accId+"' ORDER BY CreatedDate DESC LIMIT 20").catch(()=>
+          sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,Owner.Name,CreatedDate FROM Case WHERE AccountId='"+accId+"' ORDER BY CreatedDate DESC LIMIT 20")),
         sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM Task WHERE WhatId='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5").catch(()=>
           sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM Task WHERE WhatId='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5")),
-        sfQuery("SELECT Id,Name,Reported_Date__c,Category__c,Sales__c,Admin_Fee__c FROM Spend__c WHERE Vendor__c='"+accId+"' ORDER BY Reported_Date__c DESC LIMIT 6").catch(()=>({records:[]})),
+        sfQuery("SELECT Id,Name,Reported_Date__c,Category__c,Sales__c,Admin_Fee__c FROM Spend__c WHERE Vendor__c='"+accId+"' ORDER BY Reported_Date__c DESC LIMIT 50").catch(()=>({records:[]})),
       ]);
       console.log('[VCS SF] Opps:',opps?.records?.length||0,'Cases:',cases?.records?.length||0,'Tasks:',tasks?.records?.length||0,'Spend:',spend?.records?.length||0);
 
@@ -3640,28 +3648,39 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       } else if(tab==="Spend"){
         if(!sp?.records?.length){sfWrap.appendChild(el("p",{style:{fontSize:"10px",color:"var(--muted)",fontStyle:"italic",padding:"4px 0"}},"No spend records."));}
         else{
-          const tot=sp.records.reduce((s2,r)=>s2+Number(r.Amount||r.Amount||0),0);
-          const pct=parseFloat(String(vendor.adminFee||"").replace(/[^0-9.]/g,""))||0;
-          const exp=pct?Math.round(tot*pct/100):null;
-          const sr=el("div",{style:{display:"flex",gap:"16px",marginBottom:"8px",padding:"8px",background:"var(--sb)",borderRadius:"4px"}});
-          [["Total Spend","$"+tot.toLocaleString(),"var(--blue)"],...(exp?[["Expected Commission","$"+exp.toLocaleString(),"var(--green)"]]:[]),...(pct?[["Admin Fee",pct+"%","var(--muted)"]]:[])].forEach(([l2,v2,c2])=>{const k=el("div",{});k.appendChild(el("div",{style:{fontWeight:"700",fontSize:"13px",color:c2}},v2));k.appendChild(el("div",{style:{fontSize:"8px",color:"var(--muted)"}},l2));sr.appendChild(k);});
+          const totalSales=sp.records.reduce((s2,r)=>s2+Number(r.Sales__c||0),0);
+          const totalFees=sp.records.reduce((s2,r)=>s2+Number(r.Admin_Fee__c||0),0);
+          const sfRate=totalSales>0?((totalFees/totalSales)*100):null;
+          const contractedRate=parseFloat(String(vendor.adminFee||"").replace(/[^0-9.]/g,""))||null;
+          const rateMismatch=sfRate&&contractedRate&&Math.abs(sfRate-contractedRate)>0.5;
+          const sr=el("div",{style:{display:"flex",gap:"14px",marginBottom:"8px",padding:"8px",background:"var(--sb)",borderRadius:"4px",flexWrap:"wrap"}});
+          [["Total Sales","$"+totalSales.toLocaleString(),"var(--blue)"],
+           ["Admin Fee Received","$"+totalFees.toLocaleString(),"var(--green)"],
+           ...(sfRate!==null?[["Actual Rate",sfRate.toFixed(2)+"%",rateMismatch?"var(--red)":"var(--green)"]]:[]),
+           ...(contractedRate?[["Contracted Rate",contractedRate.toFixed(1)+"%","var(--muted)"]]:[]),
+          ].forEach(([l2,v2,c2])=>{const k=el("div",{});k.appendChild(el("div",{style:{fontWeight:"700",fontSize:"13px",color:c2}},v2));k.appendChild(el("div",{style:{fontSize:"8px",color:"var(--muted)"}},l2));sr.appendChild(k);});
           sfWrap.appendChild(sr);
-          sp.records.forEach(s2=>{const row2=el("div",{style:{display:"flex",gap:"6px",alignItems:"center",padding:"3px 0",borderBottom:"1px solid var(--border)",fontSize:"10px"}});row2.appendChild(el("span",{style:{flex:"1"}},s2.Name||"Spend"));if(s2.Category__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},s2.Category__c));row2.appendChild(el("span",{style:{color:"var(--green)",fontWeight:"600"}},"$"+Number(s2.Sales__c||0).toLocaleString()));if(s2.Admin_Fee__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--amber)"}},"Fee: $"+Number(s2.Admin_Fee__c).toLocaleString()));if(s2.Reported_Date__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},new Date(s2.Reported_Date__c).toLocaleDateString()));sfWrap.appendChild(row2);});
+          if(rateMismatch){const w=el("div",{style:{background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.3)",borderRadius:"3px",padding:"5px 8px",marginBottom:"6px",fontSize:"9px",color:"var(--red)"}});w.innerHTML="⚠ <strong>Rate discrepancy:</strong> SF shows "+sfRate.toFixed(2)+"% actual vs "+contractedRate.toFixed(1)+"% contracted.";sfWrap.appendChild(w);}
+          if(!contractedRate)sfWrap.appendChild(el("div",{style:{fontSize:"9px",color:"var(--amber)",marginBottom:"6px"}},"⚠ No contracted admin fee % in VCS — upload contract to auto-fill."));
+          sfWrap.appendChild(el("div",{style:{fontSize:"9px",fontWeight:"700",color:"var(--muted)",marginBottom:"3px",letterSpacing:".05em"}},"SPEND RECORDS ("+sp.records.length+(sp.totalSize>sp.records.length?" of "+sp.totalSize:"")+")"));
+          sp.records.forEach(s2=>{const row2=el("div",{style:{display:"flex",gap:"6px",alignItems:"center",padding:"3px 0",borderBottom:"1px solid var(--border)",fontSize:"10px"}});row2.appendChild(el("span",{style:{flex:"1"}},s2.Name||"Spend"));if(s2.Category__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},s2.Category__c));row2.appendChild(el("span",{style:{color:"var(--green)",fontWeight:"600"}},"$"+Number(s2.Sales__c||0).toLocaleString()));if(s2.Admin_Fee__c)row2.appendChild(el("span",{style:{color:"var(--amber)",fontSize:"9px"}},"Fee: $"+Number(s2.Admin_Fee__c||0).toLocaleString()));if(s2.Reported_Date__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},new Date(s2.Reported_Date__c).toLocaleDateString()));sfWrap.appendChild(row2);});
+          if(sp.totalSize>sp.records.length){sfWrap.appendChild(el("button",{class:"btn-xs btn-ghost",style:{marginTop:"5px",fontSize:"9px"},onclick(){S.view="spend";render();toast("See full spend data in Spend tab","#4f7cff");}},"See all "+sp.totalSize+" records in Spend tab →"));}
         }
       } else if(tab==="Opportunities"){
         if(!o?.records?.length){sfWrap.appendChild(el("p",{style:{fontSize:"10px",color:"var(--muted)",fontStyle:"italic",padding:"4px 0"}},"No open opportunities."));}
-        else o.records.forEach(opp=>{const row2=el("div",{style:{border:"1px solid var(--border)",borderRadius:"3px",padding:"6px 8px",marginBottom:"4px"}});const t2=el("div",{style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"3px"}});t2.appendChild(el("span",{style:{flex:"1",fontWeight:"600",fontSize:"10px"}},opp.Name));t2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},opp.StageName));if(opp.Amount||opp.Amount)t2.appendChild(el("span",{style:{color:"var(--green)",fontWeight:"700"}},"$"+Number(opp.Amount||opp.Amount||0).toLocaleString()));row2.appendChild(t2);if(opp.CloseDate){const dl=Math.ceil((new Date(opp.CloseDate)-new Date())/86400000);row2.appendChild(el("div",{style:{fontSize:"9px",color:dl<0?"var(--red)":dl<30?"var(--amber)":"var(--muted)"}},"Close: "+new Date(opp.CloseDate).toLocaleDateString()+(dl<0?" (overdue)":"")));}sfWrap.appendChild(row2);});
+        else{o.records.forEach(opp=>{const row2=el("div",{style:{border:"1px solid var(--border)",borderRadius:"3px",padding:"6px 8px",marginBottom:"4px"}});const t2=el("div",{style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"3px"}});t2.appendChild(el("span",{style:{flex:"1",fontWeight:"600",fontSize:"10px"}},opp.Name));t2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},opp.StageName));if(opp.Amount)t2.appendChild(el("span",{style:{color:"var(--green)",fontWeight:"700"}},"$"+Number(opp.Amount||0).toLocaleString()));row2.appendChild(t2);if(opp.CloseDate){const dl=Math.ceil((new Date(opp.CloseDate)-new Date())/86400000);row2.appendChild(el("div",{style:{fontSize:"9px",color:dl<0?"var(--red)":dl<30?"var(--amber)":"var(--muted)"}},"Close: "+new Date(opp.CloseDate).toLocaleDateString()+(dl<0?" (overdue)":"")));}sfWrap.appendChild(row2);});
+          if(o.totalSize>o.records.length)sfWrap.appendChild(el("button",{class:"btn-xs btn-ghost",style:{marginTop:"4px",fontSize:"9px"},onclick(){S.view="sfboard";render();}},"See all "+o.totalSize+" opportunities in SF Board →"));}
       } else if(tab==="Cases"){
         if(!cs?.records?.length&&!ts?.records?.length){sfWrap.appendChild(el("p",{style:{fontSize:"10px",color:"var(--muted)",fontStyle:"italic",padding:"4px 0"}},"No open cases or tasks."));}
         else{
-          if(cs?.records?.length){sfWrap.appendChild(el("div",{style:{fontSize:"9px",fontWeight:"700",color:"var(--muted)",marginBottom:"3px",letterSpacing:".05em"}},"OPEN CASES"));cs.records.forEach(c2=>{const pc=c2.Priority==="High"?"var(--red)":c2.Priority==="Medium"?"var(--amber)":"var(--muted)";const row2=el("div",{style:{border:"1px solid var(--border)",borderLeft:"3px solid "+pc,borderRadius:"3px",padding:"5px 8px",marginBottom:"4px",fontSize:"10px"}});row2.appendChild(el("div",{style:{fontWeight:"600",marginBottom:"2px"}},c2.Subject||c2.CaseNumber));const m=el("div",{style:{display:"flex",gap:"8px",fontSize:"9px",color:"var(--muted)"}});m.appendChild(el("span",{},c2.Status));if(c2.Priority)m.appendChild(el("span",{style:{color:pc,fontWeight:"600"}},c2.Priority));if(c2.CreatedDate)m.appendChild(el("span",{},new Date(c2.CreatedDate).toLocaleDateString()));row2.appendChild(m);sfWrap.appendChild(row2);});}
+          if(cs?.records?.length){sfWrap.appendChild(el("div",{style:{fontSize:"9px",fontWeight:"700",color:"var(--muted)",marginBottom:"3px",letterSpacing:".05em"}},"OPEN CASES ("+cs.records.length+(cs.totalSize>cs.records.length?" of "+cs.totalSize:"")+")"));cs.records.forEach(c2=>{const pc=c2.Priority==="High"?"var(--red)":c2.Priority==="Medium"?"var(--amber)":"var(--muted)";const row2=el("div",{style:{border:"1px solid var(--border)",borderLeft:"3px solid "+pc,borderRadius:"3px",padding:"5px 8px",marginBottom:"4px",fontSize:"10px"}});row2.appendChild(el("div",{style:{fontWeight:"600",marginBottom:"2px"}},c2.Subject||c2.CaseNumber));const m=el("div",{style:{display:"flex",gap:"8px",fontSize:"9px",color:"var(--muted)"}});m.appendChild(el("span",{},c2.Status));if(c2.Priority)m.appendChild(el("span",{style:{color:pc,fontWeight:"600"}},c2.Priority));if(c2.Owner?.Name)m.appendChild(el("span",{},"Owner: "+c2.Owner.Name));if(c2.CreatedDate)m.appendChild(el("span",{},new Date(c2.CreatedDate).toLocaleDateString()));row2.appendChild(m);sfWrap.appendChild(row2);});
+            if(cs.totalSize>cs.records.length)sfWrap.appendChild(el("button",{class:"btn-xs btn-ghost",style:{marginTop:"4px",fontSize:"9px"},onclick(){S.view="sfboard";render();}},"See all "+cs.totalSize+" cases in SF Board →"));}
           if(ts?.records?.length){sfWrap.appendChild(el("div",{style:{fontSize:"9px",fontWeight:"700",color:"var(--muted)",marginBottom:"3px",marginTop:"8px",letterSpacing:".05em"}},"OPEN TASKS"));ts.records.forEach(task=>{const dl=task.ActivityDate?Math.ceil((new Date(task.ActivityDate)-new Date())/86400000):null;const row2=el("div",{style:{display:"flex",gap:"6px",alignItems:"center",padding:"3px 0",borderBottom:"1px solid var(--border)",fontSize:"10px"}});row2.appendChild(el("span",{style:{flex:"1",fontWeight:"500"}},task.Subject||"(no subject)"));if(task.ActivityDate)row2.appendChild(el("span",{style:{fontSize:"9px",color:dl<0?"var(--red)":dl<=3?"var(--amber)":"var(--muted)"}},new Date(task.ActivityDate).toLocaleDateString()+(dl<0?" (overdue)":"")));if(task.Owner?.Name)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},task.Owner.Name));sfWrap.appendChild(row2);});}
         }
       }
       sfWrap.appendChild(el("button",{class:"btn-xs btn-ghost",style:{marginTop:"6px",fontSize:"9px"},onclick(e){e.stopPropagation();vendor._sfCache=null;doLoadSF();}}, "↻ Refresh"));
     }
 
-    renderSFPanel();
   } // end if(_canSeeSF)
 
 
@@ -4834,9 +4853,23 @@ function sfConnect(){
   const loginUrl=(S.settings.sfLoginUrl||'https://login.salesforce.com')+'/services/oauth2/authorize?response_type=token&client_id='+encodeURIComponent(clientId)+'&redirect_uri='+encodeURIComponent(redirectUri)+'&scope=api+id';
   const popup=window.open(loginUrl,'sf_auth','width=600,height=700');
   if(!popup){toast('⚠ Popup blocked — allow popups','#f59e0b');return;}
-  const poll=setInterval(()=>{try{if(popup.closed){clearInterval(poll);return;}const h=popup.location.hash;if(h&&h.includes('access_token')){clearInterval(poll);popup.close();const p=new URLSearchParams(h.slice(1));USER.sfToken=p.get('access_token');USER.sfInstance=p.get('instance_url');sessionStorage.setItem('vcs_sf_token',JSON.stringify({token:USER.sfToken,instance:USER.sfInstance}));toast('✓ Salesforce connected');updateUserBadge();}}catch(e){}},500);
+  const poll=setInterval(()=>{try{if(popup.closed){clearInterval(poll);return;}const h=popup.location.hash;if(h&&h.includes('access_token')){clearInterval(poll);popup.close();const p=new URLSearchParams(h.slice(1));USER.sfToken=p.get('access_token');USER.sfInstance=p.get('instance_url');const expiresIn=parseInt(p.get('expires_in')||'7200');
+    // Save to both sessionStorage AND localStorage (with expiry)
+    sessionStorage.setItem('vcs_sf_token',JSON.stringify({token:USER.sfToken,instance:USER.sfInstance}));
+    localStorage.setItem('vcs_sf_token_ls',JSON.stringify({token:USER.sfToken,instance:USER.sfInstance,expiry:Date.now()+(expiresIn*1000)}));
+    toast('✓ Salesforce connected');updateUserBadge();}}catch(e){}},500);
 }
-function restoreSFSession(){try{const s=JSON.parse(sessionStorage.getItem('vcs_sf_token')||'null');if(s&&s.token){USER.sfToken=s.token;USER.sfInstance=s.instance;}}catch(e){}}
+function restoreSFSession(){
+  try {
+    // Try localStorage first (persists across page close), then sessionStorage
+    const ls = JSON.parse(localStorage.getItem('vcs_sf_token_ls')||'null');
+    if(ls && ls.token && ls.instance && ls.expiry && Date.now() < ls.expiry - 60000){
+      USER.sfToken=ls.token; USER.sfInstance=ls.instance; return;
+    }
+    const s=JSON.parse(sessionStorage.getItem('vcs_sf_token')||'null');
+    if(s&&s.token){USER.sfToken=s.token;USER.sfInstance=s.instance;}
+  }catch(e){}
+}
 async function sfQuery(soql){
   if(!USER.sfToken||!USER.sfInstance) return null;
   try {
@@ -4844,9 +4877,10 @@ async function sfQuery(soql){
       headers:{'Authorization':'Bearer '+USER.sfToken, 'Content-Type':'application/json'}
     });
     if(r.status===401){
-      USER.sfToken=null; USER.sfInstance=null;
+      USER.sfToken=null;
       sessionStorage.removeItem('vcs_sf_token');
-      toast('Salesforce session expired — reconnect in Settings','#f59e0b');
+      localStorage.removeItem('vcs_sf_token_ls');
+      sfAutoReconnect();
       return null;
     }
     if(!r.ok){
@@ -4861,6 +4895,26 @@ async function sfQuery(soql){
     return {_error:true, _message:'Network error: '+e.message, records:[]};
   }
 }
+function sfAutoReconnect() {
+  const toastId='sf-reconnect-toast';
+  if(document.getElementById(toastId)) return;
+  const div=document.createElement('div');
+  div.id=toastId;
+  div.style.cssText='position:fixed;bottom:60px;left:50%;transform:translateX(-50%);background:#1e1e2e;border:1px solid rgba(245,158,11,.5);border-radius:6px;padding:10px 16px;z-index:9999;display:flex;gap:10px;align-items:center;font-size:11px;color:white;box-shadow:0 4px 12px rgba(0,0,0,.4)';
+  div.innerHTML='<span>⚠ Salesforce session expired</span>';
+  const btn=document.createElement('button');
+  btn.textContent='🔗 Reconnect now';
+  btn.style.cssText='background:#4f7cff;color:white;border:none;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:10px';
+  btn.onclick=()=>{div.remove();sfConnect();};
+  const dismiss=document.createElement('button');
+  dismiss.textContent='✕';
+  dismiss.style.cssText='background:none;border:none;color:#aaa;cursor:pointer;font-size:11px;margin-left:4px';
+  dismiss.onclick=()=>div.remove();
+  div.appendChild(btn);div.appendChild(dismiss);
+  document.body.appendChild(div);
+  setTimeout(()=>{if(div.parentNode)div.remove();},30000);
+}
+
 
 const STATIC_PICKLISTS = {
   autoRenew:      ['Yes','No'],
@@ -5312,6 +5366,118 @@ function openAddRelationshipModal(vendor) {
 // ─── Unified Notes Timeline ────────────────────────────────────────────────────
 // Merges PSD contract notes, ITW pipeline notes, and Review notes into one
 // sorted, collapsible timeline. All sources visible in one place.
+// ─── Contracts Drawer Section (in vendor detail panel) ───────────────────────
+function addContractsDrawerSection(body, vendor) {
+  const records = getContractRecords(vendor.name);
+  // Also scan Drive folder if connected
+  const sec = el('div',{class:'detail-section'});
+  const titleRow = el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'6px'}});
+  titleRow.appendChild(el('h4',{class:'detail-sec-title',style:{margin:'0',flex:'1'}},'📄 Contracts'));
+  titleRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},records.length+' uploaded'));
+  // Upload shortcut
+  const uploadLink = el('button',{class:'btn-xs btn-ghost',onclick(){S.view='contracts';render();toast('Use the Contracts tab to upload for '+vendor.name,'#4f7cff');}}, '+ Upload');
+  titleRow.appendChild(uploadLink);
+  sec.appendChild(titleRow);
+
+  if(!records.length) {
+    const empty = el('div',{style:{fontSize:'10px',color:'var(--muted)',fontStyle:'italic',padding:'4px 0'}});
+    empty.textContent='No contracts uploaded yet.';
+    sec.appendChild(empty);
+    body.appendChild(sec); return;
+  }
+
+  // Grid of contract file cards
+  const grid = el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:'6px'}});
+  records.forEach(r=>{
+    const card = el('div',{style:{
+      border:'1px solid var(--border)',borderRadius:'5px',padding:'8px 10px',
+      background:'var(--sb)',cursor:'pointer',
+      transition:'border-color .15s',
+    }});
+    card.addEventListener('mouseenter',()=>card.style.borderColor='var(--blue)');
+    card.addEventListener('mouseleave',()=>card.style.borderColor='var(--border)');
+
+    // File icon based on type
+    const ext = (r.fileName||'').split('.').pop().toLowerCase();
+    const icon = ext==='pdf'?'📕':ext==='docx'||ext==='doc'?'📘':ext==='txt'?'📄':'📎';
+    const iconEl = el('div',{style:{fontSize:'22px',marginBottom:'5px',textAlign:'center'}},icon);
+    card.appendChild(iconEl);
+
+    const fname = el('div',{style:{fontSize:'9px',fontWeight:'600',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textAlign:'center',marginBottom:'3px'}},r.fileName||'Contract');
+    card.appendChild(fname);
+
+    const meta = el('div',{style:{fontSize:'8px',color:'var(--muted)',textAlign:'center',lineHeight:'1.4'}});
+    if(r.uploadDate) meta.appendChild(el('div',{},r.uploadDate));
+    if(r.confidence) {
+      const confColor = r.confidence==='HIGH'?'var(--green)':r.confidence==='MEDIUM'?'var(--amber)':'var(--red)';
+      meta.appendChild(el('div',{style:{color:confColor}},r.confidence+' CONFIDENCE'));
+    }
+    card.appendChild(meta);
+
+    // Action row
+    const actions = el('div',{style:{display:'flex',gap:'4px',marginTop:'6px',justifyContent:'center'}});
+    if(r.driveLink) {
+      const viewBtn = el('a',{href:r.driveLink,target:'_blank',class:'btn-xs btn-blue',style:{textDecoration:'none',fontSize:'8px'},onclick(e){e.stopPropagation();}},'☁ Open');
+      actions.appendChild(viewBtn);
+    }
+    const detailBtn = el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){e.stopPropagation();openContractDetailModal(r,vendor);}}, '🔍 Details');
+    actions.appendChild(detailBtn);
+    card.appendChild(actions);
+
+    // Double-click opens in Drive
+    card.addEventListener('dblclick',()=>{if(r.driveLink)window.open(r.driveLink,'_blank');});
+    card.title = r.driveLink?'Double-click to open in Google Drive':'No Drive link — upload again with Drive connected';
+    grid.appendChild(card);
+  });
+  sec.appendChild(grid);
+
+  // Drive folder link
+  if(GDriveToken) {
+    const driveRow = el('div',{style:{marginTop:'6px',fontSize:'9px',color:'var(--muted)'}});
+    driveRow.appendChild(el('span',{},'Stored in: '));
+    const driveLink = el('a',{
+      href:'https://drive.google.com/drive/search?q='+encodeURIComponent('VCS Contracts '+vendor.name),
+      target:'_blank',style:{color:'var(--blue)',textDecoration:'none',fontSize:'9px'}
+    },'VCS Contracts / '+vendor.name+' ↗');
+    driveRow.appendChild(driveLink);
+    sec.appendChild(driveRow);
+  }
+
+  body.appendChild(sec);
+}
+
+function openContractDetailModal(record, vendor) {
+  openModal(body=>{
+    const ex = record.extractedData||{};
+    body.appendChild(el('h3',{style:{marginTop:'0',marginBottom:'4px'}},'📄 '+record.fileName));
+    body.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'8px'}},'Uploaded '+record.uploadDate+(record.driveLink?' · ':'')+(record.driveLink?'[Drive]':'')));
+
+    const rows=[
+      ['Agreement Type',ex.agreementType],['Contract #',ex.contractNumber],
+      ['Effective',ex.effectiveDate],['Expiry',ex.expirationDate],
+      ['Admin Fee',ex.adminFee?.percentage?(ex.adminFee.percentage+'% — '+ex.adminFee.basis):''],
+      ['Auto-Renewal',ex.autoRenewal],['Term',ex.contractTermMonths?ex.contractTermMonths+'mo':(ex.contractTermYears?ex.contractTermYears+'yr':'')],
+      ['Termination',ex.terminationNotice||ex.terminationNoticeDays?String(ex.terminationNoticeDays)+'d':''],
+      ['Markets',ex.markets],['Classes of Trade',ex.classesOfTrade],
+      ['Products',ex.products],['Notes',ex.notes],
+    ];
+    const grid2=el('div',{class:'detail-grid',style:{marginBottom:'8px'}});
+    rows.forEach(([l,v])=>{if(v){grid2.appendChild(el('span',{class:'detail-label'},l));grid2.appendChild(el('span',{class:'detail-value'},String(v)));}});
+    body.appendChild(grid2);
+
+    if(record.driveLink){
+      const linkRow=el('div',{style:{marginBottom:'8px'}});
+      const a=el('a',{href:record.driveLink,target:'_blank',class:'btn-primary',style:{display:'inline-flex',alignItems:'center',gap:'4px',textDecoration:'none',fontSize:'10px'}});
+      a.textContent='☁ Open in Google Drive';
+      linkRow.appendChild(a);
+      body.appendChild(linkRow);
+    }
+    const btns=el('div',{class:'modal-btns'});
+    btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));
+    body.appendChild(btns);
+  });
+}
+
 // ─── Review Notes Section ─────────────────────────────────────────────────────
 // Shown in vendor detail panel when a review record is linked or matched.
 // Keeps the three review categories distinct and each independently editable.
@@ -6819,7 +6985,7 @@ async function loadSFSignals() {
       const vendor=S.vendors.find(v=>vendorNamesMatch(v.name,vName));
       const amt=Number(rec.TotalAmt||rec.RecordCount||0);
       if(amt>0) signals.push({
-        type:'NEW SPEND',icon:'💰',color:'var(--green)',
+        type:'NEW SPEND',icon:'💰',color:'var(--green)',owner:null,
         vendor,vendorName:vName,
         message:'$'+amt.toLocaleString()+' spend reported this month — good time to reach out and confirm admin fee is being applied',
       });
@@ -6831,7 +6997,7 @@ async function loadSFSignals() {
       const vendor=vName?S.vendors.find(v=>vendorNamesMatch(v.name,vName)):null;
       const daysSince=opp.LastStageChangeDate?Math.floor((today-new Date(opp.LastStageChangeDate))/86400000):null;
       signals.push({
-        type:'STUCK OPP',icon:'🔄',color:'var(--amber)',
+        type:'STUCK OPP',icon:'🔄',color:'var(--amber)',owner:opp.Owner?.Name||null,
         vendor,vendorName:vName||opp.Name,
         message:'"'+opp.Name+'" stuck in '+opp.StageName+(daysSince?' for '+daysSince+' days':'')+' — push forward or re-evaluate'+(opp.Amount?' ($'+Number(opp.Amount).toLocaleString()+')':''),
       });
@@ -6843,7 +7009,7 @@ async function loadSFSignals() {
       const vendor=vName?S.vendors.find(v=>vendorNamesMatch(v.name,vName)):null;
       const daysOverdue=task.ActivityDate?Math.floor((today-new Date(task.ActivityDate))/86400000):null;
       signals.push({
-        type:'OVERDUE TASK',icon:'⚠',color:'var(--red)',
+        type:'OVERDUE TASK',icon:'⚠',color:'var(--red)',owner:task.Owner?.Name||null,
         vendor,vendorName:vName||'',
         message:'"'+(task.Subject||'Task')+'" overdue'+(daysOverdue?' by '+daysOverdue+' day'+( daysOverdue!==1?'s':''):'')+' ('+( task.Owner?.Name||'unassigned')+')',
       });
@@ -6854,7 +7020,7 @@ async function loadSFSignals() {
       const vName=c2['Vendor__r']?.Name;
       const vendor=vName?S.vendors.find(v=>vendorNamesMatch(v.name,vName)):null;
       signals.push({
-        type:'HIGH CASE',icon:'🎫',color:'var(--red)',
+        type:'HIGH CASE',icon:'🎫',color:'var(--red)',owner:c2.Owner?.Name||null,
         vendor,vendorName:vName||'',
         message:'"'+(c2.Subject||c2.CaseNumber)+'" — high priority open case ('+c2.Status+')',
       });
@@ -9323,6 +9489,16 @@ function renderToday(c) {
     const sigSec=el('div',{style:{marginBottom:'12px'}});
     const sigHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'6px'}});
     sigHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px'}},'☁ Salesforce Signals'));
+
+    // My records toggle
+    const myToggle=el('label',{style:{fontSize:'9px',color:'var(--muted)',display:'flex',gap:'3px',alignItems:'center',cursor:'pointer'}});
+    const myCb=el('input',{type:'checkbox',style:{cursor:'pointer'}});
+    myCb.checked=S._sfSignalMine!==false;
+    myCb.addEventListener('change',()=>{S._sfSignalMine=myCb.checked;render();});
+    myToggle.appendChild(myCb);
+    myToggle.appendChild(el('span',{},'Mine only'));
+    sigHdr.appendChild(myToggle);
+
     sigHdr.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._sfSignals=false;render();}},'✕ Hide'));
     if(S._sfSignalData){
       sigHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Last refreshed: '+(S._sfSignalLastLoaded||'—')));
@@ -9334,26 +9510,68 @@ function renderToday(c) {
       if(S._sfSignalLoading){
         sigSec.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'6px 0'}},'⏳ Loading SF signals...'));
       } else {
-        const loadSignalBtn=el('button',{class:'btn-xs btn-blue',onclick(){loadSFSignals();}}, '☁ Load SF Signals');
-        sigSec.appendChild(loadSignalBtn);
+        sigSec.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){loadSFSignals();}}, '☁ Load SF Signals'));
       }
     } else {
-      const signals=S._sfSignalData;
+      let signals=S._sfSignalData;
+      // Filter to current user's records if "mine only" is on
+      if(S._sfSignalMine!==false && USER.name){
+        const myName=USER.name.toLowerCase();
+        const myFiltered=signals.filter(sig=>!sig.owner||sig.owner.toLowerCase().includes(myName)||sig.owner.toLowerCase().includes(USER.email?.split('@')[0]?.toLowerCase()||''));
+        if(myFiltered.length) signals=myFiltered;
+      }
       if(!signals.length){
-        sigSec.appendChild(el('div',{style:{fontSize:'10px',color:'var(--green)',padding:'4px 0'}},'✅ No urgent signals from Salesforce.'));
+        sigSec.appendChild(el('div',{style:{fontSize:'10px',color:'var(--green)',padding:'4px 0'}},'✅ No urgent signals from Salesforce for you.'));
       } else {
-        const grid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:'6px'}});
-        signals.forEach(sig=>{
-          const card=el('div',{style:{border:'1px solid var(--border)',borderLeft:'3px solid '+(sig.color||'var(--border)'),borderRadius:'4px',padding:'7px 9px',background:'var(--sb)',cursor:sig.vendor?'pointer':'default'},onclick(){if(sig.vendor)openDetail(sig.vendor);}});
-          const top=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'3px'}});
-          top.appendChild(el('span',{style:{fontSize:'12px'}},sig.icon));
-          top.appendChild(el('span',{style:{fontWeight:'600',fontSize:'10px',flex:'1'}},sig.vendor?sig.vendor.name:sig.vendorName));
-          top.appendChild(el('span',{style:{fontSize:'8px',background:(sig.color||'var(--blue)')+'22',color:sig.color||'var(--blue)',padding:'1px 5px',borderRadius:'3px',fontWeight:'700'}},sig.type));
-          card.appendChild(top);
-          card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.4'}},sig.message));
-          grid.appendChild(card);
+        // Table layout
+        const tbl=el('div',{class:'tbl-wrap',style:{marginBottom:'4px'}});
+        const table=el('table',{class:'data-table',style:{fontSize:'9px'}});
+        const thead=el('thead');
+        const hrow=el('tr');
+        ['Type','Priority','Vendor','Owner','Detail','Action'].forEach(h=>{
+          hrow.appendChild(el('th',{style:{fontSize:'8px',letterSpacing:'.05em',color:'var(--muted)'}},h));
         });
-        sigSec.appendChild(grid);
+        thead.appendChild(hrow); table.appendChild(thead);
+        const tbody=el('tbody');
+        signals.forEach(sig=>{
+          const urgColor=sig.color||'var(--muted)';
+          const tr=el('tr',{style:{cursor:sig.vendor?'pointer':'default'},onclick(){if(sig.vendor)openDetail(sig.vendor);}});
+
+          // Type cell
+          const typeTd=el('td');
+          const typeBadge=el('span',{style:{fontSize:'8px',background:urgColor+'22',color:urgColor,padding:'1px 6px',borderRadius:'3px',fontWeight:'700',whiteSpace:'nowrap'}},sig.icon+' '+sig.type);
+          typeTd.appendChild(typeBadge);
+
+          // Priority cell (derived from color)
+          const prioTd=el('td');
+          const prioLabel=urgColor==='var(--red)'?'High':urgColor==='var(--amber)'?'Medium':'Normal';
+          prioTd.appendChild(el('span',{style:{color:urgColor,fontWeight:'600',fontSize:'9px'}},prioLabel));
+
+          // Vendor
+          const vTd=el('td',{style:{fontWeight:'600',color:'var(--blue)',maxWidth:'120px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}});
+          vTd.textContent=sig.vendor?sig.vendor.name:(sig.vendorName||'—');
+
+          // Owner
+          const ownerTd=el('td',{style:{color:'var(--muted)',fontSize:'9px',whiteSpace:'nowrap'}});
+          ownerTd.textContent=sig.owner||'—';
+
+          // Detail
+          const detTd=el('td',{style:{maxWidth:'220px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--muted)'}});
+          detTd.textContent=sig.message;
+          detTd.title=sig.message;
+
+          // Action
+          const actTd=el('td');
+          if(sig.vendor){
+            const viewBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){e.stopPropagation();openDetail(sig.vendor);}},'View →');
+            actTd.appendChild(viewBtn);
+          }
+
+          [typeTd,prioTd,vTd,ownerTd,detTd,actTd].forEach(td=>tr.appendChild(td));
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody); tbl.appendChild(table);
+        sigSec.appendChild(tbl);
       }
     }
     c.appendChild(sigSec);
@@ -12635,31 +12853,85 @@ function renameAISession(id) {
   const name = prompt('Rename conversation:', session.title);
   if(name?.trim()) { session.title=name.trim(); saveAISessions(); renderAISessionTabs(); }
 }
-function renderAISessionTabs() {
-  const tabsEl = $('ai-session-tabs');
-  if(!tabsEl) return;
-  tabsEl.innerHTML = '';
-  _aiSessions.forEach(s=>{
-    const active = s.id === _aiActiveSessionId;
-    const tab = el('div',{style:{
-      display:'flex',alignItems:'center',gap:'3px',padding:'2px 7px',
-      background:active?'var(--blue)':'rgba(255,255,255,.05)',
-      color:active?'white':'var(--muted)',
-      borderRadius:'3px',cursor:'pointer',fontSize:'9px',
-      border:active?'none':'1px solid rgba(255,255,255,.05)',
-      flexShrink:'0',whiteSpace:'nowrap',maxWidth:'100px',overflow:'hidden'
+function autoTitleSession(session) {
+  if(session.title && !session.title.match(/^Chat \d+$/)) return; // already custom titled
+  // Use first user message as title
+  const firstUser = session.history.find(m=>m.role==='user');
+  if(firstUser) {
+    session.title = firstUser.content.slice(0,40).trim()+(firstUser.content.length>40?'…':'');
+    saveAISessions();
+  }
+}
+function toggleAIHistoryDropdown() {
+  const dd = $('ai-history-dropdown');
+  if(!dd) return;
+  if(dd.style.display==='none') {
+    renderAIHistoryDropdown();
+    dd.style.display='block';
+    // Close on outside click
+    setTimeout(()=>document.addEventListener('click',function closeDD(e){
+      if(!dd.contains(e.target)&&e.target.id!=='ai-history-btn'){dd.style.display='none';document.removeEventListener('click',closeDD);}
+    }),50);
+  } else {
+    dd.style.display='none';
+  }
+}
+function renderAIHistoryDropdown() {
+  const dd = $('ai-history-dropdown');
+  if(!dd) return;
+  dd.innerHTML='';
+  // Header
+  const hdr=el('div',{style:{padding:'6px 10px',fontSize:'9px',fontWeight:'700',color:'var(--muted)',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center'}});
+  hdr.appendChild(el('span',{},'CONVERSATION HISTORY'));
+  const newBtn=el('button',{style:{fontSize:'9px',background:'none',border:'none',color:'var(--blue)',cursor:'pointer'},onclick(){toggleAIHistoryDropdown();newAISession();}},'+ New');
+  hdr.appendChild(newBtn);
+  dd.appendChild(hdr);
+  // Sessions list (most recent first)
+  [..._aiSessions].reverse().forEach(s=>{
+    const active = s.id===_aiActiveSessionId;
+    const row=el('div',{style:{
+      padding:'7px 10px',cursor:'pointer',borderBottom:'1px solid rgba(255,255,255,.04)',
+      background:active?'rgba(79,124,255,.1)':'',display:'flex',alignItems:'center',gap:'6px'
     }});
-    const nameSpan = el('span',{style:{flex:'1',overflow:'hidden',textOverflow:'ellipsis'},
-      ondblclick(e){e.stopPropagation();renameAISession(s.id);}},s.title);
-    tab.appendChild(nameSpan);
-    tab.onclick=()=>switchAISession(s.id);
+    row.addEventListener('mouseenter',()=>{if(!active)row.style.background='rgba(255,255,255,.04)';});
+    row.addEventListener('mouseleave',()=>{if(!active)row.style.background='';});
+    const nameWrap=el('div',{style:{flex:'1',overflow:'hidden'}});
+    nameWrap.appendChild(el('div',{style:{fontSize:'10px',fontWeight:active?'600':'400',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:active?'var(--blue)':'var(--text)'}},s.title));
+    if(s.history.length) nameWrap.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)'}},s.history.length+' messages'+(s.history[s.history.length-1]?.timestamp?' · '+s.history[s.history.length-1].timestamp.split(',')[0]:'')));
+    row.appendChild(nameWrap);
     if(_aiSessions.length>1){
-      const del=el('span',{style:{cursor:'pointer',opacity:'0.6',fontSize:'8px',marginLeft:'2px'},
-        onclick(e){e.stopPropagation();if(confirm('Delete "'+s.title+'"?'))deleteAISession(s.id);}},'✕');
-      tab.appendChild(del);
+      const del=el('button',{style:{fontSize:'9px',background:'none',border:'none',color:'var(--muted)',cursor:'pointer',padding:'0 2px'},onclick(e){e.stopPropagation();if(confirm('Delete "'+s.title+'"?')){deleteAISession(s.id);renderAIHistoryDropdown();}}}, '✕');
+      row.appendChild(del);
     }
-    tabsEl.appendChild(tab);
+    row.onclick=()=>{switchAISession(s.id);toggleAIHistoryDropdown();updateAISessionLabel();};
+    dd.appendChild(row);
   });
+  if(!_aiSessions.length) dd.appendChild(el('div',{style:{padding:'12px',fontSize:'10px',color:'var(--muted)',textAlign:'center'}},'No conversations yet'));
+}
+function renderAISessionTabs() { renderAIHistoryDropdown(); updateAISessionLabel(); }
+function updateAISessionLabel() {
+  const el2 = $('ai-session-label');
+  if(el2) el2.textContent = getActiveSession()?.title||'New conversation';
+}
+
+function branchFromMessage(messageIndex) {
+  // Truncate history at messageIndex and create a branch
+  const session = getActiveSession();
+  if(!session) return;
+  // Save current as a "branch" session
+  const branchSession = {...session, id:'s'+Date.now(), title:session.title+' (branch)', history:session.history.slice(0,messageIndex)};
+  _aiSessions.push(branchSession);
+  _aiActiveSessionId = branchSession.id;
+  aiHistory = branchSession.history.slice();
+  // Rebuild messages UI
+  const msgs = $('ai-messages');
+  if(msgs) {
+    msgs.innerHTML='';
+    aiHistory.forEach(msg=>appendAIMessage(msg.role,msg.content,msg.timestamp));
+  }
+  saveAISessions();
+  updateAISessionLabel();
+  toast('Branched from message '+messageIndex+' — continue from here');
 }
 
 function saveAIHistory() {
@@ -12712,11 +12984,18 @@ function appendAIMessage(role, content, timestamp) {
   const meta = el('div', {style:{display:'flex',gap:'8px',alignItems:'center',marginTop:'2px',opacity:'0.6'}});
   if(timestamp) meta.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}}, timestamp));
   if(role === 'user') {
+    // Find the index of this message in history for branching
+    const msgIndex = aiHistory.findIndex(m=>m.role==='user'&&m.content===content);
     const editBtn = el('button',{style:{fontSize:'8px',background:'none',border:'none',color:'var(--muted)',cursor:'pointer',padding:'0'},
       onclick(){
+        if(msgIndex >= 0 && msgIndex < aiHistory.length - 1) {
+          // Branch from this point (hides subsequent messages)
+          branchFromMessage(msgIndex);
+        }
+        // Put message in input for editing
         $('ai-input').value = content;
         $('ai-input').focus();
-      }}, '✏ Edit & resend');
+      }}, msgIndex < aiHistory.length-1 ? '↩ Edit & branch' : '✏ Edit');
     meta.appendChild(editBtn);
   }
   wrap.appendChild(meta);
@@ -12874,7 +13153,9 @@ async function sendAIMessage(userMsg) {
     const replyTs = new Date().toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true});
     appendAIMessage('assistant', reply, replyTs);
     aiHistory.push({role:'assistant', content:reply, timestamp:replyTs});
+    autoTitleSession(getActiveSession());
     saveAIHistory();
+    updateAISessionLabel();
 
     // Track usage per user (admin can review)
     try {
