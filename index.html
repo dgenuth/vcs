@@ -3477,19 +3477,6 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     sfSec.appendChild(sfWrap);
     body.appendChild(sfSec);
 
-    function renderSFPanel() {
-      sfWrap.innerHTML='';
-      if(!USER.sfToken) {
-        const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',padding:'7px',background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px',fontSize:'10px'}});
-        row.appendChild(el('span',{style:{flex:'1',color:'var(--muted)'}},'Connect Salesforce to load vendor data.'));
-        row.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){if(!S.settings.sfClientId){S.view='settings';render();return;}sfConnect();toast('Sign in to Salesforce — then reload this panel','#4f7cff');}},'🔗 Connect'));
-        sfWrap.appendChild(row);
-        return;
-      }
-      const loadBtn=el('button',{class:'btn-xs btn-blue',onclick(){doLoadSF();}}, '☁ Load Salesforce Data');
-      sfWrap.appendChild(loadBtn);
-    }
-
     async function doLoadSF() {
       sfWrap.innerHTML='';
       const statusEl=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'4px 0'}},'⏳ Loading...');
@@ -3593,19 +3580,71 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       ]);
       console.log('[VCS SF] Opps:',opps?.records?.length||0,'Cases:',cases?.records?.length||0,'Tasks:',tasks?.records?.length||0,'Spend:',spend?.records?.length||0);
 
-      function addSubSec(label){sfWrap.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',marginTop:'6px',letterSpacing:'.05em'}},label));}
-      function addRow(cells){const r=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});cells.forEach(([txt,style])=>{if(txt!=null){const s=el('span',style||{});s.textContent=String(txt);r.appendChild(s);}});sfWrap.appendChild(r);}
+      // Cache results for tab switching
+      vendor._sfCache = {acct, opps, cases, tasks, spend};
+      sfWrap.innerHTML='';
+      renderSFPanel();
+    }
 
-      if(fin&&opps?.records?.length){addSubSec('OPEN OPPORTUNITIES');opps.records.forEach(o=>addRow([[o.Name,{style:{flex:'1',fontWeight:'500'}}],[o.StageName,{style:{fontSize:'9px',color:'var(--muted)'}}],[o.Amount?'$'+Number(o.Amount).toLocaleString():null,{style:{color:'var(--green)',fontWeight:'600'}}],[o.CloseDate?new Date(o.CloseDate).toLocaleDateString():null,{style:{fontSize:'9px',color:'var(--muted)'}}]]));}
-      if(cases?.records?.length){addSubSec('OPEN CASES ('+cases.records.length+')');cases.records.forEach(c2=>{const pc=c2.Priority==='High'?'var(--red)':c2.Priority==='Medium'?'var(--amber)':'var(--muted)';addRow([[c2.Subject||c2.CaseNumber,{style:{fontWeight:'500',flex:'1'}}],[c2.Status,{style:{fontSize:'9px',background:'rgba(0,0,0,.05)',padding:'1px 5px',borderRadius:'3px'}}],[c2.Priority||null,{style:{fontSize:'9px',color:pc,fontWeight:'600'}}]])});}
-      if(tasks?.records?.length){addSubSec('OPEN TASKS');tasks.records.forEach(t=>{const dl=t.ActivityDate?Math.ceil((new Date(t.ActivityDate)-new Date())/86400000):null;addRow([[t.Subject||'(no subject)',{style:{flex:'1',fontWeight:'500'}}],[t.ActivityDate?new Date(t.ActivityDate).toLocaleDateString()+(dl<0?' (overdue)':''):null,{style:{fontSize:'9px',color:dl<0?'var(--red)':dl<=3?'var(--amber)':'var(--muted)'}}],[t.Owner?.Name||null,{style:{fontSize:'9px',color:'var(--muted)'}}]])});}
-      if(spend?.records?.length){addSubSec('RECENT SPEND');spend.records.forEach(s=>addRow([[s.Name||'Spend',{style:{flex:'1',fontWeight:'500'}}],[s.Category__c||null,{style:{fontSize:'9px',color:'var(--muted)'}}],[s.Amount__c?'$'+Number(s.Amount__c).toLocaleString():null,{style:{color:'var(--green)',fontWeight:'600'}}],[s.Reported_Date__c?new Date(s.Reported_Date__c).toLocaleDateString():null,{style:{fontSize:'9px',color:'var(--muted)'}}]]));}
-      if(!opps?.records?.length&&!cases?.records?.length&&!tasks?.records?.length&&!spend?.records?.length)
-        sfWrap.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',fontStyle:'italic',marginTop:'4px'}},'No open opportunities, cases, tasks, or spend records.'));
+    function renderSFPanel() {
+      sfWrap.innerHTML='';
+      if(!USER.sfToken){
+        const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',padding:'7px',background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px',fontSize:'10px'}});
+        row.appendChild(el('span',{style:{flex:'1',color:'var(--muted)'}},'Connect Salesforce to load vendor data.'));
+        row.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){if(!S.settings.sfClientId){S.view="settings";render();return;}sfConnect();toast("Sign in to Salesforce — then reload this panel","#4f7cff");}},"🔗 Connect"));
+        sfWrap.appendChild(row); return;
+      }
+      const sfTabs2=["Details","Spend","Opportunities","Cases"];
+      if(!vendor._sfTab) vendor._sfTab="Details";
+      const tabBar2=el("div",{style:{display:"flex",gap:"2px",marginBottom:"6px",borderBottom:"1px solid var(--border)",paddingBottom:"2px"}});
+      sfTabs2.forEach(tab=>{
+        const active=vendor._sfTab===tab;
+        const btn=el("button",{style:{padding:"3px 8px",fontSize:"9px",fontWeight:"600",border:"none",cursor:"pointer",borderRadius:"3px 3px 0 0",background:active?"var(--blue)":"transparent",color:active?"white":"var(--muted)"},onclick(e){e.stopPropagation();vendor._sfTab=tab;renderSFPanel();}},tab);
+        tabBar2.appendChild(btn);
+      });
+      sfWrap.appendChild(tabBar2);
+      if(!vendor._sfCache){sfWrap.appendChild(el("button",{class:"btn-xs btn-blue",onclick(){doLoadSF();}},"☁ Load Salesforce Data"));return;}
+      const {acct:a,opps:o,cases:cs,tasks:ts,spend:sp}=vendor._sfCache;
+      const tab=vendor._sfTab;
+      const fin=["admin","procurement","manager","cro","finance_sr","finance_jr"].includes(USER.role);
+      if(tab==="Details"){
+        if(a.Name&&a.Name.toLowerCase()!==vendor.name.toLowerCase()) sfWrap.appendChild(el("div",{style:{fontSize:"9px",color:"var(--blue)",background:"rgba(59,130,246,.06)",padding:"3px 7px",borderRadius:"3px",marginBottom:"5px"}},"Matched: \""+a.Name+"\""));
+        const g=el("div",{class:"detail-grid"});
+        [["Phone",a.Business_Phone__c],["Mobile",a.Mobile_Number__c],["Vendor Type",a.Vendor_Type__c],["Category",a.Category_Type__c],
+         ...(fin?[["PPD",a.PPD__c?"$"+a.PPD__c:""],["Admin Fee",a.Admin_Fee__c],["Rebates",a.Rebates__c?"Yes":""],["MFR Rebates",a.MFR_Rebates__c]]:[]),
+         ["Owner",a.Owner?.Name],["Last Modified",a.LastModifiedDate?new Date(a.LastModifiedDate).toLocaleDateString():"—"],
+        ].forEach(([l,v])=>{if(v){g.appendChild(el("span",{class:"detail-label"},l));g.appendChild(el("span",{class:"detail-value"},String(v)));}});
+        sfWrap.appendChild(g);
+        if(a.SSA_Notes__c) sfWrap.appendChild(el("div",{style:{marginTop:"6px",padding:"5px 8px",background:"rgba(79,124,255,.04)",borderRadius:"3px",fontSize:"9px",color:"var(--muted)",lineHeight:"1.5"}},"SSA: "+a.SSA_Notes__c));
+        if(a.Notes__c) sfWrap.appendChild(el("div",{style:{marginTop:"4px",padding:"5px 8px",background:"rgba(79,124,255,.04)",borderRadius:"3px",fontSize:"9px",color:"var(--muted)",lineHeight:"1.5"}},"Notes: "+a.Notes__c));
+        if(a.Vendor_Alias__c) sfWrap.appendChild(el("div",{style:{fontSize:"9px",color:"var(--muted)",marginTop:"4px"}},"Aliases: "+a.Vendor_Alias__c));
+      } else if(tab==="Spend"){
+        if(!sp?.records?.length){sfWrap.appendChild(el("p",{style:{fontSize:"10px",color:"var(--muted)",fontStyle:"italic",padding:"4px 0"}},"No spend records."));}
+        else{
+          const tot=sp.records.reduce((s2,r)=>s2+Number(r.Amount__c||0),0);
+          const pct=parseFloat(String(vendor.adminFee||"").replace(/[^0-9.]/g,""))||0;
+          const exp=pct?Math.round(tot*pct/100):null;
+          const sr=el("div",{style:{display:"flex",gap:"16px",marginBottom:"8px",padding:"8px",background:"var(--sb)",borderRadius:"4px"}});
+          [["Total Spend","$"+tot.toLocaleString(),"var(--blue)"],...(exp?[["Expected Commission","$"+exp.toLocaleString(),"var(--green)"]]:[]),...(pct?[["Admin Fee",pct+"%","var(--muted)"]]:[])].forEach(([l2,v2,c2])=>{const k=el("div",{});k.appendChild(el("div",{style:{fontWeight:"700",fontSize:"13px",color:c2}},v2));k.appendChild(el("div",{style:{fontSize:"8px",color:"var(--muted)"}},l2));sr.appendChild(k);});
+          sfWrap.appendChild(sr);
+          sp.records.forEach(s2=>{const row2=el("div",{style:{display:"flex",gap:"6px",alignItems:"center",padding:"3px 0",borderBottom:"1px solid var(--border)",fontSize:"10px"}});row2.appendChild(el("span",{style:{flex:"1"}},s2.Name||"Spend"));if(s2.Category__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},s2.Category__c));row2.appendChild(el("span",{style:{color:"var(--green)",fontWeight:"600"}},"$"+Number(s2.Amount__c||0).toLocaleString()));if(s2.Reported_Date__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},new Date(s2.Reported_Date__c).toLocaleDateString()));sfWrap.appendChild(row2);});
+        }
+      } else if(tab==="Opportunities"){
+        if(!o?.records?.length){sfWrap.appendChild(el("p",{style:{fontSize:"10px",color:"var(--muted)",fontStyle:"italic",padding:"4px 0"}},"No open opportunities."));}
+        else o.records.forEach(opp=>{const row2=el("div",{style:{border:"1px solid var(--border)",borderRadius:"3px",padding:"6px 8px",marginBottom:"4px"}});const t2=el("div",{style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"3px"}});t2.appendChild(el("span",{style:{flex:"1",fontWeight:"600",fontSize:"10px"}},opp.Name));t2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},opp.StageName));if(opp.Amount||opp.Amount__c)t2.appendChild(el("span",{style:{color:"var(--green)",fontWeight:"700"}},"$"+Number(opp.Amount||opp.Amount__c||0).toLocaleString()));row2.appendChild(t2);if(opp.CloseDate){const dl=Math.ceil((new Date(opp.CloseDate)-new Date())/86400000);row2.appendChild(el("div",{style:{fontSize:"9px",color:dl<0?"var(--red)":dl<30?"var(--amber)":"var(--muted)"}},"Close: "+new Date(opp.CloseDate).toLocaleDateString()+(dl<0?" (overdue)":"")));}sfWrap.appendChild(row2);});
+      } else if(tab==="Cases"){
+        if(!cs?.records?.length&&!ts?.records?.length){sfWrap.appendChild(el("p",{style:{fontSize:"10px",color:"var(--muted)",fontStyle:"italic",padding:"4px 0"}},"No open cases or tasks."));}
+        else{
+          if(cs?.records?.length){sfWrap.appendChild(el("div",{style:{fontSize:"9px",fontWeight:"700",color:"var(--muted)",marginBottom:"3px",letterSpacing:".05em"}},"OPEN CASES"));cs.records.forEach(c2=>{const pc=c2.Priority==="High"?"var(--red)":c2.Priority==="Medium"?"var(--amber)":"var(--muted)";const row2=el("div",{style:{border:"1px solid var(--border)",borderLeft:"3px solid "+pc,borderRadius:"3px",padding:"5px 8px",marginBottom:"4px",fontSize:"10px"}});row2.appendChild(el("div",{style:{fontWeight:"600",marginBottom:"2px"}},c2.Subject||c2.CaseNumber));const m=el("div",{style:{display:"flex",gap:"8px",fontSize:"9px",color:"var(--muted)"}});m.appendChild(el("span",{},c2.Status));if(c2.Priority)m.appendChild(el("span",{style:{color:pc,fontWeight:"600"}},c2.Priority));if(c2.CreatedDate)m.appendChild(el("span",{},new Date(c2.CreatedDate).toLocaleDateString()));row2.appendChild(m);sfWrap.appendChild(row2);});}
+          if(ts?.records?.length){sfWrap.appendChild(el("div",{style:{fontSize:"9px",fontWeight:"700",color:"var(--muted)",marginBottom:"3px",marginTop:"8px",letterSpacing:".05em"}},"OPEN TASKS"));ts.records.forEach(task=>{const dl=task.ActivityDate?Math.ceil((new Date(task.ActivityDate)-new Date())/86400000):null;const row2=el("div",{style:{display:"flex",gap:"6px",alignItems:"center",padding:"3px 0",borderBottom:"1px solid var(--border)",fontSize:"10px"}});row2.appendChild(el("span",{style:{flex:"1",fontWeight:"500"}},task.Subject||"(no subject)"));if(task.ActivityDate)row2.appendChild(el("span",{style:{fontSize:"9px",color:dl<0?"var(--red)":dl<=3?"var(--amber)":"var(--muted)"}},new Date(task.ActivityDate).toLocaleDateString()+(dl<0?" (overdue)":"")));if(task.Owner?.Name)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},task.Owner.Name));sfWrap.appendChild(row2);});}
+        }
+      }
+      sfWrap.appendChild(el("button",{class:"btn-xs btn-ghost",style:{marginTop:"6px",fontSize:"9px"},onclick(e){e.stopPropagation();vendor._sfCache=null;doLoadSF();}}, "↻ Refresh"));
     }
 
     renderSFPanel();
-  }
+  } // end if(_canSeeSF)
+
 
 
 
@@ -6825,6 +6864,68 @@ Extract and return this exact structure:
   return JSON.parse(clean);
 }
 
+async function saveContractToDrive(vendorName, fileName, fileObject) {
+  // Save contract file to Drive: VCS Contracts/[VendorName]/[fileName]
+  try {
+    const token = await getGDriveToken();
+    if(!token) return null;
+    // Find or create parent folder "VCS Contracts"
+    let parentId = S._contractDriveFolderId;
+    if(!parentId){
+      const searchResp = await fetch(
+        "https://www.googleapis.com/drive/v3/files?q=name%3D'VCS+Contracts'+and+mimeType%3D'application%2Fvnd.google-apps.folder'+and+trashed%3Dfalse&fields=files(id,name)",
+        {headers:{'Authorization':'Bearer '+token}}
+      );
+      const searchData = await searchResp.json();
+      if(searchData.files?.length){
+        parentId = searchData.files[0].id;
+      } else {
+        // Create the VCS Contracts folder
+        const createResp = await fetch('https://www.googleapis.com/drive/v3/files',{
+          method:'POST', headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},
+          body: JSON.stringify({name:'VCS Contracts',mimeType:'application/vnd.google-apps.folder'})
+        });
+        const createData = await createResp.json();
+        parentId = createData.id;
+      }
+      S._contractDriveFolderId = parentId;
+    }
+
+    // Find or create vendor subfolder
+    const vFolderSearch = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=name%3D'${encodeURIComponent(vendorName)}'+and+mimeType%3D'application%2Fvnd.google-apps.folder'+and+'${parentId}'+in+parents+and+trashed%3Dfalse&fields=files(id,name)`,
+      {headers:{'Authorization':'Bearer '+token}}
+    );
+    const vFolderData = await vFolderSearch.json();
+    let vFolderId;
+    if(vFolderData.files?.length){
+      vFolderId = vFolderData.files[0].id;
+    } else {
+      const vCreate = await fetch('https://www.googleapis.com/drive/v3/files',{
+        method:'POST', headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},
+        body: JSON.stringify({name:vendorName, mimeType:'application/vnd.google-apps.folder', parents:[parentId]})
+      });
+      vFolderId = (await vCreate.json()).id;
+    }
+
+    // Upload file
+    const arrayBuffer = await fileObject.arrayBuffer();
+    const metadata = {name:fileName, parents:[vFolderId]};
+    const form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify(metadata)],{type:'application/json'}));
+    form.append('file', new Blob([arrayBuffer],{type:fileObject.type||'application/octet-stream'}));
+    const uploadResp = await fetch(
+      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',
+      {method:'POST', headers:{'Authorization':'Bearer '+token}, body:form}
+    );
+    const uploadData = await uploadResp.json();
+    return {fileId: uploadData.id, webViewLink: uploadData.webViewLink, fileName};
+  } catch(e){
+    console.warn('[VCS Drive] Contract upload failed:', e.message);
+    return null;
+  }
+}
+
 function saveContractRecord(vendorName, record) {
   if(!window.S_contractStore[vendorName]) window.S_contractStore[vendorName]=[];
   // Check for duplicate
@@ -6845,23 +6946,120 @@ function loadContractRecords(vendorName) {
   return window.S_contractStore[vendorName]||[];
 }
 
+// Field mapping from extracted data to vendor fields
+const CONTRACT_FIELD_MAP = [
+  {field:'adminFee',    label:'Admin Fee',          extract:ex=>ex.adminFee?.percentage ? String(ex.adminFee.percentage)+'%' : null},
+  {field:'adminFeeNotes',label:'Admin Fee Notes',   extract:ex=>ex.adminFee?.notes||null},
+  {field:'agreementType',label:'Agreement Type',    extract:ex=>ex.agreementType||null},
+  {field:'contractNo',  label:'Contract #',         extract:ex=>ex.contractNumber||null},
+  {field:'autoRenew',   label:'Auto-Renewal',       extract:ex=>ex.autoRenewal||null},
+  {field:'autoRenewType',label:'Auto-Renewal Type', extract:ex=>ex.autoRenewalType||null},
+  {field:'terminationNotice',label:'Termination Notice (days)', extract:ex=>ex.terminationNoticeDays?String(ex.terminationNoticeDays):null},
+  {field:'contractTerm',label:'Contract Term (years)',extract:ex=>ex.contractTermYears?String(ex.contractTermYears):null},
+  {field:'perpetuity',  label:'Perpetuity',         extract:ex=>ex.perpetuity||null},
+  {field:'expiry',      label:'Expiration Date',    extract:ex=>ex.expirationDate||null},
+  {field:'effectiveDate',label:'Effective Date',    extract:ex=>ex.effectiveDate||null},
+  {field:'markets',     label:'Markets',            extract:ex=>ex.markets||null},
+  {field:'exclusivity', label:'Exclusivity',        extract:ex=>ex.keyTerms?.exclusivity||null},
+  {field:'paymentFreq', label:'Payment Frequency',  extract:ex=>ex.paymentTerms?.frequency||null},
+  {field:'product',     label:'Products/Services',  extract:ex=>ex.products||null},
+];
+
+function openApplyContractModal(vendor, extracted, onApplied) {
+  const fields = CONTRACT_FIELD_MAP.map(def=>({
+    ...def,
+    newVal: def.extract(extracted),
+    oldVal: vendor[def.field] || null,
+  })).filter(f=>f.newVal); // only show fields that have extracted values
+
+  const hasConflicts = fields.some(f=>f.oldVal && f.oldVal !== f.newVal);
+  const fieldSelections = {}; // field → 'new'|'keep'|'skip'
+  fields.forEach(f=>{
+    fieldSelections[f.field] = f.oldVal ? (f.oldVal===f.newVal?'keep':'new') : 'new';
+  });
+
+  openModal(body=>{
+    body.appendChild(el('h3',{style:{marginTop:'0',marginBottom:'4px'}},'📄 Apply Contract Data — '+vendor.name));
+    body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},(hasConflicts?'⚠ Some fields have different values. Choose which to keep for each field.':'All fields are new or unchanged. Click Apply to fill empty fields.')));
+
+    const grid=el('div',{style:{display:'grid',gridTemplateColumns:'120px 1fr 1fr',gap:'0',marginBottom:'12px',border:'1px solid var(--border)',borderRadius:'5px',overflow:'hidden',fontSize:'10px'}});
+
+    // Header row
+    ['Field','Current Value','Extracted Value'].forEach((h,i)=>{
+      const hd=el('div',{style:{padding:'5px 8px',background:'var(--sb)',borderBottom:'1px solid var(--border)',fontWeight:'700',fontSize:'9px',color:'var(--muted)',borderRight:i<2?'1px solid var(--border)':''}},h);
+      grid.appendChild(hd);
+    });
+
+    fields.forEach(f=>{
+      const hasConflict = f.oldVal && f.oldVal !== f.newVal;
+      const bg = hasConflict ? 'rgba(245,158,11,.04)' : '';
+
+      // Field label
+      grid.appendChild(el('div',{style:{padding:'6px 8px',borderBottom:'1px solid var(--border)',borderRight:'1px solid var(--border)',background:bg,color:'var(--text)',fontWeight:'500'}},f.label));
+
+      // Current value cell
+      const oldCell=el('div',{style:{padding:'6px 8px',borderBottom:'1px solid var(--border)',borderRight:'1px solid var(--border)',background:bg,cursor:hasConflict?'pointer':'default',color:f.oldVal?'var(--text)':'var(--muted)',fontStyle:f.oldVal?'normal':'italic'}});
+      if(f.oldVal){
+        const radio=el('input',{type:'radio',name:'field_'+f.field,value:'keep',style:{marginRight:'4px'}});
+        radio.checked = fieldSelections[f.field]==='keep';
+        radio.addEventListener('change',()=>{fieldSelections[f.field]='keep';newCell.style.background='';oldCell.style.background='rgba(34,197,94,.08)';});
+        oldCell.appendChild(radio);
+      }
+      oldCell.appendChild(document.createTextNode(f.oldVal||'(empty)'));
+      grid.appendChild(oldCell);
+
+      // New value cell
+      const newCell=el('div',{style:{padding:'6px 8px',borderBottom:'1px solid var(--border)',background:hasConflict?'rgba(79,124,255,.06)':bg,cursor:'pointer',color:f.newVal?'var(--blue)':'var(--muted)',fontWeight:hasConflict?'600':'400'}});
+      const radio2=el('input',{type:'radio',name:'field_'+f.field,value:'new',style:{marginRight:'4px'}});
+      radio2.checked = fieldSelections[f.field]==='new';
+      radio2.addEventListener('change',()=>{fieldSelections[f.field]='new';oldCell.style.background='';newCell.style.background='rgba(79,124,255,.08)';});
+      newCell.appendChild(radio2);
+      newCell.appendChild(document.createTextNode(f.newVal));
+      newCell.onclick=()=>{radio2.checked=true;radio2.dispatchEvent(new Event('change'));};
+      oldCell.onclick=()=>{if(f.oldVal){const r=oldCell.querySelector('input[type=radio]');if(r){r.checked=true;r.dispatchEvent(new Event('change'));}}};
+      grid.appendChild(newCell);
+    });
+
+    body.appendChild(grid);
+
+    // Tiers & channel partner splits (always new from contract)
+    if(extracted.tiers?.length){
+      body.appendChild(el('div',{style:{fontSize:'10px',color:'var(--blue)',marginBottom:'4px',fontWeight:'600'}},'📋 Tier structure will be saved to notes ('+extracted.tiers.length+' tiers)'));
+    }
+    if(extracted.channelPartnerSplits?.length){
+      body.appendChild(el('div',{style:{fontSize:'10px',color:'var(--blue)',marginBottom:'4px',fontWeight:'600'}},'🤝 '+extracted.channelPartnerSplits.length+' channel partner split(s) will be saved to notes'));
+    }
+
+    const btns=el('div',{class:'modal-btns',style:{marginTop:'10px'}});
+    btns.appendChild(el('button',{class:'btn-primary',onclick(){
+      let changed=0;
+      fields.forEach(f=>{
+        if(fieldSelections[f.field]==='new' && f.newVal){
+          vendor[f.field]=f.newVal; changed++;
+        }
+      });
+      // Save tier and split info to notes as structured entry
+      let noteAdditions='';
+      if(extracted.tiers?.length) noteAdditions+='\nTiers:\n'+extracted.tiers.map(t=>`  ${t.level}: ${t.threshold} → ${t.rate}`).join('\n');
+      if(extracted.channelPartnerSplits?.length) noteAdditions+='\nChannel Partner Splits:\n'+extracted.channelPartnerSplits.map(s=>`  ${s.partner}: Their rate ${s.theirRate}% | Our rate ${s.ourRate}%`).join('\n');
+      if(noteAdditions) prependStructuredNote(vendor, 'Contract data applied from OCR extraction.'+noteAdditions, 'Contract');
+      if(changed>0||noteAdditions){markDirty(vendor);saveSessionState();updateSidebar();}
+      closeModal();
+      toast('✓ '+changed+' field'+(changed!==1?'s':'')+' applied to '+vendor.name+(noteAdditions?' + tier/split notes':''));
+      if(onApplied) onApplied(changed);
+      refreshDetailIfOpen(vendor);
+    }},'✓ Apply Selected'));
+    btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
+    body.appendChild(btns);
+  }, true); // lockDismiss=true for safety
+}
+
 function applyContractToVendor(vendor, extracted) {
-  if(!vendor||!extracted) return;
-  const map = {
-    adminFee: extracted.adminFee?.percentage ? String(extracted.adminFee.percentage)+'%' : null,
-    adminFeeNotes: extracted.adminFee?.notes,
-    agreementType: extracted.agreementType,
-    contractNo: extracted.contractNumber,
-    autoRenew: extracted.autoRenewal,
-    autoRenewType: extracted.autoRenewalType,
-    terminationNotice: extracted.terminationNoticeDays ? String(extracted.terminationNoticeDays) : null,
-    contractTerm: extracted.contractTermYears ? String(extracted.contractTermYears) : null,
-    perpetuity: extracted.perpetuity,
-    expiry: extracted.expirationDate,
-    markets: extracted.markets,
-  };
-  let changed = 0;
-  Object.entries(map).forEach(([field,val])=>{
+  // Legacy quick-apply: fills only empty fields, no dialog
+  if(!vendor||!extracted) return 0;
+  let changed=0;
+  CONTRACT_FIELD_MAP.forEach(({field,extract})=>{
+    const val=extract(extracted);
     if(val && !vendor[field]) { vendor[field]=val; changed++; }
   });
   if(changed>0) { markDirty(vendor); saveSessionState(); }
@@ -6958,24 +7156,34 @@ function renderContracts(c) {
     extractBtn.disabled=true; extractBtn.textContent='⏳ Extracting...';
     statusEl.style.color='var(--muted)'; statusEl.textContent='Claude is reading the contract... (~15 seconds)';
     try {
-      const fileText = typeof selectedFileText==='string'?selectedFileText:'[PDF document]';
+      const fileText = typeof selectedFileText==='string'?selectedFileText:selectedFileText;
       const extracted = await extractContractWithClaude(fileText, selectedFile.name, vName);
       const record = {
         vendorName: vName, fileName: selectedFile.name,
         uploadDate: isoDate(new Date()), uploadTime: new Date().toLocaleTimeString(),
-        extractedData: extracted, rawTextLength: fileText.length,
+        extractedData: extracted, rawTextLength: typeof fileText==='string'?fileText.length:0,
         confidence: extracted.extractionConfidence||'MEDIUM',
+        driveFileId: null, driveLink: null,
       };
+
+      // Save to Drive in background
+      statusEl.style.color='var(--muted)'; statusEl.textContent='Saving to Drive...';
+      const driveResult = await saveContractToDrive(vName, selectedFile.name, selectedFile);
+      if(driveResult){record.driveFileId=driveResult.fileId;record.driveLink=driveResult.webViewLink;}
+
       saveContractRecord(vName, record);
-      // Auto-apply to vendor fields
-      const vendor = S.vendors.find(v=>v.name===vName);
-      const changed = vendor ? applyContractToVendor(vendor, extracted) : 0;
-      logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vName,action:'Contract uploaded + OCR extracted',note:selectedFile.name+(changed?' — '+changed+' fields auto-filled':'')});
+      logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vName,action:'Contract uploaded + OCR extracted'+(driveResult?' + saved to Drive':''),note:selectedFile.name});
+
       statusEl.style.color='var(--green)';
-      statusEl.textContent='✓ Extracted! '+(changed?' '+changed+' VCS fields auto-filled.':' Review and apply below.');
-      extractBtn.textContent='+ Extract Another';
-      extractBtn.disabled=false; extractBtn.style.opacity='1';
-      render(); // Refresh to show the new record
+      statusEl.textContent='✓ Extracted!'+(driveResult?' Saved to Drive.':' (Drive save failed — stored locally)');
+      extractBtn.textContent='+ Extract Another'; extractBtn.disabled=false; extractBtn.style.opacity='1';
+
+      // Open diff modal if vendor exists
+      const vendor=S.vendors.find(v=>v.name===vName);
+      if(vendor){
+        setTimeout(()=>openApplyContractModal(vendor, extracted, ()=>render()), 300);
+      }
+      render();
     } catch(e) {
       statusEl.style.color='var(--red)';
       statusEl.textContent='Extraction failed: '+e.message;
@@ -7025,12 +7233,13 @@ function renderContracts(c) {
       cardHdr.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'600',flex:'1'}},record.fileName));
       cardHdr.appendChild(el('span',{style:{fontSize:'8px',background:confColor+'22',color:confColor,padding:'1px 6px',borderRadius:'3px',fontWeight:'700'}},record.confidence+' CONFIDENCE'));
       cardHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Uploaded '+record.uploadDate));
+      if(record.driveLink){
+        cardHdr.appendChild(el('a',{href:record.driveLink,target:'_blank',class:'btn-xs btn-ghost',style:{textDecoration:'none',fontSize:'9px'},onclick(e){e.stopPropagation();}},'☁ View'));
+      }
       // Apply button
       if(vendor){
         cardHdr.appendChild(el('button',{class:'btn-xs btn-green',onclick(){
-          const changed=applyContractToVendor(vendor,ex);
-          toast(changed?'✓ '+changed+' fields applied to '+vName:'All fields already populated — no changes needed');
-          render();
+          openApplyContractModal(vendor, ex, ()=>render());
         }},'Apply to VCS'));
       }
       const expandBtn=el('button',{class:'btn-xs btn-ghost',onclick(){
