@@ -6781,7 +6781,8 @@ function renderSFBoard(c) {
     const row=el('div',{style:{display:'flex',gap:'8px',justifyContent:'center'}});
     row.appendChild(el('button',{class:'btn-primary',onclick(){if(!S.settings.sfClientId){S.view='settings';render();toast('Set your Salesforce Client ID in Settings first','#f59e0b');}else{sfConnect();}}},'🔗 Connect Salesforce'));
     row.appendChild(el('button',{class:'btn-secondary',onclick(){S.view='settings';render();}},'⚙ Settings'));
-    banner.appendChild(row); wrap.appendChild(banner); c.appendChild(wrap); return;
+    banner.appendChild(row); wrap.appendChild(banner); c.appendChild(wrap);
+    return;
   }
 
   // State for SF board
