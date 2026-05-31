@@ -6800,6 +6800,15 @@ Extract and return this exact structure:
   "missingFields": ["list of fields that could not be found in the document"]
 }`;
 
+  // Handle PDF (base64 object) vs plain text
+  const isPDF = typeof fileText === 'object' && fileText?.__pdf_base64__;
+  const userContent = isPDF ? [
+    {type:'text', text:'Extract all contract data from this vendor agreement for '+vendorName+'. File name: '+fileName},
+    {type:'document', source:{type:'base64', media_type:'application/pdf', data: fileText.__pdf_base64__}}
+  ] : [
+    {type:'text', text:'Extract all contract data from this vendor agreement for '+vendorName+':\n\n'+String(fileText).slice(0,25000)}
+  ];
+
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
@@ -6807,10 +6816,7 @@ Extract and return this exact structure:
       model:'claude-sonnet-4-20250514',
       max_tokens:2000,
       system: systemPrompt,
-      messages:[{role:'user',content:[
-        {type:'text',text:'Extract all contract data from this vendor agreement for '+vendorName+':'},
-        {type:'text',text:fileText.slice(0,25000)}
-      ]}]
+      messages:[{role:'user',content: userContent}]
     })
   });
   const data = await resp.json();
@@ -6877,10 +6883,31 @@ function renderContracts(c) {
 
   const row1=el('div',{style:{display:'flex',gap:'8px',marginBottom:'8px',alignItems:'center'}});
   row1.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',width:'80px',flexShrink:'0'}},'Vendor:'));
-  const vendorSel=el('select',{class:'detail-edit-field',style:{flex:'1',height:'26px'}});
-  vendorSel.appendChild(el('option',{value:''},'— Select vendor —'));
-  [...S.vendors].sort((a,b)=>a.name.localeCompare(b.name)).forEach(v=>vendorSel.appendChild(el('option',{value:v.name},v.name)));
-  row1.appendChild(vendorSel);
+  const vendorWrap=el('div',{style:{flex:'1',position:'relative'}});
+  const vendorInput=el('input',{type:'text',class:'detail-edit-field',style:{width:'100%',height:'28px'},placeholder:'Type vendor name to search...'});
+  const vendorDropdown=el('div',{style:{position:'absolute',top:'30px',left:'0',right:'0',background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'4px',maxHeight:'180px',overflowY:'auto',zIndex:'200',display:'none',boxShadow:'0 4px 12px rgba(0,0,0,.3)'}});
+  let selectedVendorName='';
+  vendorInput.addEventListener('input',()=>{
+    const q=vendorInput.value.toLowerCase().trim();
+    vendorDropdown.innerHTML='';
+    if(!q){vendorDropdown.style.display='none';return;}
+    const matches=S.vendors.filter(v=>v.name.toLowerCase().includes(q)).slice(0,15);
+    if(!matches.length){vendorDropdown.style.display='none';return;}
+    matches.forEach(v=>{
+      const opt=el('div',{style:{padding:'6px 10px',cursor:'pointer',fontSize:'11px',borderBottom:'1px solid var(--border)'},onclick(){
+        vendorInput.value=v.name; selectedVendorName=v.name;
+        vendorDropdown.style.display='none'; extractBtn.disabled=!selectedFile; extractBtn.style.opacity=selectedFile?'1':'0.5';
+      }});
+      opt.textContent=v.name; opt.style.color='var(--text)';
+      opt.addEventListener('mouseenter',()=>opt.style.background='var(--hover)');
+      opt.addEventListener('mouseleave',()=>opt.style.background='');
+      vendorDropdown.appendChild(opt);
+    });
+    vendorDropdown.style.display='block';
+  });
+  vendorInput.addEventListener('blur',()=>{setTimeout(()=>vendorDropdown.style.display='none',150);});
+  vendorWrap.appendChild(vendorInput); vendorWrap.appendChild(vendorDropdown);
+  row1.appendChild(vendorWrap);
   uploadSec.appendChild(row1);
 
   const dropZone=el('div',{style:{border:'2px dashed var(--border)',borderRadius:'5px',padding:'20px',textAlign:'center',cursor:'pointer',transition:'border-color .2s',marginBottom:'8px'}});
@@ -6925,7 +6952,7 @@ function renderContracts(c) {
 
   const btnRow=el('div',{style:{display:'flex',gap:'8px'}});
   const extractBtn=el('button',{class:'btn-primary',disabled:true,style:{opacity:'0.5'},onclick:async()=>{
-    const vName=vendorSel.value;
+    const vName=selectedVendorName||vendorInput.value.trim();
     if(!vName){toast('Select a vendor first','#f59e0b');return;}
     if(!selectedFileText){toast('Upload a file first','#f59e0b');return;}
     extractBtn.disabled=true; extractBtn.textContent='⏳ Extracting...';
@@ -6966,11 +6993,11 @@ function renderContracts(c) {
   const allStored = Object.keys(window.S_contractStore||{}).filter(k=>window.S_contractStore[k]?.length);
 
   if(allVendorsWithContracts.length===0 && allStored.length===0){
-    wrap.appendChild(el('div',{style:{textAlign:'center',padding:'40px',color:'var(--muted)'}}, [
-      el('div',{style:{fontSize:'28px',marginBottom:'8px'}},'📄'),
-      el('div',{style:{fontSize:'12px',fontWeight:'600'}},'No contracts uploaded yet'),
-      el('div',{style:{fontSize:'10px',marginTop:'4px'}},'Upload your first contract above to get started.'),
-    ]));
+    const emptyDiv=el('div',{style:{textAlign:'center',padding:'40px',color:'var(--muted)'}});
+    emptyDiv.appendChild(el('div',{style:{fontSize:'28px',marginBottom:'8px'}},'📄'));
+    emptyDiv.appendChild(el('div',{style:{fontSize:'12px',fontWeight:'600'}},'No contracts uploaded yet'));
+    emptyDiv.appendChild(el('div',{style:{fontSize:'10px',marginTop:'4px'}},'Upload your first contract above to get started.'));
+    wrap.appendChild(emptyDiv);
     c.appendChild(wrap); return;
   }
 
@@ -7095,6 +7122,83 @@ function renderContracts(c) {
 // ─── Spend Analytics ─────────────────────────────────────────────────────────
 const SPEND_STATE = {loading:false, data:null, error:null, lastLoaded:null, period:'year', vendorFilter:''};
 
+function renderSpendTable(wrap) {
+  if(!SPEND_STATE.data) return;
+  const {vendors:vendorSpend, totals} = SPEND_STATE.data;
+  const filtered = SPEND_STATE.vendorFilter
+    ? vendorSpend.filter(v=>v.name.toLowerCase().includes(SPEND_STATE.vendorFilter.toLowerCase()))
+    : vendorSpend;
+
+  // KPI tiles
+  const kpiRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'8px',marginBottom:'16px'}});
+  const totalSpend=totals.totalSpend||0;
+  const totalExpected=totals.totalExpected||0;
+  const totalGap=totals.totalGap||0;
+  const gapVendors=vendorSpend.filter(v=>v.gap<-0.01).length;
+  [{label:'Total Spend',val:'$'+totalSpend.toLocaleString(),color:'var(--blue)'},
+   {label:'Expected Commission',val:'$'+totalExpected.toLocaleString(),color:'var(--green)'},
+   {label:'Commission Gap',val:'$'+Math.abs(totalGap).toLocaleString()+(totalGap<0?' owed':''),color:totalGap<-100?'var(--red)':'var(--muted)'},
+   {label:'Vendors with Gaps',val:gapVendors,color:gapVendors>0?'var(--amber)':'var(--green)'},
+  ].forEach(k=>{
+    const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px',textAlign:'center'}});
+    card.appendChild(el('div',{style:{fontSize:'20px',fontWeight:'700',color:k.color}},k.val));
+    card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px'}},k.label));
+    kpiRow.appendChild(card);
+  });
+  wrap.appendChild(kpiRow);
+
+  if(!filtered.length){wrap.appendChild(el('p',{style:{color:'var(--muted)',textAlign:'center',padding:'20px'}},'No spend data found matching filter.'));return;}
+
+  // Spend table
+  const tbl=el('div',{class:'tbl-wrap'});
+  const table=el('table',{class:'data-table'});
+  const thead=el('thead'); const headerRow=el('tr');
+  ['Vendor','Category','Admin Fee %','Total Spend','Expected Commission','Gap','Status'].forEach(h=>{headerRow.appendChild(el('th',{},h));});
+  thead.appendChild(headerRow); table.appendChild(thead);
+  const tbody=el('tbody');
+  const sorted=[...filtered].sort((a,b)=>(a.gap||0)-(b.gap||0));
+  sorted.forEach(v=>{
+    const vendor=S.vendors.find(sv=>sv.name===v.name||sv.name.toLowerCase()===v.name.toLowerCase());
+    const gapColor=v.gap<-100?'var(--red)':v.gap<0?'var(--amber)':'var(--green)';
+    const statusLabel=v.gap<-100?'⚠ Gap':v.gap<0?'↓ Minor':v.gap===0&&!v.expectedRevenue?'—':'✓ OK';
+    const tr=el('tr',{style:{cursor:vendor?'pointer':'default'},onclick(){if(vendor)openDetail(vendor);}});
+    [vendor?vLink(vendor):el('span',{style:{color:'var(--muted)'}},v.name),
+     el('span',{style:{fontSize:'9px',color:'var(--muted)'}},v.category||'—'),
+     el('span',{style:{color:v.adminFeePct?'var(--green)':'var(--muted)',fontWeight:v.adminFeePct?'600':'400'}},v.adminFeePct?(v.adminFeePct+'%'):'Not set'),
+     el('span',{style:{fontWeight:'600'}},'$'+v.totalSpend.toLocaleString()),
+     el('span',{style:{color:'var(--green)',fontWeight:'600'}},v.expectedRevenue?'$'+v.expectedRevenue.toLocaleString():'—'),
+     el('span',{style:{color:gapColor,fontWeight:v.gap<0?'700':'400'}},v.gap!==0?'$'+(v.gap<0?'-':'')+Math.abs(v.gap).toLocaleString():'—'),
+     el('span',{style:{color:gapColor,fontWeight:'600',fontSize:'10px'}},statusLabel),
+    ].forEach(cell=>{const td=el('td');if(cell instanceof Node)td.appendChild(cell);else td.textContent=String(cell||'');tr.appendChild(td);});
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody); tbl.appendChild(table); wrap.appendChild(tbl);
+
+  // True-up alerts
+  const gapList=sorted.filter(v=>v.gap<-100);
+  if(gapList.length){
+    const tuHdr=el('div',{style:{marginTop:'20px',fontWeight:'700',fontSize:'13px',marginBottom:'8px',color:'var(--red)'},'data-trueup':'1'});
+    tuHdr.textContent='🔴 True-Up Alerts — '+gapList.length+' vendor'+(gapList.length!==1?'s':'')+' may owe commission';
+    wrap.appendChild(tuHdr);
+    gapList.forEach(v=>{
+      const card=el('div',{style:{border:'1px solid rgba(239,68,68,.3)',borderLeft:'4px solid var(--red)',borderRadius:'4px',padding:'10px 12px',marginBottom:'6px',background:'rgba(239,68,68,.04)'}});
+      const row=el('div',{style:{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}});
+      const vendor=S.vendors.find(sv=>sv.name===v.name);
+      const nameEl=el('span',{style:{fontWeight:'700',fontSize:'12px',flex:'1',color:vendor?'var(--blue)':'var(--text)',cursor:vendor?'pointer':'default'}},v.name);
+      if(vendor) nameEl.onclick=()=>openDetail(vendor);
+      row.appendChild(nameEl);
+      row.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},v.adminFeePct?v.adminFeePct+'% admin fee':'No admin fee on record'));
+      row.appendChild(el('span',{style:{fontSize:'10px'}},'Spend: $'+v.totalSpend.toLocaleString()));
+      row.appendChild(el('span',{style:{color:'var(--green)',fontSize:'10px'}},'Expected: $'+v.expectedRevenue.toLocaleString()));
+      row.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:'var(--red)'}},'Gap: -$'+Math.abs(v.gap).toLocaleString()));
+      card.appendChild(row);
+      if(!v.adminFeePct){card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'4px',fontStyle:'italic'}},'⚠ No admin fee % — upload contract in 📄 Contracts tab to auto-fill'));}
+      wrap.appendChild(card);
+    });
+  }
+}
+
+
 function renderSpend(c) {
   c.innerHTML='';
   const wrap=el('div',{style:{maxWidth:'1100px',margin:'0 auto',padding:'12px 0'}});
@@ -7121,7 +7225,19 @@ function renderSpend(c) {
   });
   controls.appendChild(periodBtns);
   const vendorFilter=el('input',{type:'text',class:'modal-input',style:{width:'200px',marginBottom:'0'},placeholder:'Filter by vendor...',value:SPEND_STATE.vendorFilter});
-  vendorFilter.addEventListener('input',()=>{SPEND_STATE.vendorFilter=vendorFilter.value;renderSpend(c);});
+  let spendFilterTimer=null;
+  vendorFilter.addEventListener('input',()=>{
+    clearTimeout(spendFilterTimer);
+    spendFilterTimer=setTimeout(()=>{
+      SPEND_STATE.vendorFilter=vendorFilter.value;
+      // Re-render only the table section, not whole view
+      const tblEl=wrap.querySelector('.tbl-wrap');
+      if(tblEl) tblEl.remove();
+      const trueUpEl=wrap.querySelector('[data-trueup]');
+      if(trueUpEl) trueUpEl.remove();
+      renderSpendTable(wrap);
+    },200);
+  });
   controls.appendChild(vendorFilter);
   const loadBtn=el('button',{class:'btn-primary',disabled:SPEND_STATE.loading,onclick(){SPEND_STATE.data=null;SPEND_STATE.error=null;loadSpendData();}},SPEND_STATE.loading?'⏳ Loading...':'🔄 Load / Refresh');
   if(SPEND_STATE.loading) loadBtn.style.opacity='0.6';
@@ -7139,98 +7255,9 @@ function renderSpend(c) {
   }
 
   if(SPEND_STATE.data){
-    const {vendors:vendorSpend, totals} = SPEND_STATE.data;
-    const filtered = SPEND_STATE.vendorFilter
-      ? vendorSpend.filter(v=>v.name.toLowerCase().includes(SPEND_STATE.vendorFilter.toLowerCase()))
-      : vendorSpend;
-
-    // KPI tiles
-    const kpiRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'8px',marginBottom:'16px'}});
-    const totalSpend=totals.totalSpend||0;
-    const totalExpected=totals.totalExpected||0;
-    const totalGap=totals.totalGap||0;
-    const gapVendors=vendorSpend.filter(v=>v.gap<-0.01).length;
-    [
-      {label:'Total Spend',val:'$'+totalSpend.toLocaleString(),color:'var(--blue)'},
-      {label:'Expected Commission',val:'$'+totalExpected.toLocaleString(),color:'var(--green)'},
-      {label:'Commission Gap',val:'$'+Math.abs(totalGap).toLocaleString()+(totalGap<0?' owed':''),color:totalGap<-100?'var(--red)':'var(--muted)'},
-      {label:'Vendors with Gaps',val:gapVendors,color:gapVendors>0?'var(--amber)':'var(--green)'},
-    ].forEach(k=>{
-      const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px',textAlign:'center'}});
-      card.appendChild(el('div',{style:{fontSize:'20px',fontWeight:'700',color:k.color}},k.val));
-      card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px'}},k.label));
-      kpiRow.appendChild(card);
-    });
-    wrap.appendChild(kpiRow);
-
-    if(!filtered.length){wrap.appendChild(el('p',{style:{color:'var(--muted)',textAlign:'center',padding:'20px'}},'No spend data found matching filter.'));c.appendChild(wrap);return;}
-
-    // Spend table
-    const tbl=el('div',{class:'tbl-wrap'});
-    const table=el('table',{class:'data-table'});
-    const thead=el('thead');
-    const headerRow=el('tr');
-    ['Vendor','Category','Admin Fee %','Total Spend','Expected Commission','Gap','Status'].forEach(h=>{
-      const th=el('th',{style:{cursor:'pointer'}},h);
-      headerRow.appendChild(th);
-    });
-    thead.appendChild(headerRow); table.appendChild(thead);
-    const tbody=el('tbody');
-
-    // Sort by gap (biggest shortfall first)
-    const sorted=[...filtered].sort((a,b)=>(a.gap||0)-(b.gap||0));
-    sorted.forEach(v=>{
-      const vendor=S.vendors.find(sv=>sv.name===v.name||sv.name.toLowerCase()===v.name.toLowerCase());
-      const gapColor=v.gap<-100?'var(--red)':v.gap<0?'var(--amber)':'var(--green)';
-      const statusLabel=v.gap<-100?'⚠ Gap':v.gap<0?'↓ Minor':v.gap===0&&!v.expectedRevenue?'—':'✓ OK';
-      const tr=el('tr',{style:{cursor:vendor?'pointer':'default'},onclick(){if(vendor)openDetail(vendor);}});
-      [
-        vendor?vLink(vendor):el('span',{style:{color:'var(--muted)'}},v.name),
-        el('span',{style:{fontSize:'9px',color:'var(--muted)'}},v.category||'—'),
-        el('span',{style:{color:v.adminFeePct?'var(--green)':'var(--muted)',fontWeight:v.adminFeePct?'600':'400'}},v.adminFeePct?(v.adminFeePct+'%'):'Not set'),
-        el('span',{style:{fontWeight:'600'}},'$'+v.totalSpend.toLocaleString()),
-        el('span',{style:{color:'var(--green)',fontWeight:'600'}},v.expectedRevenue?'$'+v.expectedRevenue.toLocaleString():'—'),
-        el('span',{style:{color:gapColor,fontWeight:v.gap<0?'700':'400'}},v.gap!==0?'$'+(v.gap<0?'-':'')+Math.abs(v.gap).toLocaleString():'—'),
-        el('span',{style:{color:gapColor,fontWeight:'600',fontSize:'10px'}},statusLabel),
-      ].forEach(cell=>{
-        const td=el('td');
-        if(cell instanceof Node) td.appendChild(cell);
-        else td.textContent=String(cell||'');
-        tr.appendChild(td);
-      });
-      tbody.appendChild(tr);
-    });
-    table.appendChild(tbody); tbl.appendChild(table); wrap.appendChild(tbl);
-
-    // True-up section — vendors with gaps
-    const gapList=sorted.filter(v=>v.gap<-100);
-    if(gapList.length){
-      wrap.appendChild(el('div',{style:{marginTop:'20px',fontWeight:'700',fontSize:'13px',marginBottom:'8px',color:'var(--red)'}},'🔴 True-Up Alerts — '+gapList.length+' vendor'+( gapList.length!==1?'s':'')+' may owe commission'));
-      gapList.forEach(v=>{
-        const card=el('div',{style:{border:'1px solid rgba(239,68,68,.3)',borderLeft:'4px solid var(--red)',borderRadius:'4px',padding:'10px 12px',marginBottom:'6px',background:'rgba(239,68,68,.04)'}});
-        const row=el('div',{style:{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}});
-        const vendor=S.vendors.find(sv=>sv.name===v.name);
-        row.appendChild(el('span',{style:{fontWeight:'700',fontSize:'12px',flex:'1',color:vendor?'var(--blue)':'var(--text)',cursor:vendor?'pointer':'default'},onclick(){if(vendor)openDetail(vendor);}},v.name));
-        row.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},v.adminFeePct?v.adminFeePct+'% admin fee':'No admin fee on record'));
-        row.appendChild(el('span',{style:{fontSize:'10px'}},'Spend: $'+v.totalSpend.toLocaleString()));
-        row.appendChild(el('span',{style:{fontSize:'10px',color:'var(--green)'}},'Expected: $'+v.expectedRevenue.toLocaleString()));
-        row.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:'var(--red)'}},'Gap: -$'+Math.abs(v.gap).toLocaleString()));
-        card.appendChild(row);
-        if(!v.adminFeePct){
-          const hint=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'4px',fontStyle:'italic'}},'⚠ No admin fee % in VCS contract record — upload contract via 📄 Contracts tab to auto-fill');
-          card.appendChild(hint);
-        }
-        wrap.appendChild(card);
-      });
-    }
-
-  } else if(!SPEND_STATE.loading){
-    wrap.appendChild(el('div',{style:{textAlign:'center',padding:'40px',color:'var(--muted)'}}, [
-      el('div',{style:{fontSize:'28px',marginBottom:'8px'}},'💹'),
-      el('div',{style:{fontSize:'12px',fontWeight:'600'}},'Click "Load / Refresh" to pull spend data'),
-      el('div',{style:{fontSize:'10px',marginTop:'4px'}},'Pulls all Spend__c records from Salesforce and calculates expected vs actual commissions.'),
-    ]));
+    renderSpendTable(wrap);
   }
+
 
   c.appendChild(wrap);
 
@@ -7294,11 +7321,9 @@ const CMP = {
 async function extractFileText(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    // PDF: use pdfjs if available, else send as base64 to Claude
     if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
       reader.onload = async (e) => {
         try {
-          // Use PDF.js if loaded, otherwise fallback to base64 extraction via Claude
           const pdfLib = window.pdfjsLib;
           if (pdfLib) {
             const pdf = await pdfLib.getDocument({data: new Uint8Array(e.target.result)}).promise;
@@ -7310,9 +7335,14 @@ async function extractFileText(file) {
             }
             resolve(text.trim());
           } else {
-            // Fallback: send as base64 doc to Claude API
-            const base64 = btoa(String.fromCharCode(...new Uint8Array(e.target.result)));
-            resolve({__pdf_base64__: base64});
+            // Safe chunked base64 encoding — avoids call stack overflow on large files
+            const bytes = new Uint8Array(e.target.result);
+            let binary = '';
+            const chunkSize = 8192;
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+              binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunkSize, bytes.length)));
+            }
+            resolve({__pdf_base64__: btoa(binary)});
           }
         } catch(err) { reject(err); }
       };
@@ -10450,7 +10480,7 @@ function renderAnalytics(c) {
     sfAnalyticsSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'Commission benchmarking and spend trends from live Salesforce data.'));
 
     if(!S._analyticsSpendData){
-      const loadBtn=el('button',{class:'btn-xs btn-blue',onclick(){loadAnalyticsSpend(c);}}, '☁ Load SF Revenue Data');
+      const loadBtn=el('button',{class:'btn-xs btn-blue',onclick(){loadAnalyticsSpend();}}, '☁ Load SF Revenue Data');
       sfAnalyticsSec.appendChild(loadBtn);
     } else {
       const spendData=S._analyticsSpendData;
@@ -10530,7 +10560,7 @@ function renderAnalytics(c) {
       }
 
       const refreshRow=el('div',{style:{marginTop:'8px',display:'flex',gap:'6px',alignItems:'center'}});
-      refreshRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._analyticsSpendData=null;render();loadAnalyticsSpend(c);}}, '↻ Refresh'));
+      refreshRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._analyticsSpendData=null;render();loadAnalyticsSpend();}}, '↻ Refresh'));
       if(S._analyticsSpendLoaded) refreshRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Last loaded: '+S._analyticsSpendLoaded));
       sfAnalyticsSec.appendChild(refreshRow);
     }
@@ -10538,12 +10568,12 @@ function renderAnalytics(c) {
   }
 }
 
-async function loadAnalyticsSpend(c) {
+async function loadAnalyticsSpend() {
   S._analyticsSpendData=null; S._analyticsSpendLoading=true;
-  if(c) renderAnalytics(c);
+  render(); // re-render via global render, not by passing c
   try {
     const spendResult=await sfQuery("SELECT Vendor__c,Vendor__r.Name,Category__c,SUM(Amount__c) TotalAmt FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= "+new Date().getFullYear()+"-01-01 GROUP BY Vendor__c,Vendor__r.Name,Category__c ORDER BY TotalAmt DESC LIMIT 200");
-    if(!spendResult?.records){S._analyticsSpendData=[];S._analyticsSpendLoading=false;if(c)renderAnalytics(c);return;}
+    if(!spendResult?.records){S._analyticsSpendData=[];S._analyticsSpendLoading=false;render();return;}
     const byVendor={};
     spendResult.records.forEach(rec=>{
       const vName=rec['Vendor__r']?.Name||'';
@@ -10559,8 +10589,8 @@ async function loadAnalyticsSpend(c) {
     S._analyticsSpendData=vendors;
     S._analyticsSpendLoaded=new Date().toLocaleTimeString();
     S._analyticsSpendLoading=false;
-    if(c) renderAnalytics(c);
-  } catch(e){S._analyticsSpendData=[];S._analyticsSpendLoading=false;if(c)renderAnalytics(c);}
+    render();
+  } catch(e){S._analyticsSpendData=[];S._analyticsSpendLoading=false;render();}
 }
 
 function renderSummary(c) {
