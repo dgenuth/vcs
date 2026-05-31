@@ -364,7 +364,7 @@ body.light-theme .sb-logo-text{color:var(--blue)}
 .ai-msg.thinking{background:var(--card);color:var(--muted);align-self:flex-start;font-style:italic;animation:pulse 1.5s infinite}
 @keyframes pulse{0%,100%{opacity:.6}50%{opacity:1}}
 .ai-input-row{display:flex;gap:5px;padding:8px 12px;border-top:1px solid var(--border)}
-.ai-input{flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:11px;padding:6px 8px;border-radius:4px;outline:none;resize:none;height:38px}
+.ai-input{flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:11px;padding:6px 8px;border-radius:4px;outline:none;resize:none;min-height:38px;max-height:180px;overflow-y:auto}
 .ai-input:focus{border-color:var(--blue)}
 .ai-send-btn{padding:6px 10px;background:var(--blue);border:none;color:#fff;border-radius:4px;cursor:pointer;font-family:var(--font);font-size:11px}
 .ai-send-btn:hover{background:#3d6aff}
@@ -534,7 +534,7 @@ var VCS_VERSION = 'v1778431112';
     <span>🤖 AI Assistant</span>
     <div style="display:flex;gap:4px;align-items:center">
       <button id="ai-history-btn" title="Chat history" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 4px" onclick="toggleAIHistoryDropdown()">🕐</button>
-      <button onclick="newAISession()" title="New conversation" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 4px">✏</button>
+      <button onclick="newAISession()" title="New conversation" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 4px;transform:rotate(-15deg);display:inline-block">✏</button>
       <button id="ai-close-btn" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 4px">✕</button>
     </div>
   </div>
@@ -3094,21 +3094,15 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   const isDismissed=S.dismissed.has(vendor.name);
   const snoozedUntil=S.snoozed[vendor.name];
 
-  // ── Sticky header — always visible while scrolling ──
-  const stickyHdr=el('div',{style:{
+  // ── Sticky header — the name/tier/score row sticks while scrolling ──
+  // No duplicate header — just make the existing name row sticky
+  const nameRow=el('div',{style:{
     position:'sticky',top:'0',zIndex:'10',
     background:'var(--sb)',borderBottom:'1px solid var(--border)',
-    padding:'8px 12px 6px',margin:'-12px -12px 8px',
-    display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap',
+    padding:'6px 0 6px',margin:'-4px 0 4px',
+    display:'flex',alignItems:'center',gap:'5px',flexWrap:'wrap',
     boxShadow:'0 2px 8px rgba(0,0,0,.2)'
   }});
-  stickyHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'13px',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text)'}},vendor.name));
-  if(tier) stickyHdr.appendChild(el('span',{class:'tier-badge',style:{background:TC[tier]||'#6b7280',flexShrink:'0'}},tier));
-  const closeBtn2=el('button',{class:'btn-ghost',style:{padding:'2px 6px',fontSize:'12px',flexShrink:'0',fontWeight:'700'},onclick(){closeDetail();}}, '✕');
-  stickyHdr.appendChild(closeBtn2);
-  body.appendChild(stickyHdr);
-
-  const nameRow=el('div',{style:{display:'flex',alignItems:'center',gap:'5px',flexWrap:'wrap',marginBottom:'4px'}});
   const canEdit = (ROLE_PERMS[USER.role||'restricted']||{}).editNotes;
   if (canEdit && vendor.source === 'psd') {
     const nameIn = el('input',{class:'detail-vendor-name detail-edit-field',style:{flex:'1',fontWeight:'700',fontSize:'16px',background:'transparent',border:'none',borderBottom:'1px solid var(--border)',padding:'0 0 2px 0'},value:vendor.name});
@@ -3132,6 +3126,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   if (vendor.score) nameRow.appendChild(el('span',{class:'score-badge'},`Score: ${vendor.score.toFixed(1)}`));
   if (isDismissed) nameRow.appendChild(el('span',{class:'dismissed-badge'},'DISMISSED'));
   if (snoozedUntil && snoozedUntil>new Date()) nameRow.appendChild(el('span',{class:'snoozed-badge'},`💤 until ${fmtDate(snoozedUntil)}`));
+  // Close button in sticky row
+  nameRow.appendChild(el('button',{class:'btn-ghost',style:{padding:'2px 6px',fontSize:'12px',flexShrink:'0',fontWeight:'700',marginLeft:'auto'},onclick(){closeDetail();}}, '✕'));
 
   const hdr=el('div',{class:'detail-hdr'});
   hdr.appendChild(nameRow);
@@ -4857,14 +4853,19 @@ function sfConnect(){
     // Save to both sessionStorage AND localStorage (with expiry)
     sessionStorage.setItem('vcs_sf_token',JSON.stringify({token:USER.sfToken,instance:USER.sfInstance}));
     localStorage.setItem('vcs_sf_token_ls',JSON.stringify({token:USER.sfToken,instance:USER.sfInstance,expiry:Date.now()+(expiresIn*1000)}));
-    toast('✓ Salesforce connected');updateUserBadge();}}catch(e){}},500);
+    // Store token with 24h expiry (SF tokens last at least 2-8h, we refresh proactively)
+    localStorage.setItem('vcs_sf_token_ls',JSON.stringify({token:USER.sfToken,instance:USER.sfInstance,expiry:Date.now()+86400000}));
+    toast('✓ Salesforce connected');updateUserBadge();if(S.view)render();}}catch(e){}},500);
 }
 function restoreSFSession(){
   try {
     // Try localStorage first (persists across page close), then sessionStorage
     const ls = JSON.parse(localStorage.getItem('vcs_sf_token_ls')||'null');
-    if(ls && ls.token && ls.instance && ls.expiry && Date.now() < ls.expiry - 60000){
-      USER.sfToken=ls.token; USER.sfInstance=ls.instance; return;
+    if(ls && ls.token && ls.instance) {
+      // If token hasn't expired, restore it. Salesforce implicit tokens last up to 24h.
+      // We store with a generous buffer — only reject if clearly expired
+      const stillValid = !ls.expiry || Date.now() < ls.expiry;
+      if(stillValid) { USER.sfToken=ls.token; USER.sfInstance=ls.instance; return; }
     }
     const s=JSON.parse(sessionStorage.getItem('vcs_sf_token')||'null');
     if(s&&s.token){USER.sfToken=s.token;USER.sfInstance=s.instance;}
@@ -5368,7 +5369,7 @@ function openAddRelationshipModal(vendor) {
 // sorted, collapsible timeline. All sources visible in one place.
 // ─── Contracts Drawer Section (in vendor detail panel) ───────────────────────
 function addContractsDrawerSection(body, vendor) {
-  const records = getContractRecords(vendor.name);
+  const records = loadContractRecords(vendor.name);
   // Also scan Drive folder if connected
   const sec = el('div',{class:'detail-section'});
   const titleRow = el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'6px'}});
@@ -6918,7 +6919,7 @@ async function loadSFBoard(){
       sfQuery("SELECT Id,Name,(SELECT Id,Name,StageName,Amount,CloseDate FROM Opportunities__r WHERE IsClosed=false ORDER BY Amount DESC LIMIT 3),(SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Cases__r WHERE Status!='Closed' ORDER BY CreatedDate DESC LIMIT 3) FROM Vendor__c WHERE Name IN ('"+nameList+"') LIMIT 50"),
       sfQuery("SELECT Id,Subject,Status,Priority,CreatedDate,Vendor__r.Name FROM Case WHERE Status!='Closed' AND Vendor__r.Name IN ('"+nameList+"') ORDER BY Priority,CreatedDate DESC LIMIT 30").catch(()=>({records:[]})),
       sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name,Vendor__r.Name FROM Task WHERE IsClosed=false AND Vendor__r.Name IN ('"+nameList+"') ORDER BY ActivityDate ASC LIMIT 30").catch(()=>({records:[]})),
-      sfQuery("SELECT Vendor__c,Vendor__r.Name,SUM(Sales__c) TotalAmt FROM Spend__c WHERE Reported_Date__c >= "+yearStart+" AND Vendor__r.Name IN ('"+nameList+"' GROUP BY Vendor__c,Vendor__r.Name ORDER BY TotalAmt DESC LIMIT 30").catch(()=>({records:[]})),
+      sfQuery("SELECT Vendor__c,Vendor__r.Name,SUM(Sales__c) spendTotal FROM Spend__c WHERE Reported_Date__c >= "+yearStart+" AND Vendor__r.Name IN ('"+nameList+"')" + " GROUP BY Vendor__c,Vendor__r.Name ORDER BY SUM(Sales__c) DESC LIMIT 30").catch(()=>({records:[]})),
     ]);
 
     const opps=[], cases=[], tasks=[];
@@ -6930,7 +6931,7 @@ async function loadSFBoard(){
     openTasks?.records?.forEach(t=>{if(!tasks.find(x=>x.Id===t.Id))tasks.push({...t,_accountName:t.Vendor__r?.Name});});
 
     // Spend leaderboard
-    const spendLeaderboard=(spendResult?.records||[]).map(r=>({name:r['Vendor__r']?.Name||'',spend:Number(r.TotalAmt||0)})).filter(v=>v.name&&v.spend>0);
+    const spendLeaderboard=(spendResult?.records||[]).map(r=>({name:r['Vendor__r']?.Name||'',spend:Number(r.spendTotal||r.TotalAmt||r.expr0||0)})).filter(v=>v.name&&v.spend>0);
 
     // True-up alerts: vendors with spend but missing or low admin fee
     const trueUpAlerts=spendLeaderboard.map(v=>{
@@ -6972,7 +6973,7 @@ async function loadSFSignals() {
 
     // Parallel: new spend this month, stuck opps, overdue tasks, open high-priority cases
     const [newSpend, stuckOpps, overdueTasks, highCases] = await Promise.all([
-      sfQuery("SELECT Vendor__r.Name,SUM(Sales__c) TotalAmt FROM Spend__c WHERE Reported_Date__c >= "+thisMonthStart+" GROUP BY Vendor__r.Name ORDER BY TotalAmt DESC LIMIT 10"),
+      sfQuery("SELECT Vendor__r.Name,SUM(Sales__c) FROM Spend__c WHERE Reported_Date__c >= "+thisMonthStart+" GROUP BY Vendor__r.Name ORDER BY SUM(Sales__c) DESC LIMIT 10"),
       sfQuery("SELECT Id,Name,StageName,Amount,LastStageChangeDate,Vendor__r.Name FROM Opportunity WHERE IsClosed=false AND LastStageChangeDate <= "+sixtyDaysAgo+"T00:00:00Z ORDER BY Amount DESC NULLS LAST LIMIT 10"),
       sfQuery("SELECT Id,Subject,ActivityDate,WhatId,Owner.Name FROM Task WHERE IsClosed=false AND ActivityDate < TODAY ORDER BY ActivityDate ASC LIMIT 10"),
       sfQuery("SELECT Id,Subject,Priority,Status,Vendor__r.Name,CreatedDate FROM Case WHERE Priority='High' AND Status!='Closed' ORDER BY CreatedDate DESC LIMIT 8"),
@@ -6983,7 +6984,7 @@ async function loadSFSignals() {
       const vName=rec['Vendor__r']?.Name||rec.Vendor__r_Name;
       if(!vName) return;
       const vendor=S.vendors.find(v=>vendorNamesMatch(v.name,vName));
-      const amt=Number(rec.TotalAmt||rec.RecordCount||0);
+      const amt=Number(rec.spendTotal||rec.TotalAmt||rec.expr0||0);
       if(amt>0) signals.push({
         type:'NEW SPEND',icon:'💰',color:'var(--green)',owner:null,
         vendor,vendorName:vName,
@@ -7286,16 +7287,21 @@ const CONTRACT_FIELD_MAP = [
 
 
 function openApplyContractModal(vendor, extracted, onApplied) {
-  const fields = CONTRACT_FIELD_MAP.map(def=>({
+  // Show ALL CONTRACT_FIELD_MAP fields, not just extracted ones
+  const allFields = CONTRACT_FIELD_MAP.map(def=>({
     ...def,
     newVal: def.extract(extracted),
     oldVal: vendor[def.field] || null,
-  })).filter(f=>f.newVal); // only show fields that have extracted values
+  }));
+  // Fields with extracted values come first, then empty fields
+  const fields = [...allFields.filter(f=>f.newVal), ...allFields.filter(f=>!f.newVal)];
 
-  const hasConflicts = fields.some(f=>f.oldVal && f.oldVal !== f.newVal);
+  const hasConflicts = fields.some(f=>f.oldVal && f.newVal && f.oldVal !== f.newVal);
   const fieldSelections = {}; // field → 'new'|'keep'|'skip'
+  const editedValues = {}; // user-edited values override extracted
   fields.forEach(f=>{
-    fieldSelections[f.field] = f.oldVal ? (f.oldVal===f.newVal?'keep':'new') : 'new';
+    fieldSelections[f.field] = f.newVal ? (f.oldVal&&f.oldVal!==f.newVal?'new':'new') : 'keep';
+    editedValues[f.field] = f.newVal || '';
   });
 
   openModal(body=>{
@@ -7305,14 +7311,45 @@ function openApplyContractModal(vendor, extracted, onApplied) {
     // ── Discrepancy questions at the top ──
   if(extracted.discrepancies?.length){
     const discWrap=el('div',{style:{background:'rgba(245,158,11,.06)',border:'1px solid rgba(245,158,11,.3)',borderRadius:'5px',padding:'10px 12px',marginBottom:'12px'}});
-    discWrap.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',color:'var(--amber)',marginBottom:'6px'}},'⚠ '+extracted.discrepancies.length+' Discrepancy'+(extracted.discrepancies.length!==1?'ies':'')+' Found — Please Verify'));
-    extracted.discrepancies.forEach(d=>{
-      const row=el('div',{style:{background:'rgba(0,0,0,.15)',borderRadius:'3px',padding:'6px 8px',marginBottom:'4px',fontSize:'10px'}});
-      row.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'2px',color:'var(--amber)'}},d.field+': '+d.question));
-      const vals=el('div',{style:{display:'flex',gap:'12px',flexWrap:'wrap',fontSize:'9px',color:'var(--muted)'}});
-      vals.appendChild(el('span',{},'📄 '+d.sourceA+': '+(d.valueA||'—')));
-      vals.appendChild(el('span',{},'📄 '+d.sourceB+': '+(d.valueB||'—')));
-      row.appendChild(vals);
+    discWrap.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',color:'var(--amber)',marginBottom:'6px'}},'⚠ '+extracted.discrepancies.length+' Discrepancy'+(extracted.discrepancies.length!==1?'ies':'')+' Found — Choose Which Value to Use'));
+    extracted.discrepancies.forEach((d,di)=>{
+      const row=el('div',{style:{background:'rgba(0,0,0,.12)',borderRadius:'3px',padding:'8px 10px',marginBottom:'6px',fontSize:'10px',border:'1px solid rgba(245,158,11,.2)'}});
+      row.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'5px',color:'var(--amber)'}},d.field+': '+d.question));
+      const optRow=el('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}});
+      // Option A
+      const lblA=el('label',{style:{display:'flex',gap:'5px',alignItems:'center',cursor:'pointer',padding:'3px 8px',borderRadius:'4px',border:'1px solid rgba(255,255,255,.1)',flex:'1',minWidth:'120px'}});
+      const radioA=el('input',{type:'radio',name:'disc_'+di,value:'a'});
+      radioA.checked=true; // default to A
+      radioA.addEventListener('change',()=>{
+        // Update extracted data with chosen value
+        extracted[d.field]=d.valueA;
+        // Update editedValues if this field is in our field map
+        const matchedField=fields.find(f=>f.label.toLowerCase().includes(d.field.toLowerCase())||f.field.toLowerCase().includes(d.field.toLowerCase().replace(/[^a-z]/g,'')));
+        if(matchedField){editedValues[matchedField.field]=d.valueA||'';fieldSelections[matchedField.field]='new';}
+      });
+      lblA.appendChild(radioA);
+      lblA.appendChild(el('span',{style:{fontSize:'9px'}},'📄 '+d.sourceA+': '));
+      lblA.appendChild(el('strong',{style:{color:'var(--text)'}},d.valueA||'—'));
+      optRow.appendChild(lblA);
+      // Option B
+      const lblB=el('label',{style:{display:'flex',gap:'5px',alignItems:'center',cursor:'pointer',padding:'3px 8px',borderRadius:'4px',border:'1px solid rgba(255,255,255,.1)',flex:'1',minWidth:'120px'}});
+      const radioB=el('input',{type:'radio',name:'disc_'+di,value:'b'});
+      radioB.addEventListener('change',()=>{
+        extracted[d.field]=d.valueB;
+        const matchedField=fields.find(f=>f.label.toLowerCase().includes(d.field.toLowerCase())||f.field.toLowerCase().includes(d.field.toLowerCase().replace(/[^a-z]/g,'')));
+        if(matchedField){editedValues[matchedField.field]=d.valueB||'';fieldSelections[matchedField.field]='new';}
+      });
+      lblB.appendChild(radioB);
+      lblB.appendChild(el('span',{style:{fontSize:'9px'}},'📄 '+d.sourceB+': '));
+      lblB.appendChild(el('strong',{style:{color:'var(--text)'}},d.valueB||'—'));
+      optRow.appendChild(lblB);
+      // Custom / skip option
+      const lblC=el('label',{style:{display:'flex',gap:'5px',alignItems:'center',cursor:'pointer',padding:'3px 8px',borderRadius:'4px',border:'1px solid rgba(255,255,255,.1)'}});
+      const radioC=el('input',{type:'radio',name:'disc_'+di,value:'skip'});
+      lblC.appendChild(radioC);
+      lblC.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Skip (keep existing)'));
+      optRow.appendChild(lblC);
+      row.appendChild(optRow);
       discWrap.appendChild(row);
     });
     body.appendChild(discWrap);
@@ -7327,32 +7364,51 @@ function openApplyContractModal(vendor, extracted, onApplied) {
     });
 
     fields.forEach(f=>{
-      const hasConflict = f.oldVal && f.oldVal !== f.newVal;
+      const hasConflict = f.oldVal && f.newVal && f.oldVal !== f.newVal;
+      const hasExtracted = !!f.newVal;
       const bg = hasConflict ? 'rgba(245,158,11,.04)' : '';
 
       // Field label
-      grid.appendChild(el('div',{style:{padding:'6px 8px',borderBottom:'1px solid var(--border)',borderRight:'1px solid var(--border)',background:bg,color:'var(--text)',fontWeight:'500'}},f.label));
+      const labelCell=el('div',{style:{padding:'6px 8px',borderBottom:'1px solid var(--border)',borderRight:'1px solid var(--border)',background:bg,color:hasExtracted?'var(--text)':'var(--muted)',fontWeight:hasExtracted?'500':'400'}},f.label+(hasExtracted?'':' ✏'));
+      grid.appendChild(labelCell);
 
-      // Current value cell
-      const oldCell=el('div',{style:{padding:'6px 8px',borderBottom:'1px solid var(--border)',borderRight:'1px solid var(--border)',background:bg,cursor:hasConflict?'pointer':'default',color:f.oldVal?'var(--text)':'var(--muted)',fontStyle:f.oldVal?'normal':'italic'}});
-      if(f.oldVal){
+      // Current value cell (what's already in VCS)
+      const oldCell=el('div',{style:{padding:'6px 8px',borderBottom:'1px solid var(--border)',borderRight:'1px solid var(--border)',background:bg,color:f.oldVal?'var(--text)':'var(--muted)',fontStyle:f.oldVal?'normal':'italic'}});
+      if(f.oldVal && hasExtracted){
         const radio=el('input',{type:'radio',name:'field_'+f.field,value:'keep',style:{marginRight:'4px'}});
         radio.checked = fieldSelections[f.field]==='keep';
         radio.addEventListener('change',()=>{fieldSelections[f.field]='keep';newCell.style.background='';oldCell.style.background='rgba(34,197,94,.08)';});
         oldCell.appendChild(radio);
+        oldCell.onclick=()=>{const r=oldCell.querySelector('input[type=radio]');if(r){r.checked=true;r.dispatchEvent(new Event('change'));}};
       }
       oldCell.appendChild(document.createTextNode(f.oldVal||'(empty)'));
       grid.appendChild(oldCell);
 
-      // New value cell
-      const newCell=el('div',{style:{padding:'6px 8px',borderBottom:'1px solid var(--border)',background:hasConflict?'rgba(79,124,255,.06)':bg,cursor:'pointer',color:f.newVal?'var(--blue)':'var(--muted)',fontWeight:hasConflict?'600':'400'}});
-      const radio2=el('input',{type:'radio',name:'field_'+f.field,value:'new',style:{marginRight:'4px'}});
-      radio2.checked = fieldSelections[f.field]==='new';
-      radio2.addEventListener('change',()=>{fieldSelections[f.field]='new';oldCell.style.background='';newCell.style.background='rgba(79,124,255,.08)';});
-      newCell.appendChild(radio2);
-      newCell.appendChild(document.createTextNode(f.newVal));
-      newCell.onclick=()=>{radio2.checked=true;radio2.dispatchEvent(new Event('change'));};
-      oldCell.onclick=()=>{if(f.oldVal){const r=oldCell.querySelector('input[type=radio]');if(r){r.checked=true;r.dispatchEvent(new Event('change'));}}};
+      // Extracted/new value cell — EDITABLE
+      const newCell=el('div',{style:{padding:'4px 6px',borderBottom:'1px solid var(--border)',background:hasConflict?'rgba(79,124,255,.06)':hasExtracted?'rgba(34,197,94,.03)':'var(--bg)'}});
+      if(hasExtracted){
+        const radio2=el('input',{type:'radio',name:'field_'+f.field,value:'new',style:{marginRight:'4px',verticalAlign:'middle',flexShrink:'0'}});
+        radio2.checked = fieldSelections[f.field]==='new';
+        radio2.addEventListener('change',()=>{fieldSelections[f.field]='new';oldCell.style.background='';newCell.style.background='rgba(79,124,255,.08)';});
+        newCell.appendChild(radio2);
+        // Editable input for the extracted value
+        const editIn=el('input',{type:'text',class:'detail-edit-field',style:{flex:'1',width:'calc(100% - 24px)',fontSize:'10px',color:'var(--blue)',fontWeight:hasConflict?'600':'400',display:'inline-block'},value:editedValues[f.field]||f.newVal||''});
+        editIn.addEventListener('input',()=>{editedValues[f.field]=editIn.value;fieldSelections[f.field]='new';radio2.checked=true;});
+        editIn.addEventListener('focus',()=>{radio2.checked=true;fieldSelections[f.field]='new';});
+        newCell.appendChild(editIn);
+      } else {
+        // No extracted value — show editable empty field so user can type a custom value
+        const customIn=el('input',{type:'text',class:'detail-edit-field',style:{width:'100%',fontSize:'10px',color:'var(--muted)'},placeholder:'Type to override...'});
+        customIn.addEventListener('input',()=>{
+          if(customIn.value.trim()){
+            editedValues[f.field]=customIn.value.trim();
+            fieldSelections[f.field]='custom';
+          } else {
+            fieldSelections[f.field]='keep';
+          }
+        });
+        newCell.appendChild(customIn);
+      }
       grid.appendChild(newCell);
     });
 
@@ -7370,8 +7426,10 @@ function openApplyContractModal(vendor, extracted, onApplied) {
     btns.appendChild(el('button',{class:'btn-primary',onclick(){
       let changed=0;
       fields.forEach(f=>{
-        if(fieldSelections[f.field]==='new' && f.newVal){
-          vendor[f.field]=f.newVal; changed++;
+        if(fieldSelections[f.field]==='new' && (editedValues[f.field]||f.newVal)){
+          vendor[f.field]=editedValues[f.field]||f.newVal; changed++;
+        } else if(fieldSelections[f.field]==='custom' && editedValues[f.field]){
+          vendor[f.field]=editedValues[f.field]; changed++;
         }
       });
       // Save tier and split info to notes as structured entry
@@ -8084,7 +8142,12 @@ ${typeof CMP.docBText === 'string' ? CMP.docBText.slice(0, 18000) : '[PDF upload
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:{
+        'Content-Type':'text/plain',
+        'x-api-key': apiKey,
+        'anthropic-version':'2023-06-01',
+        'anthropic-dangerous-direct-browser-access':'true'
+      },
       body: JSON.stringify({
         model:'claude-sonnet-4-20250514',
         max_tokens:4000,
@@ -9486,12 +9549,16 @@ function renderToday(c) {
 
   // ── SF-Powered Signals (if connected) ──────────────────────────────────────
   if(USER.sfToken && S._sfSignals !== false) {
-    const sigSec=el('div',{style:{marginBottom:'12px'}});
-    const sigHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'6px'}});
+    if(!S._sfSignalCollapsed) S._sfSignalCollapsed=false;
+    if(!S._sfTypeFilter) S._sfTypeFilter='All';
+    const sigSec=el('div',{style:{marginBottom:'12px',border:'1px solid var(--border)',borderRadius:'5px',overflow:'hidden'}});
+    const sigHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'6px 10px',background:'var(--sb)',cursor:'pointer',userSelect:'none'},
+      onclick(e){if(e.target.tagName==='BUTTON'||e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;S._sfSignalCollapsed=!S._sfSignalCollapsed;render();}});
     sigHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px'}},'☁ Salesforce Signals'));
+    sigHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},S._sfSignalData?'('+S._sfSignalData.length+')':''));
 
     // My records toggle
-    const myToggle=el('label',{style:{fontSize:'9px',color:'var(--muted)',display:'flex',gap:'3px',alignItems:'center',cursor:'pointer'}});
+    const myToggle=el('label',{style:{fontSize:'9px',color:'var(--muted)',display:'flex',gap:'3px',alignItems:'center',cursor:'pointer'},onclick(e){e.stopPropagation();}});
     const myCb=el('input',{type:'checkbox',style:{cursor:'pointer'}});
     myCb.checked=S._sfSignalMine!==false;
     myCb.addEventListener('change',()=>{S._sfSignalMine=myCb.checked;render();});
@@ -9499,12 +9566,22 @@ function renderToday(c) {
     myToggle.appendChild(el('span',{},'Mine only'));
     sigHdr.appendChild(myToggle);
 
-    sigHdr.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._sfSignals=false;render();}},'✕ Hide'));
+    // Type filter dropdown
+    const filterTypes=['All','NEW SPEND','STUCK OPP','OVERDUE TASK','HIGH CASE'];
+    const typeFilter=el('select',{style:{fontSize:'9px',background:'var(--card)',color:'var(--text)',border:'1px solid var(--border)',borderRadius:'3px',padding:'1px 4px',cursor:'pointer'},onclick(e){e.stopPropagation();}});
+    filterTypes.forEach(t=>{const o=el('option',{value:t},t);if(t===S._sfTypeFilter)o.selected=true;typeFilter.appendChild(o);});
+    typeFilter.addEventListener('change',e=>{S._sfTypeFilter=e.target.value;render();});
+    sigHdr.appendChild(typeFilter);
+
     if(S._sfSignalData){
-      sigHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Last refreshed: '+(S._sfSignalLastLoaded||'—')));
-      sigHdr.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._sfSignalData=null;render();loadSFSignals();}},'↻ Refresh'));
+      sigHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Last: '+(S._sfSignalLastLoaded||'—')));
+      sigHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(e){e.stopPropagation();S._sfSignalData=null;render();loadSFSignals();}},'↻'));
     }
+    sigHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(e){e.stopPropagation();S._sfSignals=false;render();}},'✕'));
+    sigHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},(S._sfSignalCollapsed?'▶':'▼')));
     sigSec.appendChild(sigHdr);
+
+    if(S._sfSignalCollapsed){c.appendChild(sigSec);} else {
 
     if(!S._sfSignalData){
       if(S._sfSignalLoading){
@@ -9523,26 +9600,48 @@ function renderToday(c) {
       if(!signals.length){
         sigSec.appendChild(el('div',{style:{fontSize:'10px',color:'var(--green)',padding:'4px 0'}},'✅ No urgent signals from Salesforce for you.'));
       } else {
+        // Apply type filter
+        const filteredSigs=S._sfTypeFilter&&S._sfTypeFilter!=='All'?signals.filter(s=>s.type===S._sfTypeFilter):signals;
         // Table layout
         const tbl=el('div',{class:'tbl-wrap',style:{marginBottom:'4px'}});
         const table=el('table',{class:'data-table',style:{fontSize:'9px'}});
         const thead=el('thead');
         const hrow=el('tr');
         ['Type','Priority','Vendor','Owner','Detail','Action'].forEach(h=>{
-          hrow.appendChild(el('th',{style:{fontSize:'8px',letterSpacing:'.05em',color:'var(--muted)'}},h));
+          hrow.appendChild(el('th',{style:{fontSize:'8px',letterSpacing:'.05em',color:'var(--muted)',cursor:'pointer'},
+            onclick(){S._sfTypeFilter=h==='Type'?'All':S._sfTypeFilter;render();}},h));
         });
         thead.appendChild(hrow); table.appendChild(thead);
         const tbody=el('tbody');
-        signals.forEach(sig=>{
+        filteredSigs.forEach(sig=>{
           const urgColor=sig.color||'var(--muted)';
-          const tr=el('tr',{style:{cursor:sig.vendor?'pointer':'default'},onclick(){if(sig.vendor)openDetail(sig.vendor);}});
+          // Row click opens a popup with full detail (not just vendor panel)
+          const tr=el('tr',{style:{cursor:'pointer'},onclick(){
+            openModal(body=>{
+              body.appendChild(el('h3',{style:{marginTop:'0',marginBottom:'6px'}},sig.icon+' '+sig.type+(sig.vendorName?' — '+sig.vendorName:'')));
+              const urgBadge=el('span',{style:{fontSize:'9px',background:urgColor+'22',color:urgColor,padding:'2px 8px',borderRadius:'3px',fontWeight:'700',display:'inline-block',marginBottom:'8px'}},(urgColor==='var(--red)'?'High Priority':urgColor==='var(--amber)'?'Medium Priority':'Normal'));
+              body.appendChild(urgBadge);
+              const grid=el('div',{class:'detail-grid',style:{marginBottom:'10px'}});
+              [['Vendor',sig.vendorName||'—'],['Owner',sig.owner||'—'],['Detail',sig.message]].forEach(([l,v])=>{
+                grid.appendChild(el('span',{class:'detail-label'},l));
+                grid.appendChild(el('span',{class:'detail-value'},v));
+              });
+              body.appendChild(grid);
+              const btns=el('div',{class:'modal-btns'});
+              if(sig.vendor){
+                btns.appendChild(el('button',{class:'btn-primary',onclick(){closeModal();openDetail(sig.vendor);}},'→ Open Vendor Record'));
+              }
+              btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));
+              body.appendChild(btns);
+            });
+          }});
 
           // Type cell
           const typeTd=el('td');
           const typeBadge=el('span',{style:{fontSize:'8px',background:urgColor+'22',color:urgColor,padding:'1px 6px',borderRadius:'3px',fontWeight:'700',whiteSpace:'nowrap'}},sig.icon+' '+sig.type);
           typeTd.appendChild(typeBadge);
 
-          // Priority cell (derived from color)
+          // Priority cell
           const prioTd=el('td');
           const prioLabel=urgColor==='var(--red)'?'High':urgColor==='var(--amber)'?'Medium':'Normal';
           prioTd.appendChild(el('span',{style:{color:urgColor,fontWeight:'600',fontSize:'9px'}},prioLabel));
@@ -9575,6 +9674,7 @@ function renderToday(c) {
       }
     }
     c.appendChild(sigSec);
+    } // end collapse else
   }
 
   let vendors=S.vendors.filter(v=>S.showDismissed?!isSnoozed(v):isVisible(v));
@@ -11263,14 +11363,14 @@ async function loadAnalyticsSpend() {
   render();
   try {
     // Query spend using Sales__c (confirmed correct field from SF schema)
-    const spendResult=await sfQuery("SELECT Vendor__c,Vendor__r.Name,Category__c,SUM(Sales__c) TotalAmt FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= "+new Date().getFullYear()+"-01-01 GROUP BY Vendor__c,Vendor__r.Name,Category__c ORDER BY TotalAmt DESC LIMIT 200");
+    const spendResult=await sfQuery("SELECT Vendor__c,Vendor__r.Name,Category__c,SUM(Sales__c) spendTotal FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= "+new Date().getFullYear()+"-01-01 GROUP BY Vendor__c,Vendor__r.Name,Category__c ORDER BY SUM(Sales__c) DESC LIMIT 200");
     if(!spendResult?.records){S._analyticsSpendData=[];S._analyticsSpendLoading=false;render();return;}
     const byVendor={};
     spendResult.records.forEach(rec=>{
       const vName=rec['Vendor__r']?.Name||'';
       if(!vName) return;
       if(!byVendor[vName]) byVendor[vName]={name:vName,totalSpend:0,category:rec.Category__c||''};
-      byVendor[vName].totalSpend+=Number(rec.TotalAmt)||0;
+      byVendor[vName].totalSpend+=Number(rec.spendTotal||rec.TotalAmt||rec.expr0)||0;
     });
     const vendors=Object.values(byVendor).map(v=>{
       const vcsV=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
@@ -12860,6 +12960,7 @@ function autoTitleSession(session) {
   if(firstUser) {
     session.title = firstUser.content.slice(0,40).trim()+(firstUser.content.length>40?'…':'');
     saveAISessions();
+    updateAISessionLabel(); // update header label immediately
   }
 }
 function toggleAIHistoryDropdown() {
@@ -12988,13 +13089,49 @@ function appendAIMessage(role, content, timestamp) {
     const msgIndex = aiHistory.findIndex(m=>m.role==='user'&&m.content===content);
     const editBtn = el('button',{style:{fontSize:'8px',background:'none',border:'none',color:'var(--muted)',cursor:'pointer',padding:'0'},
       onclick(){
-        if(msgIndex >= 0 && msgIndex < aiHistory.length - 1) {
-          // Branch from this point (hides subsequent messages)
-          branchFromMessage(msgIndex);
-        }
-        // Put message in input for editing
-        $('ai-input').value = content;
-        $('ai-input').focus();
+        // Inline editing — replace message bubble with editable textarea
+        const editArea = document.createElement('textarea');
+        editArea.value = content;
+        editArea.style.cssText = 'width:100%;min-height:60px;max-height:200px;background:rgba(79,124,255,.15);border:1px solid var(--blue);color:var(--text);font-family:var(--font);font-size:11px;padding:6px 8px;border-radius:6px;outline:none;resize:vertical;font-weight:500;';
+        const confirmRow = document.createElement('div');
+        confirmRow.style.cssText = 'display:flex;gap:5px;margin-top:4px;';
+        const sendEditBtn = document.createElement('button');
+        sendEditBtn.textContent = msgIndex < aiHistory.length-1 ? '↩ Send (branch)' : '✏ Send edit';
+        sendEditBtn.style.cssText = 'font-size:9px;background:var(--blue);color:#fff;border:none;border-radius:3px;padding:2px 8px;cursor:pointer;font-family:var(--font)';
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.style.cssText = 'font-size:9px;background:none;color:var(--muted);border:1px solid var(--border);border-radius:3px;padding:2px 6px;cursor:pointer;font-family:var(--font)';
+        sendEditBtn.onclick = () => {
+          const newMsg = editArea.value.trim();
+          if(!newMsg) return;
+          // Branch from this point if there are subsequent messages
+          if(msgIndex >= 0 && msgIndex < aiHistory.length - 1) {
+            branchFromMessage(msgIndex);
+          } else if(msgIndex >= 0) {
+            // Remove the last user message from history (we'll re-add with new text)
+            aiHistory.splice(msgIndex, 1);
+            msgEl.textContent = newMsg; // update bubble
+            wrap.querySelector('div[style*="opacity"]').replaceWith(meta); // restore meta
+          }
+          // Restore original bubble display
+          msgEl.textContent = newMsg;
+          msgEl.style.display = '';
+          editArea.remove(); confirmRow.remove();
+          meta.style.display = 'flex';
+          // Send the edited message
+          sendAIMessage(newMsg);
+        };
+        cancelBtn.onclick = () => {
+          editArea.remove(); confirmRow.remove();
+          msgEl.style.display = ''; meta.style.display = 'flex';
+        };
+        confirmRow.appendChild(sendEditBtn); confirmRow.appendChild(cancelBtn);
+        msgEl.style.display = 'none'; meta.style.display = 'none';
+        wrap.appendChild(editArea); wrap.appendChild(confirmRow);
+        editArea.focus(); editArea.select();
+        // Auto-expand
+        editArea.addEventListener('input',()=>{editArea.style.height='60px';editArea.style.height=Math.min(200,editArea.scrollHeight)+'px';});
+        editArea.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){sendEditBtn.click();}if(e.key==='Escape'){cancelBtn.click();}});
       }}, msgIndex < aiHistory.length-1 ? '↩ Edit & branch' : '✏ Edit');
     meta.appendChild(editBtn);
   }
@@ -13585,8 +13722,10 @@ function init() {
     }
   });
   $('ai-close-btn').addEventListener('click',()=>{S.aiOpen=false;$('ai-panel').style.display='none';$('ai-toggle').classList.remove('active');});
-  $('ai-send-btn').addEventListener('click',()=>{const msg=$('ai-input').value;$('ai-input').value='';sendAIMessage(msg);});
-  $('ai-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();const msg=$('ai-input').value;$('ai-input').value='';sendAIMessage(msg);}});
+  $('ai-send-btn').addEventListener('click',()=>{const inp=$('ai-input');const msg=inp.value;inp.value='';inp.style.height='38px';sendAIMessage(msg);});
+  $('ai-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();const inp=$('ai-input');const msg=inp.value;inp.value='';inp.style.height='38px';sendAIMessage(msg);}});
+  // Auto-expand AI textarea up to 10 lines (~180px)
+  $('ai-input').addEventListener('input',()=>{const inp=$('ai-input');inp.style.height='38px';inp.style.height=Math.min(180,inp.scrollHeight)+'px';});
 
   // Voice input for AI — continuous mode: mic stays on until you click again
   const voiceBtn=$('ai-voice-btn');
