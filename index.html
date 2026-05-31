@@ -6559,8 +6559,219 @@ function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt
 function renderSFBoard(c) {
   c.innerHTML='';
   const wrap=el('div',{style:{maxWidth:'1100px',margin:'0 auto',padding:'12px 0'}});
-  wrap.appendChild(el('h2',{style:{margin:'0 0 4px 0',fontSize:'16px',fontWeight:'700'}},'☁ Salesforce Board'));
-  wrap.appendChild(el('p',{style:{margin:'0 0 12px 0',fontSize:'10px',color:'var(--muted)'}},'Live view across all vendors — open opportunities, cases, and tasks pulled from Salesforce.'));
+  const hdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'baseline',marginBottom:'12px'}});
+  hdr.appendChild(el('h2',{style:{margin:'0',fontSize:'16px',fontWeight:'700'}},'☁ Salesforce Board'));
+  hdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},'Revenue intelligence across all vendors'));
+  wrap.appendChild(hdr);
+
+  if(!USER.sfToken){
+    const banner=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'6px',padding:'20px',textAlign:'center'}});
+    banner.appendChild(el('div',{style:{fontSize:'24px',marginBottom:'8px'}},'☁'));
+    banner.appendChild(el('p',{style:{fontWeight:'600',marginBottom:'4px'}},'Connect Salesforce to use this view'));
+    const row=el('div',{style:{display:'flex',gap:'8px',justifyContent:'center',marginTop:'8px'}});
+    row.appendChild(el('button',{class:'btn-primary',onclick(){if(!S.settings.sfClientId){S.view='settings';render();}else{sfConnect();}}},'🔗 Connect Salesforce'));
+    banner.appendChild(row); wrap.appendChild(banner); c.appendChild(wrap); return;
+  }
+
+  if(!S._sfBoard) S._sfBoard={loading:false,data:null,error:null,lastLoaded:null};
+  const sb=S._sfBoard;
+
+  const toolbar=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'12px',flexWrap:'wrap'}});
+  const loadBtn=el('button',{class:'btn-primary',disabled:sb.loading,onclick(){loadSFBoard();}},sb.loading?'⏳ Loading...':'🔄 Load / Refresh');
+  if(sb.loading) loadBtn.style.opacity='0.6';
+  toolbar.appendChild(loadBtn);
+  if(sb.lastLoaded) toolbar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Last loaded: '+sb.lastLoaded));
+  wrap.appendChild(toolbar);
+
+  if(sb.error) wrap.appendChild(el('div',{style:{color:'var(--red)',fontSize:'10px',padding:'8px',background:'rgba(239,68,68,.06)',borderRadius:'4px',marginBottom:'8px'}},sb.error));
+
+  if(sb.data){
+    const {opps,cases,tasks,spendLeaderboard,trueUpAlerts,expiringWithOpps}=sb.data;
+    const fin=['admin','procurement','manager','cro','finance_sr','finance_jr'].includes(USER.role);
+
+    // KPI tiles
+    const totalPipeline=opps.reduce((s,o)=>s+(o.Amount||0),0);
+    const kpiRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'8px',marginBottom:'16px'}});
+    [
+      {label:'Open Opportunities',val:opps.length,color:'var(--blue)',show:fin},
+      {label:'Pipeline Value',val:'$'+totalPipeline.toLocaleString(),color:'var(--green)',show:fin},
+      {label:'Open Cases',val:cases.length,color:cases.filter(x=>x.Priority==='High').length>0?'var(--red)':'var(--amber)',show:true},
+      {label:'Open Tasks',val:tasks.length,color:'var(--muted)',show:true},
+      {label:'True-Up Alerts',val:trueUpAlerts?.length||0,color:(trueUpAlerts?.length||0)>0?'var(--red)':'var(--green)',show:fin},
+    ].filter(k=>k.show).forEach(k=>{
+      const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'10px',textAlign:'center'}});
+      card.appendChild(el('div',{style:{fontSize:'20px',fontWeight:'700',color:k.color}},k.val));
+      card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px'}},k.label));
+      kpiRow.appendChild(card);
+    });
+    wrap.appendChild(kpiRow);
+
+    // Dashboard columns
+    const colCount=fin?4:2;
+    const cols=el('div',{style:{display:'grid',gridTemplateColumns:`repeat(${colCount},1fr)`,gap:'12px'}});
+
+    // Spend Leaderboard
+    if(fin && spendLeaderboard?.length){
+      const col=el('div',{});
+      col.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'6px',color:'var(--blue)'}},'💰 Top Vendors by Spend (YTD)'));
+      spendLeaderboard.slice(0,8).forEach((v,i)=>{
+        const vendor=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
+        const adminPct=parseFloat(String(vendor?.adminFee||'').replace(/[^0-9.]/g,''))||0;
+        const expected=adminPct?Math.round(v.spend*adminPct/100):null;
+        const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'4px',padding:'7px 9px',marginBottom:'4px',cursor:vendor?'pointer':'default'},onclick(){if(vendor)openDetail(vendor);}});
+        const top=el('div',{style:{display:'flex',gap:'6px',alignItems:'center'}});
+        top.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'14px'}},`${i+1}.`));
+        top.appendChild(el('span',{style:{fontWeight:'600',fontSize:'10px',flex:'1',color:vendor?'var(--blue)':'var(--text)'}},v.name));
+        top.appendChild(el('span',{style:{fontWeight:'700',fontSize:'10px',color:'var(--green)'}},'$'+v.spend.toLocaleString()));
+        card.appendChild(top);
+        if(expected) card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px',paddingLeft:'18px'}},'Expected commission: $'+expected.toLocaleString()+' ('+adminPct+'%)'));
+        col.appendChild(card);
+      });
+      cols.appendChild(col);
+    }
+
+    // True-Up Alerts
+    if(fin && trueUpAlerts?.length){
+      const col=el('div',{});
+      col.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'6px',color:'var(--red)'}},'🔴 True-Up Alerts'));
+      trueUpAlerts.slice(0,8).forEach(v=>{
+        const vendor=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
+        const card=el('div',{style:{background:'var(--sb)',border:'1px solid rgba(239,68,68,.3)',borderLeft:'3px solid var(--red)',borderRadius:'4px',padding:'7px 9px',marginBottom:'4px',cursor:vendor?'pointer':'default'},onclick(){if(vendor)openDetail(vendor);}});
+        card.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',color:vendor?'var(--blue)':'var(--text)'}},v.name));
+        const detail=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px',display:'flex',gap:'8px',flexWrap:'wrap'}});
+        detail.appendChild(el('span',{},'Spend: $'+v.spend.toLocaleString()));
+        detail.appendChild(el('span',{style:{color:'var(--green)'}},'Expected: $'+v.expected.toLocaleString()));
+        if(v.adminPct) detail.appendChild(el('span',{},'Rate: '+v.adminPct+'%'));
+        else detail.appendChild(el('span',{style:{color:'var(--amber)'}},'⚠ No admin fee set'));
+        card.appendChild(detail);
+        col.appendChild(card);
+      });
+      cols.appendChild(col);
+    }
+
+    // Open Cases (high priority first)
+    if(cases.length){
+      const col=el('div',{});
+      col.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'6px',color:'var(--amber)'}},'🎫 Open Cases ('+cases.length+')'));
+      const sorted=[...cases].sort((a,b)=>{const p={High:0,Medium:1,Low:2};return (p[a.Priority]??3)-(p[b.Priority]??3);});
+      sorted.slice(0,8).forEach(c2=>{
+        const pc=c2.Priority==='High'?'var(--red)':c2.Priority==='Medium'?'var(--amber)':'var(--muted)';
+        const vendor=c2._accountName?S.vendors.find(sv=>vendorNamesMatch(sv.name,c2._accountName)):null;
+        const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderLeft:'3px solid '+pc,borderRadius:'4px',padding:'6px 9px',marginBottom:'4px',cursor:vendor?'pointer':'default'},onclick(){if(vendor)openDetail(vendor);}});
+        card.appendChild(el('div',{style:{fontWeight:'500',fontSize:'10px'}},c2.Subject||c2.CaseNumber));
+        const meta=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px',display:'flex',gap:'8px'}});
+        if(c2._accountName) meta.appendChild(el('span',{style:{color:'var(--blue)'}},c2._accountName));
+        meta.appendChild(el('span',{},c2.Status));
+        if(c2.Priority) meta.appendChild(el('span',{style:{color:pc,fontWeight:'600'}},c2.Priority));
+        card.appendChild(meta); col.appendChild(card);
+      });
+      if(cases.length>8) col.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',padding:'3px 0'}},'+' +(cases.length-8)+' more cases'));
+      cols.appendChild(col);
+    }
+
+    // Expiring contracts with open opportunities
+    if(expiringWithOpps?.length){
+      const col=el('div',{});
+      col.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'6px',color:'var(--amber)'}},'⏰ Expiring + Open Opps'));
+      expiringWithOpps.slice(0,8).forEach(v=>{
+        const vendor=S.vendors.find(sv=>sv.name===v.vendorName);
+        const card=el('div',{style:{background:'var(--sb)',border:'1px solid rgba(245,158,11,.3)',borderLeft:'3px solid var(--amber)',borderRadius:'4px',padding:'7px 9px',marginBottom:'4px',cursor:vendor?'pointer':'default'},onclick(){if(vendor)openDetail(vendor);}});
+        card.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',color:vendor?'var(--blue)':'var(--text)'}},v.vendorName));
+        const detail=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px',display:'flex',gap:'8px',flexWrap:'wrap'}});
+        detail.appendChild(el('span',{style:{color:'var(--red)'}},'Expires: '+v.expiresIn+'d'));
+        detail.appendChild(el('span',{style:{color:'var(--green)'}},'Opp: '+v.oppName));
+        if(v.oppAmount) detail.appendChild(el('span',{},'$'+Number(v.oppAmount).toLocaleString()));
+        card.appendChild(detail); col.appendChild(card);
+      });
+      cols.appendChild(col);
+    }
+
+    if(cols.childElementCount) wrap.appendChild(cols);
+
+    // Open Tasks
+    if(tasks.length){
+      wrap.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',margin:'12px 0 6px',color:'var(--muted)'}},'✅ Open Tasks ('+tasks.length+')'));
+      const taskGrid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:'6px'}});
+      const today=new Date();
+      tasks.slice(0,12).forEach(task=>{
+        const dl=task.ActivityDate?Math.ceil((new Date(task.ActivityDate)-today)/86400000):null;
+        const urgColor=dl!==null&&dl<0?'var(--red)':dl!==null&&dl<=3?'var(--amber)':'var(--border)';
+        const vendor=task._accountName?S.vendors.find(sv=>vendorNamesMatch(sv.name,task._accountName)):null;
+        const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderLeft:'3px solid '+urgColor,borderRadius:'4px',padding:'6px 9px',cursor:vendor?'pointer':'default'},onclick(){if(vendor)openDetail(vendor);}});
+        card.appendChild(el('div',{style:{fontWeight:'500',fontSize:'10px'}},task.Subject||'(no subject)'));
+        const meta=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px',display:'flex',gap:'8px'}});
+        if(task._accountName) meta.appendChild(el('span',{style:{color:'var(--blue)'}},task._accountName));
+        if(task.ActivityDate) meta.appendChild(el('span',{style:{color:urgColor}},new Date(task.ActivityDate).toLocaleDateString()+(dl<0?' (overdue)':dl===0?' (today)':'')));
+        if(task.Owner?.Name) meta.appendChild(el('span',{},task.Owner.Name));
+        card.appendChild(meta); taskGrid.appendChild(card);
+      });
+      wrap.appendChild(taskGrid);
+    }
+
+    if(!opps.length&&!cases.length&&!tasks.length&&!spendLeaderboard?.length)
+      wrap.appendChild(el('p',{style:{color:'var(--green)',fontSize:'12px',textAlign:'center',padding:'30px'}},'✅ No open opportunities, cases, or tasks across all vendors.'));
+
+  } else if(!sb.loading){
+    wrap.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'11px',textAlign:'center',padding:'30px'}},'Click "Load / Refresh" to fetch live data from Salesforce across all your vendors.'));
+  }
+
+  c.appendChild(wrap);
+
+  async function loadSFBoard(){
+    sb.loading=true; sb.error=null; render();
+    try{
+      const today=new Date();
+      const yearStart=today.getFullYear()+'-01-01';
+      const activeVendors=S.vendors.filter(isVisible).slice(0,50);
+      const nameList=activeVendors.map(v=>v.name.replace(/'/g,"\\'"   )).join("','");
+
+      const [vendorResult,openCases,openTasks,spendResult]=await Promise.all([
+        sfQuery("SELECT Id,Name,(SELECT Id,Name,StageName,Amount,CloseDate FROM Opportunities__r WHERE IsClosed=false ORDER BY Amount DESC LIMIT 3),(SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Cases__r WHERE Status!='Closed' ORDER BY CreatedDate DESC LIMIT 3) FROM Vendor__c WHERE Name IN ('"+nameList+"') LIMIT 50"),
+        sfQuery("SELECT Id,Subject,Status,Priority,CreatedDate,Vendor__r.Name FROM Case WHERE Status!='Closed' AND Vendor__r.Name IN ('"+nameList+"') ORDER BY Priority,CreatedDate DESC LIMIT 30").catch(()=>({records:[]})),
+        sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name,Vendor__r.Name FROM Task WHERE IsClosed=false AND Vendor__r.Name IN ('"+nameList+"') ORDER BY ActivityDate ASC LIMIT 30").catch(()=>({records:[]})),
+        sfQuery("SELECT Vendor__c,Vendor__r.Name,SUM(Amount__c) TotalAmt FROM Spend__c WHERE Reported_Date__c >= "+yearStart+" AND Vendor__r.Name IN ('"+nameList+"') GROUP BY Vendor__c,Vendor__r.Name ORDER BY TotalAmt DESC LIMIT 30").catch(()=>({records:[]})),
+      ]);
+
+      const opps=[], cases=[], tasks=[];
+      vendorResult?.records?.forEach(v=>{
+        (v.Opportunities__r?.records||[]).forEach(o=>opps.push({...o,_accountName:v.Name,_accountId:v.Id}));
+        (v.Cases__r?.records||[]).forEach(c2=>cases.push({...c2,_accountName:v.Name}));
+      });
+      openCases?.records?.forEach(c2=>{if(!cases.find(x=>x.Id===c2.Id))cases.push({...c2,_accountName:c2.Vendor__r?.Name});});
+      openTasks?.records?.forEach(t=>{if(!tasks.find(x=>x.Id===t.Id))tasks.push({...t,_accountName:t.Vendor__r?.Name});});
+
+      // Spend leaderboard
+      const spendLeaderboard=(spendResult?.records||[]).map(r=>({name:r['Vendor__r']?.Name||'',spend:Number(r.TotalAmt||0)})).filter(v=>v.name&&v.spend>0);
+
+      // True-up alerts: vendors with spend but missing or low admin fee
+      const trueUpAlerts=spendLeaderboard.map(v=>{
+        const vcsV=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
+        const pct=parseFloat(String(vcsV?.adminFee||'').replace(/[^0-9.]/g,''))||0;
+        const expected=pct?Math.round(v.spend*pct/100):0;
+        return {name:v.name,spend:v.spend,expected,adminPct:pct||null};
+      }).filter(v=>v.spend>1000&&(!v.adminPct||v.expected<v.spend*0.01)).sort((a,b)=>b.spend-a.spend);
+
+      // Expiring contracts with open opportunities
+      const expiringWithOpps=[];
+      activeVendors.forEach(v=>{
+        const exp=getCurrentExpiry(v);
+        if(!exp) return;
+        const days=dayDiff(exp,today);
+        if(days<0||days>120) return;
+        const vendorOpps=opps.filter(o=>o._accountName&&vendorNamesMatch(o._accountName,v.name));
+        vendorOpps.forEach(o=>expiringWithOpps.push({vendorName:v.name,expiresIn:days,oppName:o.Name,oppAmount:o.Amount||o.Amount__c}));
+      });
+      expiringWithOpps.sort((a,b)=>a.expiresIn-b.expiresIn);
+
+      sb.data={opps,cases,tasks,spendLeaderboard,trueUpAlerts,expiringWithOpps};
+      sb.lastLoaded=new Date().toLocaleTimeString();
+      sb.loading=false;
+      render();
+    }catch(e){
+      sb.loading=false; sb.error='Failed to load: '+e.message; render();
+    }
+  }
+}
 
   if(!USER.sfToken){
     const banner=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'6px',padding:'20px',textAlign:'center'}});
@@ -6678,36 +6889,6 @@ function renderSFBoard(c) {
 
   c.appendChild(wrap);
 
-  async function loadSFBoard(){
-    sb.loading=true; sb.error=null; render();
-    try{
-      // Get active PSD vendors with names
-      const activeVendors=S.vendors.filter(isVisible).slice(0,50);
-      const nameList=activeVendors.map(v=>v.name.replace(/'/g,"\\'")).join("','");
-      // Query Vendor__c (custom object), with nested Opportunities and Cases
-      const [vendorResult,openCases,openTasks]=await Promise.all([
-        sfQuery("SELECT Id,Name,(SELECT Id,Name,StageName,Amount,CloseDate FROM Opportunities__r WHERE IsClosed=false ORDER BY Amount DESC LIMIT 3),(SELECT Id,CaseNumber,Subject,Status,Priority,CreatedDate FROM Cases__r WHERE Status!='Closed' ORDER BY CreatedDate DESC LIMIT 3) FROM Vendor__c WHERE Name IN ('"+nameList+"') LIMIT 50"),
-        sfQuery("SELECT Id,Subject,Status,Priority,CreatedDate,Vendor__r.Name FROM Case WHERE Status!='Closed' AND Vendor__r.Name IN ('"+nameList+"') ORDER BY Priority,CreatedDate DESC LIMIT 30").catch(()=>({records:[]})),
-        sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name,Vendor__r.Name FROM Task WHERE IsClosed=false AND Vendor__r.Name IN ('"+nameList+"') ORDER BY ActivityDate ASC LIMIT 30").catch(()=>({records:[]})),
-      ]);
-
-      const opps=[], cases=[], tasks=[];
-      vendorResult?.records?.forEach(v=>{
-        (v.Opportunities__r?.records||[]).forEach(o=>opps.push({...o,_accountName:v.Name,_accountId:v.Id}));
-        (v.Cases__r?.records||[]).forEach(c2=>cases.push({...c2,_accountName:v.Name}));
-      });
-      openCases?.records?.forEach(c2=>{if(!cases.find(x=>x.Id===c2.Id))cases.push({...c2,_accountName:c2.Vendor__r?.Name});});
-      openTasks?.records?.forEach(t=>{if(!tasks.find(x=>x.Id===t.Id))tasks.push({...t,_accountName:t.Vendor__r?.Name});});
-
-      sb.data={opps,cases,tasks};
-      sb.lastLoaded=new Date().toLocaleTimeString();
-      sb.loading=false;
-      render();
-    }catch(e){
-      sb.loading=false; sb.error='Failed to load: '+e.message; render();
-    }
-  }
-}
 
 // ─── SF-Powered Today Page Signals ────────────────────────────────────────────
 async function loadSFSignals() {
