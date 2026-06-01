@@ -6910,69 +6910,86 @@ function renderSFBoard(c) {
 
 async function loadSFBoard(){
   if(!S._sfBoard) S._sfBoard={loading:false,data:null,error:null,lastLoaded:null};
+  if(!USER.sfToken||!USER.sfInstance){
+    S._sfBoard.error='Not connected to Salesforce. Use Connect Salesforce in Settings.';
+    render(); return;
+  }
   S._sfBoard.loading=true; S._sfBoard.error=null; render();
-  const sb=S._sfBoard; // local alias
   try{
     const today=new Date();
     const yearStart=today.getFullYear()+'-01-01';
-    const activeVendors=S.vendors.filter(isVisible).slice(0,50);
-    const nameList=activeVendors.map(v=>v.name.replace(/'/g,"\\'"   )).join("','");
 
-    // Four parallel queries — all simple (no nested sub-selects)
+    // No IN clause — fetch recent records, match client-side to VCS vendors
     const [openOpps,openCases,openTasks,spendResult]=await Promise.all([
-      sfQuery("SELECT Id,Name,StageName,Amount,CloseDate,Vendor__r.Name FROM Opportunity WHERE IsClosed=false AND Vendor__r.Name IN ('"+nameList+"') ORDER BY Amount DESC LIMIT 30").catch(()=>({records:[]})),
-      sfQuery("SELECT Id,Subject,Status,Priority,CreatedDate,CaseNumber,Vendor__r.Name FROM Case WHERE Status!='Closed' AND Vendor__r.Name IN ('"+nameList+"') ORDER BY Priority,CreatedDate DESC LIMIT 30").catch(()=>({records:[]})),
-      sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name,Vendor__r.Name FROM Task WHERE IsClosed=false AND Vendor__r.Name IN ('"+nameList+"') ORDER BY ActivityDate ASC LIMIT 30").catch(()=>({records:[]})),
-      sfQuery("SELECT Vendor__c,Vendor__r.Name,SUM(Sales__c) spendTotal FROM Spend__c WHERE Reported_Date__c >= "+yearStart+" AND Vendor__r.Name IN ('"+nameList+"') GROUP BY Vendor__c,Vendor__r.Name ORDER BY SUM(Sales__c) DESC LIMIT 30").catch(()=>({records:[]})),
+      sfQuery('SELECT Id,Name,StageName,Amount,CloseDate,Vendor__r.Name,Account.Name FROM Opportunity WHERE IsClosed=false ORDER BY CloseDate ASC NULLS LAST LIMIT 100').catch(()=>({records:[]})),
+      sfQuery("SELECT Id,Subject,Status,Priority,CreatedDate,CaseNumber,Vendor__r.Name,Account.Name FROM Case WHERE Status!='Closed' ORDER BY CreatedDate DESC LIMIT 100").catch(()=>({records:[]})),
+      sfQuery('SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM Task WHERE IsClosed=false ORDER BY ActivityDate ASC LIMIT 100').catch(()=>({records:[]})),
+      sfQuery('SELECT Vendor__c,Vendor__r.Name,SUM(Sales__c) spendTotal FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= '+yearStart+' GROUP BY Vendor__c,Vendor__r.Name ORDER BY SUM(Sales__c) DESC LIMIT 100').catch(()=>({records:[]})),
     ]);
 
-    const opps=(openOpps?.records||[]).map(o=>({...o,_accountName:o.Vendor__r?.Name||'',_accountId:o.Id}));
-    const cases=(openCases?.records||[]).map(c2=>({...c2,_accountName:c2.Vendor__r?.Name||''}));
-    const tasks=(openTasks?.records||[]).map(t=>({...t,_accountName:t.Vendor__r?.Name||''}));
+    console.log('[SF Board] opps:',(openOpps?.records?.length||0),(openOpps?._error||'ok'),
+      '| cases:',(openCases?.records?.length||0),(openCases?._error||'ok'),
+      '| tasks:',(openTasks?.records?.length||0),(openTasks?._error||'ok'),
+      '| spend:',(spendResult?.records?.length||0),(spendResult?._error||'ok'));
+
+    // Client-side match to VCS vendors
+    function sfNameMatchesVCS(sfName){
+      if(!sfName) return false;
+      return S.vendors.some(v=>vendorNamesMatch(v.name, sfName));
+    }
+    const opps=(openOpps?.records||[]).map(o=>{
+      const n=o.Vendor__r?.Name||o.Account?.Name||'';
+      return {...o,_accountName:n};
+    }).filter(o=>sfNameMatchesVCS(o._accountName));
+    const cases=(openCases?.records||[]).map(c2=>{
+      const n=c2.Vendor__r?.Name||c2.Account?.Name||'';
+      return {...c2,_accountName:n};
+    }).filter(c2=>sfNameMatchesVCS(c2._accountName));
+    const tasks=(openTasks?.records||[]).map(t=>({...t,_accountName:''}));
 
     // Spend leaderboard
-    const spendLeaderboard=(spendResult?.records||[]).map(r=>({name:r['Vendor__r']?.Name||'',spend:Number(r.spendTotal||r.TotalAmt||r.expr0||0)})).filter(v=>v.name&&v.spend>0);
+    const spendLeaderboard=(spendResult?.records||[]).map(r=>({
+      name:r['Vendor__r']?.Name||'',
+      spend:Number(r.spendTotal||r.expr0||0)
+    })).filter(v=>v.name&&v.spend>0);
 
-    // True-up alerts: vendors with spend but missing or low admin fee
+    // True-up alerts: vendors with spend but missing/low admin fee in VCS
     const trueUpAlerts=spendLeaderboard.map(v=>{
       const vcsV=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
-      const pct=parseFloat(String(vcsV?.adminFee||'').replace(/[^0-9.]/g,''))||0;
+      const pct=parseFee(vcsV?.adminFee)||0;
       const expected=pct?Math.round(v.spend*pct/100):0;
       return {name:v.name,spend:v.spend,expected,adminPct:pct||null};
     }).filter(v=>v.spend>1000&&(!v.adminPct||v.expected<v.spend*0.01)).sort((a,b)=>b.spend-a.spend);
 
     // Expiring contracts with open opportunities
     const expiringWithOpps=[];
-    activeVendors.forEach(v=>{
-      const exp=getCurrentExpiry(v);
-      if(!exp) return;
-      const days=dayDiff(exp,today);
-      if(days<0||days>120) return;
-      const vendorOpps=opps.filter(o=>o._accountName&&vendorNamesMatch(o._accountName,v.name));
-      vendorOpps.forEach(o=>expiringWithOpps.push({vendorName:v.name,expiresIn:days,oppName:o.Name,oppAmount:o.Amount||o.Amount}));
+    S.vendors.filter(isVisible).forEach(v=>{
+      const exp=getCurrentExpiry(v); if(!exp) return;
+      const days=dayDiff(exp,today); if(days<0||days>120) return;
+      const vendorOpps=opps.filter(o=>vendorNamesMatch(o._accountName,v.name));
+      vendorOpps.forEach(o=>expiringWithOpps.push({vendorName:v.name,expiresIn:days,oppName:o.Name,oppAmount:o.Amount}));
     });
     expiringWithOpps.sort((a,b)=>a.expiresIn-b.expiresIn);
 
-    // Check for SF query errors before storing
     const sfErrors=[];
     if(openOpps?._error) sfErrors.push('Opps: '+openOpps._message);
     if(openCases?._error) sfErrors.push('Cases: '+openCases._message);
     if(openTasks?._error) sfErrors.push('Tasks: '+openTasks._message);
     if(spendResult?._error) sfErrors.push('Spend: '+spendResult._message);
-    if(sfErrors.length) { S._sfBoard.error='Some queries failed: '+sfErrors.join(' | '); }
+    if(sfErrors.length) S._sfBoard.error='Partial load — '+sfErrors.join(' | ');
+
     S._sfBoard.data={opps,cases,tasks,spendLeaderboard,trueUpAlerts,expiringWithOpps};
-    S._sfBoard.lastLoaded=new Date().toLocaleTimeString()+(sfErrors.length?' ⚠ partial':'');
+    S._sfBoard.lastLoaded=new Date().toLocaleTimeString()+(sfErrors.length?' ⚠':'');
     S._sfBoard.loading=false;
     render();
   }catch(e){
-    console.error('[VCS SF Board] Load failed:', e);
+    console.error('[SF Board] Error:', e);
     S._sfBoard.loading=false;
-    S._sfBoard.error='Load failed: '+e.message+' — Check browser console (F12) for SF query details.';
+    S._sfBoard.error='Error: '+e.message;
     render();
   }
 }
 
-// ─── SF-Powered Today Page Signals ────────────────────────────────────────────
 async function loadSFSignals() {
   S._sfSignalLoading=true; render();
   const signals=[];
@@ -7925,54 +7942,69 @@ function renderSpend(c) {
 }
 
 async function loadSpendData(){
+  if(!USER.sfToken||!USER.sfInstance){
+    SPEND_STATE.error='Not connected to Salesforce. Connect via Settings → Salesforce.';
+    render(); return;
+  }
   SPEND_STATE.loading=true; SPEND_STATE.error=null; render();
   try{
-    // Date filter
     const now=new Date();
     let dateFilter='';
     if(SPEND_STATE.period==='thisQ'){
       const qStart=new Date(now.getFullYear(),Math.floor(now.getMonth()/3)*3,1);
-      dateFilter=" AND Reported_Date__c >= "+qStart.toISOString().split('T')[0];
+      dateFilter=' AND Reported_Date__c >= '+qStart.toISOString().split('T')[0];
     } else if(SPEND_STATE.period==='year'){
-      dateFilter=" AND Reported_Date__c >= "+now.getFullYear()+"-01-01";
+      dateFilter=' AND Reported_Date__c >= '+now.getFullYear()+'-01-01';
     }
 
-    // Pull all spend records
-    // Query Spend__c — use only safe core fields
-    const spendResult=await sfQuery("SELECT Id,Name,Vendor__c,Vendor__r.Name,Reported_Date__c,Category__c,Sales__c,Admin_Fee__c FROM Spend__c WHERE Vendor__c != null"+dateFilter+" ORDER BY Reported_Date__c DESC LIMIT 2000");
-    if(!spendResult){SPEND_STATE.error='Salesforce not connected or query failed. Check Console for details.';SPEND_STATE.loading=false;render();return;}
-    if(spendResult._error){SPEND_STATE.error='SF Query error: '+(spendResult._message||'Unknown error');SPEND_STATE.loading=false;render();return;}
-    if(!spendResult.records?.length){SPEND_STATE.error='No spend records found for this period. Verify Spend__c has records in Salesforce.';SPEND_STATE.loading=false;render();return;}
+    const spendResult=await sfQuery('SELECT Id,Name,Vendor__c,Vendor__r.Name,Reported_Date__c,Category__c,Sales__c,Admin_Fee__c FROM Spend__c WHERE Vendor__c != null'+dateFilter+' ORDER BY Reported_Date__c DESC LIMIT 2000');
+    console.log('[SF Spend] result:', spendResult?.records?.length, spendResult?._error||'ok');
 
-    // Aggregate by vendor
+    if(!spendResult){
+      SPEND_STATE.error='Salesforce did not respond. Check your connection.';
+      SPEND_STATE.loading=false; render(); return;
+    }
+    if(spendResult._error){
+      SPEND_STATE.error='Salesforce error: '+spendResult._message;
+      SPEND_STATE.loading=false; render(); return;
+    }
+    if(!spendResult.records?.length){
+      SPEND_STATE.error='No Spend__c records found for this period in Salesforce. Verify data exists.';
+      SPEND_STATE.loading=false; render(); return;
+    }
+
     const byVendor={};
     spendResult.records.forEach(rec=>{
-      const vName=rec['Vendor__r']?.Name||rec.Vendor__c;
+      const vName=rec['Vendor__r']?.Name||'';
       if(!vName) return;
-      if(!byVendor[vName]) byVendor[vName]={name:vName,totalSpend:0,records:[],category:rec.Category__c||''};
+      if(!byVendor[vName]) byVendor[vName]={name:vName,totalSpend:0,totalFees:0,records:[],category:rec.Category__c||''};
       byVendor[vName].totalSpend+=Number(rec.Sales__c||0);
+      byVendor[vName].totalFees+=Number(rec.Admin_Fee__c||0);
       byVendor[vName].records.push(rec);
     });
 
-    // Match to VCS vendors and calculate expected commission
     const vendorSpend=Object.values(byVendor).map(v=>{
-      const vcsVendor=S.vendors.find(sv=>sv.name.toLowerCase()===v.name.toLowerCase()||vendorNamesMatch(sv.name,v.name));
-      const adminFeeStr=vcsVendor?.adminFee||'';
-      const adminFeePct=parseFloat(String(adminFeeStr).replace(/[^0-9.]/g,''))||0;
-      const expectedRevenue=adminFeePct>0?Math.round(v.totalSpend*adminFeePct/100):0;
-      const gap=expectedRevenue>0?0-expectedRevenue:0; // gap shows if we have expected but no received; extend later with actual payments
-      return {...v,adminFeePct:adminFeePct||null,expectedRevenue,gap,category:vcsVendor?.category||v.category};
+      const vcsVendor=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
+      const contractedPct=parseFee(vcsVendor?.adminFee)||0;
+      const actualPct=v.totalSpend>0?((v.totalFees/v.totalSpend)*100):0;
+      const expectedRevenue=contractedPct>0?Math.round(v.totalSpend*contractedPct/100):0;
+      const gap=v.totalFees-expectedRevenue; // positive = over, negative = under
+      return {...v,contractedPct:contractedPct||null,actualPct,expectedRevenue,gap,category:vcsVendor?.category||v.category};
     }).sort((a,b)=>b.totalSpend-a.totalSpend);
 
     const totalSpend=vendorSpend.reduce((s,v)=>s+v.totalSpend,0);
     const totalExpected=vendorSpend.reduce((s,v)=>s+v.expectedRevenue,0);
-    const totalGap=vendorSpend.reduce((s,v)=>s+v.gap,0);
+    const totalFees=vendorSpend.reduce((s,v)=>s+v.totalFees,0);
 
-    SPEND_STATE.data={vendors:vendorSpend,totals:{totalSpend,totalExpected,totalGap}};
+    SPEND_STATE.data={vendors:vendorSpend,totals:{totalSpend,totalExpected,totalFees}};
     SPEND_STATE.loading=false;
     SPEND_STATE.lastLoaded=new Date().toLocaleTimeString();
     render();
-  }catch(e){SPEND_STATE.error='Failed to load spend: '+e.message;SPEND_STATE.loading=false;render();}
+  }catch(e){
+    console.error('[SF Spend] Error:', e);
+    SPEND_STATE.error='Error: '+e.message;
+    SPEND_STATE.loading=false; render();
+  }
 }
 
 function openAddVendorModal(onCreated) {
@@ -13019,7 +13051,7 @@ function switchAISession(id) {
     if(!aiHistory.length) {
       appendAIMessage('assistant','Continuing conversation: '+session.title);
     } else {
-      aiHistory.forEach(msg=>{if(msg.role==='user'||msg.role==='assistant')appendAIMessage(msg.role,msg.content,msg.timestamp);});
+      aiHistory.forEach((msg,i)=>{if(msg.role==='user'||msg.role==='assistant')appendAIMessage(msg.role,msg.content,msg.timestamp,i);});
     }
   }
 }
@@ -13031,7 +13063,7 @@ function deleteAISession(id) {
     const session = getActiveSession();
     aiHistory = session.history.slice();
     const msgs = $('ai-messages');
-    if(msgs) { msgs.innerHTML=''; aiHistory.forEach(msg=>appendAIMessage(msg.role,msg.content,msg.timestamp)); }
+    if(msgs) { msgs.innerHTML=''; aiHistory.forEach((msg,i)=>appendAIMessage(msg.role,msg.content,msg.timestamp,i)); }
   }
   saveAISessions();
   renderAISessionTabs();
@@ -13144,7 +13176,7 @@ function branchFromMessage(messageIndex) {
   aiHistory = branchSession.history.slice();
 
   const msgs = $('ai-messages');
-  if(msgs) { msgs.innerHTML=''; aiHistory.forEach(m=>appendAIMessage(m.role,m.content,m.timestamp)); }
+  if(msgs) { msgs.innerHTML=''; aiHistory.forEach((m,i)=>appendAIMessage(m.role,m.content,m.timestamp,i)); }
   saveAISessions();
   updateAISessionLabel();
   toast('Branched — continue from message '+(messageIndex+1));
@@ -13199,7 +13231,7 @@ function markdownToHtml(text) {
     .replace(/\n/g,'<br>');
 }
 
-function appendAIMessage(role, content, timestamp) {
+function appendAIMessage(role, content, timestamp, knownIdx) {
   const msgs = $('ai-messages');
   if(!msgs) return;
   const wrap = el('div', {style:{marginBottom:'8px'}});
@@ -13215,7 +13247,7 @@ function appendAIMessage(role, content, timestamp) {
   if(timestamp) meta.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}}, timestamp));
   if(role === 'user') {
     // Find the index of this message in history for branching
-    const msgIndex = aiHistory.findIndex(m=>m.role==='user'&&m.content===content);
+    const msgIndex = (knownIdx !== undefined) ? knownIdx : aiHistory.findLastIndex(m=>m.role==='user'&&m.content===content);
     const editBtn = el('button',{style:{fontSize:'8px',background:'none',border:'none',color:'var(--muted)',cursor:'pointer',padding:'0'},
       onclick(){
         // Inline editing — replace message bubble with editable textarea
@@ -13242,7 +13274,7 @@ function appendAIMessage(role, content, timestamp) {
             aiHistory.splice(msgIndex); // remove from msgIndex onward
             // Rebuild DOM to remove the old message bubble
             const msgs2=$('ai-messages');
-            if(msgs2){msgs2.innerHTML='';aiHistory.forEach(m=>appendAIMessage(m.role,m.content,m.timestamp));}
+            if(msgs2){msgs2.innerHTML='';aiHistory.forEach((m,i)=>appendAIMessage(m.role,m.content,m.timestamp,i));}
           }
           // Send the edited/new message — DOM is clean from branch or rebuild above
           sendAIMessage(newMsg);
@@ -13917,7 +13949,7 @@ function init() {
           $('ai-messages').appendChild(m);
         } else {
           $('ai-messages').innerHTML='';
-          aiHistory.forEach(msg=>{if(msg.role==='user'||msg.role==='assistant')appendAIMessage(msg.role,msg.content,msg.timestamp);});
+          aiHistory.forEach((msg,i)=>{if(msg.role==='user'||msg.role==='assistant')appendAIMessage(msg.role,msg.content,msg.timestamp,i);});
         }
       }
     }
