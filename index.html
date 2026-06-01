@@ -6837,17 +6837,25 @@ function renderCustomers(c) {
     if(!filtered.length){wrap.appendChild(el('p',{style:{color:'var(--muted)',textAlign:'center',padding:'20px'}},'No accounts match your search.'));c.appendChild(wrap);return;}
     const tbl=el('table',{class:'data-table'});
     const thead=el('thead'); const hr=el('tr');
-    ['Account','Type','Industry','Owner','Open Opps','Open Cases','Actions'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+    ['Account','Type','Parent','Owner','Beds','Open Opps','Open Cases','Actions'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
     thead.appendChild(hr); tbl.appendChild(thead);
     const tbody=el('tbody');
     filtered.slice(0,50).forEach(a=>{
       const aOpps=opps.filter(o=>o.AccountId===a.Id||o.Vendor__c===a.Id);
       const aCases=cases.filter(cs=>cs.AccountId===a.Id||cs.Vendor__c===a.Id);
       const tr=el('tr',{style:{cursor:'pointer'}});
-      tr.appendChild(el('td',{style:{fontWeight:'600',fontSize:'10px',cursor:'pointer'},onclick(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Account/'+a.Id+'/view','_blank');}},a.Name||'—'));
+      // Indent child accounts
+      const isChild=!!(a.ParentId||a.Parent?.Id);
+      const nameCell=el('td',{style:{fontWeight:'600',fontSize:'10px',cursor:'pointer',paddingLeft:isChild?'20px':'8px'},onclick(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Account/'+a.Id+'/view','_blank');}});
+      if(isChild) nameCell.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px',marginRight:'4px'}},'└ '));
+      nameCell.appendChild(document.createTextNode(a.Name||'—'));
+      const childCount=accounts.filter(x=>x.ParentId===a.Id).length;
+      if(childCount>0) nameCell.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)',marginLeft:'4px'}},'('+childCount+' children)'));
+      tr.appendChild(nameCell);
       tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},a.Type||'—'));
-      tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},a.Industry||'—'));
-      tr.appendChild(el('td',{style:{fontSize:'9px'}},a.Owner?.Name||a.OwnerId||'—'));
+      tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},a.Parent?.Name||'—'));
+      tr.appendChild(el('td',{style:{fontSize:'9px'}},a.Owner?.Name||'—'));
+      tr.appendChild(el('td',{style:{fontSize:'9px',textAlign:'center',color:'var(--muted)'}},a.NumberOfBeds__c||a.Beds__c||'—'));
       tr.appendChild(el('td',{style:{color:aOpps.length?'var(--green)':'var(--muted)',fontWeight:aOpps.length?'600':'400',fontSize:'10px',textAlign:'center'}},aOpps.length||'—'));
       tr.appendChild(el('td',{style:{color:aCases.filter(x=>x.Priority==='High').length?'var(--red)':aCases.length?'var(--amber)':'var(--muted)',fontWeight:aCases.length?'600':'400',fontSize:'10px',textAlign:'center'}},aCases.length||'—'));
       const actCell=el('td',{});
@@ -6924,7 +6932,7 @@ async function loadCustomerData() {
   S._custLoading=true; S._custError=null; render();
   try{
     const [accountResult,oppResult,caseResult]=await Promise.all([
-      sfQuery('SELECT Id,Name,Type,Industry,OwnerId,Owner.Name,BillingState FROM Account WHERE Type != null ORDER BY LastModifiedDate DESC LIMIT 200').catch(()=>({records:[]})),
+      sfQuery('SELECT Id,Name,Type,Industry,OwnerId,Owner.Name,BillingState,ParentId,Parent.Name,NumberOfEmployees FROM Account ORDER BY ParentId ASC NULLS FIRST,Name ASC LIMIT 200').catch(()=>({records:[]})),
       sfQuery('SELECT Id,Name,StageName,Amount,CloseDate,AccountId,Account.Name,Vendor__r.Name,Owner.Name FROM Opportunity WHERE IsClosed=false ORDER BY CloseDate ASC NULLS LAST LIMIT 200').catch(()=>({records:[]})),
       sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,AccountId,Account.Name,Vendor__r.Name,CreatedDate,Owner.Name FROM Case WHERE Status!='Closed' ORDER BY Priority,CreatedDate DESC LIMIT 200").catch(()=>({records:[]})),
     ]);
@@ -6998,6 +7006,13 @@ function renderSFBoard(c) {
   const loadBtn=el('button',{class:'btn-primary',onclick:function(){console.log('[SF Board] btn clicked');loadSFBoard();}},sb.loading?'⏳ Loading...':'🔄 Load / Refresh');
   loadBtn.disabled=sb.loading;
   toolbar.appendChild(loadBtn);
+  // Year filter for board
+  if(!S._sfBoardYear) S._sfBoardYear=new Date().getFullYear();
+  const yrSel=el('select',{class:'col-toggle-btn',style:{padding:'4px 8px',fontSize:'10px'}});
+  [new Date().getFullYear(),new Date().getFullYear()-1,new Date().getFullYear()-2].forEach(y=>{
+    const o=el('option',{value:y},String(y));if(y===S._sfBoardYear)o.selected=true;yrSel.appendChild(o);});
+  yrSel.addEventListener('change',e=>{S._sfBoardYear=parseInt(e.target.value);S._sfBoard.data=null;loadSFBoard();});
+  toolbar.appendChild(yrSel);
   wrap.appendChild(toolbar);
 
   // ── Role-aware view selector ──
@@ -7591,14 +7606,16 @@ async function loadSFBoard(){
   S._sfBoard.loading=true; S._sfBoard.error=null; render();
   try{
     const today=new Date();
-    const yearStart=today.getFullYear()+'-01-01';
+    const boardYear=S._sfBoardYear||today.getFullYear();
+    const yearStart=boardYear+'-01-01';
+    const yearEnd=(boardYear<today.getFullYear())?(boardYear+'-12-31'):null;
 
     // No IN clause — fetch recent records, match client-side to VCS vendors
     const [openOpps,openCases,openTasks,spendResult]=await Promise.all([
       sfQuery('SELECT Id,Name,StageName,Amount,CloseDate,Vendor__r.Name,Account.Name FROM Opportunity WHERE IsClosed=false ORDER BY CloseDate ASC NULLS LAST LIMIT 100').catch(()=>({records:[]})),
       sfQuery("SELECT Id,Subject,Status,Priority,CreatedDate,CaseNumber,Vendor__r.Name,Account.Name FROM Case WHERE Status!='Closed' ORDER BY CreatedDate DESC LIMIT 100").catch(()=>({records:[]})),
       sfQuery('SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM Task WHERE IsClosed=false ORDER BY ActivityDate ASC LIMIT 100').catch(()=>({records:[]})),
-      sfQuery('SELECT Vendor__c,Vendor__r.Name,SUM(Sales__c) spendTotal FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= '+yearStart+' GROUP BY Vendor__c,Vendor__r.Name ORDER BY SUM(Sales__c) DESC LIMIT 100').catch(()=>({records:[]})),
+      sfQuery('SELECT Vendor__c,Vendor__r.Name,SUM(Sales__c) spendTotal FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= '+yearStart+(yearEnd?' AND Reported_Date__c <= '+yearEnd:'')+' GROUP BY Vendor__c,Vendor__r.Name ORDER BY SUM(Sales__c) DESC LIMIT 100').catch(()=>({records:[]})),
     ]);
 
     console.log('[SF Board] opps:',(openOpps?.records?.length||0),(openOpps?._error||'ok'),
@@ -8591,8 +8608,8 @@ function renderSpend(c) {
   // Controls
   const controls=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'12px',flexWrap:'wrap'}});
   const periodBtns=el('div',{style:{display:'flex',gap:'4px'}});
-  ['thisQ','year','last12','all'].forEach(p=>{
-    const label={thisQ:'This Quarter',year:'This Year',last12:'Last 12 Mo',all:'All Time'}[p];
+  ['thisQ','year','last12','custom','all'].forEach(p=>{
+    const label={thisQ:'This Quarter',year:'This Year',last12:'Last 12 Mo',custom:'Custom Range',all:'All Time'}[p];
     const btn=el('button',{class:'col-toggle-btn'+(SPEND_STATE.period===p?' on':''),onclick(){SPEND_STATE.period=p;SPEND_STATE.data=null;render();}},label);
     periodBtns.appendChild(btn);
   });
@@ -8619,6 +8636,21 @@ function renderSpend(c) {
   cats.forEach(cat=>{const o=el('option',{value:cat},cat||'All Categories');if(cat===SPEND_STATE.catFilter)o.selected=true;catSel.appendChild(o);});
   catSel.addEventListener('change',e=>{SPEND_STATE.catFilter=e.target.value;const tw=wrap.querySelector('.tbl-wrap');if(tw)tw.remove();renderSpendTable(wrap);});
   controls.appendChild(catSel);
+
+  // Custom date range inputs (show only when 'custom' period is selected)
+  if(SPEND_STATE.period==='custom'){
+    const dateRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexBasis:'100%',marginTop:'4px'}});
+    dateRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',flexShrink:'0'}},'From:'));
+    const fromIn=el('input',{type:'date',class:'modal-input',style:{width:'130px',marginBottom:'0',fontSize:'10px'},value:SPEND_STATE.customFrom||''});
+    fromIn.addEventListener('change',e=>{SPEND_STATE.customFrom=e.target.value;SPEND_STATE.data=null;});
+    dateRow.appendChild(fromIn);
+    dateRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',flexShrink:'0'}},'To:'));
+    const toIn=el('input',{type:'date',class:'modal-input',style:{width:'130px',marginBottom:'0',fontSize:'10px'},value:SPEND_STATE.customTo||''});
+    toIn.addEventListener('change',e=>{SPEND_STATE.customTo=e.target.value;SPEND_STATE.data=null;});
+    dateRow.appendChild(toIn);
+    dateRow.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){if(SPEND_STATE.customFrom){SPEND_STATE.data=null;SPEND_STATE.error=null;loadSpendData();}}}, '▶ Apply'));
+    controls.appendChild(dateRow);
+  }
 
   // Gaps only toggle
   const gapToggle=el('button',{class:'btn-xs'+(SPEND_STATE.showGapsOnly?' btn-primary':' btn-ghost'),style:{fontSize:'10px'},onclick(){SPEND_STATE.showGapsOnly=!SPEND_STATE.showGapsOnly;const tw=wrap.querySelector('.tbl-wrap');if(tw)tw.remove();renderSpendTable(wrap);}}, '⚠ Gaps Only');
@@ -8669,6 +8701,9 @@ async function loadSpendData(){
     } else if(SPEND_STATE.period==='last12'){
       const d=new Date(now-365*86400000);
       dateFilter=' AND Reported_Date__c >= '+d.toISOString().split('T')[0];
+    } else if(SPEND_STATE.period==='custom'){
+      if(SPEND_STATE.customFrom) dateFilter+=' AND Reported_Date__c >= '+SPEND_STATE.customFrom;
+      if(SPEND_STATE.customTo) dateFilter+=' AND Reported_Date__c <= '+SPEND_STATE.customTo;
     }
     // 'all' = no date filter
 
@@ -8690,16 +8725,17 @@ async function loadSpendData(){
 
     const byVendor={};
     spendResult.records.forEach(rec=>{
-      const vName=rec['Vendor__r']?.Name||'';
+      const vName=(rec['Vendor__r']?.Name||'').trim(); // trim whitespace
       if(!vName) return;
-      // Group by vendor name — aggregate across ALL categories
-      if(!byVendor[vName]) byVendor[vName]={name:vName,totalSpend:0,totalFees:0,records:[],categories:new Set(),category:''};
-      byVendor[vName].totalSpend+=Number(rec.Sales__c||0);
-      byVendor[vName].totalFees+=Number(rec.Admin_Fee__c||0);
-      byVendor[vName].records.push(rec);
-      if(rec.Category__c) byVendor[vName].categories.add(rec.Category__c);
+      // Normalize key to lowercase for dedup, preserve display name
+      const key=vName.toLowerCase();
+      if(!byVendor[key]) byVendor[key]={name:vName,totalSpend:0,totalFees:0,records:[],categories:new Set(),category:''};
+      byVendor[key].totalSpend+=Number(rec.Sales__c||0);
+      byVendor[key].totalFees+=Number(rec.Admin_Fee__c||0);
+      byVendor[key].records.push(rec);
+      if(rec.Category__c) byVendor[key].categories.add(rec.Category__c);
     });
-    // Set category to the primary (highest spend) category
+    // Finalize categories
     Object.values(byVendor).forEach(v=>{
       v.category=[...v.categories].join(', ') || '';
       delete v.categories;
@@ -8930,6 +8966,7 @@ ${typeof CMP.docBText === 'string' ? CMP.docBText.slice(0, 18000) : '[PDF upload
     CMP.result = JSON.parse(clean);
     CMP.loading = false;
     logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendorName||'Unknown',action:'Contract comparison run',note:CMP.docAName+' vs '+CMP.docBName});
+    try{const uk='vcs_ai_usage_'+(USER.email||'unknown').replace(/[^a-z0-9]/gi,'_');const u=JSON.parse(localStorage.getItem(uk)||'{}');u.user=USER.name;u.contractCompare=(u.contractCompare||0)+1;u.totalRequests=(u.totalRequests||0)+1;u.lastUsed=new Date().toISOString();localStorage.setItem(uk,JSON.stringify(u));}catch(e){}
   } catch(e) {
     CMP.loading = false;
     CMP.error = 'Comparison failed: '+e.message;
@@ -12209,7 +12246,9 @@ function renderAnalytics(c) {
       loadingDiv.appendChild(el('div',{},'Loading Salesforce revenue data...'));
       sfAnalyticsSec.appendChild(loadingDiv);
     } else if(!S._analyticsSpendData){
-      const loadBtn=el('button',{class:'btn-xs btn-blue',onclick(){loadAnalyticsSpend();}}, '☁ Load SF Revenue Data');
+      const hasCached=!!(SPEND_STATE.data?.vendors?.length);
+      const loadBtn=el('button',{class:'btn-xs btn-blue',onclick(){loadAnalyticsSpend();}}, hasCached?'⚡ Load Revenue Intelligence (instant)':'☁ Load SF Revenue Data');
+      if(!hasCached){const hint=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'4px'}});hint.textContent='Tip: Load the Spend page first for instant results';sfAnalyticsSec.appendChild(hint);}
       sfAnalyticsSec.appendChild(loadBtn);
     } else {
       const spendData=S._analyticsSpendData;
@@ -12298,44 +12337,80 @@ function renderAnalytics(c) {
 }
 
 async function loadAnalyticsSpend() {
+  // If Spend page data is already loaded, use it directly — no duplicate query needed
+  if(SPEND_STATE.data?.vendors?.length){
+    console.log('[Analytics] Using cached spend data:', SPEND_STATE.data.vendors.length, 'vendors');
+    S._analyticsSpendData=SPEND_STATE.data.vendors.map(v=>({
+      name:v.name, totalSpend:v.totalSpend, category:v.category,
+      adminFeePct:v.contractedPct||null,
+      expectedRevenue:v.expectedRevenue||0,
+      actualFees:v.totalFees||0,
+      actualPct:v.actualPct||0,
+      gap:v.gap||0,
+    }));
+    S._analyticsSpendLoaded=new Date().toLocaleTimeString()+' (from Spend page)';
+    S._analyticsSpendLoading=false;
+    render(); return;
+  }
   if(!USER.sfToken){
     S._analyticsSpendLoading=false;
-    toast('Not connected to Salesforce','#f59e0b');
+    toast('Load Spend page data first, or connect Salesforce','#f59e0b');
     render(); return;
   }
   if(!USER.sfInstance){
-    const base=S.settings.sfLoginUrl||'https://psgpo.my.salesforce.com';
+    const base=S.settings?.sfLoginUrl||'https://psgpo.my.salesforce.com';
     USER.sfInstance=base.includes('.my.salesforce.com')||base.includes('.force.com')?base:'https://psgpo.my.salesforce.com';
   }
   S._analyticsSpendData=null; S._analyticsSpendLoading=true;
   render();
   try {
-    console.log('[Analytics] Querying SF spend data...');
-    const spendResult=await sfQuery('SELECT Vendor__c,Vendor__r.Name,Category__c,SUM(Sales__c) spendTotal FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= '+new Date().getFullYear()+'-01-01 GROUP BY Vendor__c,Vendor__r.Name,Category__c ORDER BY SUM(Sales__c) DESC LIMIT 200');
-    console.log('[Analytics] SF result:', spendResult?.records?.length, spendResult?._error||'ok');
-    if(!spendResult?.records?.length){
-      console.warn('[Analytics] No records returned');
-      S._analyticsSpendData=[];S._analyticsSpendLoading=false;render();return;
+    // Use the same query pattern as Spend page (works with 1040 records)
+    console.log('[Analytics] Querying SF spend data via Spend__c...');
+    const spendResult=await sfQuery('SELECT Id,Name,Vendor__c,Vendor__r.Name,Reported_Date__c,Category__c,Sales__c,Admin_Fee__c FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= '+new Date().getFullYear()+'-01-01 ORDER BY Reported_Date__c DESC LIMIT 2000');
+    console.log('[Analytics] Result:', spendResult?.records?.length, spendResult?._error||'ok', spendResult===null?'NULL - sfQuery blocked':'');
+    if(!spendResult){
+      S._analyticsSpendData=[]; S._analyticsSpendLoading=false;
+      toast('Analytics: SF not responding. Try loading Spend page first.','#f59e0b');
+      render(); return;
     }
+    if(spendResult._error){
+      S._analyticsSpendData=[]; S._analyticsSpendLoading=false;
+      toast('Analytics SF error: '+spendResult._message,'#ef4444');
+      render(); return;
+    }
+    if(!spendResult.records?.length){
+      S._analyticsSpendData=[]; S._analyticsSpendLoading=false;
+      toast('Analytics: No spend records found for this year','#f59e0b');
+      render(); return;
+    }
+    // Aggregate same way as Spend page
     const byVendor={};
     spendResult.records.forEach(rec=>{
-      const vName=rec['Vendor__r']?.Name||'';
-      if(!vName) return;
-      if(!byVendor[vName]) byVendor[vName]={name:vName,totalSpend:0,categories:new Set()};
-      byVendor[vName].totalSpend+=Number(rec.spendTotal||rec.TotalAmt||rec.expr0)||0;
+      const vName=rec['Vendor__r']?.Name||''; if(!vName) return;
+      if(!byVendor[vName]) byVendor[vName]={name:vName,totalSpend:0,totalFees:0,categories:new Set()};
+      byVendor[vName].totalSpend+=Number(rec.Sales__c||0);
+      byVendor[vName].totalFees+=Number(rec.Admin_Fee__c||0);
       if(rec.Category__c) byVendor[vName].categories.add(rec.Category__c);
     });
     Object.values(byVendor).forEach(v=>{v.category=[...v.categories].join(', ');delete v.categories;});
     const vendors=Object.values(byVendor).map(v=>{
       const vcsV=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
-      const pct=parseFloat(String(vcsV?.adminFee||'').replace(/[^0-9.]/g,''))||0;
-      return {...v,adminFeePct:pct||null,expectedRevenue:pct?Math.round(v.totalSpend*pct/100):0,gap:pct?0-Math.round(v.totalSpend*pct/100):0,category:vcsV?.category||v.category};
+      const contractedPct=parseFee(vcsV?.adminFee)||0;
+      const actualPct=v.totalSpend>0?((v.totalFees/v.totalSpend)*100):0;
+      return {...v,adminFeePct:contractedPct||null,actualPct,
+        expectedRevenue:contractedPct?Math.round(v.totalSpend*contractedPct/100):0,
+        gap:v.totalFees-(contractedPct?Math.round(v.totalSpend*contractedPct/100):0),
+        category:vcsV?.category||v.category};
     });
     S._analyticsSpendData=vendors;
     S._analyticsSpendLoaded=new Date().toLocaleTimeString();
     S._analyticsSpendLoading=false;
     render();
-  } catch(e){console.error('[Analytics] Error:',e);S._analyticsSpendData=[];S._analyticsSpendLoading=false;toast('Analytics SF error: '+e.message,'#ef4444');render();}
+  } catch(e){
+    console.error('[Analytics] Error:',e);
+    S._analyticsSpendData=[]; S._analyticsSpendLoading=false;
+    toast('Analytics error: '+e.message,'#ef4444'); render();
+  }
 }
 
 function renderSummary(c) {
@@ -13830,34 +13905,49 @@ function renderSettings(c) {
   // ── API Usage Monitoring (Admin only) ──
   if(['admin','procurement'].includes(USER.role)){
     const apiSec=el('div',{class:'summary-section'});
-    apiSec.appendChild(el('h3',{},'📊 API Usage Monitor'));
-    apiSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'Track AI API usage per user. Toggle features on/off by role.'));
-    const usageKeys=Object.keys(localStorage).filter(k=>k.startsWith('vcs_ai_usage_'));
-    if(!usageKeys.length){
-      apiSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'No AI usage recorded yet.'));
-    } else {
-      const tbl=el('table',{class:'data-table'});
-      const thead=el('thead'); const hr=el('tr');
-      ['User','Requests','Last Used'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
-      thead.appendChild(hr); tbl.appendChild(thead);
-      const tbody=el('tbody');
-      usageKeys.forEach(k=>{try{const d=JSON.parse(localStorage.getItem(k)||'{}');const tr=el('tr');tr.appendChild(el('td',{style:{fontSize:'10px'}},d.user||k.replace('vcs_ai_usage_','').replace(/_/g,'@')));tr.appendChild(el('td',{style:{fontSize:'10px',fontWeight:'600',color:'var(--blue)'}},String(d.count||0)));tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},d.lastUsed?new Date(d.lastUsed).toLocaleDateString():'—'));tbody.appendChild(tr);}catch(e){}});
-      tbl.appendChild(tbody); apiSec.appendChild(tbl);
-      apiSec.appendChild(el('button',{class:'btn-xs btn-danger',style:{marginTop:'8px'},onclick(){if(confirm('Clear all API usage stats?')){usageKeys.forEach(k=>localStorage.removeItem(k));render();toast('Usage stats cleared');}}},'Clear All Stats'));
+    const apiHdrRow=el('div',{style:{display:'flex',alignItems:'center',cursor:'pointer',marginBottom:'4px'},onclick(){S._apiSecOpen=!S._apiSecOpen;render();}});
+    apiHdrRow.appendChild(el('h3',{style:{margin:'0',flex:'1'}},'📊 API Usage Monitor'));
+    apiHdrRow.appendChild(el('span',{style:{fontSize:'11px',color:'var(--muted)'}},S._apiSecOpen!==false?'▲':'▼'));
+    apiSec.appendChild(apiHdrRow);
+
+    if(S._apiSecOpen!==false){
+      const usageKeys=Object.keys(localStorage).filter(k=>k.startsWith('vcs_ai_usage_'));
+      // Total cost summary
+      let totalCents=0;
+      usageKeys.forEach(k=>{try{const d=JSON.parse(localStorage.getItem(k)||'{}');totalCents+=(d.estimatedCostCents||0);}catch(e){}});
+      const summaryRow=el('div',{style:{display:'flex',gap:'12px',marginBottom:'8px',padding:'8px',background:'var(--card)',borderRadius:'4px'}});
+      summaryRow.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},'Est. total cost: '));
+      summaryRow.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:'var(--blue)'}},totalCents>100?'$'+(totalCents/100).toFixed(2):(totalCents.toFixed(1)+'¢')));
+      summaryRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'8px'}},'Based on claude-sonnet pricing'));
+      apiSec.appendChild(summaryRow);
+
+      if(!usageKeys.length){
+        apiSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'No AI usage recorded yet.'));
+      } else {
+        const tbl=el('table',{class:'data-table'});
+        const thead=el('thead'); const hr=el('tr');
+        ['User','AI Chat','Contract Compare','Contract OCR','Total Requests','Est. Cost','Last Used'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+        thead.appendChild(hr); tbl.appendChild(thead);
+        const tbody=el('tbody');
+        usageKeys.sort().forEach(k=>{
+          try{
+            const d=JSON.parse(localStorage.getItem(k)||'{}');
+            const cost=d.estimatedCostCents||0;
+            const tr=el('tr');
+            tr.appendChild(el('td',{style:{fontSize:'10px',fontWeight:'600'}},d.user||(d.email||k.replace('vcs_ai_usage_','').replace(/_/g,'@'))));
+            tr.appendChild(el('td',{style:{fontSize:'10px',textAlign:'center',color:'var(--blue)'}},String(d.aiChat||0)));
+            tr.appendChild(el('td',{style:{fontSize:'10px',textAlign:'center',color:'var(--blue)'}},String(d.contractCompare||0)));
+            tr.appendChild(el('td',{style:{fontSize:'10px',textAlign:'center',color:'var(--blue)'}},String(d.contractOcr||0)));
+            tr.appendChild(el('td',{style:{fontSize:'10px',textAlign:'center',fontWeight:'600',color:'var(--text)'}},String(d.totalRequests||d.count||0)));
+            tr.appendChild(el('td',{style:{fontSize:'10px',color:cost>5000?'var(--red)':cost>1000?'var(--amber)':'var(--green)',fontWeight:'600'}},cost>100?'$'+(cost/100).toFixed(2):(cost.toFixed(1)+'¢')));
+            tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},d.lastUsed?new Date(d.lastUsed).toLocaleDateString('en-US',{month:'short',day:'numeric'})+'  '+new Date(d.lastUsed).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):'—'));
+            tbody.appendChild(tr);
+          }catch(e){}
+        });
+        tbl.appendChild(tbody); apiSec.appendChild(tbl);
+        apiSec.appendChild(el('button',{class:'btn-xs btn-danger',style:{marginTop:'8px'},onclick(){if(confirm('Clear all API usage stats?')){usageKeys.forEach(k=>localStorage.removeItem(k));render();toast('Usage stats cleared');}}},'🗑 Clear All Stats'));
+      }
     }
-    const featureKey='vcs_feature_flags';
-    const flags=JSON.parse(localStorage.getItem(featureKey)||'{}');
-    apiSec.appendChild(el('h4',{style:{fontSize:'11px',fontWeight:'700',margin:'12px 0 6px'}},'Feature Access by Role'));
-    const features=[{id:'aiChat',label:'AI Chat'},{id:'contractCompare',label:'Contract Compare'},{id:'contractOcr',label:'Contract OCR'}];
-    const roles2=['admin','procurement','sales_rep','finance','ssa'];
-    const grid=el('div',{style:{display:'grid',gridTemplateColumns:'1fr repeat(5,55px)',gap:'4px',fontSize:'9px',alignItems:'center'}});
-    grid.appendChild(el('div',{style:{fontWeight:'700'}},'Feature'));
-    roles2.forEach(r=>grid.appendChild(el('div',{style:{fontWeight:'700',textAlign:'center',color:'var(--muted)',fontSize:'8px'}},r.replace('_',' '))));
-    features.forEach(feat=>{
-      grid.appendChild(el('span',{},feat.label));
-      roles2.forEach(r2=>{const fk=feat.id+'_'+r2;const isOn=flags[fk]!==false;const tog=el('input',{type:'checkbox',checked:isOn,style:{cursor:'pointer'}});tog.addEventListener('change',e=>{const f2=JSON.parse(localStorage.getItem(featureKey)||'{}');f2[fk]=e.target.checked;localStorage.setItem(featureKey,JSON.stringify(f2));toast((e.target.checked?'Enabled ':'Disabled ')+feat.label+' for '+r2);});const cell=el('div',{style:{textAlign:'center'}});cell.appendChild(tog);grid.appendChild(cell);});
-    });
-    apiSec.appendChild(grid);
     c.appendChild(apiSec);
   }
 }
@@ -14453,10 +14543,19 @@ async function sendAIMessage(userMsg) {
     // Track usage per user (admin can review)
     try {
       const usageKey = 'vcs_ai_usage_'+USER.email.replace(/[^a-z0-9]/gi,'_');
-      const usage = JSON.parse(localStorage.getItem(usageKey)||'{"count":0,"tokens":0}');
-      usage.count = (usage.count||0) + 1;
+      const usage = JSON.parse(localStorage.getItem(usageKey)||'{}');
+      usage.user = USER.name; usage.email = USER.email;
+      usage.aiChat = (usage.aiChat||0) + 1;
+      usage.totalRequests = (usage.totalRequests||0) + 1;
+      // Estimate tokens: ~4 chars/token, system prompt ~800 tokens, response ~300 tokens
+      const estimatedInputTokens=Math.round((systemPrompt.length+userMsg.length)/4);
+      const estimatedOutputTokens=Math.round((reply?.length||0)/4);
+      usage.estimatedInputTokens = (usage.estimatedInputTokens||0) + estimatedInputTokens;
+      usage.estimatedOutputTokens = (usage.estimatedOutputTokens||0) + estimatedOutputTokens;
+      // Estimated cost: claude-sonnet ~$3/1M input, $15/1M output
+      const costCents=((estimatedInputTokens*3)+(estimatedOutputTokens*15))/1000000*100;
+      usage.estimatedCostCents = ((usage.estimatedCostCents||0) + costCents);
       usage.lastUsed = new Date().toISOString();
-      usage.user = USER.name;
       localStorage.setItem(usageKey, JSON.stringify(usage));
     } catch(e) {}
   } catch(err) {
