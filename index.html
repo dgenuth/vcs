@@ -11607,9 +11607,13 @@ async function loadAnalyticsSpend() {
   S._analyticsSpendData=null; S._analyticsSpendLoading=true;
   render();
   try {
-    // Query spend using Sales__c (confirmed correct field from SF schema)
-    const spendResult=await sfQuery("SELECT Vendor__c,Vendor__r.Name,Category__c,SUM(Sales__c) spendTotal FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= "+new Date().getFullYear()+"-01-01 GROUP BY Vendor__c,Vendor__r.Name,Category__c ORDER BY SUM(Sales__c) DESC LIMIT 200");
-    if(!spendResult?.records){S._analyticsSpendData=[];S._analyticsSpendLoading=false;render();return;}
+    console.log('[Analytics] Querying SF spend data...');
+    const spendResult=await sfQuery('SELECT Vendor__c,Vendor__r.Name,Category__c,SUM(Sales__c) spendTotal FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= '+new Date().getFullYear()+'-01-01 GROUP BY Vendor__c,Vendor__r.Name,Category__c ORDER BY SUM(Sales__c) DESC LIMIT 200');
+    console.log('[Analytics] SF result:', spendResult?.records?.length, spendResult?._error||'ok');
+    if(!spendResult?.records?.length){
+      console.warn('[Analytics] No records returned');
+      S._analyticsSpendData=[];S._analyticsSpendLoading=false;render();return;
+    }
     const byVendor={};
     spendResult.records.forEach(rec=>{
       const vName=rec['Vendor__r']?.Name||'';
@@ -11626,7 +11630,7 @@ async function loadAnalyticsSpend() {
     S._analyticsSpendLoaded=new Date().toLocaleTimeString();
     S._analyticsSpendLoading=false;
     render();
-  } catch(e){S._analyticsSpendData=[];S._analyticsSpendLoading=false;render();}
+  } catch(e){console.error('[Analytics] Error:',e);S._analyticsSpendData=[];S._analyticsSpendLoading=false;toast('Analytics SF error: '+e.message,'#ef4444');render();}
 }
 
 function renderSummary(c) {
