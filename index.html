@@ -4850,25 +4850,52 @@ function sfConnect(){
   const loginUrl=(S.settings.sfLoginUrl||'https://login.salesforce.com')+'/services/oauth2/authorize?response_type=token&client_id='+encodeURIComponent(clientId)+'&redirect_uri='+encodeURIComponent(redirectUri)+'&scope=api+id';
   const popup=window.open(loginUrl,'sf_auth','width=600,height=700');
   if(!popup){toast('⚠ Popup blocked — allow popups','#f59e0b');return;}
-  const poll=setInterval(()=>{try{if(popup.closed){clearInterval(poll);return;}const h=popup.location.hash;if(h&&h.includes('access_token')){clearInterval(poll);popup.close();const p=new URLSearchParams(h.slice(1));USER.sfToken=p.get('access_token');USER.sfInstance=p.get('instance_url');const expiresIn=parseInt(p.get('expires_in')||'7200');
+  const poll=setInterval(()=>{try{if(popup.closed){clearInterval(poll);return;}const h=popup.location.hash;if(h&&h.includes('access_token')){clearInterval(poll);popup.close();const p=new URLSearchParams(h.slice(1));USER.sfToken=p.get('access_token');
+      // instance_url is not in implicit flow hash — derive from id URL or settings
+      const idUrl=p.get('id')||''; // e.g. https://login.salesforce.com/id/00D.../005...
+      const sfLoginBase=S.settings.sfLoginUrl||'https://login.salesforce.com';
+      // Derive instance from id URL: id URLs are on login.sf.com but actual instance is org-specific
+      // Try to extract from 'id' URL hostname, or fall back to sfLoginUrl, or use stored org
+      let derivedInstance=p.get('instance_url')||'';
+      if(!derivedInstance){
+        // Use the sfLoginUrl as the base (works if org is set to psgpo.my.salesforce.com)
+        derivedInstance=sfLoginBase.replace('login.salesforce.com','psgpo.my.salesforce.com');
+        // If sfLoginUrl is already the org URL (not login.salesforce.com), use it directly
+        if(sfLoginBase.includes('.my.salesforce.com')||sfLoginBase.includes('.lightning.force.com')){
+          derivedInstance=sfLoginBase;
+        }
+      }
+      USER.sfInstance=derivedInstance||sfLoginBase;
+      const expiresIn=parseInt(p.get('expires_in')||'7200');
     // Save to both sessionStorage AND localStorage (with expiry)
     sessionStorage.setItem('vcs_sf_token',JSON.stringify({token:USER.sfToken,instance:USER.sfInstance}));
     localStorage.setItem('vcs_sf_token_ls',JSON.stringify({token:USER.sfToken,instance:USER.sfInstance,expiry:Date.now()+(expiresIn*1000)}));
-    // Store token with no expiry — persist until explicit disconnect or 401
+    // // Ensure we have an instance URL — implicit OAuth flow doesn't return instance_url
+    if(!USER.sfInstance){
+      const base=S.settings.sfLoginUrl||'https://psgpo.my.salesforce.com';
+      USER.sfInstance=base.includes('.my.salesforce.com')||base.includes('.force.com')?base:'https://psgpo.my.salesforce.com';
+    }
     localStorage.setItem('vcs_sf_token_ls',JSON.stringify({token:USER.sfToken,instance:USER.sfInstance}));
     sessionStorage.setItem('vcs_sf_token',JSON.stringify({token:USER.sfToken,instance:USER.sfInstance}));
+    console.log('[VCS SF] Connected. Instance:', USER.sfInstance);
     toast('✓ Salesforce connected');updateUserBadge();if(S.view)render();}}catch(e){}},500);
 }
 function restoreSFSession(){
   try {
-    // Restore SF token — always restore if present; only re-auth on actual 401
     const ls = JSON.parse(localStorage.getItem('vcs_sf_token_ls')||'null');
-    if(ls && ls.token && ls.instance) {
-      USER.sfToken=ls.token; USER.sfInstance=ls.instance; return;
+    if(ls && ls.token) {
+      USER.sfToken=ls.token;
+      USER.sfInstance=ls.instance||'';
+      return;
     }
     const s=JSON.parse(sessionStorage.getItem('vcs_sf_token')||'null');
-    if(s&&s.token){USER.sfToken=s.token;USER.sfInstance=s.instance;}
+    if(s&&s.token){USER.sfToken=s.token;USER.sfInstance=s.instance||'';}
   }catch(e){}
+  // If we have a token but no instance, derive from settings
+  if(USER.sfToken&&!USER.sfInstance){
+    const base=S?.settings?.sfLoginUrl||'https://psgpo.my.salesforce.com';
+    USER.sfInstance=base.includes('.my.salesforce.com')||base.includes('.force.com')?base:'https://psgpo.my.salesforce.com';
+  }
 }
 async function sfQuery(soql){
   if(!USER.sfToken||!USER.sfInstance) return null;
@@ -6910,9 +6937,15 @@ function renderSFBoard(c) {
 
 async function loadSFBoard(){
   if(!S._sfBoard) S._sfBoard={loading:false,data:null,error:null,lastLoaded:null};
-  if(!USER.sfToken||!USER.sfInstance){
-    S._sfBoard.error='Not connected to Salesforce. Use Connect Salesforce in Settings.';
+  if(!USER.sfToken){
+    S._sfBoard.error='Not connected to Salesforce. Click Connect Salesforce above.';
     render(); return;
+  }
+  // Ensure instance URL — fall back to configured org URL
+  if(!USER.sfInstance){
+    const base=S.settings.sfLoginUrl||'https://psgpo.my.salesforce.com';
+    USER.sfInstance=base.includes('.my.salesforce.com')||base.includes('.force.com')?base:'https://psgpo.my.salesforce.com';
+    console.log('[SF Board] Derived sfInstance:', USER.sfInstance);
   }
   S._sfBoard.loading=true; S._sfBoard.error=null; render();
   try{
@@ -7942,9 +7975,13 @@ function renderSpend(c) {
 }
 
 async function loadSpendData(){
-  if(!USER.sfToken||!USER.sfInstance){
-    SPEND_STATE.error='Not connected to Salesforce. Connect via Settings → Salesforce.';
+  if(!USER.sfToken){
+    SPEND_STATE.error='Not connected to Salesforce. Click Connect Salesforce above.';
     render(); return;
+  }
+  if(!USER.sfInstance){
+    const base=S.settings.sfLoginUrl||'https://psgpo.my.salesforce.com';
+    USER.sfInstance=base.includes('.my.salesforce.com')||base.includes('.force.com')?base:'https://psgpo.my.salesforce.com';
   }
   SPEND_STATE.loading=true; SPEND_STATE.error=null; render();
   try{
@@ -11480,6 +11517,15 @@ function renderAnalytics(c) {
 }
 
 async function loadAnalyticsSpend() {
+  if(!USER.sfToken){
+    S._analyticsSpendLoading=false;
+    toast('Not connected to Salesforce','#f59e0b');
+    render(); return;
+  }
+  if(!USER.sfInstance){
+    const base=S.settings.sfLoginUrl||'https://psgpo.my.salesforce.com';
+    USER.sfInstance=base.includes('.my.salesforce.com')||base.includes('.force.com')?base:'https://psgpo.my.salesforce.com';
+  }
   S._analyticsSpendData=null; S._analyticsSpendLoading=true;
   render();
   try {
