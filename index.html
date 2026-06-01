@@ -516,6 +516,7 @@ var VCS_VERSION = 'v1778431112';
 <div id="detail-panel" class="detail-panel" style="display:none">
   <div class="detail-resize-handle" id="detail-resize-handle"></div>
   <button class="detail-close" id="detail-close-btn">✕</button>
+  <div id="detail-sticky-hdr" style="position:sticky;top:0;z-index:20;background:var(--sb);padding:6px 11px 6px 11px;display:none;flex-wrap:wrap;align-items:center;gap:5px;border-bottom:1px solid var(--border)"></div>
   <div id="detail-body" class="detail-body"></div>
 </div>
 
@@ -3094,45 +3095,38 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   const isDismissed=S.dismissed.has(vendor.name);
   const snoozedUntil=S.snoozed[vendor.name];
 
-  // ── Name row — sticky so vendor name always visible while scrolling ──
-  // The original detail-close-btn (float:right, sticky top:0) floats above this.
-  // We use top:0 with a margin-top offset to sit flush under the close button area.
-  const nameRow=el('div',{style:{
-    position:'sticky',top:'0',zIndex:'9',
-    background:'var(--sb)',
-    padding:'6px 0 6px',
-    marginTop:'-2px',
-    display:'flex',alignItems:'center',gap:'5px',flexWrap:'wrap',
-  }});
+  // ── Sticky name header — lives outside detail-body in #detail-sticky-hdr ──
+  // This is a DIRECT child of .detail-panel (the scroll container) so sticky works
+  const stickySlot = $('detail-sticky-hdr');
+  stickySlot.innerHTML = '';
+  stickySlot.style.display = 'flex';
   const canEdit = (ROLE_PERMS[USER.role||'restricted']||{}).editNotes;
   if (canEdit && vendor.source === 'psd') {
-    const nameIn = el('input',{class:'detail-vendor-name detail-edit-field',style:{flex:'1',fontWeight:'700',fontSize:'16px',background:'transparent',border:'none',borderBottom:'1px solid var(--border)',padding:'0 0 2px 0'},value:vendor.name});
+    const nameIn = el('input',{class:'detail-vendor-name detail-edit-field',style:{flex:'1',fontWeight:'700',fontSize:'15px',background:'transparent',border:'none',borderBottom:'1px solid var(--border)',padding:'0 0 2px 0',color:'var(--text)'},value:vendor.name});
     nameIn.addEventListener('change',()=>{
       if (!nameIn.value.trim()) { nameIn.value = vendor.name; return; }
       const oldName = vendor.name;
       vendor.name = nameIn.value.trim();
       S.dirty.delete(oldName);
-      S.dirty.add(vendor.name); // track by new name only
+      S.dirty.add(vendor.name);
       vendor._dirty = true;
       markDirty(vendor);
       updateSidebar();
       logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendor.name,action:'Renamed vendor',from:oldName,to:vendor.name,source:'VCS'});
-      // Re-render the table so the new name shows everywhere immediately
       render();
     });
-    nameRow.appendChild(nameIn);
+    stickySlot.appendChild(nameIn);
   } else {
-    nameRow.appendChild(el('span',{class:'detail-vendor-name',style:{flex:'1'}},vendor.name));
+    stickySlot.appendChild(el('span',{style:{flex:'1',fontWeight:'700',fontSize:'15px',color:'var(--text)'}},vendor.name));
   }
-  if (isPriority(vendor)) nameRow.appendChild(priorityBadge());
-  if (tier) nameRow.appendChild(el('span',{class:'tier-badge',style:{background:TC[tier]||'#6b7280'}},tier));
-  if (vendor.score) nameRow.appendChild(el('span',{class:'score-badge'},`Score: ${vendor.score.toFixed(1)}`));
-  if (isDismissed) nameRow.appendChild(el('span',{class:'dismissed-badge'},'DISMISSED'));
-  if (snoozedUntil && snoozedUntil>new Date()) nameRow.appendChild(el('span',{class:'snoozed-badge'},`💤 until ${fmtDate(snoozedUntil)}`));
-  // Original detail-close-btn (float:right in HTML) is the single close button
+  if (isPriority(vendor)) stickySlot.appendChild(priorityBadge());
+  if (tier) stickySlot.appendChild(el('span',{class:'tier-badge',style:{background:TC[tier]||'#6b7280'}},tier));
+  if (vendor.score) stickySlot.appendChild(el('span',{class:'score-badge'},`Score: ${vendor.score.toFixed(1)}`));
+  if (isDismissed) stickySlot.appendChild(el('span',{class:'dismissed-badge'},'DISMISSED'));
+  if (snoozedUntil && snoozedUntil>new Date()) stickySlot.appendChild(el('span',{class:'snoozed-badge'},`💤 until ${fmtDate(snoozedUntil)}`));
 
+  // ── Detail body header (about / follow-up — not sticky) ──
   const hdr=el('div',{class:'detail-hdr'});
-  hdr.appendChild(nameRow);
   if (vendor.about) hdr.appendChild(el('p',{class:'detail-about'},String(vendor.about)));
   // Show follow-up if set
   const fu=parseDate(vendor.followUp);
@@ -5845,6 +5839,7 @@ function closeDetail() {
   _detailStack=[];
   $('detail-panel').style.display='none';
   $('detail-overlay').style.display='none';
+  const ss=$('detail-sticky-hdr'); if(ss){ss.innerHTML='';ss.style.display='none';}
 }
 
 // ─── Table Builder ────────────────────────────────────────────────────────────
@@ -6923,21 +6918,17 @@ async function loadSFBoard(){
     const activeVendors=S.vendors.filter(isVisible).slice(0,50);
     const nameList=activeVendors.map(v=>v.name.replace(/'/g,"\\'"   )).join("','");
 
-    // Split nested query into two simple queries for better compatibility
-    const [vendorResult,openCases,openTasks,spendResult]=await Promise.all([
-      sfQuery("SELECT Id,Name FROM Vendor__c WHERE Name IN ('"+nameList+"') LIMIT 50").catch(()=>({records:[]})),
-      sfQuery("SELECT Id,Subject,Status,Priority,CreatedDate,Vendor__r.Name FROM Case WHERE Status!='Closed' AND Vendor__r.Name IN ('"+nameList+"') ORDER BY Priority,CreatedDate DESC LIMIT 30").catch(()=>({records:[]})),
+    // Four parallel queries — all simple (no nested sub-selects)
+    const [openOpps,openCases,openTasks,spendResult]=await Promise.all([
+      sfQuery("SELECT Id,Name,StageName,Amount,CloseDate,Vendor__r.Name FROM Opportunity WHERE IsClosed=false AND Vendor__r.Name IN ('"+nameList+"') ORDER BY Amount DESC LIMIT 30").catch(()=>({records:[]})),
+      sfQuery("SELECT Id,Subject,Status,Priority,CreatedDate,CaseNumber,Vendor__r.Name FROM Case WHERE Status!='Closed' AND Vendor__r.Name IN ('"+nameList+"') ORDER BY Priority,CreatedDate DESC LIMIT 30").catch(()=>({records:[]})),
       sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name,Vendor__r.Name FROM Task WHERE IsClosed=false AND Vendor__r.Name IN ('"+nameList+"') ORDER BY ActivityDate ASC LIMIT 30").catch(()=>({records:[]})),
       sfQuery("SELECT Vendor__c,Vendor__r.Name,SUM(Sales__c) spendTotal FROM Spend__c WHERE Reported_Date__c >= "+yearStart+" AND Vendor__r.Name IN ('"+nameList+"') GROUP BY Vendor__c,Vendor__r.Name ORDER BY SUM(Sales__c) DESC LIMIT 30").catch(()=>({records:[]})),
     ]);
 
-    const opps=[], cases=[], tasks=[];
-    vendorResult?.records?.forEach(v=>{
-      (v.Opportunities__r?.records||[]).forEach(o=>opps.push({...o,_accountName:v.Name,_accountId:v.Id}));
-      (v.Cases__r?.records||[]).forEach(c2=>cases.push({...c2,_accountName:v.Name}));
-    });
-    openCases?.records?.forEach(c2=>{if(!cases.find(x=>x.Id===c2.Id))cases.push({...c2,_accountName:c2.Vendor__r?.Name});});
-    openTasks?.records?.forEach(t=>{if(!tasks.find(x=>x.Id===t.Id))tasks.push({...t,_accountName:t.Vendor__r?.Name});});
+    const opps=(openOpps?.records||[]).map(o=>({...o,_accountName:o.Vendor__r?.Name||'',_accountId:o.Id}));
+    const cases=(openCases?.records||[]).map(c2=>({...c2,_accountName:c2.Vendor__r?.Name||''}));
+    const tasks=(openTasks?.records||[]).map(t=>({...t,_accountName:t.Vendor__r?.Name||''}));
 
     // Spend leaderboard
     const spendLeaderboard=(spendResult?.records||[]).map(r=>({name:r['Vendor__r']?.Name||'',spend:Number(r.spendTotal||r.TotalAmt||r.expr0||0)})).filter(v=>v.name&&v.spend>0);
@@ -6962,12 +6953,22 @@ async function loadSFBoard(){
     });
     expiringWithOpps.sort((a,b)=>a.expiresIn-b.expiresIn);
 
+    // Check for SF query errors before storing
+    const sfErrors=[];
+    if(openOpps?._error) sfErrors.push('Opps: '+openOpps._message);
+    if(openCases?._error) sfErrors.push('Cases: '+openCases._message);
+    if(openTasks?._error) sfErrors.push('Tasks: '+openTasks._message);
+    if(spendResult?._error) sfErrors.push('Spend: '+spendResult._message);
+    if(sfErrors.length) { S._sfBoard.error='Some queries failed: '+sfErrors.join(' | '); }
     S._sfBoard.data={opps,cases,tasks,spendLeaderboard,trueUpAlerts,expiringWithOpps};
-    S._sfBoard.lastLoaded=new Date().toLocaleTimeString();
+    S._sfBoard.lastLoaded=new Date().toLocaleTimeString()+(sfErrors.length?' ⚠ partial':'');
     S._sfBoard.loading=false;
     render();
   }catch(e){
-    S._sfBoard.loading=false; S._sfBoard.error='Failed to load: '+e.message; render();
+    console.error('[VCS SF Board] Load failed:', e);
+    S._sfBoard.loading=false;
+    S._sfBoard.error='Load failed: '+e.message+' — Check browser console (F12) for SF query details.';
+    render();
   }
 }
 
@@ -7937,8 +7938,11 @@ async function loadSpendData(){
     }
 
     // Pull all spend records
-    const spendResult=await sfQuery("SELECT Id,Name,Vendor__c,Vendor__r.Name,Reported_Date__c,Category__c,Sales__c,Admin_Fee__c,Sum_of_Commission_value__c FROM Spend__c WHERE Vendor__c != null"+dateFilter+" ORDER BY Reported_Date__c DESC LIMIT 2000");
-    if(!spendResult?.records){SPEND_STATE.error='No spend records returned. '+(spendResult?._message||'Check SF connection.');SPEND_STATE.loading=false;render();return;}
+    // Query Spend__c — use only safe core fields
+    const spendResult=await sfQuery("SELECT Id,Name,Vendor__c,Vendor__r.Name,Reported_Date__c,Category__c,Sales__c,Admin_Fee__c FROM Spend__c WHERE Vendor__c != null"+dateFilter+" ORDER BY Reported_Date__c DESC LIMIT 2000");
+    if(!spendResult){SPEND_STATE.error='Salesforce not connected or query failed. Check Console for details.';SPEND_STATE.loading=false;render();return;}
+    if(spendResult._error){SPEND_STATE.error='SF Query error: '+(spendResult._message||'Unknown error');SPEND_STATE.loading=false;render();return;}
+    if(!spendResult.records?.length){SPEND_STATE.error='No spend records found for this period. Verify Spend__c has records in Salesforce.';SPEND_STATE.loading=false;render();return;}
 
     // Aggregate by vendor
     const byVendor={};
@@ -13102,60 +13106,61 @@ function updateAISessionLabel() {
 }
 
 function branchFromMessage(messageIndex) {
-  // Truncate history at messageIndex and create a branch
   const session = getActiveSession();
   if(!session) return;
-  // Save current session history first
-  saveAIHistory();
-  // Create new branch session
-  const parentId = session.id;
-  const newId = 's'+Date.now();
+  saveAIHistory(); // flush to session.history
+
+  // Create a branch group ID shared by all siblings
+  const groupId = session._branchGroup?.groupId || ('bg'+Date.now());
+  const groupAt = session._branchGroup?.at ?? messageIndex;
+
+  // Collect current siblings (this session + any others in the group)
+  const existingSiblings = _aiSessions
+    .filter(s => s._branchGroup?.groupId === groupId)
+    .map(s => s.id);
+  if(!existingSiblings.includes(session.id)) existingSiblings.unshift(session.id);
+
+  // Mark current session as part of this group
+  session._branchGroup = { groupId, at: groupAt, siblings: existingSiblings };
+
+  // New branch session
+  const newId = 'b' + Date.now();
   const branchSession = {
-    ...session,
     id: newId,
     title: session.title,
     history: session.history.slice(0, messageIndex),
-    _parentId: parentId,
-    _branchIndex: messageIndex
+    _branchGroup: { groupId, at: groupAt, siblings: [...existingSiblings, newId] }
   };
-  // Track this branch on the parent session
-  if(!session._branches) session._branches = [];
-  const branchPos = session._branches.findIndex(b=>b.index===messageIndex);
-  if(branchPos >= 0) {
-    session._branches[branchPos].ids.push(newId);
-  } else {
-    session._branches.push({index: messageIndex, ids: [session.id, newId], current: 1});
-  }
+
+  // Update all existing siblings to include newId
+  _aiSessions.forEach(s => {
+    if(s._branchGroup?.groupId === groupId) {
+      s._branchGroup.siblings = [...existingSiblings, newId];
+    }
+  });
+
   _aiSessions.push(branchSession);
-  _aiActiveSessionId = branchSession.id;
+  _aiActiveSessionId = newId;
   aiHistory = branchSession.history.slice();
-  // Rebuild messages UI
+
   const msgs = $('ai-messages');
-  if(msgs) {
-    msgs.innerHTML='';
-    aiHistory.forEach(msg=>appendAIMessage(msg.role,msg.content,msg.timestamp));
-  }
+  if(msgs) { msgs.innerHTML=''; aiHistory.forEach(m=>appendAIMessage(m.role,m.content,m.timestamp)); }
   saveAISessions();
   updateAISessionLabel();
+  toast('Branched — continue from message '+(messageIndex+1));
 }
 
 function getBranchNavForMessage(msgIndex) {
-  // Find if any session tracks branches at this message index
   const session = getActiveSession();
-  if(!session || !session._parentId) return null;
-  // Find parent session
-  const parent = _aiSessions.find(s=>s.id===session._parentId);
-  if(!parent || !parent._branches) return null;
-  const branchInfo = parent._branches.find(b=>b.index===msgIndex);
-  if(!branchInfo || branchInfo.ids.length < 2) return null;
-  const currentIdx = branchInfo.ids.indexOf(_aiActiveSessionId);
+  if(!session?._branchGroup) return null;
+  const { groupId, at, siblings } = session._branchGroup;
+  if(at !== msgIndex || !siblings || siblings.length < 2) return null;
+  const currentIdx = siblings.indexOf(_aiActiveSessionId);
   return {
-    total: branchInfo.ids.length,
+    total: siblings.length,
     current: currentIdx >= 0 ? currentIdx + 1 : 1,
-    prevId: currentIdx > 0 ? branchInfo.ids[currentIdx-1] : null,
-    nextId: currentIdx < branchInfo.ids.length-1 ? branchInfo.ids[currentIdx+1] : null,
-    allIds: branchInfo.ids,
-    index: msgIndex
+    prevId: currentIdx > 0 ? siblings[currentIdx-1] : null,
+    nextId: currentIdx < siblings.length-1 ? siblings[currentIdx+1] : null,
   };
 }
 
@@ -13256,33 +13261,35 @@ function appendAIMessage(role, content, timestamp) {
       }}, msgIndex < aiHistory.length-1 ? '↩ Edit & branch' : '✏ Edit');
     meta.appendChild(editBtn);
 
-    // Branch navigation: show ◀ N/M ▶ if this message has branches
-    // Use a slight delay so session state is settled
+    // Branch navigation: show ◀ 1/2 ▶ on the branching message
     setTimeout(()=>{
-      if(!meta.parentNode) return; // element was removed
+      if(!meta.parentNode) return;
       const nav = getBranchNavForMessage(msgIndex);
-      if(nav && nav.total > 1) {
-        const navEl = document.createElement('div');
-        navEl.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:6px;';
-        if(nav.prevId) {
-          const prev = document.createElement('button');
-          prev.textContent='◀'; prev.style.cssText='background:none;border:none;color:var(--blue);cursor:pointer;font-size:10px;padding:0 2px;';
-          prev.onclick=()=>switchAISession(nav.prevId);
-          navEl.appendChild(prev);
-        }
-        const lbl = document.createElement('span');
-        lbl.textContent = nav.current+'/'+nav.total;
-        lbl.style.cssText = 'font-size:9px;color:var(--muted);';
-        navEl.appendChild(lbl);
-        if(nav.nextId) {
-          const next = document.createElement('button');
-          next.textContent='▶'; next.style.cssText='background:none;border:none;color:var(--blue);cursor:pointer;font-size:10px;padding:0 2px;';
-          next.onclick=()=>switchAISession(nav.nextId);
-          navEl.appendChild(next);
-        }
-        meta.appendChild(navEl);
+      if(!nav || nav.total < 2) return;
+      const navEl = document.createElement('span');
+      navEl.style.cssText = 'display:inline-flex;align-items:center;gap:3px;margin-left:8px;vertical-align:middle;';
+      if(nav.prevId) {
+        const prev = document.createElement('button');
+        prev.innerHTML='&#9664;';
+        prev.title='Previous version';
+        prev.style.cssText='background:rgba(79,124,255,.15);border:1px solid rgba(79,124,255,.3);color:var(--blue);cursor:pointer;font-size:9px;padding:1px 5px;border-radius:3px;line-height:1;';
+        prev.onclick=()=>switchAISession(nav.prevId);
+        navEl.appendChild(prev);
       }
-    }, 50);
+      const lbl = document.createElement('span');
+      lbl.textContent = nav.current+'/'+nav.total;
+      lbl.style.cssText = 'font-size:9px;color:var(--muted);font-weight:600;';
+      navEl.appendChild(lbl);
+      if(nav.nextId) {
+        const next = document.createElement('button');
+        next.innerHTML='&#9654;';
+        next.title='Next version';
+        next.style.cssText='background:rgba(79,124,255,.15);border:1px solid rgba(79,124,255,.3);color:var(--blue);cursor:pointer;font-size:9px;padding:1px 5px;border-radius:3px;line-height:1;';
+        next.onclick=()=>switchAISession(nav.nextId);
+        navEl.appendChild(next);
+      }
+      meta.appendChild(navEl);
+    }, 80);
   }
   wrap.appendChild(meta);
   msgs.appendChild(wrap);
