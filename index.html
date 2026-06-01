@@ -6772,167 +6772,206 @@ function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt
 // ─── Salesforce Dashboard Board ───────────────────────────────────────────────
 function renderSFBoard(c) {
   c.innerHTML='';
-  const wrap=el('div',{style:{maxWidth:'1100px',margin:'0 auto',padding:'12px 0'}});
-  const hdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'baseline',marginBottom:'12px'}});
-  hdr.appendChild(el('h2',{style:{margin:'0',fontSize:'16px',fontWeight:'700'}},'☁ Salesforce Board'));
-  hdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},'Revenue intelligence across all vendors'));
-  wrap.appendChild(hdr);
+  const wrap=el('div',{style:{maxWidth:'1200px',margin:'0 auto',padding:'12px 0'}});
 
   if(!USER.sfToken){
-    const banner=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'6px',padding:'20px',textAlign:'center'}});
-    banner.appendChild(el('div',{style:{fontSize:'24px',marginBottom:'8px'}},'☁'));
-    banner.appendChild(el('p',{style:{fontWeight:'600',marginBottom:'4px'}},'Connect Salesforce to use this view'));
-    const row=el('div',{style:{display:'flex',gap:'8px',justifyContent:'center',marginTop:'8px'}});
-    row.appendChild(el('button',{class:'btn-primary',onclick(){if(!S.settings.sfClientId){S.view='settings';render();}else{sfConnect();}}},'🔗 Connect Salesforce'));
-    banner.appendChild(row); wrap.appendChild(banner); c.appendChild(wrap); return;
+    const banner=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'6px',padding:'28px',textAlign:'center',maxWidth:'480px',margin:'40px auto'}});
+    banner.appendChild(el('div',{style:{fontSize:'32px',marginBottom:'8px'}},'☁'));
+    banner.appendChild(el('p',{style:{fontWeight:'700',fontSize:'14px',margin:'0 0 4px'}},'Connect Salesforce'));
+    banner.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',margin:'0 0 12px'}},'See live opportunities, cases, tasks, and spend intelligence across your vendor portfolio.'));
+    banner.appendChild(el('button',{class:'btn-primary',onclick(){if(!S.settings.sfClientId){S.view='settings';render();}else{sfConnect();}}},'🔗 Connect Salesforce'));
+    wrap.appendChild(banner); c.appendChild(wrap); return;
   }
 
   if(!S._sfBoard) S._sfBoard={loading:false,data:null,error:null,lastLoaded:null};
   const sb=S._sfBoard;
 
-  const toolbar=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'12px',flexWrap:'wrap'}});
+  // ── Header toolbar ──
+  const toolbar=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'16px',flexWrap:'wrap'}});
+  toolbar.appendChild(el('h2',{style:{margin:'0',fontSize:'16px',fontWeight:'700',flex:'1'}},'☁ Salesforce Board'));
+  if(sb.lastLoaded) toolbar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Updated: '+sb.lastLoaded));
   const loadBtn=el('button',{class:'btn-primary',onclick:function(){console.log('[SF Board] btn clicked');loadSFBoard();}},sb.loading?'⏳ Loading...':'🔄 Load / Refresh');
   loadBtn.disabled=sb.loading;
-  if(sb.loading) loadBtn.style.opacity='0.6';
   toolbar.appendChild(loadBtn);
-  if(sb.lastLoaded) toolbar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Last loaded: '+sb.lastLoaded));
   wrap.appendChild(toolbar);
 
-  if(sb.error) wrap.appendChild(el('div',{style:{color:'var(--red)',fontSize:'10px',padding:'8px',background:'rgba(239,68,68,.06)',borderRadius:'4px',marginBottom:'8px'}},sb.error));
+  if(sb.error) wrap.appendChild(el('div',{style:{color:'var(--red)',fontSize:'10px',padding:'8px 12px',background:'rgba(239,68,68,.06)',borderRadius:'4px',marginBottom:'12px'}},sb.error));
 
-  if(sb.data){
-    const {opps,cases,tasks,spendLeaderboard,trueUpAlerts,expiringWithOpps}=sb.data;
-    const fin=['admin','procurement','manager','cro','finance_sr','finance_jr'].includes(USER.role);
+  if(sb.loading){
+    const loader=el('div',{style:{textAlign:'center',padding:'60px',color:'var(--muted)'}});
+    loader.appendChild(el('div',{style:{fontSize:'32px',marginBottom:'10px'}},'☁'));
+    loader.appendChild(el('div',{style:{fontSize:'13px',fontWeight:'600'}},'Loading Salesforce data...'));
+    loader.appendChild(el('div',{style:{fontSize:'10px',marginTop:'4px'}},'Querying opportunities, cases, tasks and spend'));
+    wrap.appendChild(loader); c.appendChild(wrap); return;
+  }
 
-    // KPI tiles
-    const totalPipeline=opps.reduce((s,o)=>s+(o.Amount||0),0);
-    const kpiRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'8px',marginBottom:'16px'}});
-    [
-      {label:'Open Opportunities',val:opps.length,color:'var(--blue)',show:fin},
-      {label:'Pipeline Value',val:'$'+totalPipeline.toLocaleString(),color:'var(--green)',show:fin},
-      {label:'Open Cases',val:cases.length,color:cases.filter(x=>x.Priority==='High').length>0?'var(--red)':'var(--amber)',show:true},
-      {label:'Open Tasks',val:tasks.length,color:'var(--muted)',show:true},
-      {label:'True-Up Alerts',val:trueUpAlerts?.length||0,color:(trueUpAlerts?.length||0)>0?'var(--red)':'var(--green)',show:fin},
-    ].filter(k=>k.show).forEach(k=>{
-      const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'10px',textAlign:'center'}});
-      card.appendChild(el('div',{style:{fontSize:'20px',fontWeight:'700',color:k.color}},k.val));
-      card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px'}},k.label));
-      kpiRow.appendChild(card);
+  if(!sb.data){
+    const empty=el('div',{style:{textAlign:'center',padding:'60px 20px',color:'var(--muted)'}});
+    empty.appendChild(el('div',{style:{fontSize:'32px',marginBottom:'8px'}},'📊'));
+    empty.appendChild(el('div',{style:{fontSize:'12px',fontWeight:'600',marginBottom:'4px'}},'No data loaded yet'));
+    empty.appendChild(el('div',{style:{fontSize:'10px'}},'Click Load / Refresh to pull live Salesforce data'));
+    wrap.appendChild(empty); c.appendChild(wrap); return;
+  }
+
+  const {opps,cases,tasks,spendLeaderboard,trueUpAlerts,expiringWithOpps}=sb.data;
+
+  // ── KPI summary row ──
+  const totalPipelineVal=opps.reduce((s,o)=>s+Number(o.Amount||0),0);
+  const kpis=[
+    {icon:'💼',val:opps.length,label:'Open Opportunities',color:'var(--blue)',click:()=>document.getElementById('sf-opps-sec')?.scrollIntoView({behavior:'smooth'})},
+    {icon:'💰',val:'$'+Math.round(totalPipelineVal).toLocaleString(),label:'Pipeline Value',color:'var(--green)',click:null},
+    {icon:'🎫',val:cases.length,label:'Open Cases',color:cases.filter(x=>x.Priority==='High').length>0?'var(--red)':'var(--amber)',click:()=>document.getElementById('sf-cases-sec')?.scrollIntoView({behavior:'smooth'})},
+    {icon:'✅',val:tasks.length,label:'Open Tasks',color:'var(--muted)',click:()=>document.getElementById('sf-tasks-sec')?.scrollIntoView({behavior:'smooth'})},
+    {icon:'⚠',val:trueUpAlerts.length,label:'True-Up Alerts',color:trueUpAlerts.length>0?'var(--amber)':'var(--green)',click:()=>document.getElementById('sf-trueup-sec')?.scrollIntoView({behavior:'smooth'})},
+  ];
+  const kpiRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'8px',marginBottom:'16px'}});
+  kpis.forEach(k=>{
+    const tile=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px 10px',textAlign:'center',cursor:k.click?'pointer':'default'},onclick:k.click||null});
+    tile.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'2px'}},k.icon+' '+k.label));
+    tile.appendChild(el('div',{style:{fontSize:'20px',fontWeight:'700',color:k.color}},String(k.val)));
+    kpiRow.appendChild(tile);
+  });
+  wrap.appendChild(kpiRow);
+
+  // ── Two-column layout: Opps | Cases ──
+  const twoCol=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',marginBottom:'12px'}});
+
+  // Opportunities panel
+  const oppsPanel=el('div',{id:'sf-opps-sec',style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
+  const oppHdr=el('div',{style:{display:'flex',alignItems:'center',padding:'10px 12px',borderBottom:'1px solid var(--border)',background:'var(--card)'}});
+  oppHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'💼 Open Opportunities ('+opps.length+')'));
+  if(USER.sfInstance) oppHdr.appendChild(el('a',{href:USER.sfInstance+'/lightning/o/Opportunity/list',target:'_blank',style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none'}},'View in SF ↗'));
+  oppsPanel.appendChild(oppHdr);
+  if(!opps.length){
+    oppsPanel.appendChild(el('div',{style:{padding:'20px',textAlign:'center',fontSize:'10px',color:'var(--muted)'}},'No open opportunities matched to VCS vendors'));
+  } else {
+    const oppList=el('div',{style:{maxHeight:'300px',overflowY:'auto'}});
+    opps.slice(0,25).forEach(o=>{
+      const row=el('div',{style:{padding:'8px 12px',borderBottom:'1px solid var(--border)',display:'flex',gap:'8px',alignItems:'center',cursor:'pointer'},
+        onclick(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view','_blank');}});
+      const info=el('div',{style:{flex:'1',minWidth:'0'}});
+      info.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},o.Name||'Unnamed'));
+      info.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},o._accountName+(o.CloseDate?' · Close: '+new Date(o.CloseDate).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'')+(o.StageName?' · '+o.StageName:'')));
+      row.appendChild(info);
+      if(o.Amount) row.appendChild(el('span',{style:{color:'var(--green)',fontSize:'10px',fontWeight:'600',flexShrink:'0'}},'$'+Math.round(Number(o.Amount)).toLocaleString()));
+      oppList.appendChild(row);
     });
-    wrap.appendChild(kpiRow);
+    if(opps.length>25) oppList.appendChild(el('div',{style:{padding:'6px 12px',fontSize:'9px',color:'var(--muted)',textAlign:'center'}},'+'+( opps.length-25)+' more'));
+    oppsPanel.appendChild(oppList);
+  }
+  twoCol.appendChild(oppsPanel);
 
-    // Dashboard columns
-    const colCount=fin?4:2;
-    const cols=el('div',{style:{display:'grid',gridTemplateColumns:`repeat(${colCount},1fr)`,gap:'12px'}});
+  // Cases panel
+  const casesPanel=el('div',{id:'sf-cases-sec',style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
+  const caseHdr=el('div',{style:{display:'flex',alignItems:'center',padding:'10px 12px',borderBottom:'1px solid var(--border)',background:'var(--card)'}});
+  caseHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'🎫 Open Cases ('+cases.length+')'));
+  if(USER.sfInstance) caseHdr.appendChild(el('a',{href:USER.sfInstance+'/lightning/o/Case/list',target:'_blank',style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none'}},'View in SF ↗'));
+  casesPanel.appendChild(caseHdr);
+  if(!cases.length){
+    casesPanel.appendChild(el('div',{style:{padding:'20px',textAlign:'center',fontSize:'10px',color:'var(--muted)'}},'No open cases matched to VCS vendors'));
+  } else {
+    const caseList=el('div',{style:{maxHeight:'300px',overflowY:'auto'}});
+    const sortedCases=[...cases].sort((a,b)=>{const po={High:0,Medium:1,Low:2};return (po[a.Priority]||3)-(po[b.Priority]||3);});
+    sortedCases.slice(0,25).forEach(cs=>{
+      const pc={'High':'var(--red)','Medium':'var(--amber)','Low':'var(--muted)'}[cs.Priority]||'var(--muted)';
+      const row=el('div',{style:{padding:'8px 12px',borderBottom:'1px solid var(--border)',display:'flex',gap:'8px',alignItems:'center',cursor:'pointer',borderLeft:'3px solid '+pc},
+        onclick(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Case/'+cs.Id+'/view','_blank');}});
+      const info=el('div',{style:{flex:'1',minWidth:'0'}});
+      info.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},cs.Subject||'No subject'));
+      info.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},(cs.CaseNumber?'#'+cs.CaseNumber+' · ':'')+cs._accountName+(cs.Status?' · '+cs.Status:'')));
+      row.appendChild(info);
+      row.appendChild(el('span',{style:{color:pc,fontSize:'9px',fontWeight:'600',flexShrink:'0'}},cs.Priority||''));
+      caseList.appendChild(row);
+    });
+    if(cases.length>25) caseList.appendChild(el('div',{style:{padding:'6px 12px',fontSize:'9px',color:'var(--muted)',textAlign:'center'}},'+'+( cases.length-25)+' more'));
+    casesPanel.appendChild(caseList);
+  }
+  twoCol.appendChild(casesPanel);
+  wrap.appendChild(twoCol);
 
-    // Spend Leaderboard
-    if(fin && spendLeaderboard?.length){
-      const col=el('div',{});
-      col.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'6px',color:'var(--blue)'}},'💰 Top Vendors by Spend (YTD)'));
-      spendLeaderboard.slice(0,8).forEach((v,i)=>{
-        const vendor=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
-        const adminPct=parseFloat(String(vendor?.adminFee||'').replace(/[^0-9.]/g,''))||0;
-        const expected=adminPct?Math.round(v.spend*adminPct/100):null;
-        const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'4px',padding:'7px 9px',marginBottom:'4px',cursor:vendor?'pointer':'default'},onclick(){if(vendor)openDetail(vendor);}});
-        const top=el('div',{style:{display:'flex',gap:'6px',alignItems:'center'}});
-        top.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'14px'}},`${i+1}.`));
-        top.appendChild(el('span',{style:{fontWeight:'600',fontSize:'10px',flex:'1',color:vendor?'var(--blue)':'var(--text)'}},v.name));
-        top.appendChild(el('span',{style:{fontWeight:'700',fontSize:'10px',color:'var(--green)'}},'$'+v.spend.toLocaleString()));
-        card.appendChild(top);
-        if(expected) card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px',paddingLeft:'18px'}},'Expected commission: $'+expected.toLocaleString()+' ('+adminPct+'%)'));
-        col.appendChild(card);
-      });
-      cols.appendChild(col);
-    }
+  // ── Tasks panel ──
+  if(tasks.length){
+    const taskSec=el('div',{id:'sf-tasks-sec',style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'12px'}});
+    const tkHdr=el('div',{style:{display:'flex',alignItems:'center',padding:'10px 12px',borderBottom:'1px solid var(--border)',background:'var(--card)'}});
+    tkHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'✅ Open Tasks ('+tasks.length+')'));
+    if(USER.sfInstance) tkHdr.appendChild(el('a',{href:USER.sfInstance+'/lightning/o/Task/list',target:'_blank',style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none'}},'View in SF ↗'));
+    taskSec.appendChild(tkHdr);
+    const grid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:'8px',padding:'10px'}});
+    tasks.slice(0,30).forEach(t=>{
+      const card=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',padding:'8px',fontSize:'10px',cursor:'pointer'},
+        onclick(){if(USER.sfInstance&&t.Id)window.open(USER.sfInstance+'/lightning/r/Task/'+t.Id+'/view','_blank');}});
+      card.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'2px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},t.Subject||'Task'));
+      card.appendChild(el('div',{style:{color:'var(--muted)',fontSize:'9px'}},(t['Owner']?.Name||t.Owner_Name||'')+(t.ActivityDate?' · Due: '+new Date(t.ActivityDate).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'')+(t.Status?' · '+t.Status:'')));
+      grid.appendChild(card);
+    });
+    taskSec.appendChild(grid);
+    if(tasks.length>30) taskSec.appendChild(el('div',{style:{padding:'6px 12px',fontSize:'9px',color:'var(--muted)',textAlign:'center',borderTop:'1px solid var(--border)'}},'+'+( tasks.length-30)+' more tasks'));
+    wrap.appendChild(taskSec);
+  }
 
-    // True-Up Alerts
-    if(fin && trueUpAlerts?.length){
-      const col=el('div',{});
-      col.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'6px',color:'var(--red)'}},'🔴 True-Up Alerts'));
-      trueUpAlerts.slice(0,8).forEach(v=>{
-        const vendor=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
-        const card=el('div',{style:{background:'var(--sb)',border:'1px solid rgba(239,68,68,.3)',borderLeft:'3px solid var(--red)',borderRadius:'4px',padding:'7px 9px',marginBottom:'4px',cursor:vendor?'pointer':'default'},onclick(){if(vendor)openDetail(vendor);}});
-        card.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',color:vendor?'var(--blue)':'var(--text)'}},v.name));
-        const detail=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px',display:'flex',gap:'8px',flexWrap:'wrap'}});
-        detail.appendChild(el('span',{},'Spend: $'+v.spend.toLocaleString()));
-        detail.appendChild(el('span',{style:{color:'var(--green)'}},'Expected: $'+v.expected.toLocaleString()));
-        if(v.adminPct) detail.appendChild(el('span',{},'Rate: '+v.adminPct+'%'));
-        else detail.appendChild(el('span',{style:{color:'var(--amber)'}},'⚠ No admin fee set'));
-        card.appendChild(detail);
-        col.appendChild(card);
-      });
-      cols.appendChild(col);
-    }
+  // ── Spend Leaderboard ──
+  if(spendLeaderboard.length){
+    const spendSec=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'12px'}});
+    spendSec.appendChild(el('div',{style:{padding:'10px 12px',borderBottom:'1px solid var(--border)',background:'var(--card)',fontWeight:'700',fontSize:'11px'}},'📊 YTD Spend Leaderboard'));
+    const maxSpend=spendLeaderboard[0]?.spend||1;
+    const spList=el('div',{style:{padding:'8px 12px'}});
+    spendLeaderboard.slice(0,10).forEach((v,i)=>{
+      const pct=Math.round((v.spend/maxSpend)*100);
+      const row=el('div',{style:{marginBottom:'8px'}});
+      const labelRow=el('div',{style:{display:'flex',justifyContent:'space-between',fontSize:'10px',marginBottom:'3px'}});
+      labelRow.appendChild(el('span',{style:{fontWeight:'600'}},v.name));
+      labelRow.appendChild(el('span',{style:{color:'var(--green)',fontWeight:'600'}},'$'+Math.round(v.spend).toLocaleString()));
+      row.appendChild(labelRow);
+      const bar=el('div',{style:{height:'6px',background:'var(--border)',borderRadius:'3px',overflow:'hidden'}});
+      bar.appendChild(el('div',{style:{height:'100%',width:pct+'%',background:i===0?'var(--green)':i<3?'var(--blue)':'var(--muted)',borderRadius:'3px'}}));
+      row.appendChild(bar);
+      spList.appendChild(row);
+    });
+    spendSec.appendChild(spList);
+    wrap.appendChild(spendSec);
+  }
 
-    // Open Cases (high priority first)
-    if(cases.length){
-      const col=el('div',{});
-      col.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'6px',color:'var(--amber)'}},'🎫 Open Cases ('+cases.length+')'));
-      const sorted=[...cases].sort((a,b)=>{const p={High:0,Medium:1,Low:2};return (p[a.Priority]??3)-(p[b.Priority]??3);});
-      sorted.slice(0,8).forEach(c2=>{
-        const pc=c2.Priority==='High'?'var(--red)':c2.Priority==='Medium'?'var(--amber)':'var(--muted)';
-        const vendor=c2._accountName?S.vendors.find(sv=>vendorNamesMatch(sv.name,c2._accountName)):null;
-        const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderLeft:'3px solid '+pc,borderRadius:'4px',padding:'6px 9px',marginBottom:'4px',cursor:vendor?'pointer':'default'},onclick(){if(vendor)openDetail(vendor);}});
-        card.appendChild(el('div',{style:{fontWeight:'500',fontSize:'10px'}},c2.Subject||c2.CaseNumber));
-        const meta=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px',display:'flex',gap:'8px'}});
-        if(c2._accountName) meta.appendChild(el('span',{style:{color:'var(--blue)'}},c2._accountName));
-        meta.appendChild(el('span',{},c2.Status));
-        if(c2.Priority) meta.appendChild(el('span',{style:{color:pc,fontWeight:'600'}},c2.Priority));
-        card.appendChild(meta); col.appendChild(card);
-      });
-      if(cases.length>8) col.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',padding:'3px 0'}},'+' +(cases.length-8)+' more cases'));
-      cols.appendChild(col);
-    }
+  // ── True-Up Alerts ──
+  if(trueUpAlerts.length){
+    const alertSec=el('div',{id:'sf-trueup-sec',style:{background:'rgba(245,158,11,.05)',border:'1px solid rgba(245,158,11,.3)',borderRadius:'6px',overflow:'hidden',marginBottom:'12px'}});
+    alertSec.appendChild(el('div',{style:{padding:'10px 12px',borderBottom:'1px solid rgba(245,158,11,.3)',fontWeight:'700',fontSize:'11px',color:'var(--amber)'}},'⚠ True-Up Alerts — Spend Without Contracted Fees ('+trueUpAlerts.length+')'));
+    const tbl2=el('table',{class:'data-table',style:{margin:'0'}});
+    const th2=el('thead'); const tr2=el('tr');
+    ['Vendor','YTD Spend','Admin %','Expected Commission','Action'].forEach(h=>tr2.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+    th2.appendChild(tr2); tbl2.appendChild(th2);
+    const tb2=el('tbody');
+    trueUpAlerts.slice(0,10).forEach(v=>{
+      const tr3=el('tr',{style:{cursor:'pointer'},onclick(){S.view='spend';render();}});
+      tr3.appendChild(el('td',{style:{fontWeight:'600',fontSize:'10px'}},v.name));
+      tr3.appendChild(el('td',{style:{color:'var(--blue)',fontWeight:'600',fontSize:'10px'}},'$'+Math.round(v.spend).toLocaleString()));
+      tr3.appendChild(el('td',{style:{color:v.adminPct?'var(--green)':'var(--red)',fontSize:'10px'}},v.adminPct?(v.adminPct+'%'):'Not set'));
+      tr3.appendChild(el('td',{style:{color:'var(--green)',fontSize:'10px'}},v.expected?'$'+v.expected.toLocaleString():'—'));
+      tr3.appendChild(el('td',{},[
+        el('button',{class:'btn-xs btn-ghost',onclick(e){e.stopPropagation();openDetail(S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name)));}})
+      ]).children[0].textContent='Set Fee');
+      tb2.appendChild(tr3);
+    });
+    tbl2.appendChild(tb2);
+    alertSec.appendChild(tbl2);
+    wrap.appendChild(alertSec);
+  }
 
-    // Expiring contracts with open opportunities
-    if(expiringWithOpps?.length){
-      const col=el('div',{});
-      col.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'6px',color:'var(--amber)'}},'⏰ Expiring + Open Opps'));
-      expiringWithOpps.slice(0,8).forEach(v=>{
-        const vendor=S.vendors.find(sv=>sv.name===v.vendorName);
-        const card=el('div',{style:{background:'var(--sb)',border:'1px solid rgba(245,158,11,.3)',borderLeft:'3px solid var(--amber)',borderRadius:'4px',padding:'7px 9px',marginBottom:'4px',cursor:vendor?'pointer':'default'},onclick(){if(vendor)openDetail(vendor);}});
-        card.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',color:vendor?'var(--blue)':'var(--text)'}},v.vendorName));
-        const detail=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px',display:'flex',gap:'8px',flexWrap:'wrap'}});
-        detail.appendChild(el('span',{style:{color:'var(--red)'}},'Expires: '+v.expiresIn+'d'));
-        detail.appendChild(el('span',{style:{color:'var(--green)'}},'Opp: '+v.oppName));
-        if(v.oppAmount) detail.appendChild(el('span',{},'$'+Number(v.oppAmount).toLocaleString()));
-        card.appendChild(detail); col.appendChild(card);
-      });
-      cols.appendChild(col);
-    }
-
-    if(cols.childElementCount) wrap.appendChild(cols);
-
-    // Open Tasks
-    if(tasks.length){
-      wrap.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',margin:'12px 0 6px',color:'var(--muted)'}},'✅ Open Tasks ('+tasks.length+')'));
-      const taskGrid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:'6px'}});
-      const today=new Date();
-      tasks.slice(0,12).forEach(task=>{
-        const dl=task.ActivityDate?Math.ceil((new Date(task.ActivityDate)-today)/86400000):null;
-        const urgColor=dl!==null&&dl<0?'var(--red)':dl!==null&&dl<=3?'var(--amber)':'var(--border)';
-        const vendor=task._accountName?S.vendors.find(sv=>vendorNamesMatch(sv.name,task._accountName)):null;
-        const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderLeft:'3px solid '+urgColor,borderRadius:'4px',padding:'6px 9px',cursor:vendor?'pointer':'default'},onclick(){if(vendor)openDetail(vendor);}});
-        card.appendChild(el('div',{style:{fontWeight:'500',fontSize:'10px'}},task.Subject||'(no subject)'));
-        const meta=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px',display:'flex',gap:'8px'}});
-        if(task._accountName) meta.appendChild(el('span',{style:{color:'var(--blue)'}},task._accountName));
-        if(task.ActivityDate) meta.appendChild(el('span',{style:{color:urgColor}},new Date(task.ActivityDate).toLocaleDateString()+(dl<0?' (overdue)':dl===0?' (today)':'')));
-        if(task.Owner?.Name) meta.appendChild(el('span',{},task.Owner.Name));
-        card.appendChild(meta); taskGrid.appendChild(card);
-      });
-      wrap.appendChild(taskGrid);
-    }
-
-    if(!opps.length&&!cases.length&&!tasks.length&&!spendLeaderboard?.length)
-      wrap.appendChild(el('p',{style:{color:'var(--green)',fontSize:'12px',textAlign:'center',padding:'30px'}},'✅ No open opportunities, cases, or tasks across all vendors.'));
-
-  } else if(!sb.loading){
-    wrap.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'11px',textAlign:'center',padding:'30px'}},'Click "Load / Refresh" to fetch live data from Salesforce across all your vendors.'));
+  // ── Expiring with Opps ──
+  if(expiringWithOpps.length){
+    const expSec=el('div',{style:{background:'rgba(239,68,68,.05)',border:'1px solid rgba(239,68,68,.2)',borderRadius:'6px',padding:'10px 12px',marginBottom:'12px'}});
+    expSec.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',color:'var(--red)',marginBottom:'8px'}},'🔥 Expiring Contracts with Open Opportunities ('+expiringWithOpps.length+')'));
+    expiringWithOpps.forEach(v=>{
+      const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
+      row.appendChild(el('span',{style:{flex:'1',fontWeight:'600'}},v.vendorName));
+      row.appendChild(el('span',{style:{color:'var(--red)',fontWeight:'700'}},v.expiresIn+'d'));
+      row.appendChild(el('span',{style:{color:'var(--muted)'}},v.oppName));
+      if(v.oppAmount) row.appendChild(el('span',{style:{color:'var(--green)'}},'$'+Math.round(Number(v.oppAmount)).toLocaleString()));
+      expSec.appendChild(row);
+    });
+    wrap.appendChild(expSec);
   }
 
   c.appendChild(wrap);
-
-
 }
 
 
@@ -7834,82 +7873,97 @@ function renderContracts(c) {
 }
 
 // ─── Spend Analytics ─────────────────────────────────────────────────────────
-const SPEND_STATE = {loading:false, data:null, error:null, lastLoaded:null, period:'year', vendorFilter:''};
+const SPEND_STATE = {loading:false, data:null, error:null, lastLoaded:null, period:'year', vendorFilter:'', catFilter:'', sortKey:'totalSpend', sortDir:-1, showGapsOnly:false};
 
 function renderSpendTable(wrap) {
   if(!SPEND_STATE.data) return;
   const {vendors:vendorSpend, totals} = SPEND_STATE.data;
-  const filtered = SPEND_STATE.vendorFilter
-    ? vendorSpend.filter(v=>v.name.toLowerCase().includes(SPEND_STATE.vendorFilter.toLowerCase()))
-    : vendorSpend;
+
+  // Apply filters
+  const fq = (SPEND_STATE.vendorFilter||'').toLowerCase().trim();
+  const cf = SPEND_STATE.catFilter||'';
+  let filtered = vendorSpend;
+  if(fq) filtered = filtered.filter(v=>v.name.toLowerCase().includes(fq)||(v.category||'').toLowerCase().includes(fq));
+  if(cf) filtered = filtered.filter(v=>(v.category||'')=== cf);
+  if(SPEND_STATE.showGapsOnly) filtered = filtered.filter(v=>v.gap<-0.01);
+
+  // Apply sort
+  const sk = SPEND_STATE.sortKey||'totalSpend';
+  const sd = SPEND_STATE.sortDir||-1;
+  filtered = [...filtered].sort((a,b)=>sd*((Number(a[sk])||0)-(Number(b[sk])||0)));
 
   // KPI tiles
-  const kpiRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'8px',marginBottom:'16px'}});
   const totalSpend=totals.totalSpend||0;
+  const totalFees=totals.totalFees||0;
   const totalExpected=totals.totalExpected||0;
-  const totalGap=totals.totalGap||0;
   const gapVendors=vendorSpend.filter(v=>v.gap<-0.01).length;
-  [{label:'Total Spend',val:'$'+totalSpend.toLocaleString(),color:'var(--blue)'},
-   {label:'Expected Commission',val:'$'+totalExpected.toLocaleString(),color:'var(--green)'},
-   {label:'Commission Gap',val:'$'+Math.abs(totalGap).toLocaleString()+(totalGap<0?' owed':''),color:totalGap<-100?'var(--red)':'var(--muted)'},
-   {label:'Vendors with Gaps',val:gapVendors,color:gapVendors>0?'var(--amber)':'var(--green)'},
+  const actualRate=totalSpend>0?((totalFees/totalSpend)*100).toFixed(2):0;
+  const kpiRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'8px',marginBottom:'12px'}});
+  [{label:'Total Spend',val:'$'+Math.round(totalSpend).toLocaleString(),color:'var(--blue)',sub:''},
+   {label:'Fees Received',val:'$'+Math.round(totalFees).toLocaleString(),color:'var(--green)',sub:'Actual: '+actualRate+'%'},
+   {label:'Expected Commission',val:'$'+Math.round(totalExpected).toLocaleString(),color:'var(--muted)',sub:'At contracted rates'},
+   {label:'Commission Gap',val:'$'+Math.round(Math.abs(totalSpend*0.01-totalFees)).toLocaleString(),color:gapVendors>3?'var(--red)':'var(--amber)',sub:gapVendors+' vendors under-paying'},
+   {label:'Vendors with Data',val:vendorSpend.length,color:'var(--muted)',sub:filtered.length+' shown'},
   ].forEach(k=>{
-    const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px',textAlign:'center'}});
-    card.appendChild(el('div',{style:{fontSize:'20px',fontWeight:'700',color:k.color}},k.val));
+    const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'10px',textAlign:'center'}});
+    card.appendChild(el('div',{style:{fontSize:'18px',fontWeight:'700',color:k.color}},String(k.val)));
     card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px'}},k.label));
+    if(k.sub) card.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'1px',fontStyle:'italic'}},k.sub));
     kpiRow.appendChild(card);
   });
   wrap.appendChild(kpiRow);
 
-  if(!filtered.length){wrap.appendChild(el('p',{style:{color:'var(--muted)',textAlign:'center',padding:'20px'}},'No spend data found matching filter.'));return;}
+  if(!filtered.length){
+    wrap.appendChild(el('p',{style:{color:'var(--muted)',textAlign:'center',padding:'20px'}},'No vendors match your filters.'));
+    return;
+  }
 
   // Spend table
   const tbl=el('div',{class:'tbl-wrap'});
   const table=el('table',{class:'data-table'});
   const thead=el('thead'); const headerRow=el('tr');
-  ['Vendor','Category','Admin Fee %','Total Spend','Expected Commission','Gap','Status'].forEach(h=>{headerRow.appendChild(el('th',{},h));});
+  const cols=[
+    {key:'name',label:'Vendor',sort:false},
+    {key:'category',label:'Category',sort:false},
+    {key:'contractedPct',label:'Admin %',sort:true},
+    {key:'totalSpend',label:'Total Spend',sort:true},
+    {key:'totalFees',label:'Fees Received',sort:true},
+    {key:'actualPct',label:'Actual %',sort:true},
+    {key:'expectedRevenue',label:'Expected',sort:true},
+    {key:'gap',label:'Gap',sort:true},
+    {key:'status',label:'Status',sort:false},
+  ];
+  cols.forEach(col=>{
+    const th=el('th',{style:{cursor:col.sort?'pointer':'default',whiteSpace:'nowrap',userSelect:'none'},
+      onclick:col.sort?()=>{
+        if(SPEND_STATE.sortKey===col.key){SPEND_STATE.sortDir*=-1;}
+        else{SPEND_STATE.sortKey=col.key;SPEND_STATE.sortDir=-1;}
+        const tw=wrap.querySelector('.tbl-wrap');
+        if(tw)tw.remove();
+        renderSpendTable(wrap);
+      }:null},
+      col.label+(col.sort&&SPEND_STATE.sortKey===col.key?(SPEND_STATE.sortDir>0?' ↑':' ↓'):''));
+    headerRow.appendChild(th);
+  });
   thead.appendChild(headerRow); table.appendChild(thead);
   const tbody=el('tbody');
-  const sorted=[...filtered].sort((a,b)=>(a.gap||0)-(b.gap||0));
-  sorted.forEach(v=>{
-    const vendor=S.vendors.find(sv=>sv.name===v.name||sv.name.toLowerCase()===v.name.toLowerCase());
-    const gapColor=v.gap<-100?'var(--red)':v.gap<0?'var(--amber)':'var(--green)';
-    const statusLabel=v.gap<-100?'⚠ Gap':v.gap<0?'↓ Minor':v.gap===0&&!v.expectedRevenue?'—':'✓ OK';
-    const tr=el('tr',{style:{cursor:vendor?'pointer':'default'},onclick(){if(vendor)openDetail(vendor);}});
-    [vendor?vLink(vendor):el('span',{style:{color:'var(--muted)'}},v.name),
-     el('span',{style:{fontSize:'9px',color:'var(--muted)'}},v.category||'—'),
-     el('span',{style:{color:v.adminFeePct?'var(--green)':'var(--muted)',fontWeight:v.adminFeePct?'600':'400'}},v.adminFeePct?(v.adminFeePct+'%'):'Not set'),
-     el('span',{style:{fontWeight:'600'}},'$'+v.totalSpend.toLocaleString()),
-     el('span',{style:{color:'var(--green)',fontWeight:'600'}},v.expectedRevenue?'$'+v.expectedRevenue.toLocaleString():'—'),
-     el('span',{style:{color:gapColor,fontWeight:v.gap<0?'700':'400'}},v.gap!==0?'$'+(v.gap<0?'-':'')+Math.abs(v.gap).toLocaleString():'—'),
-     el('span',{style:{color:gapColor,fontWeight:'600',fontSize:'10px'}},statusLabel),
-    ].forEach(cell=>{const td=el('td');if(cell instanceof Node)td.appendChild(cell);else td.textContent=String(cell||'');tr.appendChild(td);});
+  filtered.forEach(v=>{
+    const tr=el('tr',{style:{cursor:'pointer'},onclick(){openDetail(S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name)));}}); 
+    const gapColor=v.gap>0.01?'var(--green)':v.gap<-0.01?'var(--red)':'var(--muted)';
+    const statusLabel=!v.contractedPct?{t:'No Fee',c:'var(--muted)'}:v.gap>0.01?{t:'✓ OK',c:'var(--green)'}:v.gap<-500?{t:'△ Gap',c:'var(--red)'}:{t:'~ Minor',c:'var(--amber)'};
+    tr.appendChild(el('td',{style:{fontWeight:'600',fontSize:'10px'}},v.name));
+    tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},v.category||'—'));
+    tr.appendChild(el('td',{style:{color:v.contractedPct?'var(--text)':'var(--muted)',fontSize:'10px'}},v.contractedPct?(v.contractedPct.toFixed(1)+'%'):'Not set'));
+    tr.appendChild(el('td',{style:{color:'var(--blue)',fontWeight:'600',fontSize:'10px'}},'$'+Math.round(v.totalSpend).toLocaleString()));
+    tr.appendChild(el('td',{style:{color:'var(--green)',fontSize:'10px'}},v.totalFees?'$'+Math.round(v.totalFees).toLocaleString():'—'));
+    tr.appendChild(el('td',{style:{color:v.actualPct>0?'var(--text)':'var(--muted)',fontSize:'10px'}},v.actualPct?(v.actualPct.toFixed(2)+'%'):'—'));
+    tr.appendChild(el('td',{style:{fontSize:'10px'}},v.expectedRevenue?'$'+Math.round(v.expectedRevenue).toLocaleString():'—'));
+    tr.appendChild(el('td',{style:{color:gapColor,fontWeight:'600',fontSize:'10px'}},v.gap?'$'+Math.round(v.gap).toLocaleString():'—'));
+    tr.appendChild(el('td',{},el('span',{style:{fontSize:'9px',color:statusLabel.c,fontWeight:'600'}},statusLabel.t)));
     tbody.appendChild(tr);
   });
-  table.appendChild(tbody); tbl.appendChild(table); wrap.appendChild(tbl);
-
-  // True-up alerts
-  const gapList=sorted.filter(v=>v.gap<-100);
-  if(gapList.length){
-    const tuHdr=el('div',{style:{marginTop:'20px',fontWeight:'700',fontSize:'13px',marginBottom:'8px',color:'var(--red)'},'data-trueup':'1'});
-    tuHdr.textContent='🔴 True-Up Alerts — '+gapList.length+' vendor'+(gapList.length!==1?'s':'')+' may owe commission';
-    wrap.appendChild(tuHdr);
-    gapList.forEach(v=>{
-      const card=el('div',{style:{border:'1px solid rgba(239,68,68,.3)',borderLeft:'4px solid var(--red)',borderRadius:'4px',padding:'10px 12px',marginBottom:'6px',background:'rgba(239,68,68,.04)'}});
-      const row=el('div',{style:{display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}});
-      const vendor=S.vendors.find(sv=>sv.name===v.name);
-      const nameEl=el('span',{style:{fontWeight:'700',fontSize:'12px',flex:'1',color:vendor?'var(--blue)':'var(--text)',cursor:vendor?'pointer':'default'}},v.name);
-      if(vendor) nameEl.onclick=()=>openDetail(vendor);
-      row.appendChild(nameEl);
-      row.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},v.adminFeePct?v.adminFeePct+'% admin fee':'No admin fee on record'));
-      row.appendChild(el('span',{style:{fontSize:'10px'}},'Spend: $'+v.totalSpend.toLocaleString()));
-      row.appendChild(el('span',{style:{color:'var(--green)',fontSize:'10px'}},'Expected: $'+v.expectedRevenue.toLocaleString()));
-      row.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:'var(--red)'}},'Gap: -$'+Math.abs(v.gap).toLocaleString()));
-      card.appendChild(row);
-      if(!v.adminFeePct){card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'4px',fontStyle:'italic'}},'⚠ No admin fee % — upload contract in 📄 Contracts tab to auto-fill'));}
-      wrap.appendChild(card);
-    });
-  }
+  table.appendChild(tbody); tbl.appendChild(table);
+  wrap.appendChild(tbl);
 }
 
 
@@ -7932,8 +7986,8 @@ function renderSpend(c) {
   // Controls
   const controls=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'12px',flexWrap:'wrap'}});
   const periodBtns=el('div',{style:{display:'flex',gap:'4px'}});
-  ['thisQ','year','all'].forEach(p=>{
-    const label={thisQ:'This Quarter',year:'This Year',all:'All Time'}[p];
+  ['thisQ','year','last12','all'].forEach(p=>{
+    const label={thisQ:'This Quarter',year:'This Year',last12:'Last 12 Mo',all:'All Time'}[p];
     const btn=el('button',{class:'col-toggle-btn'+(SPEND_STATE.period===p?' on':''),onclick(){SPEND_STATE.period=p;SPEND_STATE.data=null;render();}},label);
     periodBtns.appendChild(btn);
   });
@@ -7953,6 +8007,17 @@ function renderSpend(c) {
     },200);
   });
   controls.appendChild(vendorFilter);
+
+  // Category filter dropdown
+  const cats=[''].concat([...new Set((SPEND_STATE.data?.vendors||[]).map(v=>v.category||'').filter(Boolean))].sort());
+  const catSel=el('select',{class:'modal-input',style:{width:'160px',marginBottom:'0',padding:'5px 8px'}});
+  cats.forEach(cat=>{const o=el('option',{value:cat},cat||'All Categories');if(cat===SPEND_STATE.catFilter)o.selected=true;catSel.appendChild(o);});
+  catSel.addEventListener('change',e=>{SPEND_STATE.catFilter=e.target.value;const tw=wrap.querySelector('.tbl-wrap');if(tw)tw.remove();renderSpendTable(wrap);});
+  controls.appendChild(catSel);
+
+  // Gaps only toggle
+  const gapToggle=el('button',{class:'btn-xs'+(SPEND_STATE.showGapsOnly?' btn-primary':' btn-ghost'),style:{fontSize:'10px'},onclick(){SPEND_STATE.showGapsOnly=!SPEND_STATE.showGapsOnly;const tw=wrap.querySelector('.tbl-wrap');if(tw)tw.remove();renderSpendTable(wrap);}}, '⚠ Gaps Only');
+  controls.appendChild(gapToggle);
   const loadBtn=el('button',{class:'btn-primary',onclick:function(){console.log('[SF Spend] btn clicked');SPEND_STATE.data=null;SPEND_STATE.error=null;loadSpendData();}},SPEND_STATE.loading?'⏳ Loading...':'🔄 Load / Refresh');
   loadBtn.disabled=SPEND_STATE.loading;
   if(SPEND_STATE.loading) loadBtn.style.opacity='0.6';
@@ -7996,7 +8061,11 @@ async function loadSpendData(){
       dateFilter=' AND Reported_Date__c >= '+qStart.toISOString().split('T')[0];
     } else if(SPEND_STATE.period==='year'){
       dateFilter=' AND Reported_Date__c >= '+now.getFullYear()+'-01-01';
+    } else if(SPEND_STATE.period==='last12'){
+      const d=new Date(now-365*86400000);
+      dateFilter=' AND Reported_Date__c >= '+d.toISOString().split('T')[0];
     }
+    // 'all' = no date filter
 
     const spendResult=await sfQuery('SELECT Id,Name,Vendor__c,Vendor__r.Name,Reported_Date__c,Category__c,Sales__c,Admin_Fee__c FROM Spend__c WHERE Vendor__c != null'+dateFilter+' ORDER BY Reported_Date__c DESC LIMIT 2000');
     console.log('[SF Spend] result:', spendResult?.records?.length, spendResult?._error||'ok');
@@ -11431,7 +11500,12 @@ function renderAnalytics(c) {
     sfAnalyticsSec.appendChild(el('h3',{style:{fontSize:'13px',fontWeight:'700',marginBottom:'4px'}},'☁ Revenue Intelligence (Salesforce)'));
     sfAnalyticsSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'Commission benchmarking and spend trends from live Salesforce data.'));
 
-    if(!S._analyticsSpendData){
+    if(S._analyticsSpendLoading){
+      const loadingDiv=el('div',{style:{padding:'20px',textAlign:'center',color:'var(--muted)',fontSize:'11px'}});
+      loadingDiv.appendChild(el('div',{style:{fontSize:'20px',marginBottom:'6px'}},'⏳'));
+      loadingDiv.appendChild(el('div',{},'Loading Salesforce revenue data...'));
+      sfAnalyticsSec.appendChild(loadingDiv);
+    } else if(!S._analyticsSpendData){
       const loadBtn=el('button',{class:'btn-xs btn-blue',onclick(){loadAnalyticsSpend();}}, '☁ Load SF Revenue Data');
       sfAnalyticsSec.appendChild(loadBtn);
     } else {
