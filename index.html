@@ -6791,7 +6791,8 @@ function renderSFBoard(c) {
   const sb=S._sfBoard;
 
   const toolbar=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'12px',flexWrap:'wrap'}});
-  const loadBtn=el('button',{class:'btn-primary',disabled:sb.loading,onclick(){loadSFBoard();}},sb.loading?'⏳ Loading...':'🔄 Load / Refresh');
+  const loadBtn=el('button',{class:'btn-primary',onclick:function(){console.log('[SF Board] btn clicked');loadSFBoard();}},sb.loading?'⏳ Loading...':'🔄 Load / Refresh');
+  loadBtn.disabled=sb.loading;
   if(sb.loading) loadBtn.style.opacity='0.6';
   toolbar.appendChild(loadBtn);
   if(sb.lastLoaded) toolbar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Last loaded: '+sb.lastLoaded));
@@ -6936,6 +6937,7 @@ function renderSFBoard(c) {
 
 
 async function loadSFBoard(){
+  console.log('[SF Board] loadSFBoard() called. sfToken:', USER.sfToken?'SET':'NULL', 'sfInstance:', USER.sfInstance||'NULL');
   if(!S._sfBoard) S._sfBoard={loading:false,data:null,error:null,lastLoaded:null};
   if(!USER.sfToken){
     S._sfBoard.error='Not connected to Salesforce. Click Connect Salesforce above.';
@@ -7951,7 +7953,8 @@ function renderSpend(c) {
     },200);
   });
   controls.appendChild(vendorFilter);
-  const loadBtn=el('button',{class:'btn-primary',disabled:SPEND_STATE.loading,onclick(){SPEND_STATE.data=null;SPEND_STATE.error=null;loadSpendData();}},SPEND_STATE.loading?'⏳ Loading...':'🔄 Load / Refresh');
+  const loadBtn=el('button',{class:'btn-primary',onclick:function(){console.log('[SF Spend] btn clicked');SPEND_STATE.data=null;SPEND_STATE.error=null;loadSpendData();}},SPEND_STATE.loading?'⏳ Loading...':'🔄 Load / Refresh');
+  loadBtn.disabled=SPEND_STATE.loading;
   if(SPEND_STATE.loading) loadBtn.style.opacity='0.6';
   controls.appendChild(loadBtn);
   if(SPEND_STATE.lastLoaded) controls.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Last loaded: '+SPEND_STATE.lastLoaded));
@@ -7975,6 +7978,7 @@ function renderSpend(c) {
 }
 
 async function loadSpendData(){
+  console.log('[SF Spend] loadSpendData() called. sfToken:', USER.sfToken?'SET':'NULL', 'sfInstance:', USER.sfInstance||'NULL');
   if(!USER.sfToken){
     SPEND_STATE.error='Not connected to Salesforce. Click Connect Salesforce above.';
     render(); return;
