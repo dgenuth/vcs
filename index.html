@@ -3163,6 +3163,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   }
   if (_canAct) { if (isDismissed) acts.appendChild(el('button',{class:'btn-blue btn-action',onclick(){undismissVendor(vendor);closeDetail();}}, '↩ Restore'));
   else acts.appendChild(el('button',{class:'btn-ghost btn-action',onclick(){openDismissConfirm(vendor);}}, '✕ Dismiss')); }
+  // Data Sheet button — generate Word doc for Finance/Ops
+  if (_canAct) acts.appendChild(el('button',{class:'btn-ghost btn-action',style:{color:'#38bdf8',borderColor:'rgba(56,189,248,.3)'},title:'Generate a data sheet Word document for Finance/Operations',onclick(){generateVendorDataSheet(vendor);}},'📄 Data Sheet'));
   body.appendChild(acts);
 
   // Find cross-tab data for this vendor using exact name matching + aliases
@@ -4869,18 +4871,13 @@ function sfConnect(){
       }
       USER.sfInstance=derivedInstance||sfLoginBase;
       const expiresIn=parseInt(p.get('expires_in')||'7200');
-    // Save to both sessionStorage AND localStorage (with expiry)
-    sessionStorage.setItem('vcs_sf_token',JSON.stringify({token:USER.sfToken,instance:USER.sfInstance}));
-    localStorage.setItem('vcs_sf_token_ls',JSON.stringify({token:USER.sfToken,instance:USER.sfInstance,expiry:Date.now()+(expiresIn*1000)}));
-    // // Ensure we have an instance URL — implicit OAuth flow doesn't return instance_url
-    if(!USER.sfInstance){
-      const base=S.settings.sfLoginUrl||'https://psgpo.my.salesforce.com';
-      USER.sfInstance=base.includes('.my.salesforce.com')||base.includes('.force.com')?base:'https://psgpo.my.salesforce.com';
-    }
-    localStorage.setItem('vcs_sf_token_ls',JSON.stringify({token:USER.sfToken,instance:USER.sfInstance}));
-    sessionStorage.setItem('vcs_sf_token',JSON.stringify({token:USER.sfToken,instance:USER.sfInstance}));
-    console.log('[VCS SF] Connected. Instance:', USER.sfInstance);
-    toast('✓ Salesforce connected');updateUserBadge();if(S.view)render();}}catch(e){}},500);
+      // Save token to localStorage (persistent) and sessionStorage (tab-level)
+      const sfPayload={token:USER.sfToken,instance:USER.sfInstance,storedAt:Date.now(),expiry:Date.now()+(expiresIn*1000)};
+      localStorage.setItem('vcs_sf_token_ls',JSON.stringify(sfPayload));
+      sessionStorage.setItem('vcs_sf_token',JSON.stringify(sfPayload));
+      startSFTokenMonitor();
+      console.log('[VCS SF] Connected. Instance:', USER.sfInstance);
+      toast('✓ Salesforce connected');updateUserBadge();if(S.view)render();}}catch(e){}},500);
 }
 function restoreSFSession(){
   try {
@@ -4888,29 +4885,64 @@ function restoreSFSession(){
     if(ls && ls.token) {
       USER.sfToken=ls.token;
       USER.sfInstance=ls.instance||'';
+      // Start proactive refresh monitor if not already running
+      startSFTokenMonitor();
       return;
     }
     const s=JSON.parse(sessionStorage.getItem('vcs_sf_token')||'null');
     if(s&&s.token){USER.sfToken=s.token;USER.sfInstance=s.instance||'';}
   }catch(e){}
-  // If we have a token but no instance, derive from settings
   if(USER.sfToken&&!USER.sfInstance){
     const base=S?.settings?.sfLoginUrl||'https://psgpo.my.salesforce.com';
     USER.sfInstance=base.includes('.my.salesforce.com')||base.includes('.force.com')?base:'https://psgpo.my.salesforce.com';
   }
 }
-async function sfQuery(soql){
-  if(!USER.sfToken||!USER.sfInstance) return null;
+
+// Proactive SF token refresh — runs every 25 minutes
+// SF implicit flow tokens default to 2 hours; we reconnect proactively before they expire
+let _sfTokenMonitor=null;
+function startSFTokenMonitor(){
+  if(_sfTokenMonitor) return; // already running
+  _sfTokenMonitor=setInterval(()=>{
+    if(!USER.sfToken||!USER.sfInstance) return;
+    // Check token stored time — if stored more than 90 minutes ago, reconnect
+    try{
+      const ls=JSON.parse(localStorage.getItem('vcs_sf_token_ls')||'null');
+      if(!ls||!ls.storedAt) return;
+      const ageMs=Date.now()-ls.storedAt;
+      const ninetyMin=90*60*1000;
+      if(ageMs>ninetyMin){
+        console.log('[VCS SF] Token is '+Math.round(ageMs/60000)+'min old — proactively reconnecting');
+        sfConnect(); // opens popup; user sees it but it's brief
+      }
+    }catch(e){}
+  }, 25*60*1000); // check every 25 minutes
+}
+
+function stopSFTokenMonitor(){
+  if(_sfTokenMonitor){clearInterval(_sfTokenMonitor);_sfTokenMonitor=null;}
+}
+async function sfQuery(soql, _retried){
+  if(!USER.sfToken||!USER.sfInstance){
+    // Try to restore from storage before giving up
+    restoreSFSession();
+    if(!USER.sfToken||!USER.sfInstance) return null;
+  }
   try {
     const r=await fetch(USER.sfInstance+'/services/data/v59.0/query?q='+encodeURIComponent(soql),{
       headers:{'Authorization':'Bearer '+USER.sfToken, 'Content-Type':'application/json'}
     });
     if(r.status===401){
-      // Token expired - clear it and prompt reconnect
+      // Token expired — clear and show reconnect prompt
       USER.sfToken=null; USER.sfInstance=null;
       sessionStorage.removeItem('vcs_sf_token');
       localStorage.removeItem('vcs_sf_token_ls');
-      sfAutoReconnect();
+      if(!_retried){
+        // Queue a reconnect and retry once when done
+        sfAutoReconnect(_retried===false?null:()=>sfQuery(soql,true));
+      } else {
+        sfAutoReconnect();
+      }
       return null;
     }
     if(!r.ok){
@@ -4925,9 +4957,14 @@ async function sfQuery(soql){
     return {_error:true, _message:'Network error: '+e.message, records:[]};
   }
 }
-function sfAutoReconnect() {
+function sfAutoReconnect(onReconnected) {
   const toastId='sf-reconnect-toast';
-  if(document.getElementById(toastId)) return;
+  if(document.getElementById(toastId)){
+    // Already showing — add callback to existing reconnect queue
+    if(onReconnected) window._sfReconnectCallbacks=(window._sfReconnectCallbacks||[]).concat(onReconnected);
+    return;
+  }
+  if(onReconnected) window._sfReconnectCallbacks=[onReconnected];
   const div=document.createElement('div');
   div.id=toastId;
   div.style.cssText='position:fixed;bottom:60px;left:50%;transform:translateX(-50%);background:#1e1e2e;border:1px solid rgba(245,158,11,.5);border-radius:6px;padding:10px 16px;z-index:9999;display:flex;gap:10px;align-items:center;font-size:11px;color:white;box-shadow:0 4px 12px rgba(0,0,0,.4)';
@@ -4935,14 +4972,28 @@ function sfAutoReconnect() {
   const btn=document.createElement('button');
   btn.textContent='🔗 Reconnect now';
   btn.style.cssText='background:#4f7cff;color:white;border:none;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:10px';
-  btn.onclick=()=>{div.remove();sfConnect();};
+  btn.onclick=()=>{
+    div.remove();
+    // After reconnect completes (sfConnect calls render() and updateUserBadge()),
+    // fire any queued retry callbacks
+    const origUpdate=window.updateUserBadge;
+    window.updateUserBadge=function(){
+      origUpdate?.();
+      window.updateUserBadge=origUpdate;
+      if(window._sfReconnectCallbacks){
+        window._sfReconnectCallbacks.forEach(cb=>{try{cb();}catch(e){}});
+        window._sfReconnectCallbacks=null;
+      }
+    };
+    sfConnect();
+  };
   const dismiss=document.createElement('button');
   dismiss.textContent='✕';
   dismiss.style.cssText='background:none;border:none;color:#aaa;cursor:pointer;font-size:11px;margin-left:4px';
-  dismiss.onclick=()=>div.remove();
+  dismiss.onclick=()=>{div.remove();window._sfReconnectCallbacks=null;};
   div.appendChild(btn);div.appendChild(dismiss);
   document.body.appendChild(div);
-  setTimeout(()=>{if(div.parentNode)div.remove();},30000);
+  setTimeout(()=>{if(div.parentNode){div.remove();window._sfReconnectCallbacks=null;}},60000);
 }
 
 
@@ -6777,40 +6828,38 @@ function renderCustomers(c) {
   c.innerHTML='';
   const wrap=el('div',{style:{maxWidth:'1200px',margin:'0 auto',padding:'12px 0'}});
 
-  const hdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'16px',flexWrap:'wrap'}});
-  hdr.appendChild(el('h2',{style:{margin:'0',fontSize:'16px',fontWeight:'700',flex:'1'}},'👥 Customers & Clients'));
-  hdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},'Operators, facilities, and client accounts'));
-  wrap.appendChild(hdr);
-
   if(!USER.sfToken){
     const banner=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'6px',padding:'28px',textAlign:'center',maxWidth:'480px',margin:'40px auto'}});
     banner.appendChild(el('div',{style:{fontSize:'32px',marginBottom:'8px'}},'👥'));
-    banner.appendChild(el('p',{style:{fontWeight:'700',fontSize:'14px',margin:'0 0 4px'}},'Connect Salesforce to view customer accounts'));
-    banner.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',margin:'0 0 12px'}},'Customer accounts, spend history, open cases and opportunities pulled live from Salesforce.'));
-    banner.appendChild(el('button',{class:'btn-primary',onclick(){if(!S.settings.sfClientId){S.view='settings';render();}else{sfConnect();}}},'🔗 Connect Salesforce'));
+    banner.appendChild(el('p',{style:{fontWeight:'700',fontSize:'14px',margin:'0 0 8px'}},'Connect Salesforce to view customer accounts'));
+    banner.appendChild(el('button',{class:'btn-primary',onclick(){sfConnect();}},'🔗 Connect Salesforce'));
     wrap.appendChild(banner); c.appendChild(wrap); return;
   }
 
-  // View tabs
-  if(!S._custView) S._custView='accounts';
-  const custViews=[
-    {id:'accounts',label:'🏢 Accounts'},
-    {id:'opportunities',label:'💼 Opportunities'},
-    {id:'cases',label:'🎫 Cases'},
-  ];
-  const vtabs=el('div',{style:{display:'flex',gap:'4px',marginBottom:'16px'}});
-  custViews.forEach(v=>{
-    vtabs.appendChild(el('button',{class:'col-toggle-btn'+(S._custView===v.id?' on':''),onclick(){S._custView=v.id;render();}},v.label));
-  });
-  wrap.appendChild(vtabs);
+  // Header
+  const hdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'12px',flexWrap:'wrap'}});
+  hdr.appendChild(el('h2',{style:{margin:'0',fontSize:'16px',fontWeight:'700',flex:'1'}},'👥 Customers & Clients'));
+  if(S._custData){
+    const {accounts=[]}=S._custData;
+    const parents=accounts.filter(a=>!a.ParentId).length;
+    const children=accounts.filter(a=>a.ParentId).length;
+    hdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},'🏢 '+parents+' parent accounts · 🔗 '+children+' locations'));
+  }
+  wrap.appendChild(hdr);
 
-  // Load/filter controls
+  // Controls bar
   const ctrlRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'12px',flexWrap:'wrap'}});
-  const searchInp=el('input',{type:'text',class:'modal-input',placeholder:'Search accounts, facilities...',style:{flex:'1',marginBottom:'0'},value:S._custSearch||''});
-  let custSearchTimer=null;
-  searchInp.addEventListener('input',e=>{clearTimeout(custSearchTimer);custSearchTimer=setTimeout(()=>{S._custSearch=e.target.value;render();},300);});
+  const searchInp=el('input',{type:'text',class:'modal-input',placeholder:'Search accounts, cities, types...',style:{flex:'1',minWidth:'200px',marginBottom:'0'},value:S._custSearch||''});
+  let custTimer=null;
+  searchInp.addEventListener('input',e=>{clearTimeout(custTimer);custTimer=setTimeout(()=>{S._custSearch=e.target.value.trim();render();},300);});
   ctrlRow.appendChild(searchInp);
-  const loadBtn=el('button',{class:'btn-primary',onclick(){loadCustomerData();}},S._custLoading?'⏳ Loading...':'🔄 Load / Refresh');
+  // View mode
+  if(!S._custViewMode) S._custViewMode='tree';
+  ['tree','flat','opps','cases','contacts'].forEach(mode=>{
+    ctrlRow.appendChild(el('button',{class:'col-toggle-btn'+(S._custViewMode===mode?' on':''),onclick(){S._custViewMode=mode;render();}},
+      {tree:'🌳 Hierarchy',flat:'📋 List',opps:'💼 Opps',cases:'🎫 Cases',contacts:'👤 Contacts'}[mode]));
+  });
+  const loadBtn=el('button',{class:'btn-primary',onclick(){loadCustomerData();}},S._custLoading?'⏳ Loading...':'🔄 Refresh');
   loadBtn.disabled=S._custLoading;
   ctrlRow.appendChild(loadBtn);
   if(S._custLastLoaded) ctrlRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Updated: '+S._custLastLoaded));
@@ -6819,96 +6868,220 @@ function renderCustomers(c) {
   if(S._custError) wrap.appendChild(el('div',{style:{color:'var(--red)',fontSize:'10px',padding:'8px',background:'rgba(239,68,68,.06)',borderRadius:'4px',marginBottom:'8px'}},S._custError));
 
   if(!S._custData){
-    const empty=el('div',{style:{textAlign:'center',padding:'60px',color:'var(--muted)'}});
-    empty.appendChild(el('div',{style:{fontSize:'32px',marginBottom:'8px'}},'👥'));
-    empty.appendChild(el('div',{style:{fontSize:'12px',fontWeight:'600',marginBottom:'4px'}},'No data loaded'));
-    empty.appendChild(el('div',{style:{fontSize:'10px'}},'Click Load / Refresh to pull customer data from Salesforce'));
-    wrap.appendChild(empty); c.appendChild(wrap); return;
+    if(S._custLoading){
+      const load=el('div',{style:{textAlign:'center',padding:'60px',color:'var(--muted)'}});
+      load.appendChild(el('div',{style:{fontSize:'32px',marginBottom:'8px'}},'⏳'));
+      load.appendChild(el('div',{style:{fontSize:'12px',fontWeight:'600'}},'Loading all customer accounts...'));
+      load.appendChild(el('div',{style:{fontSize:'10px',marginTop:'4px'}},'Fetching all accounts, opportunities, cases and contacts from Salesforce'));
+      wrap.appendChild(load);
+    } else {
+      const empty=el('div',{style:{textAlign:'center',padding:'60px',color:'var(--muted)'}});
+      empty.appendChild(el('div',{style:{fontSize:'32px',marginBottom:'8px'}},'👥'));
+      empty.appendChild(el('div',{style:{fontSize:'12px',fontWeight:'600',marginBottom:'4px'}},'No data loaded'));
+      empty.appendChild(el('div',{style:{fontSize:'10px'}},'Click Refresh to load all customer accounts from Salesforce'));
+      wrap.appendChild(empty);
+    }
+    c.appendChild(wrap); return;
   }
 
-  const {accounts,opps,cases}=S._custData;
-  const fq=(S._custSearch||'').toLowerCase().trim();
+  const {accounts=[],opps=[],cases=[],contacts=[]}=S._custData;
+  const fq=(S._custSearch||'').toLowerCase();
+  if(!S._custExpandedAccounts) S._custExpandedAccounts=new Set();
 
-  if(S._custView==='accounts'){
-    const filtered=fq?accounts.filter(a=>(a.Name||'').toLowerCase().includes(fq)):accounts;
-    const secHdr=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'8px'}});
-    secHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'13px',fontWeight:'700'}},'Accounts ('+filtered.length+')'));
-    wrap.appendChild(secHdr);
-    if(!filtered.length){wrap.appendChild(el('p',{style:{color:'var(--muted)',textAlign:'center',padding:'20px'}},'No accounts match your search.'));c.appendChild(wrap);return;}
-    const tbl=el('table',{class:'data-table'});
-    const thead=el('thead'); const hr=el('tr');
-    ['Account','Type','Parent','Owner','Beds','Open Opps','Open Cases','Actions'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
-    thead.appendChild(hr); tbl.appendChild(thead);
-    const tbody=el('tbody');
-    filtered.slice(0,50).forEach(a=>{
-      const aOpps=opps.filter(o=>o.AccountId===a.Id||o.Vendor__c===a.Id);
-      const aCases=cases.filter(cs=>cs.AccountId===a.Id||cs.Vendor__c===a.Id);
-      const tr=el('tr',{style:{cursor:'pointer'}});
-      // Indent child accounts
-      const isChild=!!(a.ParentId||a.Parent?.Id);
-      const nameCell=el('td',{style:{fontWeight:'600',fontSize:'10px',cursor:'pointer',paddingLeft:isChild?'20px':'8px'},onclick(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Account/'+a.Id+'/view','_blank');}});
-      if(isChild) nameCell.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px',marginRight:'4px'}},'└ '));
-      nameCell.appendChild(document.createTextNode(a.Name||'—'));
-      const childCount=accounts.filter(x=>x.ParentId===a.Id).length;
-      if(childCount>0) nameCell.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)',marginLeft:'4px'}},'('+childCount+' children)'));
-      tr.appendChild(nameCell);
-      tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},a.Type||'—'));
-      tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},a.Parent?.Name||'—'));
-      tr.appendChild(el('td',{style:{fontSize:'9px'}},a.Owner?.Name||'—'));
-      tr.appendChild(el('td',{style:{fontSize:'9px',textAlign:'center',color:'var(--muted)'}},a.NumberOfBeds__c||a.Beds__c||'—'));
-      tr.appendChild(el('td',{style:{color:aOpps.length?'var(--green)':'var(--muted)',fontWeight:aOpps.length?'600':'400',fontSize:'10px',textAlign:'center'}},aOpps.length||'—'));
-      tr.appendChild(el('td',{style:{color:aCases.filter(x=>x.Priority==='High').length?'var(--red)':aCases.length?'var(--amber)':'var(--muted)',fontWeight:aCases.length?'600':'400',fontSize:'10px',textAlign:'center'}},aCases.length||'—'));
-      const actCell=el('td',{});
-      actCell.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(e){e.stopPropagation();if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Account/'+a.Id+'/view','_blank');}},'☁ SF'));
-      tr.appendChild(actCell);
-      tbody.appendChild(tr);
+  // Filter accounts
+  let filteredAccounts=fq
+    ? accounts.filter(a=>(a.Name||'').toLowerCase().includes(fq)||(a.BillingCity||'').toLowerCase().includes(fq)||(a.BillingState||'').toLowerCase().includes(fq)||(a.Type||'').toLowerCase().includes(fq))
+    : accounts;
+
+  // ── Hierarchy Tree View ──
+  if(S._custViewMode==='tree'){
+    const parents=filteredAccounts.filter(a=>!a.ParentId);
+    const childMap={};
+    accounts.forEach(a=>{if(a.ParentId){if(!childMap[a.ParentId])childMap[a.ParentId]=[];childMap[a.ParentId].push(a);}});
+
+    if(!parents.length){wrap.appendChild(el('p',{style:{color:'var(--muted)',padding:'20px',textAlign:'center'}},'No accounts match your search.'));c.appendChild(wrap);return;}
+
+    const expandAll=el('button',{class:'btn-xs btn-ghost',style:{marginBottom:'8px'},onclick(){parents.forEach(p=>S._custExpandedAccounts.add(p.Id));render();}},'▼ Expand All');
+    const collapseAll=el('button',{class:'btn-xs btn-ghost',style:{marginBottom:'8px',marginLeft:'4px'},onclick(){S._custExpandedAccounts.clear();render();}},'▶ Collapse All');
+    wrap.appendChild(expandAll);wrap.appendChild(collapseAll);
+
+    parents.forEach(parent=>{
+      const children=(childMap[parent.Id]||[]);
+      const pOpps=opps.filter(o=>o.AccountId===parent.Id);
+      const pCases=cases.filter(cs=>cs.AccountId===parent.Id);
+      const pContacts=contacts.filter(ct=>ct.AccountId===parent.Id);
+      const isExpanded=S._custExpandedAccounts.has(parent.Id);
+
+      const parentCard=el('div',{style:{marginBottom:'6px',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
+
+      // Parent header row
+      const parentHdr=el('div',{style:{
+        display:'flex',gap:'8px',alignItems:'center',padding:'8px 12px',
+        background:'var(--sb)',cursor:'pointer',userSelect:'none',
+      },onclick(){
+        if(S._custExpandedAccounts.has(parent.Id)) S._custExpandedAccounts.delete(parent.Id);
+        else S._custExpandedAccounts.add(parent.Id);
+        render();
+      }});
+
+      parentHdr.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'10px',flexShrink:'0'}},isExpanded?'▼':'▶'));
+      const nameEl=el('div',{style:{flex:'1',minWidth:'0'}});
+      nameEl.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},parent.Name));
+      const subInfo=el('div',{style:{fontSize:'9px',color:'var(--muted)',display:'flex',gap:'8px',flexWrap:'wrap',marginTop:'2px'}});
+      if(parent.Type) subInfo.appendChild(el('span',{},parent.Type));
+      if(parent.BillingCity) subInfo.appendChild(el('span',{},parent.BillingCity+(parent.BillingState?', '+parent.BillingState:'')));
+      if(parent.Phone) subInfo.appendChild(el('span',{},parent.Phone));
+      if(parent.Owner?.Name) subInfo.appendChild(el('span',{style:{color:'var(--blue)'}},parent.Owner.Name));
+      nameEl.appendChild(subInfo);
+      parentHdr.appendChild(nameEl);
+
+      // Badges
+      const badges=el('div',{style:{display:'flex',gap:'4px',flexShrink:'0',flexWrap:'wrap'}});
+      if(children.length) badges.appendChild(el('span',{style:{fontSize:'8px',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'3px',padding:'1px 5px'}},children.length+' locations'));
+      if(pOpps.length) badges.appendChild(el('span',{style:{fontSize:'8px',color:'var(--green)',background:'rgba(34,197,94,.1)',border:'1px solid rgba(34,197,94,.2)',borderRadius:'3px',padding:'1px 5px'}},'💼 '+pOpps.length));
+      if(pCases.filter(x=>x.Priority==='High').length) badges.appendChild(el('span',{style:{fontSize:'8px',color:'var(--red)',background:'rgba(239,68,68,.08)',border:'1px solid rgba(239,68,68,.2)',borderRadius:'3px',padding:'1px 5px'}},'🚨 '+pCases.filter(x=>x.Priority==='High').length));
+      else if(pCases.length) badges.appendChild(el('span',{style:{fontSize:'8px',color:'var(--amber)',background:'rgba(245,158,11,.08)',border:'1px solid rgba(245,158,11,.2)',borderRadius:'3px',padding:'1px 5px'}},'🎫 '+pCases.length));
+      const sfBtn=el('button',{class:'btn-xs btn-ghost',onclick(e){e.stopPropagation();if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Account/'+parent.Id+'/view','_blank');}},'☁');
+      badges.appendChild(sfBtn);
+      parentHdr.appendChild(badges);
+      parentCard.appendChild(parentHdr);
+
+      // Expanded content
+      if(isExpanded){
+        const expanded=el('div',{style:{padding:'8px 12px',background:'var(--bg)',borderTop:'1px solid var(--border)'}});
+
+        // Contacts for this account
+        if(pContacts.length){
+          const ctSec=el('div',{style:{marginBottom:'8px'}});
+          ctSec.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'4px',textTransform:'uppercase',letterSpacing:'.05em'}},'Contacts'));
+          const ctGrid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:'4px'}});
+          pContacts.forEach(ct=>{
+            const card=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',padding:'6px',fontSize:'9px'}});
+            card.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'2px'}},ct.Name||'—'));
+            if(ct.Title) card.appendChild(el('div',{style:{color:'var(--muted)'}},ct.Title));
+            if(ct.Phone) card.appendChild(el('div',{},'📞 '+ct.Phone));
+            if(ct.Email) card.appendChild(el('div',{style:{color:'var(--blue)'}},ct.Email));
+            ctGrid.appendChild(card);
+          });
+          ctSec.appendChild(ctGrid);
+          expanded.appendChild(ctSec);
+        }
+
+        // Child locations
+        if(children.length){
+          const chSec=el('div',{style:{marginBottom:'8px'}});
+          chSec.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'4px',textTransform:'uppercase',letterSpacing:'.05em'}},'Locations ('+children.length+')'));
+          children.forEach(child=>{
+            const cOpps=opps.filter(o=>o.AccountId===child.Id);
+            const cCases=cases.filter(cs=>cs.AccountId===child.Id);
+            const cContacts=contacts.filter(ct=>ct.AccountId===child.Id);
+            const childRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'5px 8px',background:'var(--sb)',borderRadius:'4px',marginBottom:'3px',border:'1px solid var(--border)',cursor:'pointer'},
+              onclick(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Account/'+child.Id+'/view','_blank');}});
+            childRow.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'└'));
+            const cInfo=el('div',{style:{flex:'1',minWidth:'0'}});
+            cInfo.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},child.Name));
+            if(child.BillingCity||child.Phone) cInfo.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)'}},(child.BillingCity||'')+(child.Phone?' · '+child.Phone:'')));
+            childRow.appendChild(cInfo);
+            const cBadges=el('div',{style:{display:'flex',gap:'3px',flexShrink:'0'}});
+            if(cContacts.length) cBadges.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'👤'+cContacts.length));
+            if(cOpps.length) cBadges.appendChild(el('span',{style:{fontSize:'8px',color:'var(--green)'}},'💼'+cOpps.length));
+            if(cCases.length) cBadges.appendChild(el('span',{style:{fontSize:'8px',color:'var(--amber)'}},'🎫'+cCases.length));
+            childRow.appendChild(cBadges);
+            chSec.appendChild(childRow);
+          });
+          expanded.appendChild(chSec);
+        }
+
+        // Open opportunities for this account
+        if(pOpps.length){
+          const oppSec=el('div',{style:{marginBottom:'8px'}});
+          oppSec.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'4px',textTransform:'uppercase',letterSpacing:'.05em'}},'Open Opportunities'));
+          pOpps.forEach(o=>{
+            const oRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'4px 6px',background:'rgba(34,197,94,.06)',border:'1px solid rgba(34,197,94,.2)',borderRadius:'3px',marginBottom:'2px',fontSize:'9px',cursor:'pointer'},
+              onclick(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view','_blank');}});
+            oRow.appendChild(el('span',{style:{flex:'1',fontWeight:'600',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},o.Name));
+            if(o.StageName) oRow.appendChild(el('span',{style:{color:'var(--muted)'}},o.StageName));
+            if(o.Amount) oRow.appendChild(el('span',{style:{color:'var(--green)',fontWeight:'700'}},'$'+Math.round(Number(o.Amount)).toLocaleString()));
+            if(o.CloseDate) oRow.appendChild(el('span',{style:{color:new Date(o.CloseDate)<new Date()?'var(--red)':'var(--muted)'}},new Date(o.CloseDate).toLocaleDateString('en-US',{month:'short',day:'numeric'})));
+            oppSec.appendChild(oRow);
+          });
+          expanded.appendChild(oppSec);
+        }
+
+        parentCard.appendChild(expanded);
+      }
+      wrap.appendChild(parentCard);
     });
-    tbl.appendChild(tbody);
-    const tblWrap=el('div',{class:'tbl-wrap'});
-    tblWrap.appendChild(tbl);
-    wrap.appendChild(tblWrap);
   }
 
-  if(S._custView==='opportunities'){
-    const filtered=fq?opps.filter(o=>(o.Name||'').toLowerCase().includes(fq)||(o.Account?.Name||'').toLowerCase().includes(fq)):opps;
-    wrap.appendChild(el('h3',{style:{fontSize:'13px',fontWeight:'700',marginBottom:'8px'}},'Opportunities ('+filtered.length+')'));
-    if(!filtered.length){wrap.appendChild(el('p',{style:{color:'var(--muted)',padding:'20px',textAlign:'center'}},'No opportunities found.'));c.appendChild(wrap);return;}
+  // ── Flat List View ──
+  else if(S._custViewMode==='flat'){
+    const filtered2=fq?filteredAccounts:accounts;
+    wrap.appendChild(el('div',{style:{marginBottom:'8px',fontSize:'10px',color:'var(--muted)'}},'Showing '+filtered2.length+' of '+accounts.length+' accounts'));
     const tbl=el('table',{class:'data-table'});
     const thead=el('thead'); const hr=el('tr');
-    ['Opportunity','Account','Stage','Amount','Close Date','Owner','Status'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+    ['Account','Type','Location','Owner','Contacts','Opps','Cases'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
     thead.appendChild(hr); tbl.appendChild(thead);
-    const sortedOpps=[...filtered].sort((a,b)=>new Date(a.CloseDate||'2099')-new Date(b.CloseDate||'2099'));
     const tbody=el('tbody');
-    sortedOpps.slice(0,60).forEach(o=>{
-      const isOverdue=o.CloseDate&&new Date(o.CloseDate)<new Date();
-      const tr=el('tr',{style:{cursor:'pointer',background:isOverdue?'rgba(239,68,68,.04)':''},onclick(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view','_blank');}});
-      tr.appendChild(el('td',{style:{fontWeight:'600',fontSize:'10px',maxWidth:'180px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},o.Name||'—'));
-      tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},o.Account?.Name||'—'));
-      tr.appendChild(el('td',{style:{fontSize:'9px'}},o.StageName||'—'));
-      tr.appendChild(el('td',{style:{color:'var(--green)',fontWeight:'600',fontSize:'10px'}},o.Amount?'$'+Math.round(Number(o.Amount)).toLocaleString():'—'));
-      tr.appendChild(el('td',{style:{color:isOverdue?'var(--red)':'var(--text)',fontSize:'9px'}},o.CloseDate?new Date(o.CloseDate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—'));
-      tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},o.Owner?.Name||'—'));
-      tr.appendChild(el('td',{},el('span',{style:{fontSize:'8px',fontWeight:'600',color:isOverdue?'var(--red)':'var(--muted)'}},isOverdue?'⚠ Overdue':'Active')));
+    filtered2.slice(0,100).forEach(a=>{
+      const aOpps=opps.filter(o=>o.AccountId===a.Id);
+      const aCases=cases.filter(cs=>cs.AccountId===a.Id);
+      const aContacts=contacts.filter(ct=>ct.AccountId===a.Id);
+      const isChild=!!a.ParentId;
+      const tr=el('tr',{style:{cursor:'pointer'},onclick(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Account/'+a.Id+'/view','_blank');}});
+      tr.appendChild(el('td',{style:{fontWeight:isChild?'400':'700',fontSize:'10px',paddingLeft:isChild?'20px':'8px'}},(isChild?'└ ':'')+a.Name));
+      tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},a.Type||'—'));
+      tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},(a.BillingCity||'')+(a.BillingState?', '+a.BillingState:'')||'—'));
+      tr.appendChild(el('td',{style:{fontSize:'9px'}},a.Owner?.Name||'—'));
+      tr.appendChild(el('td',{style:{fontSize:'10px',textAlign:'center',color:'var(--muted)'}},aContacts.length||'—'));
+      tr.appendChild(el('td',{style:{color:aOpps.length?'var(--green)':'var(--muted)',fontSize:'10px',textAlign:'center',fontWeight:aOpps.length?'600':'400'}},aOpps.length||'—'));
+      tr.appendChild(el('td',{style:{color:aCases.filter(x=>x.Priority==='High').length?'var(--red)':aCases.length?'var(--amber)':'var(--muted)',fontSize:'10px',textAlign:'center',fontWeight:aCases.length?'600':'400'}},aCases.length||'—'));
       tbody.appendChild(tr);
     });
     tbl.appendChild(tbody);
     const tw=el('div',{class:'tbl-wrap'}); tw.appendChild(tbl); wrap.appendChild(tw);
   }
 
-  if(S._custView==='cases'){
-    const filtered=fq?cases.filter(cs=>(cs.Subject||'').toLowerCase().includes(fq)||(cs.Account?.Name||'').toLowerCase().includes(fq)):cases;
-    wrap.appendChild(el('h3',{style:{fontSize:'13px',fontWeight:'700',marginBottom:'8px'}},'Cases ('+filtered.length+')'));
-    const sortedCases=[...filtered].sort((a,b)=>{const po={High:0,Medium:1,Low:2};return (po[a.Priority]||3)-(po[b.Priority]||3);});
+  // ── Opportunities View ──
+  else if(S._custViewMode==='opps'){
+    const filtered2=fq?opps.filter(o=>(o.Name||'').toLowerCase().includes(fq)||(o.Account?.Name||'').toLowerCase().includes(fq)):opps;
+    wrap.appendChild(el('div',{style:{marginBottom:'8px',fontSize:'10px',color:'var(--muted)'}},'Showing '+filtered2.length+' open opportunities'));
+    const sortedO=[...filtered2].sort((a,b)=>new Date(a.CloseDate||'2099')-new Date(b.CloseDate||'2099'));
+    const tbl=el('table',{class:'data-table'});
+    const thead=el('thead'); const hr=el('tr');
+    ['Opportunity','Account','Stage','Amount','Close Date','Owner','Status'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+    thead.appendChild(hr); tbl.appendChild(thead);
+    const tbody=el('tbody');
+    sortedO.slice(0,100).forEach(o=>{
+      const overdue=o.CloseDate&&new Date(o.CloseDate)<new Date();
+      const tr=el('tr',{style:{cursor:'pointer',background:overdue?'rgba(239,68,68,.04)':''},onclick(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view','_blank');}});
+      tr.appendChild(el('td',{style:{fontWeight:'600',fontSize:'10px',maxWidth:'160px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},o.Name||'—'));
+      tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},o.Account?.Name||'—'));
+      tr.appendChild(el('td',{style:{fontSize:'9px'}},o.StageName||'—'));
+      tr.appendChild(el('td',{style:{color:'var(--green)',fontWeight:'600',fontSize:'10px'}},o.Amount?'$'+Math.round(Number(o.Amount)).toLocaleString():'—'));
+      tr.appendChild(el('td',{style:{color:overdue?'var(--red)':'var(--text)',fontSize:'9px'}},o.CloseDate?new Date(o.CloseDate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'}):'—'));
+      tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},o.Owner?.Name||'—'));
+      tr.appendChild(el('td',{},el('span',{style:{fontSize:'8px',color:overdue?'var(--red)':'var(--muted)',fontWeight:'600'}},overdue?'⚠ Overdue':'Active')));
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody); const tw=el('div',{class:'tbl-wrap'});tw.appendChild(tbl);wrap.appendChild(tw);
+  }
+
+  // ── Cases View ──
+  else if(S._custViewMode==='cases'){
+    const filtered2=fq?cases.filter(cs=>(cs.Subject||'').toLowerCase().includes(fq)||(cs.Account?.Name||'').toLowerCase().includes(fq)):cases;
+    wrap.appendChild(el('div',{style:{marginBottom:'8px',fontSize:'10px',color:'var(--muted)'}},'Showing '+filtered2.length+' open cases'));
+    const sortedC=[...filtered2].sort((a,b)=>{const po={High:0,Medium:1,Low:2};return(po[a.Priority]||3)-(po[b.Priority]||3);});
     const tbl=el('table',{class:'data-table'});
     const thead=el('thead'); const hr=el('tr');
     ['Case #','Subject','Account','Priority','Status','Created','Owner'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
     thead.appendChild(hr); tbl.appendChild(thead);
     const tbody=el('tbody');
-    sortedCases.slice(0,60).forEach(cs=>{
+    sortedC.slice(0,100).forEach(cs=>{
       const pc={'High':'var(--red)','Medium':'var(--amber)','Low':'var(--muted)'}[cs.Priority]||'var(--muted)';
       const tr=el('tr',{style:{cursor:'pointer',borderLeft:'3px solid '+pc},onclick(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Case/'+cs.Id+'/view','_blank');}});
       tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},cs.CaseNumber||'—'));
-      tr.appendChild(el('td',{style:{fontWeight:'600',fontSize:'10px',maxWidth:'200px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},cs.Subject||'No subject'));
+      tr.appendChild(el('td',{style:{fontWeight:'600',fontSize:'10px',maxWidth:'180px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},cs.Subject||'No subject'));
       tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},cs.Account?.Name||'—'));
       tr.appendChild(el('td',{},el('span',{style:{fontSize:'9px',fontWeight:'700',color:pc}},cs.Priority||'—')));
       tr.appendChild(el('td',{style:{fontSize:'9px'}},cs.Status||'—'));
@@ -6916,38 +7089,79 @@ function renderCustomers(c) {
       tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},cs.Owner?.Name||'—'));
       tbody.appendChild(tr);
     });
-    tbl.appendChild(tbody);
-    const tw=el('div',{class:'tbl-wrap'}); tw.appendChild(tbl); wrap.appendChild(tw);
+    tbl.appendChild(tbody); const tw=el('div',{class:'tbl-wrap'});tw.appendChild(tbl);wrap.appendChild(tw);
+  }
+
+  // ── Contacts View ──
+  else if(S._custViewMode==='contacts'){
+    const filtered2=fq?contacts.filter(ct=>(ct.Name||'').toLowerCase().includes(fq)||(ct.Account?.Name||'').toLowerCase().includes(fq)||(ct.Email||'').toLowerCase().includes(fq)):contacts;
+    wrap.appendChild(el('div',{style:{marginBottom:'8px',fontSize:'10px',color:'var(--muted)'}},'Showing '+filtered2.length+' contacts'));
+    const tbl=el('table',{class:'data-table'});
+    const thead=el('thead'); const hr=el('tr');
+    ['Contact','Title','Account','Phone','Email','Owner'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+    thead.appendChild(hr); tbl.appendChild(thead);
+    const tbody=el('tbody');
+    filtered2.slice(0,100).forEach(ct=>{
+      const tr=el('tr',{style:{cursor:'pointer'},onclick(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Contact/'+ct.Id+'/view','_blank');}});
+      tr.appendChild(el('td',{style:{fontWeight:'600',fontSize:'10px'}},ct.Name||'—'));
+      tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},ct.Title||'—'));
+      tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},ct.Account?.Name||'—'));
+      tr.appendChild(el('td',{style:{fontSize:'10px'}},ct.Phone?el('a',{href:'tel:'+ct.Phone,style:{color:'var(--blue)',textDecoration:'none'}},ct.Phone):'—'));
+      tr.appendChild(el('td',{style:{fontSize:'9px'}},ct.Email?el('a',{href:'mailto:'+ct.Email,style:{color:'var(--blue)',textDecoration:'none'}},ct.Email):'—'));
+      tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},ct.Owner?.Name||'—'));
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody); const tw=el('div',{class:'tbl-wrap'});tw.appendChild(tbl);wrap.appendChild(tw);
   }
 
   c.appendChild(wrap);
 }
 
+
+async function sfQueryAll(soql, maxRecords=2000){
+  // Paginate through all SF records using nextRecordsUrl
+  if(!USER.sfToken||!USER.sfInstance) return [];
+  const allRecords=[];
+  let url=USER.sfInstance+'/services/data/v59.0/query?q='+encodeURIComponent(soql);
+  while(url && allRecords.length < maxRecords){
+    try{
+      const r=await fetch(url,{headers:{'Authorization':'Bearer '+USER.sfToken,'Content-Type':'application/json'}});
+      if(r.status===401){USER.sfToken=null;USER.sfInstance=null;sessionStorage.removeItem('vcs_sf_token');localStorage.removeItem('vcs_sf_token_ls');sfAutoReconnect();return allRecords;}
+      if(!r.ok) break;
+      const data=await r.json();
+      if(data.records) allRecords.push(...data.records);
+      // nextRecordsUrl is a path like /services/data/v59.0/query/01gXX-2000
+      url=data.nextRecordsUrl?(USER.sfInstance+data.nextRecordsUrl):null;
+      if(data.done) break;
+    }catch(e){console.error('[sfQueryAll]',e);break;}
+  }
+  return allRecords;
+}
+
 async function loadCustomerData() {
-  if(!USER.sfToken){ S._custError='Not connected to Salesforce.'; render(); return; }
+  if(!USER.sfToken){ S._custError='Not connected to Salesforce. Connect via Settings.'; render(); return; }
   if(!USER.sfInstance){
     const base=S.settings?.sfLoginUrl||'https://psgpo.my.salesforce.com';
     USER.sfInstance=base.includes('.my.salesforce.com')||base.includes('.force.com')?base:'https://psgpo.my.salesforce.com';
   }
   S._custLoading=true; S._custError=null; render();
   try{
-    const [accountResult,oppResult,caseResult]=await Promise.all([
-      sfQuery('SELECT Id,Name,Type,Industry,OwnerId,Owner.Name,BillingState,ParentId,Parent.Name,NumberOfEmployees FROM Account ORDER BY ParentId ASC NULLS FIRST,Name ASC LIMIT 200').catch(()=>({records:[]})),
-      sfQuery('SELECT Id,Name,StageName,Amount,CloseDate,AccountId,Account.Name,Vendor__r.Name,Owner.Name FROM Opportunity WHERE IsClosed=false ORDER BY CloseDate ASC NULLS LAST LIMIT 200').catch(()=>({records:[]})),
-      sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,AccountId,Account.Name,Vendor__r.Name,CreatedDate,Owner.Name FROM Case WHERE Status!='Closed' ORDER BY Priority,CreatedDate DESC LIMIT 200").catch(()=>({records:[]})),
+    // Fetch accounts with pagination - no LIMIT cap, get all records
+    const [accounts,opps,cases,contacts]=await Promise.all([
+      sfQueryAll('SELECT Id,Name,Type,Industry,OwnerId,Owner.Name,BillingCity,BillingState,Phone,ParentId,Parent.Name,NumberOfEmployees,Description FROM Account ORDER BY ParentId ASC NULLS FIRST,Name ASC', 5000),
+      sfQueryAll('SELECT Id,Name,StageName,Amount,CloseDate,AccountId,Account.Name,Vendor__r.Name,Owner.Name FROM Opportunity WHERE IsClosed=false ORDER BY CloseDate ASC NULLS LAST', 2000),
+      sfQueryAll("SELECT Id,CaseNumber,Subject,Status,Priority,AccountId,Account.Name,Vendor__r.Name,CreatedDate,Owner.Name FROM Case WHERE Status!='Closed' ORDER BY Priority,CreatedDate DESC", 1000),
+      sfQueryAll('SELECT Id,Name,Title,Email,Phone,AccountId,Account.Name,OwnerId FROM Contact ORDER BY LastModifiedDate DESC', 2000),
     ]);
-    console.log('[Customers] accounts:',accountResult?.records?.length,'opps:',oppResult?.records?.length,'cases:',caseResult?.records?.length);
-    S._custData={
-      accounts:accountResult?.records||[],
-      opps:oppResult?.records||[],
-      cases:caseResult?.records||[],
-    };
+    console.log('[Customers] accounts:',accounts.length,'opps:',opps.length,'cases:',cases.length,'contacts:',contacts.length);
+    S._custData={accounts,opps,cases,contacts};
     S._custLoading=false;
     S._custLastLoaded=new Date().toLocaleTimeString();
+    if(!S._custExpandedAccounts) S._custExpandedAccounts=new Set();
     render();
   }catch(e){
     console.error('[Customers]',e);
-    S._custError='Error: '+e.message;
+    S._custError='Error loading: '+e.message;
     S._custLoading=false; render();
   }
 }
@@ -9990,15 +10204,35 @@ function openAddTierModal(existingVendor) {
 
 // Nav icon + label maps
 const NAV_DEFS=[
-  ['today','📋','Today'],['callsheet','📞','Call Sheet'],['expiring','⏰','Expiring'],
-  ['vendordb','🗂','Vendor DB'],['network','🔗','Network Intel'],
-  ['economics','💰','Contract Economics'],['tiers','📶','Tier Tracker'],
-  ['itw','🔧','In The Works'],['reviews','📝','Reviews'],
-  ['compare','⚖️','Compare'],['sfboard','☁','SF Board'],['customers','👥','Customers'],
-  ['contracts','📄','Contracts'],['spend','💹','Spend'],
-  ['calendar','📅','Calendar'],['forecast','📆','Forecast'],['analytics','📊','Analytics'],
-  ['reports','📑','Reports'],['summary','📈','Summary'],['history','🕐','History'],
-  ['datacheck','✅','Data Check'],['settings','⚙','Settings'],
+  // ── Operations ──
+  ['today','📋','Today'],
+  ['callsheet','📞','Call Sheet'],
+  ['expiring','⏰','Expiring'],
+  ['calendar','📅','Calendar'],
+  // ── Vendors ──
+  ['_div1',null,'Vendors'],
+  ['vendordb','🗂','Vendor DB'],
+  ['itw','🔧','In The Works'],
+  ['reviews','📝','Reviews'],
+  ['tiers','📶','Tier Tracker'],
+  ['contracts','📄','Contracts'],
+  ['compare','⚖️','Compare'],
+  // ── Intelligence ──
+  ['_div2',null,'Intelligence'],
+  ['sfboard','☁','SF Board'],
+  ['customers','👥','Customers'],
+  ['spend','💹','Spend'],
+  ['network','🔗','Network Intel'],
+  ['economics','💰','Contract Econ'],
+  ['analytics','📊','Analytics'],
+  ['forecast','📆','Forecast'],
+  // ── Admin ──
+  ['_div3',null,'Admin'],
+  ['reports','📑','Reports'],
+  ['summary','📈','Summary'],
+  ['history','🕐','History'],
+  ['datacheck','✅','Data Check'],
+  ['settings','⚙','Settings'],
 ];
 
 function updateSidebar() {
@@ -10032,13 +10266,28 @@ function updateSidebar() {
     }
   }
   // Get effective tabs — role defaults + per-user overrides
-  const _roleBaseTabs = (ROLE_PERMS[USER.role||'viewer']||ROLE_PERMS.viewer).tabs || NAV_DEFS.map(n=>n[0]);
+  const _roleBaseTabs = (ROLE_PERMS[USER.role||'viewer']||ROLE_PERMS.viewer).tabs || NAV_DEFS.map(n=>n[0]).filter(id=>!id.startsWith('_'));
   const _tabOverrides = USER.tabOverrides || {};
   const allowedTabs = NAV_DEFS.map(n=>n[0]).filter(tabId => {
+    if(tabId.startsWith('_div')) return true; // always include dividers
     if (tabId in _tabOverrides) return _tabOverrides[tabId]; // user override
     return _roleBaseTabs.includes(tabId); // role default
   });
   for (const [id,icon,label] of NAV_DEFS) {
+    // Render section dividers
+    if(id.startsWith('_div')){
+      if(!collapsed){
+        const div=document.createElement('div');
+        div.style.cssText='padding:10px 10px 2px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);opacity:.6;';
+        div.textContent=label;
+        nav.appendChild(div);
+      } else {
+        const line=document.createElement('div');
+        line.style.cssText='height:1px;background:var(--border);margin:6px 4px;';
+        nav.appendChild(line);
+      }
+      continue;
+    }
     if (!allowedTabs.includes(id)) continue; // hide tabs not in role
     const btn=document.createElement('button');
     btn.className='nav-btn'+(S.view===id?' active':'');
@@ -13056,8 +13305,40 @@ AG=Added Value, AH=Contact, AJ=Business#, AK=Mobile, AL=Email, BA=Notes (r[52])
   }
 }
 
+function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
+  // Creates a collapsible settings card
+  const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
+  const isOpen=S._settingsOpen?.[key] ?? defaultOpen;
+  const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'10px 14px',cursor:'pointer',userSelect:'none',background:isOpen?'var(--card)':'var(--sb)',transition:'background .15s'},
+    onclick(){
+      if(!S._settingsOpen) S._settingsOpen={};
+      S._settingsOpen[key]=!isOpen;
+      render();
+    }});
+  hdr.appendChild(el('span',{style:{fontSize:'14px'}},icon));
+  hdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},title));
+  hdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',fontWeight:'400'}},isOpen?'▲':'▼'));
+  card.appendChild(hdr);
+  if(isOpen){
+    const body=el('div',{style:{padding:'14px'}});
+    buildFn(body);
+    card.appendChild(body);
+  }
+  c.appendChild(card);
+}
+
 function renderSettings(c) {
   c.innerHTML = ''; // CRITICAL: clear before re-rendering to prevent duplication
+  const wrap=el('div',{style:{maxWidth:'840px',margin:'0 auto',padding:'4px 0'}});
+
+  // ── Settings Header ──
+  const settingsHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'16px'}});
+  settingsHdr.appendChild(el('h2',{style:{margin:'0',fontSize:'16px',fontWeight:'700',flex:'1'}},'⚙ Settings'));
+  if(USER.role==='admin'||USER.role==='procurement') {
+    settingsHdr.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){if(!S._settingsOpen)S._settingsOpen={};['handover','users','sf','drive','ms365','dialer','ai','apiusage'].forEach(k=>S._settingsOpen[k]=true);render();}},'▼ Expand All'));
+    settingsHdr.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){if(!S._settingsOpen)S._settingsOpen={};['handover','users','sf','drive','ms365','dialer','ai','apiusage'].forEach(k=>S._settingsOpen[k]=false);render();}},'▶ Collapse All'));
+  }
+  c.appendChild(settingsHdr);
 
   // ── Session Handover Generator ──
   const secHandover=el('div',{class:'settings-section'});
@@ -14590,6 +14871,128 @@ function updateClock() {
   }
 }
 
+// ─── Data Sheet Generator ─────────────────────────────────────────────────────
+function generateVendorDataSheet(vendor) {
+  // Build a clean HTML data sheet that the user can print or save as PDF
+  const exp=getCurrentExpiry(vendor);
+  const today=new Date();
+  const daysToExp=exp?dayDiff(exp,today):null;
+  const fee=parseFee(vendor.adminFee)||0;
+
+  // Open in a new window as a printable HTML page
+  const html=`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Data Sheet — ${vendor.name||'Vendor'}</title>
+<style>
+  body{font-family:Arial,sans-serif;font-size:10pt;color:#1a1a2e;max-width:850px;margin:30px auto;padding:0 30px;}
+  .header{border-bottom:3px solid #4f7cff;padding-bottom:10px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:flex-end;}
+  .logo{font-size:18pt;font-weight:700;color:#4f7cff;}
+  .doc-title{font-size:11pt;color:#888;}
+  h1{font-size:15pt;color:#1a1a2e;margin:0 0 4px;}
+  .badge{display:inline-block;padding:2px 10px;border-radius:4px;font-size:9pt;font-weight:700;margin-left:8px;}
+  .badge-call{background:#fee2e2;color:#991b1b;}
+  .badge-email{background:#fef3c7;color:#92400e;}
+  .section{margin-bottom:16px;}
+  .section-title{font-size:10pt;font-weight:700;color:#4f7cff;border-bottom:1px solid #e2e8f0;padding-bottom:3px;margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em;}
+  .grid{display:grid;grid-template-columns:160px 1fr;gap:3px 12px;font-size:9.5pt;}
+  .label{color:#888;font-weight:600;}
+  .value{color:#1a1a2e;}
+  .highlight{color:#166534;font-weight:700;}
+  .warning{color:#b91c1c;font-weight:700;}
+  .tiers{margin-top:6px;}
+  .tier-row{display:grid;grid-template-columns:180px 1fr;padding:4px 0;border-bottom:1px solid #f1f5f9;font-size:9pt;}
+  .notes{background:#f8faff;border:1px solid #e2e8f0;border-radius:4px;padding:10px;font-size:9pt;white-space:pre-wrap;line-height:1.6;max-height:200px;overflow:hidden;}
+  .footer{margin-top:24px;border-top:1px solid #e2e8f0;padding-top:8px;font-size:8pt;color:#888;display:flex;justify-content:space-between;}
+  @media print{body{margin:10px;}.footer{position:fixed;bottom:0;width:100%;}}
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <div class="logo">Prime Source Expense Experts</div>
+    <div class="doc-title">Vendor Contract Data Sheet — Confidential</div>
+  </div>
+  <div style="text-align:right;font-size:9pt;color:#888;">
+    Generated: ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}<br>
+    Prepared by: ${USER.name||'VCS System'}
+  </div>
+</div>
+
+<h1>${vendor.name||'—'}${vendor.tier?`<span class="badge badge-${(vendor.tier||'').toLowerCase()}">${vendor.tier}</span>`:''}</h1>
+<div style="color:#888;font-size:9pt;margin-bottom:16px;">${vendor.category||''}${vendor.subCategory?' · '+vendor.subCategory:''} &nbsp;|&nbsp; Score: ${vendor.score||'N/A'} &nbsp;|&nbsp; Status: ${vendor.status||'Active'}</div>
+
+<div class="section">
+  <div class="section-title">Contract Details</div>
+  <div class="grid">
+    <span class="label">Contract Name</span><span class="value">${vendor.contractName||'—'}</span>
+    <span class="label">Agreement Type</span><span class="value">${vendor.agreementType||'—'}</span>
+    <span class="label">Signatory</span><span class="value">${vendor.signatory||'—'}</span>
+    <span class="label">Effective Date</span><span class="value">${vendor.termEffective||'—'}</span>
+    <span class="label">Expiration Date</span><span class="value ${daysToExp!==null&&daysToExp<=30?'warning':daysToExp!==null&&daysToExp<=90?'':''}">${exp?fmtDate(exp):'—'}${daysToExp!==null?' ('+daysToExp+' days)':''}</span>
+    <span class="label">Contract Term</span><span class="value">${vendor.contractTerm||'—'} year(s)</span>
+    <span class="label">Min Years</span><span class="value">${vendor.minYears||'—'}</span>
+    <span class="label">Auto-Renewal</span><span class="value">${vendor.autoRenewal||vendor.autoRenew||'No'}</span>
+    <span class="label">AR Type</span><span class="value">${vendor.autoRenewalType||'—'}</span>
+    <span class="label">Notice Period</span><span class="value">${vendor.noticeDays||vendor.noticePeriod||'—'} days</span>
+    <span class="label">Perpetuity</span><span class="value">${vendor.perpetuity||'—'}</span>
+    <span class="label">Tail</span><span class="value">${vendor.tail||'—'}</span>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Financial Terms</div>
+  <div class="grid">
+    <span class="label">Admin Fee</span><span class="value highlight">${vendor.adminFee||'Not set'}</span>
+    <span class="label">Market</span><span class="value">${vendor.markets||'—'}</span>
+    <span class="label">GPO</span><span class="value">${vendor.gpo||'—'}</span>
+    <span class="label">Cost of Trade (COT)</span><span class="value">${vendor.cot||'—'}</span>
+  </div>
+  ${vendor.tiers?`<div class="tiers"><div style="font-size:9pt;font-weight:700;margin-top:8px;margin-bottom:4px;">Tier Structure:</div><div style="font-size:9pt;background:#f0f4ff;padding:8px;border-radius:4px;white-space:pre-wrap;">${vendor.tiers}</div></div>`:''}
+</div>
+
+<div class="section">
+  <div class="section-title">Contact Information</div>
+  <div class="grid">
+    <span class="label">Primary Contact</span><span class="value">${vendor.procContact||vendor.sharedContact||'—'}</span>
+    <span class="label">Email</span><span class="value">${vendor.email||'—'}</span>
+    <span class="label">Business Phone</span><span class="value">${vendor.bizPhone||'—'}</span>
+    <span class="label">Mobile</span><span class="value">${vendor.mobile||'—'}</span>
+    <span class="label">Vendor Website</span><span class="value">${vendor.website||'—'}</span>
+    <span class="label">Trainual</span><span class="value">${vendor.trainualUrl||'—'}</span>
+  </div>
+</div>
+
+${vendor.notes?`<div class="section">
+  <div class="section-title">Contract Notes</div>
+  <div class="notes">${String(vendor.notes||'').slice(0,800)}</div>
+</div>`:''}
+
+${vendor.comments?`<div class="section">
+  <div class="section-title">Comments</div>
+  <div class="notes">${String(vendor.comments||'').slice(0,400)}</div>
+</div>`:''}
+
+<div class="footer">
+  <span>Prime Source Expense Experts — Confidential. For internal use only.</span>
+  <span>VCS Data Sheet · ${vendor.name||''} · ${new Date().toLocaleDateString()}</span>
+</div>
+
+<div style="margin-top:20px;text-align:center;color:#888;font-size:8pt;">
+  <button onclick="window.print()" style="background:#4f7cff;color:white;border:none;padding:8px 20px;border-radius:4px;cursor:pointer;font-size:10pt;">🖨 Print / Save as PDF</button>
+</div>
+</body>
+</html>`;
+
+  const w=window.open('','_blank','width=900,height=700');
+  if(!w){toast('⚠ Popup blocked — allow popups to generate data sheet','#f59e0b');return;}
+  w.document.write(html);
+  w.document.close();
+  toast('📄 Data Sheet opened — use Print to save as PDF');
+}
+
+
 // ─── Main Render ──────────────────────────────────────────────────────────────
 function render() {
   const content=$('content');
@@ -14755,7 +15158,13 @@ function init() {
     restoreSFSession();
     updateUserBadge();
     $('upload-user-info').innerHTML='Signed in as <strong>'+USER.name+'</strong> ('+ROLES[USER.role]+') — <a href="#" style="color:var(--blue)" onclick="event.preventDefault();logout();">Sign out</a>';
-    // Check for unsaved session from a previous load
+    // Auto-collapse sidebar on narrow screens
+  const _sb2=$('sidebar');
+  if(_sb2&&window.innerWidth<1100&&!_sb2.classList.contains('collapsed')){
+    _sb2.classList.add('collapsed');
+    updateSidebar();
+  }
+  // Check for unsaved session from a previous load
     const saved=loadSessionState();
     if(saved&&saved.dirtyVendors?.length){
       const ageMin=Math.round((Date.now()-new Date(saved.ts))/60000);
@@ -14898,6 +15307,10 @@ function init() {
   $('analytics-popup-bg').addEventListener('click',closeAnalyticsPopup);
   document.querySelector('.analytics-popup').addEventListener('click',e=>e.stopPropagation());
   document.addEventListener('keydown',e=>{
+  // Press / to focus search (not when in an input/textarea)
+  if(e.key==='/'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)){
+    e.preventDefault();const s=$('search');if(s){s.focus();s.select();}
+  }
     if(e.key==='Escape'){closeModal();closeDetail();closeAnalyticsPopup();return;}
     // Don't hijack when typing in an input
     const tag=document.activeElement?.tagName;
