@@ -3894,6 +3894,31 @@ async function saveToDrive(buffer, filename) {
       headers: {'Content-Type': 'text/plain'},
       body: JSON.stringify({action: 'saveFile', content: b64, name: filename})
     });
+
+    // Push vendor JSON snapshot for Renzo — non-blocking, non-critical
+    try {
+      const snap=S.vendors.filter(v=>v.source==='psd').map(v=>({
+        source_system:'VCS',source_record_id:'psd:'+v.name,entity_type:'vendor',
+        company_name:v.name,contact_name:v.procContact||'',contact_email:v.email||'',
+        contact_phone:v.bizPhone||v.mobile||'',relationship_owner:v.signatory||'',
+        priority:({CALL:'high',EMAIL:'medium',MONITOR:'low',WATCH:'low',REVIEW:'medium'})[v.tier]||'normal',
+        last_contact_date:v.lastComm||null,follow_up_date:v.followUp||null,
+        renewal_or_contract_date:v.contractExpiry||null,
+        relationship_status:v.status||'Active',
+        context_notes:(v.notes||'').slice(0,1000),
+        tags:[v.category,v.tier,isAutoRenew(v)?'Auto-Renew':'',v.gpo?'GPO:'+v.gpo:'',v.markets].filter(Boolean),
+        vcs_category:v.category||'',vcs_tier:v.tier||'',vcs_score:v.score||null,
+        vcs_admin_fee:v.adminFee||'',vcs_auto_renewal:v.autoRenewal||v.autoRenew||'',
+        vcs_contract_term:v.contractTerm||'',vcs_gpo:v.gpo||'',vcs_markets:v.markets||'',
+        vcs_trainual_url:v.trainualUrl||'',
+      }));
+      fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
+        body:JSON.stringify({action:'saveRenzoSnapshot',
+          data:JSON.stringify({generated_at:new Date().toISOString(),count:snap.length,records:snap})
+        })
+      }).catch(e=>console.warn('[VCS] Renzo snapshot non-critical error:',e.message));
+    } catch(snapErr){console.warn('[VCS] Renzo snapshot failed:',snapErr.message);}
+
     if (proxyResp.ok) {
       const data = await proxyResp.json();
       console.log('[saveToDrive] Proxy response:', JSON.stringify(data).slice(0,200));
@@ -14221,21 +14246,48 @@ function renderSettings(c) {
         if(!url){toast('Enter the connector URL first','#f59e0b');return;}
         testBtn.textContent='⏳ Testing...';testBtn.disabled=true;
         try{
-          const r=await fetch(url+'?action=ping&apiKey='+(key||''),{method:'GET'});
-          const d=await r.json();
-          if(d.status==='ok'){
-            toast('✓ Renzo connector connected! Version: '+(d.version||'1.0'));
+          // Route through VCS proxy to avoid browser CORS restriction
+          // VCS proxy → Renzo connector (server-to-server, no CORS)
+          console.log('[Renzo Test] Routing through VCS proxy...');
+          const r=await fetch(VCS_PROXY_URL, {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+              action:'renzoProxy',
+              renzoUrl:url,
+              renzoKey:key||'',
+              renzoAction:'ping'
+            })
+          });
+          const text=await r.text();
+          console.log('[Renzo Test] Proxy response:', text);
+          let d;
+          try{ d=JSON.parse(text); }catch(e){ d={error:'Non-JSON: '+text.slice(0,200)}; }
+          
+          // Handle proxy wrapper vs direct response
+          const inner = d.renzoResult || d;
+          
+          if(inner.status==='ok'){
+            toast('✓ Renzo connector live! Version: '+(inner.version||'1.0'));
             testBtn.textContent='✓ Connected';
             testBtn.style.background='rgba(34,197,94,.2)';
+            testBtn.disabled=false;
+          } else if(d.proxyError){
+            toast('⚠ Proxy error: '+d.proxyError,'#f59e0b');
+            testBtn.textContent='⚠ Proxy error'; testBtn.disabled=false;
+          } else if(inner.error==='Unauthorized'){
+            toast('✗ Wrong API key — VCS key does not match Apps Script RENZO_API_KEY property','#ef4444');
+            testBtn.textContent='✗ Wrong key'; testBtn.disabled=false;
           } else {
-            toast('⚠ Connector responded but returned: '+JSON.stringify(d),'#f59e0b');
-            testBtn.textContent='⚠ Check key';
+            toast('⚠ '+(inner.error||JSON.stringify(inner)).slice(0,120),'#f59e0b');
+            testBtn.textContent='⚠ Error'; testBtn.disabled=false;
           }
         }catch(e){
-          toast('✗ Cannot reach connector: '+e.message,'#ef4444');
-          testBtn.textContent='✗ Failed';
+          console.error('[Renzo Test]',e);
+          toast('✗ '+e.message,'#ef4444');
+          testBtn.textContent='✗ Failed'; testBtn.disabled=false;
         }
-        setTimeout(()=>{testBtn.textContent='Test Connection';testBtn.disabled=false;testBtn.style.background='';},3000);
+        setTimeout(()=>{if(testBtn.textContent!=='✓ Connected'){testBtn.textContent='Test Connection';testBtn.style.background='';}},5000);
       }},'Test Connection');
       testRow.appendChild(testBtn);
       if(S.settings.renzoConnectorUrl){
