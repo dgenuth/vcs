@@ -4067,7 +4067,7 @@ const PERSONAL_SETTING_KEYS = ['theme','fontSize','compactRows','defaultView','s
   'showHebrew','autoSortByScore','showSnoozed','showDismissedDefault','animateBadges',
   'emailSignature','cols','dbHiddenCols','sidebarWidth','closedDays','oooDays','dialerUrl'];
 // Global settings — stored once, admin-controlled, apply to all sessions
-const GLOBAL_SETTING_KEYS = ['sfClientId','sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId'];
+const GLOBAL_SETTING_KEYS = ['sfClientId','sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey'];
 const PERSIST_KEYS = [...PERSONAL_SETTING_KEYS, ...GLOBAL_SETTING_KEYS];
 
 function saveSettings() {
@@ -14183,6 +14183,92 @@ function renderSettings(c) {
   for (const [label,cls,fn] of btns) sec3.appendChild(el('button',{class:`${cls} btn-action`,style:{marginRight:'5px',marginBottom:'5px'},onclick:fn},label));
   if(['admin','procurement','manager'].includes(USER.role))if(['admin','procurement','manager'].includes(USER.role))c.appendChild(sec3);
 
+  // ── Renzo Integration Settings (Admin only) ──
+  if(['admin','procurement'].includes(USER.role)){
+    const renzoSec=el('div',{style:{background:'var(--sb)',border:'1px solid rgba(79,124,255,.3)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
+    const _rnOpen=!S._settingsOpen||(S._settingsOpen.renzo!==false);
+    const _rnHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'10px 14px',cursor:'pointer',background:_rnOpen?'rgba(79,124,255,.06)':'var(--sb)'},onclick(){if(!S._settingsOpen)S._settingsOpen={};S._settingsOpen.renzo=!_rnOpen;render();}});
+    _rnHdr.appendChild(el('span',{style:{fontSize:'14px'}},'🔌'));
+    _rnHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1',color:'var(--blue)'}},'Renzo Integration'));
+    _rnHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'8px'}},'AI Relationship Outreach'));
+    _rnHdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},_rnOpen?'▲':'▼'));
+    renzoSec.appendChild(_rnHdr);
+    if(_rnOpen){
+      const _rnBody=el('div',{style:{padding:'14px'}});
+      _rnBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px'}},'Renzo connects to VCS via a Google Apps Script endpoint. Configure the connector URL and API key here.'));
+
+      // Connector URL
+      const urlRow=el('div',{style:{marginBottom:'8px'}});
+      urlRow.appendChild(el('label',{style:{display:'block',fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.04em'}},'Connector URL (Apps Script Web App URL)'));
+      const urlIn=el('input',{type:'text',class:'modal-input',style:{width:'100%',marginBottom:'0',fontFamily:'monospace',fontSize:'10px'},placeholder:'https://script.google.com/macros/s/ABC.../exec',value:S.settings.renzoConnectorUrl||''});
+      urlIn.addEventListener('change',e=>{S.settings.renzoConnectorUrl=e.target.value.trim();saveSettings();});
+      urlRow.appendChild(urlIn);
+      _rnBody.appendChild(urlRow);
+
+      // API Key
+      const keyRow=el('div',{style:{marginBottom:'10px'}});
+      keyRow.appendChild(el('label',{style:{display:'block',fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.04em'}},'Renzo API Key (shared secret)'));
+      const keyIn=el('input',{type:'password',class:'modal-input',style:{width:'100%',marginBottom:'0',fontFamily:'monospace',fontSize:'10px'},placeholder:'renzo-vcs-key-...',value:S.settings.renzoApiKey||''});
+      keyIn.addEventListener('change',e=>{S.settings.renzoApiKey=e.target.value.trim();saveSettings();});
+      keyRow.appendChild(keyIn);
+      _rnBody.appendChild(keyRow);
+
+      // Test connection button
+      const testRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'10px'}});
+      const testBtn=el('button',{class:'btn-xs btn-blue',onclick:async function(){
+        const url=S.settings.renzoConnectorUrl;
+        const key=S.settings.renzoApiKey;
+        if(!url){toast('Enter the connector URL first','#f59e0b');return;}
+        testBtn.textContent='⏳ Testing...';testBtn.disabled=true;
+        try{
+          const r=await fetch(url+'?action=ping&apiKey='+(key||''),{method:'GET'});
+          const d=await r.json();
+          if(d.status==='ok'){
+            toast('✓ Renzo connector connected! Version: '+(d.version||'1.0'));
+            testBtn.textContent='✓ Connected';
+            testBtn.style.background='rgba(34,197,94,.2)';
+          } else {
+            toast('⚠ Connector responded but returned: '+JSON.stringify(d),'#f59e0b');
+            testBtn.textContent='⚠ Check key';
+          }
+        }catch(e){
+          toast('✗ Cannot reach connector: '+e.message,'#ef4444');
+          testBtn.textContent='✗ Failed';
+        }
+        setTimeout(()=>{testBtn.textContent='Test Connection';testBtn.disabled=false;testBtn.style.background='';},3000);
+      }},'Test Connection');
+      testRow.appendChild(testBtn);
+      if(S.settings.renzoConnectorUrl){
+        testRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){
+          const url=S.settings.renzoConnectorUrl;
+          const key=S.settings.renzoApiKey;
+          window.open(url+'?action=getVCSRecords&apiKey='+(key||'')+'&limit=5','_blank');
+        }},'Preview Records →'));
+      }
+      _rnBody.appendChild(testRow);
+
+      // Instructions
+      const steps=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',padding:'10px',fontSize:'9px',color:'var(--muted)'}});
+      steps.appendChild(el('div',{style:{fontWeight:'700',marginBottom:'6px',color:'var(--text)'}},'Setup Instructions'));
+      const ol=el('ol',{style:{paddingLeft:'16px',lineHeight:'1.8'}});
+      [
+        'Download renzo_connector.gs from the VCS output files',
+        'Open script.google.com → New Project → name it "VCS Renzo Connector"',
+        'Paste the .gs file content as Code.gs',
+        'Project Settings → Script Properties → Add: RENZO_API_KEY = (your key)',
+        'Deploy → New Deployment → Web App → Execute as: Me → Anyone',
+        'Copy the Web App URL and paste it above',
+        'Click Test Connection to verify'
+      ].forEach((step,i)=>{
+        ol.appendChild(el('li',{},step));
+      });
+      steps.appendChild(ol);
+      _rnBody.appendChild(steps);
+      renzoSec.appendChild(_rnBody);
+    }
+    c.appendChild(renzoSec);
+  }
+
   // ── API Usage Monitoring (Admin only) ──
   if(['admin','procurement'].includes(USER.role)){
     const apiSec=el('div',{class:'summary-section'});
@@ -14873,124 +14959,176 @@ function updateClock() {
 
 // ─── Data Sheet Generator ─────────────────────────────────────────────────────
 function generateVendorDataSheet(vendor) {
-  // Build a clean HTML data sheet that the user can print or save as PDF
   const exp=getCurrentExpiry(vendor);
   const today=new Date();
   const daysToExp=exp?dayDiff(exp,today):null;
-  const fee=parseFee(vendor.adminFee)||0;
+  const expStr=exp?fmtDate(exp)+(daysToExp!==null?' ('+daysToExp+'d)':''):'—';
+  const startStr=vendor.termEffective||'—';
 
-  // Open in a new window as a printable HTML page
+  // Build term string
+  const termParts=[];
+  if(vendor.contractTerm) termParts.push(vendor.contractTerm+' year'+(vendor.contractTerm!=='1'?'s':''));
+  if(isAutoRenew(vendor)){
+    const arType=vendor.autoRenewalType||'automatic';
+    const nd=getNoticeDays(vendor);
+    termParts.push((arType)+' auto-renewal'+(nd?' ('+nd+' day notice)':''));
+  } else {
+    termParts.push('no auto-renewal');
+  }
+  if(vendor.perpetuity&&vendor.perpetuity.toLowerCase()!=='no'&&vendor.perpetuity.toLowerCase()!=='n/a'&&vendor.perpetuity!=='—') {
+    termParts.push('perpetuity: '+vendor.perpetuity);
+  } else {
+    termParts.push('no perpetuity');
+  }
+  const termStr=termParts.join(', ');
+
+  // Contract summary — admin fee, tiers, key terms
+  const feeStr=vendor.adminFee||'Not on file';
+  const summaryParts=[];
+  if(vendor.adminFee) summaryParts.push('<strong>Admin Fee: '+vendor.adminFee+'</strong>');
+  if(vendor.tiers) summaryParts.push(vendor.tiers);
+  if(vendor.contractNotes||vendor.adminFeeNotes) summaryParts.push(vendor.contractNotes||vendor.adminFeeNotes||'');
+  const contractSummary=summaryParts.filter(Boolean).join(' · ')||'See contract for full terms.';
+
+  // Contact info
+  const contactName=vendor.procContact||vendor.sharedContact||'—';
+  const contactPhone=vendor.bizPhone||vendor.mobile||'—';
+  const contactEmail=vendor.email||'—';
+  const contactLine=[contactName,contactPhone,contactEmail].filter(s=>s&&s!=='—').join(' · ');
+
+  // SF spend data if available
+  const sfCtx=getSFContext(vendor.name);
+  const ytdSpend=sfCtx?.spend?'$'+Math.round(sfCtx.spend).toLocaleString()+' YTD':'Not available';
+
+  const rows=[
+    ['VENDOR NAME',vendor.name||'—'],
+    ['VENDOR ADDRESS',vendor.address||vendor.city||(vendor.markets?'National — '+vendor.markets:'—')],
+    ['VENDOR CONTACT',contactLine],
+    ['CONTRACT #',vendor.contractNumber||vendor.contractName||'—'],
+    ['CONTRACT TITLE',vendor.contractName||vendor.agreementType||'—'],
+    ['GPO / AGREEMENT TYPE',vendor.gpo?vendor.gpo+(vendor.agreementType?' — '+vendor.agreementType:''):vendor.agreementType||'Direct Agreement'],
+    ['START DATE',startStr],
+    ['END DATE',expStr],
+    ['CONTRACT TERM',termStr||'—'],
+    ['ADMIN FEE / REBATE STRUCTURE',feeStr+(vendor.tiers?'\n\nTier Structure:\n'+vendor.tiers:'')],
+    ['CATEGORY',vendor.category||(vendor.subCategory?vendor.subCategory:'—')],
+    ['MARKETS SERVICED',vendor.markets||'National'],
+    ['SIGNATORY / AGREEMENT CONTACT',vendor.signatory||'—'],
+    ['COST OF TRADE (COT)',vendor.cot||'—'],
+    ['PRICING / QUOTES PROCESS',vendor.pricingProcess||'Price list on file — contact vendor rep for updated pricing'],
+    ['ACCOUNT SETUP REQUIREMENTS',vendor.accountSetup||'Contact vendor representative'],
+    ['YTD SPEND (SF)',ytdSpend],
+    ['NOTES',vendor.notes?String(vendor.notes).slice(0,400):'—'],
+  ].filter(([k,v])=>v&&v!=='—'||['VENDOR NAME','CONTRACT TITLE','START DATE','END DATE','ADMIN FEE / REBATE STRUCTURE'].includes(k));
+
+  const tableRows=rows.map(([label,value])=>`
+    <tr>
+      <td class="label-cell">${label}</td>
+      <td class="value-cell">${String(value||'—').replace(/\n/g,'<br>')}</td>
+    </tr>`).join('');
+
   const html=`<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Data Sheet — ${vendor.name||'Vendor'}</title>
+<title>Contract Data Sheet — ${vendor.name||'Vendor'}</title>
 <style>
-  body{font-family:Arial,sans-serif;font-size:10pt;color:#1a1a2e;max-width:850px;margin:30px auto;padding:0 30px;}
-  .header{border-bottom:3px solid #4f7cff;padding-bottom:10px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:flex-end;}
-  .logo{font-size:18pt;font-weight:700;color:#4f7cff;}
-  .doc-title{font-size:11pt;color:#888;}
-  h1{font-size:15pt;color:#1a1a2e;margin:0 0 4px;}
-  .badge{display:inline-block;padding:2px 10px;border-radius:4px;font-size:9pt;font-weight:700;margin-left:8px;}
-  .badge-call{background:#fee2e2;color:#991b1b;}
-  .badge-email{background:#fef3c7;color:#92400e;}
-  .section{margin-bottom:16px;}
-  .section-title{font-size:10pt;font-weight:700;color:#4f7cff;border-bottom:1px solid #e2e8f0;padding-bottom:3px;margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em;}
-  .grid{display:grid;grid-template-columns:160px 1fr;gap:3px 12px;font-size:9.5pt;}
-  .label{color:#888;font-weight:600;}
-  .value{color:#1a1a2e;}
-  .highlight{color:#166534;font-weight:700;}
-  .warning{color:#b91c1c;font-weight:700;}
-  .tiers{margin-top:6px;}
-  .tier-row{display:grid;grid-template-columns:180px 1fr;padding:4px 0;border-bottom:1px solid #f1f5f9;font-size:9pt;}
-  .notes{background:#f8faff;border:1px solid #e2e8f0;border-radius:4px;padding:10px;font-size:9pt;white-space:pre-wrap;line-height:1.6;max-height:200px;overflow:hidden;}
-  .footer{margin-top:24px;border-top:1px solid #e2e8f0;padding-top:8px;font-size:8pt;color:#888;display:flex;justify-content:space-between;}
-  @media print{body{margin:10px;}.footer{position:fixed;bottom:0;width:100%;}}
+  @import url('https://fonts.googleapis.com/css2?family=Calibri:wght@400;700&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Calibri, Arial, sans-serif; font-size: 10pt; color: #1a1a1a; background: #fff; padding: 0.5in; max-width: 9in; margin: 0 auto; }
+  
+  /* Header */
+  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; padding-bottom: 12px; border-bottom: 3px solid #1f3864; }
+  .header-left { }
+  .company-name { font-size: 16pt; font-weight: 700; color: #1f3864; letter-spacing: .02em; }
+  .doc-type { font-size: 13pt; font-weight: 700; color: #1f3864; margin-top: 2px; }
+  .header-right { text-align: right; font-size: 8.5pt; color: #555; line-height: 1.5; }
+  
+  /* Intro text */
+  .intro { font-size: 10pt; margin-bottom: 14px; line-height: 1.5; color: #1a1a1a; }
+  
+  /* Main table */
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+  td { padding: 7px 10px; vertical-align: top; border: 1px solid #c9c9c9; line-height: 1.5; font-size: 9.5pt; }
+  .label-cell { 
+    width: 32%; 
+    background: #1f3864; 
+    color: #ffffff; 
+    font-weight: 700; 
+    font-size: 8.5pt; 
+    text-transform: uppercase; 
+    letter-spacing: .04em;
+    vertical-align: middle;
+  }
+  .value-cell { 
+    width: 68%; 
+    background: #ffffff; 
+    color: #1a1a1a; 
+  }
+  tr:nth-child(even) .value-cell { background: #f4f7fc; }
+  
+  /* Footer */
+  .footer { 
+    text-align: center; 
+    font-size: 8pt; 
+    color: #666; 
+    border-top: 2px solid #1f3864; 
+    padding-top: 8px; 
+    margin-top: 8px;
+    line-height: 1.6;
+  }
+  .footer strong { color: #1f3864; }
+  
+  /* Print button */
+  .print-bar { text-align: center; margin-bottom: 16px; }
+  .print-btn { background: #1f3864; color: white; border: none; padding: 8px 24px; border-radius: 4px; cursor: pointer; font-size: 10pt; font-family: inherit; }
+  .print-btn:hover { background: #2e4f8a; }
+  @media print { .print-bar { display: none; } body { padding: 0.3in; } }
 </style>
 </head>
 <body>
+
+<div class="print-bar">
+  <button class="print-btn" onclick="window.print()">🖨 Print / Save as PDF</button>
+  &nbsp;&nbsp;
+  <span style="font-size:9pt;color:#888;">Tip: In print dialog, choose "Save as PDF" → Destination</span>
+</div>
+
 <div class="header">
-  <div>
-    <div class="logo">Prime Source Expense Experts</div>
-    <div class="doc-title">Vendor Contract Data Sheet — Confidential</div>
+  <div class="header-left">
+    <div class="company-name">Prime Source</div>
+    <div class="doc-type">Contract Data Sheet</div>
   </div>
-  <div style="text-align:right;font-size:9pt;color:#888;">
+  <div class="header-right">
     Generated: ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}<br>
-    Prepared by: ${USER.name||'VCS System'}
+    Prepared by: ${USER.name||'VCS System'}<br>
+    <strong>CONFIDENTIAL — Internal Use Only</strong>
   </div>
 </div>
 
-<h1>${vendor.name||'—'}${vendor.tier?`<span class="badge badge-${(vendor.tier||'').toLowerCase()}">${vendor.tier}</span>`:''}</h1>
-<div style="color:#888;font-size:9pt;margin-bottom:16px;">${vendor.category||''}${vendor.subCategory?' · '+vendor.subCategory:''} &nbsp;|&nbsp; Score: ${vendor.score||'N/A'} &nbsp;|&nbsp; Status: ${vendor.status||'Active'}</div>
+<p class="intro">Prime Source is pleased to share the contract details for the following vendor. The information below summarizes the key terms of our agreement.</p>
 
-<div class="section">
-  <div class="section-title">Contract Details</div>
-  <div class="grid">
-    <span class="label">Contract Name</span><span class="value">${vendor.contractName||'—'}</span>
-    <span class="label">Agreement Type</span><span class="value">${vendor.agreementType||'—'}</span>
-    <span class="label">Signatory</span><span class="value">${vendor.signatory||'—'}</span>
-    <span class="label">Effective Date</span><span class="value">${vendor.termEffective||'—'}</span>
-    <span class="label">Expiration Date</span><span class="value ${daysToExp!==null&&daysToExp<=30?'warning':daysToExp!==null&&daysToExp<=90?'':''}">${exp?fmtDate(exp):'—'}${daysToExp!==null?' ('+daysToExp+' days)':''}</span>
-    <span class="label">Contract Term</span><span class="value">${vendor.contractTerm||'—'} year(s)</span>
-    <span class="label">Min Years</span><span class="value">${vendor.minYears||'—'}</span>
-    <span class="label">Auto-Renewal</span><span class="value">${vendor.autoRenewal||vendor.autoRenew||'No'}</span>
-    <span class="label">AR Type</span><span class="value">${vendor.autoRenewalType||'—'}</span>
-    <span class="label">Notice Period</span><span class="value">${vendor.noticeDays||vendor.noticePeriod||'—'} days</span>
-    <span class="label">Perpetuity</span><span class="value">${vendor.perpetuity||'—'}</span>
-    <span class="label">Tail</span><span class="value">${vendor.tail||'—'}</span>
-  </div>
-</div>
-
-<div class="section">
-  <div class="section-title">Financial Terms</div>
-  <div class="grid">
-    <span class="label">Admin Fee</span><span class="value highlight">${vendor.adminFee||'Not set'}</span>
-    <span class="label">Market</span><span class="value">${vendor.markets||'—'}</span>
-    <span class="label">GPO</span><span class="value">${vendor.gpo||'—'}</span>
-    <span class="label">Cost of Trade (COT)</span><span class="value">${vendor.cot||'—'}</span>
-  </div>
-  ${vendor.tiers?`<div class="tiers"><div style="font-size:9pt;font-weight:700;margin-top:8px;margin-bottom:4px;">Tier Structure:</div><div style="font-size:9pt;background:#f0f4ff;padding:8px;border-radius:4px;white-space:pre-wrap;">${vendor.tiers}</div></div>`:''}
-</div>
-
-<div class="section">
-  <div class="section-title">Contact Information</div>
-  <div class="grid">
-    <span class="label">Primary Contact</span><span class="value">${vendor.procContact||vendor.sharedContact||'—'}</span>
-    <span class="label">Email</span><span class="value">${vendor.email||'—'}</span>
-    <span class="label">Business Phone</span><span class="value">${vendor.bizPhone||'—'}</span>
-    <span class="label">Mobile</span><span class="value">${vendor.mobile||'—'}</span>
-    <span class="label">Vendor Website</span><span class="value">${vendor.website||'—'}</span>
-    <span class="label">Trainual</span><span class="value">${vendor.trainualUrl||'—'}</span>
-  </div>
-</div>
-
-${vendor.notes?`<div class="section">
-  <div class="section-title">Contract Notes</div>
-  <div class="notes">${String(vendor.notes||'').slice(0,800)}</div>
-</div>`:''}
-
-${vendor.comments?`<div class="section">
-  <div class="section-title">Comments</div>
-  <div class="notes">${String(vendor.comments||'').slice(0,400)}</div>
-</div>`:''}
+<table>
+  ${tableRows}
+</table>
 
 <div class="footer">
-  <span>Prime Source Expense Experts — Confidential. For internal use only.</span>
-  <span>VCS Data Sheet · ${vendor.name||''} · ${new Date().toLocaleDateString()}</span>
+  <strong>Prime Source Expense Experts</strong><br>
+  135 Chestnut Ridge Road Suite LL100, Montvale, NJ 07645 &nbsp;|&nbsp; 877-8PRIME8 &nbsp;|&nbsp; www.primesourcex.com<br>
+  This document is confidential and intended for internal distribution only.
 </div>
 
-<div style="margin-top:20px;text-align:center;color:#888;font-size:8pt;">
-  <button onclick="window.print()" style="background:#4f7cff;color:white;border:none;padding:8px 20px;border-radius:4px;cursor:pointer;font-size:10pt;">🖨 Print / Save as PDF</button>
-</div>
 </body>
 </html>`;
 
-  const w=window.open('','_blank','width=900,height=700');
-  if(!w){toast('⚠ Popup blocked — allow popups to generate data sheet','#f59e0b');return;}
+  const w=window.open('','_blank','width=1000,height=750');
+  if(!w){toast('⚠ Popup blocked — allow popups for this site in your browser settings','#f59e0b');return;}
   w.document.write(html);
   w.document.close();
-  toast('📄 Data Sheet opened — use Print to save as PDF');
+  toast('📄 Data Sheet ready — use Print / Save as PDF to share');
 }
+
+
 
 
 // ─── Main Render ──────────────────────────────────────────────────────────────
