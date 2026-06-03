@@ -1073,6 +1073,15 @@ function priorityBadge() {
 // If value contains %, always trust it. If bare number, only accept ≤ 30.
 const TC={CALL:'#ef4444',EMAIL:'#f59e0b',REVIEW:'#4f7cff',MONITOR:'#6b7280',WATCH:'#8b5cf6'};
 
+// Check if a vendor's category field matches a filter category
+// Supports comma-separated multi-category vendors like "Pharmacy, Medical Supplies"
+function vendorMatchesCategory(vendor, filterCat) {
+  if (!filterCat || !vendor) return true;
+  if (!vendor.category) return false;
+  const cats = vendor.category.split(',').map(c => c.trim().toLowerCase());
+  return cats.some(c => c === filterCat.toLowerCase() || c.includes(filterCat.toLowerCase()) || filterCat.toLowerCase().includes(c));
+}
+
 function parseFee(raw) {
   if (!raw) return null;
   const s = String(raw).trim();
@@ -3448,7 +3457,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   // Related Vendors section — only for roles with access
   // Related Vendors: show for all logged-in users, but filter sensitive data below
   if (vendor.source==='psd' && vendor.category) {
-    const sameCat=S.vendors.filter(v=>v.name!==vendor.name&&v.category===vendor.category&&isVisible(v)).slice(0,4);
+    const sameCat=S.vendors.filter(v=>v.name!==vendor.name&&vendorMatchesCategory(v, vendor.category?.split(',')[0])&&isVisible(v)).slice(0,4);
 
     // Service-based cross-referral: what does this vendor's category need?
     function vendorSvcText(v){return [v.product||'',v.addedValue||'',v.about||'',v.category||'',v.subCategory||''].join(' ').toLowerCase();}
@@ -3897,21 +3906,45 @@ async function saveToDrive(buffer, filename) {
 
     // Push vendor JSON snapshot for Renzo — non-blocking, non-critical
     try {
-      const snap=S.vendors.filter(v=>v.source==='psd').map(v=>({
-        source_system:'VCS',source_record_id:'psd:'+v.name,entity_type:'vendor',
-        company_name:v.name,contact_name:v.procContact||'',contact_email:v.email||'',
-        contact_phone:v.bizPhone||v.mobile||'',relationship_owner:v.signatory||'',
-        priority:({CALL:'high',EMAIL:'medium',MONITOR:'low',WATCH:'low',REVIEW:'medium'})[v.tier]||'normal',
-        last_contact_date:v.lastComm||null,follow_up_date:v.followUp||null,
-        renewal_or_contract_date:v.contractExpiry||null,
-        relationship_status:v.status||'Active',
-        context_notes:(v.notes||'').slice(0,1000),
-        tags:[v.category,v.tier,isAutoRenew(v)?'Auto-Renew':'',v.gpo?'GPO:'+v.gpo:'',v.markets].filter(Boolean),
-        vcs_category:v.category||'',vcs_tier:v.tier||'',vcs_score:v.score||null,
-        vcs_admin_fee:v.adminFee||'',vcs_auto_renewal:v.autoRenewal||v.autoRenew||'',
-        vcs_contract_term:v.contractTerm||'',vcs_gpo:v.gpo||'',vcs_markets:v.markets||'',
-        vcs_trainual_url:v.trainualUrl||'',
-      }));
+      // Build Renzo snapshot — one record per VCS row (no deduplication)
+      // Vendors with duplicate names get their category appended to the ID
+      // so Renzo sees them as distinct relationships with distinct contracts
+      const psdVendors=S.vendors.filter(v=>v.source==='psd'&&v.name);
+      // Count how many times each vendor name appears
+      const nameCount={};
+      psdVendors.forEach(v=>{ const k=v.name.trim().toLowerCase(); nameCount[k]=(nameCount[k]||0)+1; });
+      const snap=psdVendors.map(v=>{
+        const isDup=nameCount[v.name.trim().toLowerCase()]>1;
+        // For duplicates, append category to make ID unique: "psd:1HealthSource — Pharmacy"
+        const recordId='psd:'+v.name.trim()+(isDup&&v.category?' — '+v.category:'');
+        const displayName=v.name.trim()+(isDup&&v.category?' ('+v.category+')':'');
+        return {
+          source_system:'VCS',
+          source_record_id:recordId,
+          entity_type:'vendor',
+          company_name:displayName,
+          contact_name:v.procContact||'',
+          contact_email:(v.email||'').trim(),
+          contact_phone:v.bizPhone||v.mobile||'',
+          relationship_owner:v.signatory||'',
+          priority:({CALL:'high',EMAIL:'medium',MONITOR:'low',WATCH:'low',REVIEW:'medium'})[v.tier]||'normal',
+          last_contact_date:v.lastComm||null,
+          follow_up_date:v.followUp||null,
+          renewal_or_contract_date:v.contractExpiry||null,
+          relationship_status:v.status||'Active',
+          context_notes:(v.notes||'').slice(0,1000),
+          tags:[v.category,v.tier,isAutoRenew(v)?'Auto-Renew':'',v.gpo?'GPO:'+v.gpo:'',v.markets].filter(Boolean),
+          vcs_category:v.category||'',
+          vcs_tier:v.tier||'',
+          vcs_score:v.score||null,
+          vcs_admin_fee:v.adminFee?String(v.adminFee):'',
+          vcs_auto_renewal:v.autoRenewal||v.autoRenew||'',
+          vcs_contract_term:v.contractTerm||'',
+          vcs_gpo:v.gpo||'',
+          vcs_markets:v.markets||'',
+          vcs_trainual_url:v.trainualUrl||'',
+        };
+      });
       fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
         body:JSON.stringify({action:'saveRenzoSnapshot',
           data:JSON.stringify({generated_at:new Date().toISOString(),count:snap.length,records:snap})
@@ -8745,7 +8778,7 @@ function renderSpendTable(wrap) {
   const cf = SPEND_STATE.catFilter||'';
   let filtered = vendorSpend;
   if(fq) filtered = filtered.filter(v=>v.name.toLowerCase().includes(fq)||(v.category||'').toLowerCase().includes(fq));
-  if(cf) filtered = filtered.filter(v=>(v.category||'')=== cf);
+  if(cf) filtered = filtered.filter(v=>vendorMatchesCategory(v, cf));
   if(SPEND_STATE.showGapsOnly) filtered = filtered.filter(v=>v.gap<-0.01);
 
   // Apply sort
