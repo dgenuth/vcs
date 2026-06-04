@@ -9296,10 +9296,10 @@ function renderContractCompare(c) {
 
   // Header
   const hdr = el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px'}});
-  hdr.appendChild(el('div',{},[
-    el('h2',{style:{margin:'0 0 2px 0',fontSize:'16px',fontWeight:'700'}},'⚖️ Contract Comparison Tool'),
-    el('p',{style:{margin:'0',fontSize:'10px',color:'var(--muted)'}},'Upload two agreements. Claude analyzes every clause and produces a color-coded negotiation cheat sheet.'),
-  ]));
+  const hdrLeft=el('div',{});
+  hdrLeft.appendChild(el('h2',{style:{margin:'0 0 2px 0',fontSize:'16px',fontWeight:'700'}},'⚖️ Contract Comparison Tool'));
+  hdrLeft.appendChild(el('p',{style:{margin:'0',fontSize:'10px',color:'var(--muted)'}},'Upload two agreements. Claude analyzes every clause and produces a color-coded negotiation cheat sheet.'));
+  hdr.appendChild(hdrLeft);
   wrap.appendChild(hdr);
 
   // Upload zone
