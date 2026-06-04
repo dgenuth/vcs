@@ -9226,16 +9226,57 @@ ${typeof CMP.docBText === 'string' ? CMP.docBText.slice(0, 18000) : '[PDF upload
         'anthropic-dangerous-direct-browser-access':'true'
       },
       body: JSON.stringify({
-        model:'claude-sonnet-4-20250514',
-        max_tokens:4000,
+        model:'claude-opus-4-6',
+        max_tokens:8000,
         system: systemPrompt,
         messages,
       })
     });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error('[Comparison] API error:', resp.status, errText);
+      throw new Error('API returned ' + resp.status + ': ' + errText.slice(0,200));
+    }
+
     const data = await resp.json();
+
+    // Check for API-level errors
+    if (data.error) {
+      throw new Error(data.error.message || JSON.stringify(data.error));
+    }
+
+    // Check stop reason — if max_tokens hit, response was truncated
+    if (data.stop_reason === 'max_tokens') {
+      console.warn('[Comparison] Response was truncated — increase max_tokens or reduce document size');
+    }
+
     const raw = data.content?.find(b=>b.type==='text')?.text || '';
-    const clean = raw.replace(/^```[a-z]*\n?/,'').replace(/```$/,'').trim();
-    CMP.result = JSON.parse(clean);
+    if (!raw) {
+      console.error('[Comparison] Empty response from API. Full data:', JSON.stringify(data).slice(0,500));
+      throw new Error('API returned empty response. Check your API key and try again.');
+    }
+
+    // Strip markdown fences if present
+    const clean = raw.replace(/^```(?:json)?\n?/i,'').replace(/\n?```$/,'').trim();
+
+    // Attempt JSON parse with helpful error if it fails
+    let parsed;
+    try {
+      parsed = JSON.parse(clean);
+    } catch(parseErr) {
+      console.error('[Comparison] JSON parse failed. Raw response:', raw.slice(0,500));
+      // Try to recover truncated JSON by finding last complete object
+      const lastBrace = clean.lastIndexOf('}');
+      if (lastBrace > 100) {
+        try {
+          parsed = JSON.parse(clean.slice(0, lastBrace+1) + (clean.endsWith(']}') ? '' : ']}'));
+        } catch(e2) {}
+      }
+      if (!parsed) throw new Error('Response was not valid JSON. The contracts may be too large — try shorter documents or fewer pages.');
+    }
+
+    CMP.result = parsed;
     CMP.loading = false;
     logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendorName||'Unknown',action:'Contract comparison run',note:CMP.docAName+' vs '+CMP.docBName});
     try{const uk='vcs_ai_usage_'+(USER.email||'unknown').replace(/[^a-z0-9]/gi,'_');const u=JSON.parse(localStorage.getItem(uk)||'{}');u.user=USER.name;u.contractCompare=(u.contractCompare||0)+1;u.totalRequests=(u.totalRequests||0)+1;u.lastUsed=new Date().toISOString();localStorage.setItem(uk,JSON.stringify(u));}catch(e){}
