@@ -3193,8 +3193,6 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   // Data Sheet button — generate Word doc for Finance/Ops
   if (_canAct) acts.appendChild(el('button',{class:'btn-ghost btn-action',style:{color:'#38bdf8',borderColor:'rgba(56,189,248,.3)'},title:'Generate a data sheet Word document for Finance/Operations',onclick(){generateVendorDataSheet(vendor);}},'📄 Data Sheet'));
 
-  detail.appendChild(acts);
-
   // ── Contract Files section ──
   const contractFilesSection = el('div',{style:{marginTop:'12px',borderTop:'1px solid var(--border)',paddingTop:'12px'}});
   const cfsHdr = el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'8px'}});
@@ -3233,9 +3231,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   contractFilesSection.appendChild(contractFilesList);
   // Load files
   loadVendorContractFiles(vendor.name, contractFilesList);
-  detail.appendChild(contractFilesSection);
-
   body.appendChild(acts);
+  body.appendChild(contractFilesSection);
 
   // Find cross-tab data for this vendor using exact name matching + aliases
   const psdVendor = vendor.source==='psd' ? vendor : findPSDVendor(vendor.name);
@@ -6966,6 +6963,20 @@ function renderCustomers(c) {
   }
   wrap.appendChild(hdr);
 
+  // Alphabet filter bar
+  const alphaBar=el('div',{style:{display:'flex',gap:'2px',flexWrap:'wrap',marginBottom:'8px'}});
+  const letters=['All','A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z','#'];
+  if(!S._custAlpha) S._custAlpha='All';
+  letters.forEach(l=>{
+    alphaBar.appendChild(el('button',{
+      style:{padding:'2px 5px',fontSize:'9px',fontWeight:'600',borderRadius:'3px',border:'1px solid var(--border)',
+        background:S._custAlpha===l?'var(--blue)':'var(--card)',
+        color:S._custAlpha===l?'white':'var(--text)',cursor:'pointer',minWidth:'20px'},
+      onclick(){S._custAlpha=l;render();}
+    },l));
+  });
+  wrap.appendChild(alphaBar);
+
   // Controls bar
   const ctrlRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'12px',flexWrap:'wrap'}});
   const searchInp=el('input',{type:'text',class:'modal-input',placeholder:'Search accounts, cities, types...',style:{flex:'1',minWidth:'200px',marginBottom:'0'},value:S._custSearch||''});
@@ -7008,9 +7019,21 @@ function renderCustomers(c) {
   if(!S._custExpandedAccounts) S._custExpandedAccounts=new Set();
 
   // Filter accounts
-  let filteredAccounts=fq
-    ? accounts.filter(a=>(a.Name||'').toLowerCase().includes(fq)||(a.BillingCity||'').toLowerCase().includes(fq)||(a.BillingState||'').toLowerCase().includes(fq)||(a.Type||'').toLowerCase().includes(fq))
-    : accounts;
+  let filteredAccounts=accounts.filter(a=>{
+    const name=(a.Name||'').toLowerCase();
+    const city=(a.BillingCity||'').toLowerCase();
+    const state=(a.BillingState||'').toLowerCase();
+    const type=(a.Type||'').toLowerCase();
+    // Apply text search
+    if(fq && !name.includes(fq) && !city.includes(fq) && !state.includes(fq) && !type.includes(fq)) return false;
+    // Apply alphabet filter
+    if(S._custAlpha && S._custAlpha!=='All'){
+      const first=(a.Name||'')[0]?.toUpperCase()||'#';
+      if(S._custAlpha==='#') return !/[A-Z]/.test(first);
+      if(first !== S._custAlpha) return false;
+    }
+    return true;
+  });
 
   // ── Hierarchy Tree View ──
   if(S._custViewMode==='tree'){
@@ -7034,16 +7057,18 @@ function renderCustomers(c) {
       const parentCard=el('div',{style:{marginBottom:'6px',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
 
       // Parent header row
+      const hasExpandable = children.length > 0 || pOpps.length > 0 || pContacts.length > 0 || pCases.length > 0;
       const parentHdr=el('div',{style:{
-        display:'flex',gap:'8px',alignItems:'center',padding:'8px 12px',
-        background:'var(--sb)',cursor:'pointer',userSelect:'none',
+        display:'flex',gap:'8px',alignItems:'center',padding:'5px 10px',
+        background:'var(--sb)',cursor:hasExpandable?'pointer':'default',userSelect:'none',
       },onclick(){
+        if(!hasExpandable) return;
         if(S._custExpandedAccounts.has(parent.Id)) S._custExpandedAccounts.delete(parent.Id);
         else S._custExpandedAccounts.add(parent.Id);
         render();
       }});
 
-      parentHdr.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'10px',flexShrink:'0'}},isExpanded?'▼':'▶'));
+      parentHdr.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'10px',flexShrink:'0',visibility:hasExpandable?'visible':'hidden'}},isExpanded?'▼':'▶'));
       const nameEl=el('div',{style:{flex:'1',minWidth:'0'}});
       nameEl.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},parent.Name));
       const subInfo=el('div',{style:{fontSize:'9px',color:'var(--muted)',display:'flex',gap:'8px',flexWrap:'wrap',marginTop:'2px'}});
@@ -7267,7 +7292,7 @@ async function loadCustomerData() {
   try{
     // Fetch accounts with pagination - no LIMIT cap, get all records
     const [accounts,opps,cases,contacts]=await Promise.all([
-      sfQueryAll('SELECT Id,Name,Type,Industry,OwnerId,Owner.Name,BillingCity,BillingState,Phone,ParentId,Parent.Name,NumberOfEmployees,Description FROM Account ORDER BY ParentId ASC NULLS FIRST,Name ASC', 5000),
+      sfQueryAll('SELECT Id,Name,Type,Industry,OwnerId,Owner.Name,BillingCity,BillingState,Phone,ParentId,Parent.Name,NumberOfEmployees FROM Account ORDER BY Name ASC', 5000),
       sfQueryAll('SELECT Id,Name,StageName,Amount,CloseDate,AccountId,Account.Name,Vendor__r.Name,Owner.Name FROM Opportunity WHERE IsClosed=false ORDER BY CloseDate ASC NULLS LAST', 2000),
       sfQueryAll("SELECT Id,CaseNumber,Subject,Status,Priority,AccountId,Account.Name,Vendor__r.Name,CreatedDate,Owner.Name FROM Case WHERE Status!='Closed' ORDER BY Priority,CreatedDate DESC", 1000),
       sfQueryAll('SELECT Id,Name,Title,Email,Phone,AccountId,Account.Name,OwnerId FROM Contact ORDER BY LastModifiedDate DESC', 2000),
