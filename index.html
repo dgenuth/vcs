@@ -1806,17 +1806,7 @@ async function executeSave() {
         const whoLine = lockUser
           ? `⚠ "${lockUser}" currently has the vendor catalogue open in Excel on the server.`
           : '⚠ The vendor catalogue is currently open in Excel on the server.';
-        if (!confirm(
-          whoLine +
-          '
-
-Saving now may overwrite their changes when they close Excel.' +
-          '
-
-Recommendation: Ask them to save and close first.
-
-Save anyway?'
-        )) {
+        if (!confirm(whoLine + '\n\nSaving now may overwrite their changes when they close Excel.\n\nRecommendation: Ask them to save and close first.\n\nSave anyway?')) {
           toast('Save cancelled — server file is in use. Your changes are still pending.','#f59e0b');
           return;
         }
