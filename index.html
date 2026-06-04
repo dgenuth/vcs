@@ -1793,6 +1793,41 @@ function upsertComment(commentsXml, ref, newNoteText, authorName) {
 
 async function executeSave() {
   if (!S.originalBuffer) return;
+
+  // ── Lock check FIRST — before any save operations ──
+  try {
+    console.log('[VCS Save] Checking server lock status...');
+    const lockResp = await fetch(VCS_PROXY_URL + '?action=getLockStatus', {method:'GET'});
+    if (lockResp.ok) {
+      const lockData = await lockResp.json();
+      console.log('[VCS Save] Lock status:', JSON.stringify(lockData));
+      if (lockData.status === 'ok' && lockData.locked) {
+        const lockUser = lockData.user && lockData.user !== 'unknown' && lockData.user !== '' ? lockData.user : null;
+        const whoLine = lockUser
+          ? `⚠ "${lockUser}" currently has the vendor catalogue open in Excel on the server.`
+          : '⚠ The vendor catalogue is currently open in Excel on the server.';
+        if (!confirm(
+          whoLine +
+          '
+
+Saving now may overwrite their changes when they close Excel.' +
+          '
+
+Recommendation: Ask them to save and close first.
+
+Save anyway?'
+        )) {
+          toast('Save cancelled — server file is in use. Your changes are still pending.','#f59e0b');
+          return;
+        }
+      }
+    } else {
+      console.warn('[VCS Save] Lock check HTTP error:', lockResp.status);
+    }
+  } catch(lockErr) {
+    console.warn('[VCS Save] Lock check failed (proceeding):', lockErr.message);
+  }
+
   try {
     toast('Saving…', '#4f7cff');
     // Fetch fresh copy from Drive before applying changes (prevents overwriting concurrent edits)
@@ -2218,28 +2253,6 @@ async function executeSave() {
     }
 
     // Old VCS History writer removed — using writeHistoryToExcel instead
-
-    // Check if server file is currently open BEFORE generating zip or clearing dirty flags
-    try {
-      const lockResp = await fetch(VCS_PROXY_URL + '?action=getLockStatus', {method:'GET'});
-      if (lockResp.ok) {
-        const lockData = await lockResp.json();
-        if (lockData.status === 'ok' && lockData.locked) {
-          const lockUser = lockData.user && lockData.user !== 'unknown' && lockData.user !== '' ? lockData.user : null;
-          const whoLine = lockUser
-            ? `⚠ "${lockUser}" currently has the vendor catalogue open in Excel.`
-            : '⚠ The vendor catalogue is currently open on the server (user unknown — watcher may need update).';
-          if (!confirm(
-            whoLine +
-            '\n\nYour changes will save to Drive but may be overwritten when they save.' +
-            '\n\nRecommendation: Ask them to save and close first.\n\nSave anyway?'
-          )) {
-            toast('Save cancelled \u2014 server file is in use. Your changes are still pending.','#f59e0b');
-            return;
-          }
-        }
-      }
-    } catch(lockErr) { /* lock check failed, proceed silently */ }
 
     const uint8 = await zip.generateAsync({
       type: 'uint8array',
