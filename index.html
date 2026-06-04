@@ -504,6 +504,7 @@ var VCS_VERSION = 'v1778431112';
       <div id="datetime-display"></div>
       <button id="refresh-btn" style="display:none;padding:4px 10px;font-size:10px;font-weight:600;border-radius:4px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;font-family:inherit">🔄 Refresh</button>
       <button id="save-btn" style="display:none;padding:4px 12px;font-size:10px;font-weight:600;border-radius:4px;border:none;background:var(--blue);color:#fff;cursor:pointer;font-family:inherit">💾 Save File</button>
+      <button id="theme-toggle-btn" onclick="toggleTheme()" title="Toggle dark/light mode" style="padding:4px 8px;font-size:13px;border-radius:4px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;font-family:inherit">☀</button>
       <button id="ai-toggle">🤖 AI</button>
       <span id="user-badge" class="user-badge" title="Signed in — click to manage session" style="display:none"></span>
       <span id="dirty-indicator" style="display:none;font-size:9px;color:var(--amber);padding:2px 6px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:3px" title="You have unsaved changes">● Unsaved</span>
@@ -1231,7 +1232,21 @@ function isHolidayOrWeekend(date) {
   return getHolidaysForDate(date).length > 0;
 }
 
+function toggleTheme() {
+  const themes = ['dark','light'];
+  const cur = S.settings.theme || 'dark';
+  const next = cur === 'dark' ? 'light' : 'dark';
+  S.settings.theme = next;
+  applyTheme(next);
+  saveSettings();
+  const btn = document.getElementById('theme-toggle-btn');
+  if (btn) btn.textContent = next === 'dark' ? '☀' : '🌙';
+}
+
 function applyTheme(theme) {
+  // Update toggle button icon
+  const tBtn = document.getElementById('theme-toggle-btn');
+  if (tBtn) tBtn.textContent = theme === 'dark' ? '☀' : '🌙';
   const ALL_THEMES=['light-theme','ocean-theme','midnight-theme','slate-theme','warm-theme','rose-theme'];
   document.body.classList.remove(...ALL_THEMES);
   if (theme && theme!=='dark') document.body.classList.add(theme+'-theme');
@@ -3177,6 +3192,42 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   else acts.appendChild(el('button',{class:'btn-ghost btn-action',onclick(){openDismissConfirm(vendor);}}, '✕ Dismiss')); }
   // Data Sheet button — generate Word doc for Finance/Ops
   if (_canAct) acts.appendChild(el('button',{class:'btn-ghost btn-action',style:{color:'#38bdf8',borderColor:'rgba(56,189,248,.3)'},title:'Generate a data sheet Word document for Finance/Operations',onclick(){generateVendorDataSheet(vendor);}},'📄 Data Sheet'));
+
+  detail.appendChild(acts);
+
+  // ── Contract Files section ──
+  const contractFilesSection = el('div',{style:{marginTop:'12px',borderTop:'1px solid var(--border)',paddingTop:'12px'}});
+  const cfsHdr = el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'8px'}});
+  cfsHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px'}},'📁 Contract Files'));
+  // Upload button
+  if(_canAct){
+    const upBtn=el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'auto'},onclick(){
+      const inp=document.createElement('input');
+      inp.type='file';inp.accept='.pdf,.docx,.doc,.txt,.xlsx,.xls';
+      inp.onchange=async(e)=>{
+        const file=e.target.files[0]; if(!file) return;
+        toast('⏳ Uploading '+file.name+'...','#4f7cff');
+        try{
+          const ab=await file.arrayBuffer();
+          const b64=btoa(String.fromCharCode(...new Uint8Array(ab)));
+          const resp=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
+            body:JSON.stringify({action:'uploadVendorFile',vendorName:vendor.name,fileName:file.name,fileContent:b64,mimeType:file.type||'application/octet-stream'})});
+          const d=await resp.json();
+          if(d.status==='ok'){toast('✓ '+file.name+' uploaded to Drive');loadVendorContractFiles(vendor.name,contractFilesList);}
+          else toast('⚠ Upload failed: '+d.message,'#ef4444');
+        }catch(err){toast('⚠ Upload error: '+err.message,'#ef4444');}
+      };
+      inp.click();
+    }},'📤 Upload');
+    cfsHdr.appendChild(upBtn);
+  }
+  contractFilesSection.appendChild(cfsHdr);
+  const contractFilesList=el('div',{style:{fontSize:'10px'}});
+  contractFilesSection.appendChild(contractFilesList);
+  // Load files
+  loadVendorContractFiles(vendor.name, contractFilesList);
+  detail.appendChild(contractFilesSection);
+
   body.appendChild(acts);
 
   // Find cross-tab data for this vendor using exact name matching + aliases
@@ -9376,6 +9427,49 @@ function renderContractCompare(c) {
   hdr.appendChild(hdrLeft);
   wrap.appendChild(hdr);
 
+  // Tab row: New Comparison vs Saved Comparisons
+  if(!S._cmpTab) S._cmpTab='new';
+  const tabRow=el('div',{style:{display:'flex',gap:'4px',marginBottom:'12px'}});
+  ['new','saved'].forEach(tab=>{
+    const label={new:'⚖️ New Comparison',saved:'💾 Saved Comparisons'}[tab];
+    tabRow.appendChild(el('button',{
+      class:'col-toggle-btn'+(S._cmpTab===tab?' on':''),
+      onclick(){S._cmpTab=tab;render();}
+    },label));
+  });
+  wrap.appendChild(tabRow);
+
+  // Saved comparisons view
+  if(S._cmpTab==='saved'){
+    const saves=JSON.parse(localStorage.getItem('vcs_saved_comparisons')||'[]');
+    if(!saves.length){
+      const empty=el('div',{style:{textAlign:'center',padding:'40px',color:'var(--muted)'}});
+      empty.appendChild(el('div',{style:{fontSize:'28px',marginBottom:'8px'}},'💾'));
+      empty.appendChild(el('div',{style:{fontSize:'12px',fontWeight:'600'}},'No saved comparisons yet'));
+      empty.appendChild(el('div',{style:{fontSize:'10px',marginTop:'4px'}},'Run a comparison and click "Save Comparison" to store it here'));
+      wrap.appendChild(empty);
+    } else {
+      saves.forEach((s,i)=>{
+        const row=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'10px 14px',marginBottom:'8px',display:'flex',gap:'10px',alignItems:'center'}});
+        const info=el('div',{style:{flex:'1'}});
+        info.appendChild(el('div',{style:{fontWeight:'700',fontSize:'12px'}},s.vendor+' Contract Comparison'));
+        info.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px'}},s.date+' · Doc A: '+(s.docA||'—')+' · Doc B: '+(s.docB||'—')));
+        row.appendChild(info);
+        row.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){CMP.result=s.result;CMP.docAName=s.docA;CMP.docBName=s.docB;S._cmpTab='new';S._cmpVendor=s.vendor;render();}},'📂 Load'));
+        row.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){
+          if(confirm('Delete this saved comparison?')){
+            const arr=JSON.parse(localStorage.getItem('vcs_saved_comparisons')||'[]');
+            arr.splice(i,1);
+            localStorage.setItem('vcs_saved_comparisons',JSON.stringify(arr));
+            render();
+          }
+        }},'🗑'));
+        wrap.appendChild(row);
+      });
+    }
+    c.appendChild(wrap); return;
+  }
+
   // Upload zone
   const uploadRow = el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',marginBottom:'12px'}});
   ['A','B'].forEach(side => {
@@ -9459,27 +9553,72 @@ function renderContractCompare(c) {
     exportRow.appendChild(lgnd);
     exportRow.appendChild(el('span',{},''));// placeholder to avoid original array syntax below
     exportRow.appendChild(el('button',{class:'btn-xs btn-blue',onclick:()=>exportComparisonDocx(res)},'⬇ Export to Word'));
+    exportRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--green)',borderColor:'rgba(34,197,94,.3)'},onclick(){
+      // Save comparison to localStorage
+      const saves=JSON.parse(localStorage.getItem('vcs_saved_comparisons')||'[]');
+      const entry={
+        id:Date.now(),
+        vendor:res.vendorName||S._cmpVendor||'Unknown',
+        docA:CMP.docAName,
+        docB:CMP.docBName,
+        date:new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),
+        result:res,
+      };
+      saves.unshift(entry);
+      if(saves.length>20) saves.pop();
+      localStorage.setItem('vcs_saved_comparisons',JSON.stringify(saves));
+      toast('✓ Comparison saved — access from the Saved tab');
+    }},'💾 Save Locally'));
+    // Save to Drive button
+    exportRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'#34d399',borderColor:'rgba(52,211,153,.3)'},onclick:async function(){
+      const vendor=res.vendorName||S._cmpVendor||vendorIn.value.trim();
+      if(!vendor){toast('Enter a vendor name first','#f59e0b');return;}
+      const reportName=(vendor+' Contract Comparison '+(CMP.docAName||'').replace(/\.docx?$/i,'').slice(0,20)+' vs '+(CMP.docBName||'').replace(/\.docx?$/i,'').slice(0,20)).slice(0,80);
+      // Build the HTML report
+      const reportHtml='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+reportName+'</title></head><body>'+
+        '<h2>'+vendor+' — Contract Comparison</h2>'+
+        '<p>Doc A: '+CMP.docAName+' · Doc B: '+CMP.docBName+'</p>'+
+        '<p>Generated: '+new Date().toLocaleDateString()+'</p>'+
+        '<pre style="white-space:pre-wrap">'+JSON.stringify(res,null,2)+'</pre>'+
+        '</body></html>';
+      toast('⏳ Saving to Drive...','#4f7cff');
+      try{
+        const resp=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
+          body:JSON.stringify({action:'saveComparisonReport',vendorName:vendor,reportHtml:reportHtml,reportName:reportName})});
+        const d=await resp.json();
+        if(d.status==='ok') toast('✓ Saved to Drive: '+d.vendorFolder+'/'+d.fileName);
+        else toast('⚠ Drive save failed: '+d.message,'#ef4444');
+      }catch(err){toast('⚠ '+err.message,'#ef4444');}
+    }},'☁ Save to Drive'));
     wrap.appendChild(exportRow);
 
-    // ── Scrollable contract text viewers (frozen at top while scrolling results) ──
+    // ── Document viewers — expandable, white background ──
     if(CMP.docAText || CMP.docBText) {
-      const viewerRow=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'12px',position:'sticky',top:'0',zIndex:'5',background:'var(--bg)',paddingBottom:'6px',borderBottom:'1px solid var(--border)'}});
+      if(!S._cmpViewerOpen) S._cmpViewerOpen = {A:false, B:false};
+      const viewerRow=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'12px'}});
       ['A','B'].forEach(side=>{
         const isA=side==='A';
         const docName=isA?CMP.docAName:CMP.docBName;
         const docText=isA?CMP.docAText:CMP.docBText;
         const textStr=typeof docText==='string'?docText:(docText?'[PDF — text extracted by Claude]':'');
+        const isOpen=S._cmpViewerOpen[side];
         const panel=el('div',{style:{border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden',background:'var(--sb)'}});
-        const pHdr=el('div',{style:{padding:'4px 8px',fontSize:'9px',fontWeight:'700',color:'var(--muted)',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center',background:'var(--card)'}});
-        pHdr.appendChild(el('span',{},('Document '+side+(docName?' — '+docName.slice(0,30)+(docName.length>30?'…':''):''))));
-        // Toggle expand/collapse
-        const toggleBtn=el('button',{style:{fontSize:'8px',background:'none',border:'none',color:'var(--muted)',cursor:'pointer'}},textStr?'▼ Show':'—');
+        const pHdr=el('div',{style:{padding:'6px 10px',fontSize:'9px',fontWeight:'700',color:'var(--muted)',borderBottom:isOpen?'1px solid var(--border)':'none',display:'flex',justifyContent:'space-between',alignItems:'center',background:'var(--card)',cursor:'pointer',userSelect:'none'},
+          onclick(){S._cmpViewerOpen[side]=!S._cmpViewerOpen[side];render();}});
+        pHdr.appendChild(el('span',{},('Doc '+side+(docName?' — '+docName.slice(0,35)+(docName.length>35?'…':''):' (not loaded)'))));
+        const toggleBtn=el('span',{style:{fontSize:'9px',color:'var(--blue)',fontWeight:'600'}},isOpen?'▲ Collapse':'▼ Expand to read');
         pHdr.appendChild(toggleBtn);
         panel.appendChild(pHdr);
-        if(textStr){
-          const textDiv=el('div',{style:{maxHeight:'100px',overflowY:'auto',padding:'6px 8px',fontSize:'9px',lineHeight:'1.5',color:'var(--muted)',fontFamily:'monospace',whiteSpace:'pre-wrap',wordBreak:'break-word',display:'none'}});
-          textDiv.textContent=textStr.slice(0,8000)+(textStr.length>8000?'\n\n[...'+Math.round((textStr.length-8000)/1000)+'K chars truncated]':'');
-          toggleBtn.onclick=()=>{const open=textDiv.style.display!=='none';textDiv.style.display=open?'none':'block';toggleBtn.textContent=open?'▼ Show':'▲ Hide';};
+        if(textStr && isOpen){
+          // White background regardless of theme — contract reads like paper
+          const textDiv=el('div',{style:{
+            height:'320px',overflowY:'auto',padding:'16px 18px',
+            fontSize:'10px',lineHeight:'1.7',
+            color:'#1a1a1a',background:'#ffffff',
+            fontFamily:'Georgia, serif',whiteSpace:'pre-wrap',wordBreak:'break-word',
+            borderTop:'1px solid #ddd',resize:'vertical'
+          }});
+          textDiv.textContent=textStr+(textStr.length>50000?'\n\n[Full document — '+Math.round(textStr.length/1000)+'K chars total]':'');
           panel.appendChild(textDiv);
         } else {
           panel.appendChild(el('div',{style:{padding:'8px',fontSize:'9px',color:'var(--muted)',fontStyle:'italic'}},'No document loaded'));
@@ -15157,6 +15296,60 @@ function updateClock() {
     const time=now.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
     const date=now.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
     dt.textContent=`${date}  ${time}`;
+  }
+}
+
+// ─── Vendor Contract Files Loader ────────────────────────────────────────────
+async function loadVendorContractFiles(vendorName, container) {
+  if (!vendorName) return;
+  container.innerHTML = '<span style="color:var(--muted);font-size:9px">⏳ Loading contract files...</span>';
+  try {
+    const resp = await fetch(VCS_PROXY_URL + '?action=listVendorFiles&vendorName=' + encodeURIComponent(vendorName));
+    const d = await resp.json();
+    container.innerHTML = '';
+    if (d.status !== 'ok') {
+      container.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'⚠ ' + d.message));
+      return;
+    }
+    if (!d.folderFound) {
+      container.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'No Drive folder found for this vendor. Upload a file to create one.'));
+      return;
+    }
+    if (!d.files || !d.files.length) {
+      container.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'No files in this vendor Drive folder yet.'));
+      return;
+    }
+    // Render file list
+    d.files.forEach(file => {
+      const row = el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'4px 0',borderBottom:'1px solid var(--border)'}});
+      const icon = file.mimeType && file.mimeType.includes('pdf') ? '📄' :
+                   file.mimeType && file.mimeType.includes('word') ? '📝' :
+                   file.mimeType && file.mimeType.includes('sheet') ? '📊' : '📎';
+      const nameEl = el('div',{style:{flex:'1',minWidth:'0'}});
+      const nameLine = el('div',{style:{fontSize:'10px',fontWeight:file.suggested?'700':'400',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:file.suggested?'var(--blue)':'var(--text)'}});
+      nameLine.textContent = icon + ' ' + (file.path || file.name);
+      if (file.suggested) nameLine.appendChild(el('span',{style:{fontSize:'8px',background:'rgba(79,124,255,.15)',color:'var(--blue)',borderRadius:'2px',padding:'0 4px',marginLeft:'4px'}},'★ Key'));
+      nameEl.appendChild(nameLine);
+      const meta = el('div',{style:{fontSize:'8px',color:'var(--muted)'}});
+      meta.textContent = new Date(file.modifiedTime).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) +
+        (file.size ? ' · ' + (file.size > 1048576 ? (file.size/1048576).toFixed(1)+'MB' : Math.round(file.size/1024)+'KB') : '');
+      nameEl.appendChild(meta);
+      row.appendChild(nameEl);
+      // Open in Drive button
+      row.appendChild(el('button',{class:'btn-xs btn-ghost',style:{flexShrink:'0',fontSize:'8px'},
+        onclick(){window.open(file.url,'_blank');}
+      },'☁ Open'));
+      container.appendChild(row);
+    });
+    // Footer with folder link
+    const footer = el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'6px',textAlign:'right'}});
+    footer.textContent = d.fileCount + ' file' + (d.fileCount!==1?'s':'') + ' · ';
+    const folderLink = el('a',{href:'https://drive.google.com/drive/folders/'+d.folderId,target:'_blank',style:{color:'var(--blue)'}});
+    folderLink.textContent = 'Open folder in Drive';
+    footer.appendChild(folderLink);
+    container.appendChild(footer);
+  } catch(err) {
+    container.innerHTML = '<span style="color:var(--muted);font-size:9px">Could not load files: ' + err.message + '</span>';
   }
 }
 
