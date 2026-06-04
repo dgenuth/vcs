@@ -6539,6 +6539,30 @@ function renderVendorDB(c) {
   // Default hidden: show the most useful cols, hide the verbose ones
   // (already initialized above — do not reinitialize here)
 
+
+  // Admin-controlled locked columns (always hidden for non-admins)
+  // Max allowed columns per role — user can only toggle within this set
+  // Filter visible cols
+  const _userHidden = new Set(USER.hiddenFields || []);
+  const _userHiddenForCols = _userHidden; // alias
+  const _fToCol = {'gpo':'gpo','name':'name','category':'cat','subCategory':'subcat','product':'product','classOfTrade':'cot','markets':'markets','addedValue':'addedValue','website':'website','score':'score','status':'status','tier':'tier','contractName':'contractName','signatory':'signatory','assignment':'assignment','assignmentConditions':'assignmentConditions','exclusivity':'exclusivity','terminationWoCause':'terminationWoCause','terminationNotice':'notice','pricingCommitment':'pricingCommitment','procContact':'contact','contactType':'contact','title':'contact','bizPhone':'phone','mobile':'phone','email':'email','sharedContact':'contact','contactType2':'mobile2','title2':'mobile2','mobile2':'mobile2','email2':'email2','inContractSince':'inContractSince','contractEffective':'contractEffective','contractExpiry':'expiry','autoRenewal':'ar','autoRenewalType':'autoRenewalType','termEffective':'termEffective','termExpiry':'termExpiry','engagementReminder':'engagementReminder','contractTerm':'contractTerm','currentTerm':'currentTerm','terminationReceived':'terminationReceived','needsLOP':'lop','coverSheet':'coverSheet','dataSheet':'dataSheet','havePricing':'havePricing','pricingLocation':'pricingLocation','pricingDate':'pricingDate','pricingFrequency':'pricingFrequency','whitePapers':'wp','serviceSummary':'ss','videoRecording':'vid','adminFee':'fee','adminFeeNotes':'adminFeeNotes','tiers':'tiers','perpetuity':'perp','tail':'perp','minYears':'minYears','contractNo':'contractNo','reportFrequency':'reportFrequency','agreementType':'agreementType','comments':'comments','notes':'notes','lastComm':'lastComm','about':'about','followUp':'followUp','aka':'aka','justification':'justification','changeOfControl':'changeOfControl','attachment':'attachment','tier':'tier','days':'days','score':'score'};
+  const VISIBLE_COLS = COLS.filter(col => {
+    if (S.dbHiddenCols.has(col.key)) return false;
+    for (const [f, ck] of Object.entries(_fToCol)) {
+      if (ck === col.key && _userHidden.has(f)) return false;
+    }
+    return true;
+  });
+
+  // Column visibility driven by user's hiddenFields — no hardcoded role restrictions
+  const myAllowedCols = new Set(COLS.map(c=>c.key).filter(key => {
+    for (const [f, ck] of Object.entries(_fToCol)) {
+      if (ck === key && _userHiddenForCols.has(f)) return false;
+    }
+    return true;
+  }));
+  const canEditCols = hasPermission('editAll') || USER.role === 'admin' || USER.role === 'manager';
+
   // ── Column visibility toggles — collapsible, grouped, searchable ──
   if(!S._colToggleOpen) S._colToggleOpen=false;
   if(!S._colToggleSearch) S._colToggleSearch='';
@@ -6641,30 +6665,6 @@ function renderVendorDB(c) {
 
   const colToggleBar=el('div',{style:{display:'none'}}); // legacy ref kept for compat
   colToggleBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'3px'}},'Columns:'));
-  // Admin-controlled locked columns (always hidden for non-admins)
-  // Max allowed columns per role — user can only toggle within this set
-  // Filter visible cols
-  const _userHidden = new Set(USER.hiddenFields || []);
-  const _userHiddenForCols = _userHidden; // alias
-  const _fToCol = {'gpo':'gpo','name':'name','category':'cat','subCategory':'subcat','product':'product','classOfTrade':'cot','markets':'markets','addedValue':'addedValue','website':'website','score':'score','status':'status','tier':'tier','contractName':'contractName','signatory':'signatory','assignment':'assignment','assignmentConditions':'assignmentConditions','exclusivity':'exclusivity','terminationWoCause':'terminationWoCause','terminationNotice':'notice','pricingCommitment':'pricingCommitment','procContact':'contact','contactType':'contact','title':'contact','bizPhone':'phone','mobile':'phone','email':'email','sharedContact':'contact','contactType2':'mobile2','title2':'mobile2','mobile2':'mobile2','email2':'email2','inContractSince':'inContractSince','contractEffective':'contractEffective','contractExpiry':'expiry','autoRenewal':'ar','autoRenewalType':'autoRenewalType','termEffective':'termEffective','termExpiry':'termExpiry','engagementReminder':'engagementReminder','contractTerm':'contractTerm','currentTerm':'currentTerm','terminationReceived':'terminationReceived','needsLOP':'lop','coverSheet':'coverSheet','dataSheet':'dataSheet','havePricing':'havePricing','pricingLocation':'pricingLocation','pricingDate':'pricingDate','pricingFrequency':'pricingFrequency','whitePapers':'wp','serviceSummary':'ss','videoRecording':'vid','adminFee':'fee','adminFeeNotes':'adminFeeNotes','tiers':'tiers','perpetuity':'perp','tail':'perp','minYears':'minYears','contractNo':'contractNo','reportFrequency':'reportFrequency','agreementType':'agreementType','comments':'comments','notes':'notes','lastComm':'lastComm','about':'about','followUp':'followUp','aka':'aka','justification':'justification','changeOfControl':'changeOfControl','attachment':'attachment','tier':'tier','days':'days','score':'score'};
-  const VISIBLE_COLS = COLS.filter(col => {
-    if (S.dbHiddenCols.has(col.key)) return false;
-    for (const [f, ck] of Object.entries(_fToCol)) {
-      if (ck === col.key && _userHidden.has(f)) return false;
-    }
-    return true;
-  });
-
-  // Column visibility driven by user's hiddenFields — no hardcoded role restrictions
-  const myAllowedCols = new Set(COLS.map(c=>c.key).filter(key => {
-    for (const [f, ck] of Object.entries(_fToCol)) {
-      if (ck === key && _userHiddenForCols.has(f)) return false;
-    }
-    return true;
-  }));
-  const canEditCols = hasPermission('editAll') || USER.role === 'admin' || USER.role === 'manager';
-
-  // Column toggles now handled by colToggleWrap above
 
   // ── Filter + sort function ──
   function getFiltered() {
@@ -7170,7 +7170,7 @@ function renderCustomers(c) {
       parentCard.appendChild(parentHdr);
 
       // Expanded content
-      if(isExpanded){
+      if(isExpanded && hasExpandable){
         const expanded=el('div',{style:{padding:'8px 12px',background:'var(--bg)',borderTop:'1px solid var(--border)'}});
 
         // Contacts for this account
@@ -7374,7 +7374,7 @@ async function loadCustomerData() {
       sfQueryAll('SELECT Id,Name,Type,Industry,OwnerId,Owner.Name,BillingCity,BillingState,Phone,ParentId,Parent.Name,NumberOfEmployees FROM Account ORDER BY Name ASC', 999999),
       sfQueryAll('SELECT Id,Name,StageName,Amount,CloseDate,AccountId,Account.Name,Vendor__r.Name,Owner.Name FROM Opportunity WHERE IsClosed=false ORDER BY CloseDate ASC NULLS LAST', 2000),
       sfQueryAll("SELECT Id,CaseNumber,Subject,Status,Priority,AccountId,Account.Name,Vendor__r.Name,CreatedDate,Owner.Name FROM Case WHERE Status!='Closed' ORDER BY Priority,CreatedDate DESC", 1000),
-      sfQueryAll('SELECT Id,Name,Title,Email,Phone,AccountId,Account.Name,OwnerId FROM Contact ORDER BY LastModifiedDate DESC', 2000),
+      sfQueryAll('SELECT Id,Name,Title,Email,Phone,AccountId,Account.Name,Owner.Name FROM Contact WHERE Name != null AND Name NOT LIKE \'%safe harbor%\' AND Name NOT LIKE \'%safeharbor%\' ORDER BY Name ASC', 999999),
     ]);
     console.log('[Customers] accounts:',accounts.length,'opps:',opps.length,'cases:',cases.length,'contacts:',contacts.length);
     S._custData={accounts,opps,cases,contacts};
@@ -8768,12 +8768,17 @@ function renderContracts(c) {
     const records = window.S_contractStore[vName]||[];
     if(!records.length) return;
     const vendor = S.vendors.find(v=>v.name===vName);
-    const vSec=el('div',{style:{marginBottom:'16px'}});
-    const vHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'6px'}});
-    if(vendor){vHdr.appendChild(el('span',{class:'vendor-link',style:{fontWeight:'700',fontSize:'12px'},onclick(){openDetail(vendor);}},vName));}
-    else{vHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'12px'}},vName));}
+    if(!S._contractVendorOpen) S._contractVendorOpen={};
+    const vIsOpen = S._contractVendorOpen[vName] !== false;
+    const vSec=el('div',{style:{marginBottom:'10px',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
+    const vHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'8px 12px',background:'var(--card)',cursor:'pointer',userSelect:'none'},
+      onclick(){S._contractVendorOpen[vName]=!vIsOpen;render();}});
+    vHdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',flexShrink:'0'}},vIsOpen?'▼':'▶'));
+    if(vendor){vHdr.appendChild(el('span',{class:'vendor-link',style:{fontWeight:'700',fontSize:'12px',flex:'1'},onclick(e){e.stopPropagation();openDetail(vendor);}},vName));}
+    else{vHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'12px',flex:'1'}},vName));}
     vHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'('+records.length+' contract'+( records.length!==1?'s':'')+')'));
     vSec.appendChild(vHdr);
+    const vBody=el('div',{style:{padding:'8px 12px'}});
 
     records.forEach(record=>{
       const ex=record.extractedData||{};
@@ -8795,8 +8800,8 @@ function renderContracts(c) {
         }},'Apply to VCS'));
       }
       const expandBtn=el('button',{class:'btn-xs btn-ghost',onclick(){
-        body.style.display=body.style.display==='none'?'':'none';
-        expandBtn.textContent=body.style.display==='none'?'▶ Show':'▼ Hide';
+        contractBody.style.display=contractBody.style.display==='none'?'block':'none';
+        expandBtn.textContent=contractBody.style.display==='none'?'▶ Show':'▼ Hide';
       }},'▼ Hide');
       cardHdr.appendChild(expandBtn);
       card.appendChild(cardHdr);
@@ -8892,8 +8897,9 @@ function renderContracts(c) {
       }
 
       card.appendChild(body2);
-      vSec.appendChild(card);
+      vBody.appendChild(card);
     });
+        if(vIsOpen) vSec.appendChild(vBody);
     wrap.appendChild(vSec);
   });
 
