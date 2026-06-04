@@ -9145,6 +9145,80 @@ async function extractFileText(file) {
   });
 }
 
+function smartChunkContract(text, maxChars) {
+  // For large contracts, intelligently extract the most relevant sections
+  // rather than blindly truncating. Prioritizes: fees, term, renewal, pricing, legal.
+  if (!text || typeof text !== 'string') return text || '';
+  if (text.length <= maxChars) return text;
+
+  // Priority keywords — sections most important for comparison
+  const prioritySections = [
+    'admin fee', 'administrative fee', 'rebate', 'commission', 'compensation',
+    'term ', 'initial term', 'contract term', 'renewal', 'auto-renew', 'automatic renewal',
+    'notice period', 'termination', 'expire', 'expiration',
+    'pricing', 'price', 'tier', 'volume', 'discount',
+    'exclusiv', 'non-exclusiv',
+    'governing law', 'jurisdiction', 'indemnif', 'liability',
+    'effective date', 'commencement',
+  ];
+
+  // Split into paragraphs
+  const paragraphs = text.split(/\n\s*\n/);
+  const scored = paragraphs.map((p, i) => {
+    const lower = p.toLowerCase();
+    let score = 0;
+    // Higher score = more relevant
+    prioritySections.forEach(kw => { if (lower.includes(kw)) score += 10; });
+    // Bonus for section headers (short lines with caps or numbers)
+    if (p.length < 100 && (p.match(/^[A-Z\s\d\.]+$/) || p.match(/^\d+\./))) score += 5;
+    // Small penalty for very long paragraphs (likely boilerplate)
+    if (p.length > 2000) score -= 3;
+    // Small bonus for early sections (definitions, key terms usually first)
+    if (i < 10) score += 2;
+    return { text: p, score, index: i };
+  });
+
+  // Always include first 3 paragraphs (usually parties, recitals, key definitions)
+  const alwaysInclude = new Set([0, 1, 2]);
+  // Sort by score descending
+  const sorted = [...scored].sort((a, b) => b.score - a.score);
+
+  // Build output: first include always-include, then top scored until we hit maxChars
+  let result = '';
+  const included = new Set();
+
+  // First pass: always-include paragraphs in order
+  for (const idx of alwaysInclude) {
+    if (scored[idx]) { result += scored[idx].text + '\n\n'; included.add(idx); }
+  }
+
+  // Second pass: highest scored paragraphs
+  for (const p of sorted) {
+    if (included.has(p.index)) continue;
+    if (result.length + p.text.length > maxChars * 0.85) continue;
+    // Insert at correct position to preserve document flow
+    included.add(p.index);
+  }
+
+  // Rebuild in original order
+  result = scored
+    .filter(p => included.has(p.index))
+    .map(p => p.text)
+    .join('\n\n');
+
+  // If still too long, truncate with note
+  if (result.length > maxChars) {
+    result = result.slice(0, maxChars) + '\n\n[... document truncated for length ...]';
+  }
+
+  // Add note about chunking
+  if (text.length > maxChars) {
+    result = '[Note: This contract was ' + Math.round(text.length/1000) + 'KB. Key sections extracted.]\n\n' + result;
+  }
+
+  return result;
+}
+
 async function runContractComparison(vendorName) {
   if (!CMP.docAText || !CMP.docBText) { toast('Load both documents first','#f59e0b'); return; }
   const apiKey = S.settings?.apiKey || S.settings?.anthropicApiKey || localStorage.getItem('vcs_api_key') || '';
@@ -9201,19 +9275,19 @@ Include every meaningful difference. Do not summarize away important details. If
   const userMsg = `Vendor: ${vendorName || 'Unknown Vendor'}
 
 DOCUMENT A (${CMP.docAName}):
-${typeof CMP.docAText === 'string' ? CMP.docAText.slice(0, 18000) : '[PDF uploaded]'}
+${typeof CMP.docAText === 'string' ? smartChunkContract(CMP.docAText, 40000) : '[PDF uploaded]'}
 
 DOCUMENT B (${CMP.docBName}):
-${typeof CMP.docBText === 'string' ? CMP.docBText.slice(0, 18000) : '[PDF uploaded]'}`;
+${typeof CMP.docBText === 'string' ? smartChunkContract(CMP.docBText, 40000) : '[PDF uploaded]'}`;
 
   // Build messages — handle PDF base64 case
   let messages;
   if (CMP.docAText?.__pdf_base64__ || CMP.docBText?.__pdf_base64__) {
     const contentParts = [{type:'text',text:`Vendor: ${vendorName||'Unknown'}\n\nAnalyze both contract documents below and compare them according to the system instructions.`}];
     if (CMP.docAText?.__pdf_base64__) contentParts.push({type:'document',source:{type:'base64',media_type:'application/pdf',data:CMP.docAText.__pdf_base64__}});
-    else contentParts.push({type:'text',text:'DOCUMENT A ('+CMP.docAName+'):\n'+CMP.docAText.slice(0,18000)});
+    else contentParts.push({type:'text',text:'DOCUMENT A ('+CMP.docAName+'):\n'+smartChunkContract(CMP.docAText,40000)});
     if (CMP.docBText?.__pdf_base64__) contentParts.push({type:'document',source:{type:'base64',media_type:'application/pdf',data:CMP.docBText.__pdf_base64__}});
-    else contentParts.push({type:'text',text:'DOCUMENT B ('+CMP.docBName+'):\n'+CMP.docBText.slice(0,18000)});
+    else contentParts.push({type:'text',text:'DOCUMENT B ('+CMP.docBName+'):\n'+smartChunkContract(CMP.docBText,40000)});
     messages = [{role:'user',content:contentParts}];
   } else {
     messages = [{role:'user',content:userMsg}];
@@ -9230,7 +9304,7 @@ ${typeof CMP.docBText === 'string' ? CMP.docBText.slice(0, 18000) : '[PDF upload
       },
       body: JSON.stringify({
         model:'claude-opus-4-6',
-        max_tokens:8000,
+        max_tokens:16000,
         system: systemPrompt,
         messages,
       })
