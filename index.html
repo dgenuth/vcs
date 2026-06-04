@@ -3209,7 +3209,14 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
         toast('⏳ Uploading '+file.name+'...','#4f7cff');
         try{
           const ab=await file.arrayBuffer();
-          const b64=btoa(String.fromCharCode(...new Uint8Array(ab)));
+          // Safe base64 encoding for large files (avoids stack overflow from spread operator)
+          const bytes=new Uint8Array(ab);
+          let b64='';
+          const chunkSize=8192;
+          for(let i=0;i<bytes.length;i+=chunkSize){
+            b64+=String.fromCharCode(...bytes.slice(i,i+chunkSize));
+          }
+          b64=btoa(b64);
           const resp=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
             body:JSON.stringify({action:'uploadVendorFile',vendorName:vendor.name,fileName:file.name,fileContent:b64,mimeType:file.type||'application/octet-stream'})});
           const d=await resp.json();
@@ -8458,6 +8465,8 @@ function applyContractToVendor(vendor, extracted) {
 
 function renderContracts(c) {
   c.innerHTML='';
+  // Ensure contract store is initialized
+  if(!window.S_contractStore) window.S_contractStore={};
   const wrap=el('div',{style:{maxWidth:'1000px',margin:'0 auto',padding:'12px 0'}});
 
   const hdr=el('div',{style:{marginBottom:'12px'}});
