@@ -6539,8 +6539,107 @@ function renderVendorDB(c) {
   // Default hidden: show the most useful cols, hide the verbose ones
   // (already initialized above — do not reinitialize here)
 
-  // ── Column visibility toggles ──
-  const colToggleBar=el('div',{style:{display:'flex',gap:'3px',flexWrap:'wrap',marginBottom:'6px',alignItems:'center'}});
+  // ── Column visibility toggles — collapsible, grouped, searchable ──
+  if(!S._colToggleOpen) S._colToggleOpen=false;
+  if(!S._colToggleSearch) S._colToggleSearch='';
+
+  const colToggleWrap=el('div',{style:{marginBottom:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
+
+  // Header row — always visible
+  const colToggleHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'5px 8px',background:'var(--card)',cursor:'pointer'},
+    onclick(){S._colToggleOpen=!S._colToggleOpen;render();}});
+  colToggleHdr.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',flex:'1'}},'📋 Column Visibility'));
+  const visCount=COLS.filter(c=>myAllowedCols.has(c.key)&&!S.dbHiddenCols.has(c.key)).length;
+  const totalCount=COLS.filter(c=>myAllowedCols.has(c.key)).length;
+  colToggleHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Showing '+visCount+' of '+totalCount));
+  if(canEditCols){
+    colToggleHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){e.stopPropagation();S.dbHiddenCols=new Set();debouncedSaveSettings();render();}},'Show All'));
+    colToggleHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){e.stopPropagation();S.dbHiddenCols=new Set(myAllowedCols);debouncedSaveSettings();render();}},'Hide All'));
+  }
+  colToggleHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},S._colToggleOpen?'▲':'▼'));
+  colToggleWrap.appendChild(colToggleHdr);
+
+  if(S._colToggleOpen){
+    const colToggleBody=el('div',{style:{padding:'8px'}});
+
+    // Search box
+    const colSearch=el('input',{type:'text',class:'modal-input',placeholder:'Search fields...',
+      style:{width:'100%',marginBottom:'8px',fontSize:'10px'},value:S._colToggleSearch||''});
+    colSearch.addEventListener('input',e=>{S._colToggleSearch=e.target.value;render();});
+    colToggleBody.appendChild(colSearch);
+
+    // Column groups with colors
+    const COL_GROUPS=[
+      {label:'Identity',color:'#6366f1',keys:['name','gpo','cat','subcat','product','cot','markets','addedValue','website','about','aka']},
+      {label:'Contract',color:'#0891b2',keys:['contractName','contractNo','agreementType','signatory','contractTerm','currentTerm','minYears','contractEffective','termEffective','expiry','termExpiry','ar','autoRenewalType','notice','engagementReminder','terminationReceived','terminationWoCause','pricingCommitment','assignment','assignmentConditions','exclusivity','changeOfControl','perp','lop','coverSheet','dataSheet']},
+      {label:'Financial',color:'#059669',keys:['fee','adminFeeNotes','tiers','score','inContractSince']},
+      {label:'Pricing',color:'#d97706',keys:['havePricing','pricingLocation','pricingDate','pricingFrequency','reportFrequency','attachment']},
+      {label:'Contact',color:'#dc2626',keys:['contact','phone','email','mobile2','email2']},
+      {label:'Activity',color:'#7c3aed',keys:['status','tier','days','lastComm','followUp','comments','notes','justification']},
+      {label:'Resources',color:'#0284c7',keys:['wp','ss','vid','sf']},
+    ];
+
+    const srch=(S._colToggleSearch||'').toLowerCase();
+
+    COL_GROUPS.forEach(group=>{
+      const groupCols=COLS.filter(c=>group.keys.includes(c.key)&&myAllowedCols.has(c.key)&&(!srch||c.label.toLowerCase().includes(srch)||group.label.toLowerCase().includes(srch)));
+      if(!groupCols.length) return;
+
+      const groupEl=el('div',{style:{marginBottom:'8px'}});
+      const groupHdr=el('div',{style:{fontSize:'8px',fontWeight:'700',color:group.color,textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'3px',paddingBottom:'2px',borderBottom:'1px solid '+group.color+'44'}});
+      groupHdr.textContent=group.label;
+      groupEl.appendChild(groupHdr);
+
+      const btnRow=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px'}});
+      groupCols.forEach(col=>{
+        const isHid=S.dbHiddenCols.has(col.key);
+        const btn=el('button',{
+          style:{fontSize:'8px',padding:'2px 6px',borderRadius:'3px',cursor:'pointer',
+            border:'1px solid '+(isHid?'var(--border)':group.color+'66'),
+            background:isHid?'var(--card)':group.color+'18',
+            color:isHid?'var(--muted)':group.color,fontWeight:isHid?'400':'600'},
+          onclick(){
+            if(S.dbHiddenCols.has(col.key)) S.dbHiddenCols.delete(col.key);
+            else S.dbHiddenCols.add(col.key);
+            debouncedSaveSettings(); render();
+          }
+        },col.label);
+        btnRow.appendChild(btn);
+      });
+      groupEl.appendChild(btnRow);
+      colToggleBody.appendChild(groupEl);
+    });
+
+    // Any ungrouped columns
+    const groupedKeys=COL_GROUPS.flatMap(g=>g.keys);
+    const ungrouped=COLS.filter(c=>!groupedKeys.includes(c.key)&&myAllowedCols.has(c.key)&&(!srch||c.label.toLowerCase().includes(srch)));
+    if(ungrouped.length){
+      const ugEl=el('div',{style:{marginBottom:'4px'}});
+      ugEl.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:'3px'}},'Other'));
+      const btnRow=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px'}});
+      ungrouped.forEach(col=>{
+        const isHid=S.dbHiddenCols.has(col.key);
+        const btn=el('button',{
+          style:{fontSize:'8px',padding:'2px 6px',borderRadius:'3px',cursor:'pointer',
+            border:'1px solid '+(isHid?'var(--border)':'rgba(107,114,128,.4)'),
+            background:isHid?'var(--card)':'rgba(107,114,128,.1)',color:isHid?'var(--muted)':'var(--text)'},
+          onclick(){
+            if(S.dbHiddenCols.has(col.key)) S.dbHiddenCols.delete(col.key);
+            else S.dbHiddenCols.add(col.key);
+            debouncedSaveSettings(); render();
+          }
+        },col.label);
+        btnRow.appendChild(btn);
+      });
+      ugEl.appendChild(btnRow);
+      colToggleBody.appendChild(ugEl);
+    }
+
+    colToggleWrap.appendChild(colToggleBody);
+  }
+  c.appendChild(colToggleWrap);
+
+  const colToggleBar=el('div',{style:{display:'none'}}); // legacy ref kept for compat
   colToggleBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'3px'}},'Columns:'));
   // Admin-controlled locked columns (always hidden for non-admins)
   // Max allowed columns per role — user can only toggle within this set
@@ -6565,27 +6664,7 @@ function renderVendorDB(c) {
   }));
   const canEditCols = hasPermission('editAll') || USER.role === 'admin' || USER.role === 'manager';
 
-  COLS.forEach(col=>{
-    // Hide cols not in this role's allowed set — no toggle shown
-    if (!myAllowedCols.has(col.key)) return;
-    const isHidden = () => S.dbHiddenCols.has(col.key);
-    const btn=el('button',{
-      class:'col-toggle-btn'+(isHidden()?'':' on'),
-      style:{fontSize:'8px',padding:'1px 5px', cursor: 'pointer'},
-      onclick(){
-        if (S.dbHiddenCols.has(col.key)) S.dbHiddenCols.delete(col.key);
-        else S.dbHiddenCols.add(col.key);
-        debouncedSaveSettings();
-        render();
-      }
-    },col.label);
-    colToggleBar.appendChild(btn);
-  });
-  if (canEditCols) {
-    colToggleBar.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',marginLeft:'4px'},onclick(){S.dbHiddenCols=new Set();debouncedSaveSettings();render();}},'Show All'));
-    colToggleBar.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',marginLeft:'2px'},onclick(){S.dbHiddenCols=new Set(myAllowedCols);debouncedSaveSettings();render();}},'Hide All'));
-  }
-  c.appendChild(colToggleBar);
+  // Column toggles now handled by colToggleWrap above
 
   // ── Filter + sort function ──
   function getFiltered() {
@@ -7292,7 +7371,7 @@ async function loadCustomerData() {
   try{
     // Fetch accounts with pagination - no LIMIT cap, get all records
     const [accounts,opps,cases,contacts]=await Promise.all([
-      sfQueryAll('SELECT Id,Name,Type,Industry,OwnerId,Owner.Name,BillingCity,BillingState,Phone,ParentId,Parent.Name,NumberOfEmployees FROM Account ORDER BY Name ASC', 5000),
+      sfQueryAll('SELECT Id,Name,Type,Industry,OwnerId,Owner.Name,BillingCity,BillingState,Phone,ParentId,Parent.Name,NumberOfEmployees FROM Account ORDER BY Name ASC', 999999),
       sfQueryAll('SELECT Id,Name,StageName,Amount,CloseDate,AccountId,Account.Name,Vendor__r.Name,Owner.Name FROM Opportunity WHERE IsClosed=false ORDER BY CloseDate ASC NULLS LAST', 2000),
       sfQueryAll("SELECT Id,CaseNumber,Subject,Status,Priority,AccountId,Account.Name,Vendor__r.Name,CreatedDate,Owner.Name FROM Case WHERE Status!='Closed' ORDER BY Priority,CreatedDate DESC", 1000),
       sfQueryAll('SELECT Id,Name,Title,Email,Phone,AccountId,Account.Name,OwnerId FROM Contact ORDER BY LastModifiedDate DESC', 2000),
@@ -8121,6 +8200,26 @@ async function loadSFSignals() {
 // State: contract uploads stored per vendor in S._contractFiles
 // Each entry: { vendorName, fileName, uploadDate, extractedData, rawText, fileBase64 }
 if(!window.S_contractStore) window.S_contractStore = {}; // vendorName → array of contract records
+
+function saveContractRecord(vendorName, record) {
+  if(!window.S_contractStore[vendorName]) window.S_contractStore[vendorName]=[];
+  const existing = window.S_contractStore[vendorName].findIndex(r=>r.fileName===record.fileName);
+  if(existing>=0) window.S_contractStore[vendorName][existing]=record;
+  else window.S_contractStore[vendorName].unshift(record);
+  try { localStorage.setItem('vcs_contracts_'+btoa(unescape(encodeURIComponent(vendorName))).slice(0,20), JSON.stringify(window.S_contractStore[vendorName])); } catch(e){}
+}
+
+function loadContractRecords(vendorName) {
+  if(!window.S_contractStore) window.S_contractStore={};
+  if(!window.S_contractStore[vendorName]) {
+    try {
+      const key = 'vcs_contracts_'+btoa(unescape(encodeURIComponent(vendorName))).slice(0,20);
+      const stored = localStorage.getItem(key);
+      if(stored) window.S_contractStore[vendorName]=JSON.parse(stored);
+    } catch(e){}
+  }
+  return window.S_contractStore[vendorName]||[];
+}
 
 async function extractContractWithClaude(fileText, fileName, vendorName) {
   const systemPrompt = `You are a contract analysis expert for Prime Source Expense Experts, a healthcare group purchasing organization (GPO). Extract structured data from vendor contracts with surgical precision.
