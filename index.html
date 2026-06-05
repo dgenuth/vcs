@@ -2707,6 +2707,37 @@ function isVisible(v) {
 // Track which vendor is in the detail panel
 let _openDetailVendor = null;
 let _detailStack = [];
+function updateSidebar() {
+  // Update sidebar counts and status indicators
+  try {
+    const vs = S.vendors || [];
+    const visVendors = vs.filter(isVisible);
+    const callCount = visVendors.filter(v=>(v.tier||'').toUpperCase()==='CALL').length;
+    const emailCount = visVendors.filter(v=>(v.tier||'').toUpperCase()==='EMAIL').length;
+    const pipeline = visVendors.filter(v=>v.status==='pipeline'||v.status==='Pipeline').length;
+    const dirty = S.dirty ? 1 : 0;
+
+    // Update footer counts if elements exist
+    const setEl = (id, val) => { const e = document.getElementById(id); if(e) e.textContent = val; };
+    setEl('sidebar-vendor-count', vs.length);
+    setEl('sidebar-call-count', callCount);
+    setEl('sidebar-email-count', emailCount);
+    setEl('sidebar-pipeline-count', pipeline);
+
+    // Update dirty indicator
+    const dirtyEl = document.getElementById('dirty-count');
+    if(dirtyEl) dirtyEl.textContent = dirty;
+    const unsavedBtn = document.getElementById('unsaved-btn');
+    if(unsavedBtn) {
+      unsavedBtn.style.display = dirty ? 'inline-flex' : 'none';
+      unsavedBtn.textContent = dirty ? '● ' + S.dirtyCount + ' unsaved' : '';
+    }
+  } catch(e) {
+    // Non-critical — sidebar update failure should never break the app
+    console.warn('[VCS] updateSidebar error:', e.message);
+  }
+}
+
 function refreshDetailIfOpen(vendor) {
   if (_openDetailVendor && _openDetailVendor.name === vendor.name) {
     openDetail(vendor, _fromAnalytics, false);
