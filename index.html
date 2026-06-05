@@ -2707,36 +2707,125 @@ function isVisible(v) {
 // Track which vendor is in the detail panel
 let _openDetailVendor = null;
 let _detailStack = [];
+const NAV_DEFS=[
+  // ── Operations ──
+  ['today','📋','Today'],
+  ['callsheet','📞','Call Sheet'],
+  ['expiring','⏰','Expiring'],
+  ['calendar','📅','Calendar'],
+  // ── Vendors ──
+  ['_div1',null,'Vendors'],
+  ['vendordb','🗂','Vendor DB'],
+  ['itw','🔧','In The Works'],
+  ['reviews','📝','Reviews'],
+  ['tiers','📶','Tier Tracker'],
+  ['contracts','📄','Contracts'],
+  ['compare','⚖️','Compare'],
+  // ── Intelligence ──
+  ['_div2',null,'Intelligence'],
+  ['sfboard','☁','SF Board'],
+  ['customers','👥','Customers'],
+  ['spend','💹','Spend'],
+  ['network','🔗','Network Intel'],
+  ['economics','💰','Contract Econ'],
+  ['analytics','📊','Analytics'],
+  ['forecast','📆','Forecast'],
+  // ── Admin ──
+  ['_div3',null,'Admin'],
+  ['reports','📑','Reports'],
+  ['summary','📈','Summary'],
+  ['history','🕐','History'],
+  ['datacheck','✅','Data Check'],
+  ['settings','⚙','Settings'],
+];
+
+
 function updateSidebar() {
-  // Update sidebar counts and status indicators
-  try {
-    const vs = S.vendors || [];
-    const visVendors = vs.filter(isVisible);
-    const callCount = visVendors.filter(v=>(v.tier||'').toUpperCase()==='CALL').length;
-    const emailCount = visVendors.filter(v=>(v.tier||'').toUpperCase()==='EMAIL').length;
-    const pipeline = visVendors.filter(v=>v.status==='pipeline'||v.status==='Pipeline').length;
-    const dirty = S.dirty ? 1 : 0;
+  // Hide save/reload for non-edit roles
+  const _sb=$('save-btn');
+  if(_sb){ const _canSv=(ROLE_PERMS[USER.role||'restricted']||{}).save; _sb.style.display=_canSv?'':'none'; }
+  const nav=$('nav'); nav.innerHTML='';
+  const sb=$('sidebar');
+  const collapsed=sb.classList.contains('collapsed');
 
-    // Update footer counts if elements exist
-    const setEl = (id, val) => { const e = document.getElementById(id); if(e) e.textContent = val; };
-    setEl('sidebar-vendor-count', vs.length);
-    setEl('sidebar-call-count', callCount);
-    setEl('sidebar-email-count', emailCount);
-    setEl('sidebar-pipeline-count', pipeline);
-
-    // Update dirty indicator
-    const dirtyEl = document.getElementById('dirty-count');
-    if(dirtyEl) dirtyEl.textContent = dirty;
-    const unsavedBtn = document.getElementById('unsaved-btn');
-    if(unsavedBtn) {
-      unsavedBtn.style.display = dirty ? 'inline-flex' : 'none';
-      unsavedBtn.textContent = dirty ? '● ' + S.dirtyCount + ' unsaved' : '';
+  // Show/hide header buttons based on loaded state
+  const isLoaded = S.loaded;
+  ['refresh-btn'].forEach(id=>{
+    const btn=$(id);
+    if(btn) btn.style.display = isLoaded ? 'inline-block' : 'none';
+  });
+  // Save button respects role permission (already set above)
+  const dirtyInd=$('dirty-indicator');
+  if(dirtyInd){
+    const _vDirty=S.dirty?.size||0; const _rDirty=S.dirtyReviews?.size||0; const _iDirty=S.dirtyITW?.size||0;
+    const _total=_vDirty+_rDirty+_iDirty;
+    const hasDirty=isLoaded&&_total>0;
+    dirtyInd.style.display=hasDirty?'inline':'none';
+    dirtyInd.textContent='● '+_total+' unsaved';
+    if(hasDirty){
+      const parts=[];
+      if(_vDirty) parts.push(_vDirty+' vendor'+(_vDirty!==1?'s':''));
+      if(_iDirty) parts.push(_iDirty+' ITW change'+(_iDirty!==1?'s':''));
+      if(_rDirty) parts.push(_rDirty+' review note'+(_rDirty!==1?'s':''));
+      dirtyInd.title=parts.join(', ')+' with unsaved changes — click Save to persist';
     }
-  } catch(e) {
-    // Non-critical — sidebar update failure should never break the app
-    console.warn('[VCS] updateSidebar error:', e.message);
   }
+  // Get effective tabs — role defaults + per-user overrides
+  const _roleBaseTabs = (ROLE_PERMS[USER.role||'viewer']||ROLE_PERMS.viewer).tabs || NAV_DEFS.map(n=>n[0]).filter(id=>!id.startsWith('_'));
+  const _tabOverrides = USER.tabOverrides || {};
+  const allowedTabs = NAV_DEFS.map(n=>n[0]).filter(tabId => {
+    if(tabId.startsWith('_div')) return true; // always include dividers
+    if (tabId in _tabOverrides) return _tabOverrides[tabId]; // user override
+    return _roleBaseTabs.includes(tabId); // role default
+  });
+  for (const [id,icon,label] of NAV_DEFS) {
+    // Render section dividers
+    if(id.startsWith('_div')){
+      if(!collapsed){
+        const div=document.createElement('div');
+        div.style.cssText='padding:10px 10px 2px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);opacity:.6;';
+        div.textContent=label;
+        nav.appendChild(div);
+      } else {
+        const line=document.createElement('div');
+        line.style.cssText='height:1px;background:var(--border);margin:6px 4px;';
+        nav.appendChild(line);
+      }
+      continue;
+    }
+    if (!allowedTabs.includes(id)) continue; // hide tabs not in role
+    const btn=document.createElement('button');
+    btn.className='nav-btn'+(S.view===id?' active':'');
+    btn.title=label;
+    btn.innerHTML=`<span class="nav-icon">${icon}</span>${collapsed?'':label}`;
+    btn.addEventListener('click',()=>{
+      if (!allowedTabs.includes(id)) { toast('⚠ You do not have access to this section','#f59e0b'); return; }
+      S.view=id;S.search='';$('search').value='';if(id!=='today'){S.filter=null;S.filterLabel='';}updateSidebar();render();
+    });
+    nav.appendChild(btn);
+  }
+  const qs=$('quick-stats'); qs.innerHTML='';
+  const _tOvr=USER.tabOverrides||{};
+  const _roleCanStats=['admin','procurement','manager'].includes(USER.role||'');
+  const _canSeeStats='_statsbar' in _tOvr?_tOvr['_statsbar']:_roleCanStats;
+  if (S.loaded && !collapsed && _canSeeStats) {
+    const active=S.vendors.filter(isVisible);
+    const calls=active.filter(v=>v.tier==='CALL').length;
+    const emails=active.filter(v=>v.tier==='EMAIL').length;
+    [[`Vendors`,active.length,''],[`🔴 CALL`,calls,'red'],[`🟡 EMAIL`,emails,'amber'],[`Pipeline`,S.itw.length,''],[`Dirty`,(S.dirty.size||0)+(S.dirtyReviews?.size||0)+(S.dirtyITW?.size||0),(S.dirty.size||S.dirtyReviews?.size||S.dirtyITW?.size)?'amber':'']].forEach(([label,val,cls])=>{
+      if (cls==='') { qs.appendChild(el('div',{class:'stat-row'},el('span',{class:'stat-label'},label),el('span',{class:'stat-val'},val))); }
+      else { qs.appendChild(el('div',{class:'stat-row'},el('span',{class:'stat-label '+cls},label),el('span',{class:'stat-val '+cls},val))); }
+    });
+  }
+  // Update toggle arrow direction
+  const tog=$('sidebar-toggle');
+  if (tog) tog.textContent=collapsed?'▶':'◀';
 }
+
+// ─── Views ────────────────────────────────────────────────────────────────────
+// ─── Unified Add Vendor Record Modal ────────────────────────────────────────
+// opts: { destination: 'psd'|'itw', prefillName, prefillData, promoteMode }
+// destination defaults to 'psd'. promoteMode = true skips duplicate check on ITW.
 
 function refreshDetailIfOpen(vendor) {
   if (_openDetailVendor && _openDetailVendor.name === vendor.name) {
@@ -15018,6 +15107,86 @@ async function loadVendorContractFiles(vendorName, container) {
     container.innerHTML = '<span style="color:var(--muted);font-size:9px">Could not load files: ' + err.message + '</span>';
   }
 }
+
+function loadAnalyticsSpend() {
+  // If Spend page data is already loaded, use it directly — no duplicate query needed
+  if(SPEND_STATE.data?.vendors?.length){
+    console.log('[Analytics] Using cached spend data:', SPEND_STATE.data.vendors.length, 'vendors');
+    S._analyticsSpendData=SPEND_STATE.data.vendors.map(v=>({
+      name:v.name, totalSpend:v.totalSpend, category:v.category,
+      adminFeePct:v.contractedPct||null,
+      expectedRevenue:v.expectedRevenue||0,
+      actualFees:v.totalFees||0,
+      actualPct:v.actualPct||0,
+      gap:v.gap||0,
+    }));
+    S._analyticsSpendLoaded=new Date().toLocaleTimeString()+' (from Spend page)';
+    S._analyticsSpendLoading=false;
+    render(); return;
+  }
+  if(!USER.sfToken){
+    S._analyticsSpendLoading=false;
+    toast('Load Spend page data first, or connect Salesforce','#f59e0b');
+    render(); return;
+  }
+  if(!USER.sfInstance){
+    const base=S.settings?.sfLoginUrl||'https://psgpo.my.salesforce.com';
+    USER.sfInstance=base.includes('.my.salesforce.com')||base.includes('.force.com')?base:'https://psgpo.my.salesforce.com';
+  }
+  S._analyticsSpendData=null; S._analyticsSpendLoading=true;
+  render();
+  try {
+    // Use the same query pattern as Spend page (works with 1040 records)
+    console.log('[Analytics] Querying SF spend data via Spend__c...');
+    const spendResult=await sfQuery('SELECT Id,Name,Vendor__c,Vendor__r.Name,Reported_Date__c,Category__c,Sales__c,Admin_Fee__c FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= '+new Date().getFullYear()+'-01-01 ORDER BY Reported_Date__c DESC LIMIT 2000');
+    console.log('[Analytics] Result:', spendResult?.records?.length, spendResult?._error||'ok', spendResult===null?'NULL - sfQuery blocked':'');
+    if(!spendResult){
+      S._analyticsSpendData=[]; S._analyticsSpendLoading=false;
+      toast('Analytics: SF not responding. Try loading Spend page first.','#f59e0b');
+      render(); return;
+    }
+    if(spendResult._error){
+      S._analyticsSpendData=[]; S._analyticsSpendLoading=false;
+      toast('Analytics SF error: '+spendResult._message,'#ef4444');
+      render(); return;
+    }
+    if(!spendResult.records?.length){
+      S._analyticsSpendData=[]; S._analyticsSpendLoading=false;
+      toast('Analytics: No spend records found for this year','#f59e0b');
+      render(); return;
+    }
+    // Aggregate same way as Spend page
+    const byVendor={};
+    spendResult.records.forEach(rec=>{
+      const vName=rec['Vendor__r']?.Name||''; if(!vName) return;
+      if(!byVendor[vName]) byVendor[vName]={name:vName,totalSpend:0,totalFees:0,categories:new Set()};
+      byVendor[vName].totalSpend+=Number(rec.Sales__c||0);
+      byVendor[vName].totalFees+=Number(rec.Admin_Fee__c||0);
+      if(rec.Category__c) byVendor[vName].categories.add(rec.Category__c);
+    });
+    Object.values(byVendor).forEach(v=>{v.category=[...v.categories].join(', ');delete v.categories;});
+    const vendors=Object.values(byVendor).map(v=>{
+      const vcsV=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
+      const contractedPct=parseFee(vcsV?.adminFee)||0;
+      const actualPct=v.totalSpend>0?((v.totalFees/v.totalSpend)*100):0;
+      return {...v,adminFeePct:contractedPct||null,actualPct,
+        expectedRevenue:contractedPct?Math.round(v.totalSpend*contractedPct/100):0,
+        gap:v.totalFees-(contractedPct?Math.round(v.totalSpend*contractedPct/100):0),
+        category:vcsV?.category||v.category};
+    });
+    S._analyticsSpendData=vendors;
+    S._analyticsSpendLoaded=new Date().toLocaleTimeString();
+    S._analyticsSpendLoading=false;
+    render();
+  } catch(e){
+    console.error('[Analytics] Error:',e);
+    S._analyticsSpendData=[]; S._analyticsSpendLoading=false;
+    toast('Analytics error: '+e.message,'#ef4444'); render();
+  }
+}
+
+
+function openAddNewVendorModal() { openAddVendorRecordModal({destination:'psd'}); }
 
 function renderContractFilesFromData(container, vendorName, allFiles) {
   if(!allFiles) return;
