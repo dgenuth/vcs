@@ -15108,7 +15108,7 @@ async function loadVendorContractFiles(vendorName, container) {
   }
 }
 
-function loadAnalyticsSpend() {
+async function loadAnalyticsSpend() {
   // If Spend page data is already loaded, use it directly — no duplicate query needed
   if(SPEND_STATE.data?.vendors?.length){
     console.log('[Analytics] Using cached spend data:', SPEND_STATE.data.vendors.length, 'vendors');
