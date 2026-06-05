@@ -3198,10 +3198,17 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   // Data Sheet button — generate Word doc for Finance/Ops
   if (_canAct) acts.appendChild(el('button',{class:'btn-ghost btn-action',style:{color:'#38bdf8',borderColor:'rgba(56,189,248,.3)'},title:'Generate a data sheet Word document for Finance/Operations',onclick(){generateVendorDataSheet(vendor);}},'📄 Data Sheet'));
 
-  // ── Contract Files section ──
-  const contractFilesSection = el('div',{style:{marginTop:'12px',borderTop:'1px solid var(--border)',paddingTop:'12px'}});
-  const cfsHdr = el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'8px'}});
-  cfsHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px'}},'📁 Contract Files'));
+  // ── Contract Files section — collapsible ──
+  if(!S._cfsOpen) S._cfsOpen = {};
+  const cfsVendorKey = vendor.name;
+  const cfsIsOpen = S._cfsOpen[cfsVendorKey] !== false; // default open
+  const contractFilesSection = el('div',{style:{marginTop:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
+  const cfsHdr = el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'6px 10px',
+    background:'var(--card)',cursor:'pointer',userSelect:'none'},
+    onclick(){S._cfsOpen[cfsVendorKey]=!cfsIsOpen;render();}});
+  cfsHdr.appendChild(el('span',{style:{fontSize:'11px'}},'📁'));
+  cfsHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Contract Files'));
+  cfsHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},cfsIsOpen?'▲ collapse':'▼ expand'));
   // Upload button
   if(_canAct){
     const upBtn=el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'auto'},onclick(){
@@ -3232,10 +3239,11 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     cfsHdr.appendChild(upBtn);
   }
   contractFilesSection.appendChild(cfsHdr);
-  const contractFilesList=el('div',{style:{fontSize:'10px'}});
-  contractFilesSection.appendChild(contractFilesList);
-  // Load files
-  loadVendorContractFiles(vendor.name, contractFilesList);
+  if(cfsIsOpen){
+    const contractFilesList=el('div',{style:{fontSize:'10px',padding:'6px 8px'}});
+    contractFilesSection.appendChild(contractFilesList);
+    loadVendorContractFiles(vendor.name, contractFilesList);
+  }
   body.appendChild(acts);
   body.appendChild(contractFilesSection);
 
@@ -5019,30 +5027,11 @@ function restoreSFSession(){
   }
 }
 
-// Proactive SF token refresh — runs every 25 minutes
-// SF implicit flow tokens default to 2 hours; we reconnect proactively before they expire
+// SF token monitor — disabled proactive refresh (causes unwanted popups)
+// Token stays valid until a 401 is received, at which point sfAutoReconnect handles it
 let _sfTokenMonitor=null;
-function startSFTokenMonitor(){
-  if(_sfTokenMonitor) return; // already running
-  _sfTokenMonitor=setInterval(()=>{
-    if(!USER.sfToken||!USER.sfInstance) return;
-    // Check token stored time — if stored more than 90 minutes ago, reconnect
-    try{
-      const ls=JSON.parse(localStorage.getItem('vcs_sf_token_ls')||'null');
-      if(!ls||!ls.storedAt) return;
-      const ageMs=Date.now()-ls.storedAt;
-      const ninetyMin=90*60*1000;
-      if(ageMs>ninetyMin){
-        console.log('[VCS SF] Token is '+Math.round(ageMs/60000)+'min old — proactively reconnecting');
-        sfConnect(); // opens popup; user sees it but it's brief
-      }
-    }catch(e){}
-  }, 25*60*1000); // check every 25 minutes
-}
-
-function stopSFTokenMonitor(){
-  if(_sfTokenMonitor){clearInterval(_sfTokenMonitor);_sfTokenMonitor=null;}
-}
+function startSFTokenMonitor(){ /* disabled — no proactive refresh */ }
+function stopSFTokenMonitor(){ if(_sfTokenMonitor){clearInterval(_sfTokenMonitor);_sfTokenMonitor=null;} }
 async function sfQuery(soql, _retried){
   if(!USER.sfToken||!USER.sfInstance){
     // Try to restore from storage before giving up
@@ -7320,7 +7309,7 @@ function renderCustomers(c) {
     wrap.appendChild(el('div',{style:{marginBottom:'8px',fontSize:'10px',color:'var(--muted)'}},'Showing '+filtered2.length+' contacts'));
     const tbl=el('table',{class:'data-table'});
     const thead=el('thead'); const hr=el('tr');
-    ['Contact','Title','Account','Phone','Email','Owner'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+    ['Contact','Title','Account','Phone','Email','Owner'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px',background:'var(--sb)',position:'sticky',top:'0',zIndex:'2'}},h)));
     thead.appendChild(hr); tbl.appendChild(thead);
     const tbody=el('tbody');
     filtered2.slice(0,100).forEach(ct=>{
@@ -7373,7 +7362,7 @@ async function loadCustomerData() {
       sfQueryAll('SELECT Id,Name,Type,Industry,OwnerId,Owner.Name,BillingCity,BillingState,Phone,ParentId,Parent.Name,NumberOfEmployees FROM Account ORDER BY Name ASC', 999999),
       sfQueryAll('SELECT Id,Name,StageName,Amount,CloseDate,AccountId,Account.Name,Vendor__r.Name,Owner.Name FROM Opportunity WHERE IsClosed=false ORDER BY CloseDate ASC NULLS LAST', 2000),
       sfQueryAll("SELECT Id,CaseNumber,Subject,Status,Priority,AccountId,Account.Name,Vendor__r.Name,CreatedDate,Owner.Name FROM Case WHERE Status!='Closed' ORDER BY Priority,CreatedDate DESC", 1000),
-      sfQueryAll('SELECT Id,Name,Title,Email,Phone,AccountId,Account.Name,Owner.Name FROM Contact WHERE Name != null ORDER BY Name ASC', 999999),
+      sfQueryAll('SELECT Id,Name,Title,Email,Phone,AccountId,Account.Name,Owner.Name FROM Contact WHERE Name != null AND (NOT Name LIKE \'%safe harbor%\') AND (NOT Name LIKE \'%0011K%\') ORDER BY Name ASC', 999999),
     ]);
     console.log('[Customers] accounts:',accounts.length,'opps:',opps.length,'cases:',cases.length,'contacts:',contacts.length);
     S._custData={accounts,opps,cases,contacts};
@@ -15388,9 +15377,20 @@ function updateClock() {
 async function loadVendorContractFiles(vendorName, container) {
   if (!vendorName) return;
   container.innerHTML = '<span style="color:var(--muted);font-size:9px">⏳ Loading contract files...</span>';
+  
+  // Also try canonical name if this vendor is an alias
+  const canonicalName = S.vendorAliases ? (S.vendorAliases[normName(vendorName)] || vendorName) : vendorName;
+  // Try both the given name and canonical name
+  const namesToTry = [...new Set([vendorName, canonicalName])];
+  
   try {
-    const resp = await fetch(VCS_PROXY_URL + '?action=listVendorFiles&vendorName=' + encodeURIComponent(vendorName));
-    const d = await resp.json();
+    let d = null;
+    for (const nameToTry of namesToTry) {
+      const resp2 = await fetch(VCS_PROXY_URL + '?action=listVendorFiles&vendorName=' + encodeURIComponent(nameToTry));
+      const d2 = await resp2.json();
+      if (d2.status === 'ok' && d2.folderFound) { d = d2; break; }
+      if (!d) d = d2; // keep last result for error display
+    }
     container.innerHTML = '';
     if (d.status !== 'ok') {
       container.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'⚠ ' + d.message));
@@ -15404,8 +15404,105 @@ async function loadVendorContractFiles(vendorName, container) {
       container.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'No files in this vendor Drive folder yet.'));
       return;
     }
-    // Render file list
-    d.files.forEach(file => {
+
+    // Filter out system files
+    const skipFiles = ['Thumbs.db', 'desktop.ini', '.DS_Store'];
+    const files = d.files.filter(f => !skipFiles.includes(f.name) && !f.name.startsWith('.'));
+
+    // Build folder tree structure
+    const folderTree = {}; // { folderPath: [files] }
+    const rootFiles = [];
+    files.forEach(file => {
+      const pathParts = file.path.split('/');
+      if (pathParts.length === 1) {
+        rootFiles.push(file);
+      } else {
+        const folder = pathParts.slice(0, -1).join('/');
+        if (!folderTree[folder]) folderTree[folder] = [];
+        folderTree[folder].push(file);
+      }
+    });
+
+    // Sort state
+    if (!container._sortKey) container._sortKey = 'date';
+    if (!container._sortDir) container._sortDir = -1;
+
+    const sortFiles = (arr) => {
+      return [...arr].sort((a, b) => {
+        if (container._sortKey === 'date') return container._sortDir * (new Date(b.modifiedTime) - new Date(a.modifiedTime));
+        if (container._sortKey === 'name') return container._sortDir * a.name.localeCompare(b.name);
+        if (container._sortKey === 'type') return container._sortDir * (a.mimeType||'').localeCompare(b.mimeType||'');
+        return 0;
+      });
+    };
+
+    // Sort controls
+    const sortRow = el('div',{style:{display:'flex',gap:'4px',alignItems:'center',marginBottom:'4px',fontSize:'8px',color:'var(--muted)'}});
+    sortRow.appendChild(el('span',{},'Sort:'));
+    ['date','name','type'].forEach(key => {
+      const isActive = container._sortKey === key;
+      const btn = el('button',{style:{fontSize:'8px',padding:'1px 5px',borderRadius:'3px',border:'1px solid var(--border)',
+        background:isActive?'var(--blue)':'var(--card)',color:isActive?'white':'var(--muted)',cursor:'pointer'},
+        onclick(){container._sortKey=key;container._sortDir=isActive?-container._sortDir:-1;
+          container.innerHTML='';loadVendorContractFiles(vendorName,container);}
+      }, key+(isActive?(container._sortDir>0?' ↑':' ↓'):''));
+      sortRow.appendChild(btn);
+    });
+    container.appendChild(sortRow);
+
+    const renderFileRow = (file) => {
+      const icon = file.mimeType && file.mimeType.includes('pdf') ? '📄' :
+                   file.mimeType && file.mimeType.includes('word') ? '📝' :
+                   file.mimeType && file.mimeType.includes('sheet') ? '📊' :
+                   file.mimeType && file.mimeType.includes('presentation') ? '📊' : '📎';
+      const isPricing = /pric|tier|rate|fee/i.test(file.name);
+      const row = el('div',{style:{display:'flex',gap:'4px',alignItems:'center',padding:'2px 0',
+        borderBottom:'1px solid rgba(255,255,255,.04)',cursor:'pointer'},
+        onclick(){window.open(file.url,'_blank');}});
+      const nameEl = el('div',{style:{flex:'1',minWidth:'0'}});
+      const nameLine = el('div',{style:{fontSize:'9px',fontWeight:file.suggested?'700':'400',
+        overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',
+        color:file.suggested?'#34d399':isPricing?'#f59e0b':'var(--text)'}});
+      nameLine.textContent = icon + ' ' + file.name;
+      if (file.suggested) nameLine.appendChild(el('span',{style:{fontSize:'7px',background:'rgba(52,211,153,.15)',color:'#34d399',borderRadius:'2px',padding:'0 3px',marginLeft:'3px'}},'★ KEY'));
+      if (isPricing) nameLine.appendChild(el('span',{style:{fontSize:'7px',background:'rgba(245,158,11,.15)',color:'#f59e0b',borderRadius:'2px',padding:'0 3px',marginLeft:'3px'}},'💰 PRICING'));
+      nameEl.appendChild(nameLine);
+      nameEl.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)'}},
+        new Date(file.modifiedTime).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) +
+        (file.size ? ' · ' + (file.size>1048576?(file.size/1048576).toFixed(1)+'MB':Math.round(file.size/1024)+'KB') : '')));
+      row.appendChild(nameEl);
+      return row;
+    };
+
+    // Render root files first
+    sortFiles(rootFiles).forEach(file => container.appendChild(renderFileRow(file)));
+
+    // Render folders as collapsible sections
+    Object.entries(folderTree).forEach(([folderPath, folderFiles]) => {
+      if (!folderFiles.length) return;
+      const folderKey = 'folder_' + folderPath;
+      if (!container._folderOpen) container._folderOpen = {};
+      const isOpen = container._folderOpen[folderKey];
+      const folderEl = el('div',{style:{marginTop:'4px',border:'1px solid var(--border)',borderRadius:'3px',overflow:'hidden'}});
+      const folderHdr = el('div',{style:{display:'flex',gap:'4px',alignItems:'center',padding:'3px 6px',
+        background:'var(--card)',cursor:'pointer',fontSize:'9px',fontWeight:'600'},
+        onclick(){container._folderOpen[folderKey]=!isOpen;
+          container.innerHTML='';loadVendorContractFiles(vendorName,container);}});
+      folderHdr.appendChild(el('span',{style:{fontSize:'9px'}},isOpen?'📂':'📁'));
+      folderHdr.appendChild(el('span',{style:{flex:'1'}},folderPath.split('/').pop()));
+      folderHdr.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'8px'}},folderFiles.length+' files'));
+      folderHdr.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'8px'}},isOpen?'▲':'▼'));
+      folderEl.appendChild(folderHdr);
+      if (isOpen) {
+        const folderBody = el('div',{style:{padding:'4px 6px'}});
+        sortFiles(folderFiles).forEach(file => folderBody.appendChild(renderFileRow(file)));
+        folderEl.appendChild(folderBody);
+      }
+      container.appendChild(folderEl);
+    });
+
+    // Dummy forEach start to match closing brace below
+    [].forEach(file => {
       const row = el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'4px 0',borderBottom:'1px solid var(--border)'}});
       const icon = file.mimeType && file.mimeType.includes('pdf') ? '📄' :
                    file.mimeType && file.mimeType.includes('word') ? '📝' :
