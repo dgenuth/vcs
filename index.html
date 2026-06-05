@@ -1665,6 +1665,11 @@ async function loadFile(file) {
           }
           // Restore vendor aliases
           if (saved.vendorAliases) Object.assign(S.vendorAliases, saved.vendorAliases);
+      // Also check localStorage settings for aliases
+      try {
+        const ls = JSON.parse(localStorage.getItem('vcs_user_settings_v2')||'{}');
+        if(ls.vendorAliases) Object.assign(S.vendorAliases, ls.vendorAliases);
+      } catch(e){}
           clearSessionState();
           render(); updateSidebar(); closeModal();
           toast('✓ Restored '+applied+' vendor'+(applied!==1?'s':'')+(skipped?' ('+skipped+' not found in this file)':''));
@@ -6382,10 +6387,18 @@ function openVendorAliasModal(vendor) {
       // Log to history so it appears in audit trail and can be reviewed
       logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendor.name,action:'Linked alias to "'+selectedVendor.name+'"',note:'Vendor alias created — '+vendor.name+' → '+selectedVendor.name});
       saveSessionState();
+      // Also save alias to Drive config immediately so it persists across sessions
+      // without requiring a full VCS save
+      try {
+        const aliasConfig = JSON.parse(localStorage.getItem('vcs_user_settings_v2')||'{}');
+        if(!aliasConfig.vendorAliases) aliasConfig.vendorAliases={};
+        aliasConfig.vendorAliases[normName(vendor.name)] = selectedVendor.name;
+        localStorage.setItem('vcs_user_settings_v2', JSON.stringify(aliasConfig));
+      } catch(e){}
       closeModal();
       render();
       openDetail(selectedVendor, false, false);
-      toast('✓ "'+vendor.name+'" linked to "'+selectedVendor.name+'" — save to persist to spreadsheet');
+      toast('✓ "'+vendor.name+'" linked to "'+selectedVendor.name+'" — link saved');
     }},'✓ Confirm Link');
     btns.appendChild(confirmBtn);
     btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
@@ -6589,7 +6602,18 @@ function renderVendorDB(c) {
     // Search box
     const colSearch=el('input',{type:'text',class:'modal-input',placeholder:'Search fields...',
       style:{width:'100%',marginBottom:'8px',fontSize:'10px'},value:S._colToggleSearch||''});
-    colSearch.addEventListener('input',e=>{S._colToggleSearch=e.target.value;render();});
+    colSearch.addEventListener('input',e=>{
+      S._colToggleSearch=e.target.value;
+      // Debounce render to avoid losing focus
+      clearTimeout(colSearch._t);
+      colSearch._t=setTimeout(()=>{
+        render();
+        // Restore focus to search box after render
+        const el2=document.querySelector('.col-toggle-search-input');
+        if(el2){el2.focus();const v=el2.value;el2.value='';el2.value=v;} // move cursor to end
+      },150);
+    });
+    colSearch.className+=' col-toggle-search-input';
     colToggleBody.appendChild(colSearch);
 
     // Column groups with colors
@@ -7042,20 +7066,6 @@ function renderCustomers(c) {
   }
   wrap.appendChild(hdr);
 
-  // Alphabet filter bar
-  const alphaBar=el('div',{style:{display:'flex',gap:'2px',flexWrap:'wrap',marginBottom:'8px'}});
-  const letters=['All','A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z','#'];
-  if(!S._custAlpha) S._custAlpha='All';
-  letters.forEach(l=>{
-    alphaBar.appendChild(el('button',{
-      style:{padding:'2px 5px',fontSize:'9px',fontWeight:'600',borderRadius:'3px',border:'1px solid var(--border)',
-        background:S._custAlpha===l?'var(--blue)':'var(--card)',
-        color:S._custAlpha===l?'white':'var(--text)',cursor:'pointer',minWidth:'20px'},
-      onclick(){S._custAlpha=l;render();}
-    },l));
-  });
-  wrap.appendChild(alphaBar);
-
   // Controls bar
   const ctrlRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'12px',flexWrap:'wrap'}});
   const searchInp=el('input',{type:'text',class:'modal-input',placeholder:'Search accounts, cities, types...',style:{flex:'1',minWidth:'200px',marginBottom:'0'},value:S._custSearch||''});
@@ -7098,21 +7108,9 @@ function renderCustomers(c) {
   if(!S._custExpandedAccounts) S._custExpandedAccounts=new Set();
 
   // Filter accounts
-  let filteredAccounts=accounts.filter(a=>{
-    const name=(a.Name||'').toLowerCase();
-    const city=(a.BillingCity||'').toLowerCase();
-    const state=(a.BillingState||'').toLowerCase();
-    const type=(a.Type||'').toLowerCase();
-    // Apply text search
-    if(fq && !name.includes(fq) && !city.includes(fq) && !state.includes(fq) && !type.includes(fq)) return false;
-    // Apply alphabet filter
-    if(S._custAlpha && S._custAlpha!=='All'){
-      const first=(a.Name||'')[0]?.toUpperCase()||'#';
-      if(S._custAlpha==='#') return !/[A-Z]/.test(first);
-      if(first !== S._custAlpha) return false;
-    }
-    return true;
-  });
+  let filteredAccounts=fq
+    ? accounts.filter(a=>(a.Name||'').toLowerCase().includes(fq)||(a.BillingCity||'').toLowerCase().includes(fq)||(a.Type||'').toLowerCase().includes(fq))
+    : accounts;
 
   // ── Hierarchy Tree View ──
   if(S._custViewMode==='tree'){
@@ -7133,13 +7131,14 @@ function renderCustomers(c) {
       const pContacts=contacts.filter(ct=>ct.AccountId===parent.Id);
       const isExpanded=S._custExpandedAccounts.has(parent.Id);
 
-      const parentCard=el('div',{style:{marginBottom:'6px',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
-
-      // Parent header row
       const hasExpandable = children.length > 0 || pOpps.length > 0 || pContacts.length > 0 || pCases.length > 0;
+      const parentCard=el('div',{style:{marginBottom:'0',borderBottom:'1px solid var(--border)'}});
+
+      // Parent header row - compact table-like row
       const parentHdr=el('div',{style:{
-        display:'flex',gap:'8px',alignItems:'center',padding:'5px 10px',
-        background:'var(--sb)',cursor:hasExpandable?'pointer':'default',userSelect:'none',
+        display:'flex',gap:'6px',alignItems:'center',padding:'3px 8px',
+        background:isExpanded?'rgba(79,124,255,.05)':'transparent',
+        cursor:hasExpandable?'pointer':'default',userSelect:'none',
       },onclick(){
         if(!hasExpandable) return;
         if(S._custExpandedAccounts.has(parent.Id)) S._custExpandedAccounts.delete(parent.Id);
@@ -7150,7 +7149,7 @@ function renderCustomers(c) {
       parentHdr.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'10px',flexShrink:'0',visibility:hasExpandable?'visible':'hidden'}},isExpanded?'▼':'▶'));
       const nameEl=el('div',{style:{flex:'1',minWidth:'0'}});
       nameEl.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},parent.Name));
-      const subInfo=el('div',{style:{fontSize:'9px',color:'var(--muted)',display:'flex',gap:'8px',flexWrap:'wrap',marginTop:'2px'}});
+      const subInfo=el('div',{style:{fontSize:'8px',color:'var(--muted)',display:'flex',gap:'6px'}});
       if(parent.Type) subInfo.appendChild(el('span',{},parent.Type));
       if(parent.BillingCity) subInfo.appendChild(el('span',{},parent.BillingCity+(parent.BillingState?', '+parent.BillingState:'')));
       if(parent.Phone) subInfo.appendChild(el('span',{},parent.Phone));
@@ -7374,7 +7373,7 @@ async function loadCustomerData() {
       sfQueryAll('SELECT Id,Name,Type,Industry,OwnerId,Owner.Name,BillingCity,BillingState,Phone,ParentId,Parent.Name,NumberOfEmployees FROM Account ORDER BY Name ASC', 999999),
       sfQueryAll('SELECT Id,Name,StageName,Amount,CloseDate,AccountId,Account.Name,Vendor__r.Name,Owner.Name FROM Opportunity WHERE IsClosed=false ORDER BY CloseDate ASC NULLS LAST', 2000),
       sfQueryAll("SELECT Id,CaseNumber,Subject,Status,Priority,AccountId,Account.Name,Vendor__r.Name,CreatedDate,Owner.Name FROM Case WHERE Status!='Closed' ORDER BY Priority,CreatedDate DESC", 1000),
-      sfQueryAll('SELECT Id,Name,Title,Email,Phone,AccountId,Account.Name,Owner.Name FROM Contact WHERE Name != null AND Name NOT LIKE \'%safe harbor%\' AND Name NOT LIKE \'%safeharbor%\' ORDER BY Name ASC', 999999),
+      sfQueryAll('SELECT Id,Name,Title,Email,Phone,AccountId,Account.Name,Owner.Name FROM Contact WHERE Name != null ORDER BY Name ASC', 999999),
     ]);
     console.log('[Customers] accounts:',accounts.length,'opps:',opps.length,'cases:',cases.length,'contacts:',contacts.length);
     S._custData={accounts,opps,cases,contacts};
