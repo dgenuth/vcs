@@ -3787,7 +3787,10 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       if(!USER.sfToken){
         const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',padding:'7px',background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px',fontSize:'10px'}});
         row.appendChild(el('span',{style:{flex:'1',color:'var(--muted)'}},'Connect Salesforce to load vendor data.'));
-        row.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){if(!S.settings.sfClientId){S.view="settings";render();return;}sfConnect();toast("Sign in to Salesforce — then reload this panel","#4f7cff");}},"🔗 Connect"));
+        row.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){if(!S.settings.sfClientId){S.view="settings";render();return;}sfConnect();
+    const _chk=setInterval(()=>{if(USER.sfToken){clearInterval(_chk);delete vendor._sfCache;doLoadSF();}},600);
+    setTimeout(()=>clearInterval(_chk),30000);
+  }},"🔗 Connect"));
         sfWrap.appendChild(row); return;
       }
       const sfTabs2=["Details","Spend","Opportunities","Cases"];
@@ -3832,7 +3835,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
           if(rateMismatch){const w=el("div",{style:{background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.3)",borderRadius:"3px",padding:"5px 8px",marginBottom:"6px",fontSize:"9px",color:"var(--red)"}});w.innerHTML="⚠ <strong>Rate discrepancy:</strong> SF shows "+sfRate.toFixed(2)+"% actual vs "+contractedRate.toFixed(1)+"% contracted.";sfWrap.appendChild(w);}
           if(!contractedRate)sfWrap.appendChild(el("div",{style:{fontSize:"9px",color:"var(--amber)",marginBottom:"6px"}},"⚠ No contracted admin fee % in VCS — upload contract to auto-fill."));
           sfWrap.appendChild(el("div",{style:{fontSize:"9px",fontWeight:"700",color:"var(--muted)",marginBottom:"3px",letterSpacing:".05em"}},"SPEND RECORDS ("+sp.records.length+(sp.totalSize>sp.records.length?" of "+sp.totalSize:"")+")"));
-          sp.records.forEach(s2=>{const row2=el("div",{style:{display:"flex",gap:"6px",alignItems:"center",padding:"3px 0",borderBottom:"1px solid var(--border)",fontSize:"10px"}});row2.appendChild(el("span",{style:{flex:"1"}},s2.Name||"Spend"));if(s2.Category__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},s2.Category__c));row2.appendChild(el("span",{style:{color:"var(--green)",fontWeight:"600"}},"$"+Number(s2.Sales__c||0).toLocaleString()));if(s2.Admin_Fee__c)row2.appendChild(el("span",{style:{color:"var(--amber)",fontSize:"9px"}},"Fee: $"+Number(s2.Admin_Fee__c||0).toLocaleString()));if(s2.Reported_Date__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},new Date(s2.Reported_Date__c).toLocaleDateString()));sfWrap.appendChild(row2);});
+          sp.records.forEach(s2=>{const row2=el("div",{style:{display:"flex",gap:"6px",alignItems:"center",padding:"3px 0",borderBottom:"1px solid var(--border)",fontSize:"10px"}});row2.style.cursor='pointer'; row2.title='Open spend record in Salesforce'; row2.onclick=function(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/AP_Spend__c/'+s2.Id+'/view','_blank');}; row2.appendChild(el("span",{style:{flex:"1"}},s2.Name||"Spend"));if(s2.Category__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},s2.Category__c));row2.appendChild(el("span",{style:{color:"var(--green)",fontWeight:"600"}},"$"+Number(s2.Sales__c||0).toLocaleString()));if(s2.Admin_Fee__c)row2.appendChild(el("span",{style:{color:"var(--amber)",fontSize:"9px"}},"Fee: $"+Number(s2.Admin_Fee__c||0).toLocaleString()));if(s2.Reported_Date__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},new Date(s2.Reported_Date__c).toLocaleDateString()));sfWrap.appendChild(row2);});
           if(sp.totalSize>sp.records.length){sfWrap.appendChild(el("button",{class:"btn-xs btn-ghost",style:{marginTop:"5px",fontSize:"9px"},onclick(){S.view="spend";render();toast("See full spend data in Spend tab","#4f7cff");}},"See all "+sp.totalSize+" records in Spend tab →"));}
         }
       } else if(tab==="Opportunities"){
@@ -5121,7 +5124,10 @@ function sfConnect(){
       sessionStorage.setItem('vcs_sf_token',JSON.stringify(sfPayload));
       startSFTokenMonitor();
       console.log('[VCS SF] Connected. Instance:', USER.sfInstance);
-      toast('✓ Salesforce connected');updateUserBadge();if(S.view)render();}}catch(e){}},500);
+      toast('✓ Salesforce connected');updateUserBadge();
+      // If vendor panel is open, auto-reload its SF data
+      if(_openDetailVendor){ delete _openDetailVendor._sfCache; }
+      if(S.view)render();}}catch(e){}},500);
 }
 function restoreSFSession(){
   try {
@@ -10656,6 +10662,18 @@ function renderTierTracker(c) {
   const addBar=el('div',{style:{display:'flex',gap:'6px',marginBottom:'10px',alignItems:'center'}});
   addBar.appendChild(el('button',{class:'btn-primary',onclick(){openAddTierModal();}}, '+ Add Vendor Tier Structure'));
   addBar.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},'Auto-suggests from your PSD vendors with admin fees'));
+  // Load & Sync SF Spend button
+  const sfSyncBtn = el('button',{class:'btn-xs btn-blue',style:{marginLeft:'auto',fontSize:'10px'},onclick:async function(){
+    sfSyncBtn.disabled=true; sfSyncBtn.textContent='⏳ Loading SF...';
+    try{
+      if(!SPEND_STATE.data?.vendors?.length) await loadSpendData();
+      const n=syncTierSpend();
+      toast('✓ Synced '+n+' vendors from Salesforce spend data');
+      render();
+    }catch(e){ toast('SF load failed: '+e.message,'#ef4444'); }
+    sfSyncBtn.disabled=false; sfSyncBtn.textContent='🔄 Load & Sync SF';
+  }},'🔄 Load & Sync SF');
+  addBar.appendChild(sfSyncBtn);
   c.appendChild(addBar);
 
   // Auto-sync SF spend into tier tracking if available
@@ -15519,7 +15537,7 @@ async function loadVendorContractFiles(vendorName, container) {
     const skipFiles = ['Thumbs.db', 'desktop.ini', '.DS_Store'];
     const files = d.files.filter(f => !skipFiles.includes(f.name) && !f.name.startsWith('.'));
 
-    if(d && d.files) renderContractFilesFromData(container, vendorName, d.files);
+    if(d && d.files) renderContractFilesFromData(container, vendorName, d.files, d);
     else container.innerHTML = '<span style="color:var(--muted);font-size:9px">No files found</span>';
   } catch(err) {
     container.innerHTML = '<span style="color:var(--muted);font-size:9px">Could not load files: ' + err.message + '</span>';
@@ -15606,7 +15624,7 @@ async function loadAnalyticsSpend() {
 
 function openAddNewVendorModal() { openAddVendorRecordModal({destination:'psd'}); }
 
-function renderContractFilesFromData(container, vendorName, allFiles) {
+function renderContractFilesFromData(container, vendorName, allFiles, responseData) {
   if(!allFiles) return;
   // Clear except sort/folder state
   const savedSortKey = container._sortKey || 'date';
@@ -15618,6 +15636,8 @@ function renderContractFilesFromData(container, vendorName, allFiles) {
   container._sortDir = savedSortDir;
   container._folderOpen = savedFolderOpen;
   container._cachedFiles = savedCachedFiles;
+  if(responseData) container._responseData = responseData;
+  const rd = responseData || container._responseData || {};
 
   const skipFiles = ['Thumbs.db', 'desktop.ini', '.DS_Store'];
   const files = allFiles.filter(f => !skipFiles.includes(f.name) && !f.name.startsWith('.'));
@@ -15662,7 +15682,7 @@ function renderContractFilesFromData(container, vendorName, allFiles) {
       const btn = el('button',{style:{fontSize:'8px',padding:'1px 5px',borderRadius:'3px',border:'1px solid var(--border)',
         background:isActive?'var(--blue)':'var(--card)',color:isActive?'white':'var(--muted)',cursor:'pointer'},
         onclick(){container._sortKey=key;container._sortDir=isActive?-container._sortDir:-1;
-          renderContractFilesFromData(container, vendorName, container._cachedFiles || allFiles || []);}
+          renderContractFilesFromData(container, vendorName, container._cachedFiles || allFiles || [], container._responseData);}
       }, key+(isActive?(container._sortDir>0?' ↑':' ↓'):''));
       sortRow.appendChild(btn);
     });
@@ -15708,7 +15728,7 @@ function renderContractFilesFromData(container, vendorName, allFiles) {
           e.stopPropagation();
           container._folderOpen[folderKey]=!isOpen;
           // Re-render from cached data without re-fetching
-          renderContractFilesFromData(container, vendorName, container._cachedFiles || allFiles || []);
+          renderContractFilesFromData(container, vendorName, container._cachedFiles || allFiles || [], container._responseData);
         }});
       folderHdr.appendChild(el('span',{style:{fontSize:'9px'}},isOpen?'📂':'📁'));
       folderHdr.appendChild(el('span',{style:{flex:'1'}},folderPath.split('/').pop()));
@@ -15727,8 +15747,8 @@ function renderContractFilesFromData(container, vendorName, allFiles) {
     
     // Footer with folder link
     const footer = el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'6px',textAlign:'right'}});
-    footer.textContent = d.fileCount + ' file' + (d.fileCount!==1?'s':'') + ' · ';
-    const folderLink = el('a',{href:'https://drive.google.com/drive/folders/'+d.folderId,target:'_blank',style:{color:'var(--blue)'}});
+    footer.textContent = (rd.fileCount||allFiles.length) + ' file' + ((rd.fileCount||allFiles.length)!==1?'s':'') + ' · ';
+    const folderLink = el('a',{href:'https://drive.google.com/drive/folders/'+(rd.folderId||''),target:'_blank',style:{color:'var(--blue)'}});
     folderLink.textContent = 'Open folder in Drive';
     footer.appendChild(folderLink);
     container.appendChild(footer);
