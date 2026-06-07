@@ -5307,7 +5307,10 @@ function addEditableSection(body, title, vendor, fields) {
       const rawNum=(val||'').replace(/[^\d+]/g,'');
       if(rawNum){
         valEl.appendChild(el('a',{href:'tel:'+rawNum,style:{fontSize:'9px',color:'var(--blue)',marginLeft:'5px',textDecoration:'none'},title:'Call this number'},'☎️'));
-        valEl.appendChild(el('a',{href:'sms:'+rawNum,style:{fontSize:'9px',color:'var(--green)',marginLeft:'2px',textDecoration:'none'},title:'Send number to your phone via SMS'},'📲'));
+        const myPhone=(S.settings?.myPhone||'').replace(/[^\d+]/g,'');
+      const smsHref=myPhone?('sms:'+myPhone+'?body=Call%20'+encodeURIComponent(rawNum)):('sms:'+rawNum);
+      const smsTitle=myPhone?'Send to your phone ('+S.settings.myPhone+')':'Send number via SMS — set your mobile in Settings → Dialer';
+      valEl.appendChild(el('a',{href:smsHref,style:{fontSize:'9px',color:'var(--green)',marginLeft:'2px',textDecoration:'none'},title:smsTitle},'📲'));
       }
     }
     if (picklist && canEdit) valEl.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)',opacity:'0.6'}},'▾'));
@@ -10666,11 +10669,42 @@ function renderTierTracker(c) {
   const sfSyncBtn = el('button',{class:'btn-xs btn-blue',style:{marginLeft:'auto',fontSize:'10px'},onclick:async function(){
     sfSyncBtn.disabled=true; sfSyncBtn.textContent='⏳ Loading SF...';
     try{
-      if(!SPEND_STATE.data?.vendors?.length) await loadSpendData();
+      // Load SF spend if not already loaded
+      if(!SPEND_STATE.data?.vendors?.length){
+        await loadSpendData();
+        await new Promise(r=>setTimeout(r,300));
+      }
+      if(!SPEND_STATE.data?.vendors?.length){
+        toast('No SF spend data available — check Salesforce connection','#f59e0b');
+        sfSyncBtn.disabled=false; sfSyncBtn.textContent='🔄 Load & Sync SF';
+        return;
+      }
+      // Auto-add all PSD vendors with tiers that aren't tracked yet
+      if(!S.tierData) S.tierData=[];
+      const trackedNames=new Set(S.tierData.map(t=>t.vendorName.toLowerCase()));
+      const tierVendors=S.vendors.filter(v=>v.source==='psd'&&v.tiers&&String(v.tiers).trim()&&String(v.tiers).trim().toLowerCase()!=='n/a');
+      let added=0;
+      tierVendors.forEach(v=>{
+        if(trackedNames.has(v.name.toLowerCase())) return;
+        const tierStr=String(v.tiers||'');
+        const tierLines=tierStr.split(/[;\n,]/).filter(l=>l.trim());
+        const tiers=tierLines.map((l,i)=>{
+          const match=l.match(/\$?([\d,]+(?:\.\d+)?[KkMm]?)\s*[-–]?\s*(?:([\d.]+)%|\$([\d,]+(?:\.\d+)?))/);
+          const threshold=match?parseFloat((match[1]||'0').replace(/[$,KkMm]/g,''))*(/[Kk]/.test(match[1])?1000:/[Mm]/.test(match[1])?1000000:1):(i+1)*500000;
+          const fee=match?parseFloat(match[2]||match[3]||'0'):parseFloat(v.fee)||0;
+          return {name:'Tier '+(i+1),threshold,fee};
+        });
+        if(!tiers.length) tiers.push({name:'Tier 1',threshold:500000,fee:parseFloat(v.fee)||0});
+        S.tierData.push({vendorName:v.name,tiers,period:'annual',currentSpend:0,_autoAdded:true});
+        trackedNames.add(v.name.toLowerCase());
+        added++;
+      });
+      // Now sync spend into tier data
       const n=syncTierSpend();
-      toast('✓ Synced '+n+' vendors from Salesforce spend data');
+      saveSessionState();
+      toast('✓ Loaded SF spend · '+(added?' Added '+added+' vendors · ':'')+'Synced '+n+' with spend data');
       render();
-    }catch(e){ toast('SF load failed: '+e.message,'#ef4444'); }
+    }catch(e){ toast('SF sync failed: '+e.message,'#ef4444'); console.error(e); }
     sfSyncBtn.disabled=false; sfSyncBtn.textContent='🔄 Load & Sync SF';
   }},'🔄 Load & Sync SF');
   addBar.appendChild(sfSyncBtn);
@@ -14503,6 +14537,40 @@ function renderSettings(c) {
   }
   urlInp.addEventListener('input',updateDialerPreview); updateDialerPreview();
   secDialer.appendChild(dialerTest);
+
+  // ── Phone Connection Guide ──
+  const phoneGuide = el('div',{style:{marginTop:'12px',background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px',padding:'10px 12px'}});
+  phoneGuide.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',marginBottom:'8px',color:'var(--blue)'}},'📱 How to receive calls on your phone from VCS'));
+  const guideSteps = [
+    ['Option A — Microsoft Teams (recommended if you use Teams)',
+     '1. Select "Microsoft Teams" from the preset buttons above\n2. Make sure Teams is installed on your phone\n3. When you click a phone number in VCS, Teams opens on your desktop and rings your phone automatically via Teams\'s mobile sync\n4. Accept the call on your phone'],
+    ['Option B — Google Voice (free, personal)',
+     '1. Go to voice.google.com → set up a Google Voice number\n2. In Google Voice settings → enable "Ring linked numbers" and add your mobile\n3. In VCS dialer above, enter: https://voice.google.com/calls?a=nc&num={e164}\n4. When you click a number in VCS, Google Voice rings both your computer and your phone simultaneously'],
+    ['Option C — RingCentral / Zoom Phone',
+     '1. Select "RingCentral" or "Zoom Phone" preset above\n2. Install the app on your phone and log in with the same account\n3. Clicking a number in VCS opens the desktop app, which rings your mobile through the same business line'],
+    ['Option D — Your phone\'s built-in SMS (simplest)',
+     '1. Leave the dialer URL blank (uses system tel: link)\n2. On Windows: go to Settings → Phone Link → pair your Android phone\n3. On Mac: iPhone calls/texts sync automatically via Handoff if signed into same Apple ID\n4. Clicking ☎️ on a number will ring your paired phone directly'],
+  ];
+  guideSteps.forEach(([title, steps]) => {
+    const item = el('div',{style:{marginBottom:'8px'}});
+    item.appendChild(el('div',{style:{fontWeight:'600',fontSize:'9px',marginBottom:'2px'}},title));
+    const pre = el('div',{style:{fontSize:'8px',color:'var(--muted)',lineHeight:'1.6',whiteSpace:'pre-wrap'}});
+    pre.textContent = steps;
+    item.appendChild(pre);
+    phoneGuide.appendChild(item);
+  });
+  // User's own mobile number for SMS send-to-phone
+  phoneGuide.appendChild(el('div',{style:{marginTop:'8px',borderTop:'1px solid rgba(79,124,255,.15)',paddingTop:'8px'}}));
+  const myPhoneRow = el('div',{style:{display:'flex',gap:'6px',alignItems:'center'}});
+  myPhoneRow.appendChild(el('label',{style:{fontSize:'9px',color:'var(--muted)',flexShrink:'0'}},'Your mobile (for 📲 Send-to-Phone):'));
+  const myPhoneInp = el('input',{type:'tel',class:'modal-input',style:{fontSize:'10px',height:'24px',maxWidth:'150px'},
+    placeholder:'+1 (555) 000-0000', value:S.settings.myPhone||''});
+  myPhoneInp.addEventListener('change',()=>{S.settings.myPhone=myPhoneInp.value.trim();debouncedSaveSettings();});
+  myPhoneRow.appendChild(myPhoneInp);
+  myPhoneRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'Used to pre-fill SMS with the vendor number'));
+  phoneGuide.appendChild(myPhoneRow);
+  secDialer.appendChild(phoneGuide);
+
   makeCollapsibleSection(secDialer,'📞 Click-to-Call Dialer','vcs_s_dialer',false);
   c.appendChild(secDialer);
 
