@@ -7989,7 +7989,7 @@ function renderSFBoard(c) {
   }
 
   // ── Spend Leaderboard ──
-  if(displayLeaderboard.length){
+  if(spendLeaderboard.length){
     const spendSec=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'12px'}});
     spendSec.appendChild(el('div',{style:{padding:'10px 12px',borderBottom:'1px solid var(--border)',background:'var(--card)',fontWeight:'700',fontSize:'11px'}},'📊 YTD Spend Leaderboard'));
     const maxSpend=spendLeaderboard[0]?.spend||1;
