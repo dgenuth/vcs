@@ -3122,20 +3122,22 @@ function renzoLogoSVG(size) {
   svg.setAttribute('width', size); svg.setAttribute('height', size);
   svg.setAttribute('viewBox','0 0 32 32');
   svg.style.cssText = 'display:inline-block;vertical-align:middle;flex-shrink:0';
-  // Cream circle background
-  const circle = document.createElementNS(ns,'circle');
-  circle.setAttribute('cx','16'); circle.setAttribute('cy','16'); circle.setAttribute('r','16');
-  circle.setAttribute('fill','#f5f0eb');
-  // Green R lettermark
+  // Green rounded-square background (matches Renzo brand spec)
+  const rect = document.createElementNS(ns,'rect');
+  rect.setAttribute('width','32'); rect.setAttribute('height','32');
+  rect.setAttribute('rx','6'); rect.setAttribute('ry','6');
+  rect.setAttribute('fill','#1F6B47');
+  // White R lettermark — Georgia serif, bold
   const text = document.createElementNS(ns,'text');
-  text.setAttribute('x','16'); text.setAttribute('y','22');
+  text.setAttribute('x','50%'); text.setAttribute('y','50%');
+  text.setAttribute('dominant-baseline','central');
   text.setAttribute('text-anchor','middle');
   text.setAttribute('font-family','Georgia, serif');
-  text.setAttribute('font-size','20');
+  text.setAttribute('font-size','19');
   text.setAttribute('font-weight','bold');
-  text.setAttribute('fill','#1F6B47');
+  text.setAttribute('fill','white');
   text.textContent = 'R';
-  svg.appendChild(circle); svg.appendChild(text);
+  svg.appendChild(rect); svg.appendChild(text);
   return svg;
 }
 
@@ -3151,7 +3153,7 @@ function renzoButton(label, size) {
   btn.style.cssText = [
     'display:inline-flex','align-items:center','gap:5px',
     'height:'+heights[s],'padding:'+pads[s],
-    'background:#1F6B47','color:#f5f0eb',
+    'background:#1F6B47','color:#ffffff',
     'border:1px solid #1F6B47','border-radius:4px',
     'font-size:'+fonts[s],'font-weight:600',
     'cursor:pointer','transition:background .15s',
@@ -6600,6 +6602,9 @@ function actionBtns(vendor) {
   const wrap=el('div',{class:'action-cell'});
   wrap.appendChild(el('button',{class:'btn-xs btn-green',title:'Mark Done',onclick(e){e.stopPropagation();openDoneModal(vendor);}},'✓'));
   wrap.appendChild(el('button',{class:'btn-xs btn-blue',title:'Email',onclick(e){e.stopPropagation();openEmailModal(vendor);}},'✉'));
+  const _rzBtn=makeRenzoBtn(vendor,null,'Check in on relationship',null,'xs');
+  _rzBtn.addEventListener('click',e=>e.stopPropagation(),true);
+  wrap.appendChild(_rzBtn);
   wrap.appendChild(el('button',{class:'btn-xs btn-amber',title:'Snooze',onclick(e){e.stopPropagation();openSnoozeModal(vendor);}},'💤'));
   if (S.dismissed.has(vendor.name)) wrap.appendChild(el('button',{class:'undismiss-btn',title:'Restore',onclick(e){e.stopPropagation();undismissVendor(vendor);}},'↩'));
   else wrap.appendChild(el('button',{class:'btn-xs btn-danger',title:'Dismiss',onclick(e){e.stopPropagation();openDismissConfirm(vendor);}},'✕'));
@@ -8354,6 +8359,7 @@ function renderSFVendorBrief(wrap, opps, cases, tasks, spendLeaderboard) {
   if(vcsV){
     if(vcsV.phone) btnRow.appendChild(el('a',{href:'tel:'+vcsV.phone.replace(/\D/g,''),class:'btn-xs btn-ghost',style:{textDecoration:'none'}},'📞 Call'));
     if(vcsV.email) btnRow.appendChild(el('a',{href:'mailto:'+vcsV.email,class:'btn-xs btn-ghost',style:{textDecoration:'none'}},'✉ Email'));
+    btnRow.appendChild(makeRenzoBtn(vcsV, null, 'Check in on relationship', null, 'xs'));
     btnRow.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){openDetail(vcsV);}},'Open Panel →'));
   }
   nameRow.appendChild(btnRow);
@@ -12067,6 +12073,7 @@ function renderToday(c) {
       // Right: action buttons
       const btns=el('div',{style:{display:'flex',gap:'4px',flexShrink:'0'}});
       btns.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){$('ai-input').value='Draft an outreach email to '+v.name+' — reasons: '+reasons.join(', ');if(!S.aiOpen){S.aiOpen=true;render();}else{$('ai-input').focus();}}}, '✍ Draft'));
+      btns.appendChild(makeRenzoBtn(v, null, 'Check in on relationship', null, 'xs'));
       btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){openDetail(v);}}, '→'));
       row.appendChild(btns);
       list.appendChild(row);
