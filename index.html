@@ -3332,11 +3332,11 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   // ── Contract Files section — collapsible ──
   if(!S._cfsOpen) S._cfsOpen = {};
   const cfsVendorKey = vendor.name;
-  const cfsIsOpen = S._cfsOpen[cfsVendorKey] !== false; // default open
+  const cfsIsOpen = S._cfsOpen[cfsVendorKey] === true; // default CLOSED - saves space
   const contractFilesSection = el('div',{style:{marginTop:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
   const cfsHdr = el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'6px 10px',
     background:'var(--card)',cursor:'pointer',userSelect:'none'},
-    onclick(){S._cfsOpen[cfsVendorKey]=!cfsIsOpen;render();}});
+    onclick(e){e.stopPropagation();S._cfsOpen[cfsVendorKey]=!cfsIsOpen;render();}});
   cfsHdr.appendChild(el('span',{style:{fontSize:'11px'}},'📁'));
   cfsHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Contract Files'));
   cfsHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},cfsIsOpen?'▲ collapse':'▼ expand'));
@@ -7192,13 +7192,26 @@ function renderCustomers(c) {
   const searchInp=el('input',{type:'text',class:'modal-input',placeholder:'Search accounts, cities, types...',style:{flex:'1',minWidth:'200px',marginBottom:'0'},value:S._custSearch||''});
   let custTimer=null;
   searchInp.id='cust-search-input';
-  searchInp.addEventListener('input',e=>{clearTimeout(custTimer);custTimer=setTimeout(()=>{
-      S._custSearch=e.target.value.trim();
+  searchInp.addEventListener('input',e=>{
+    // Capture value and cursor position immediately (before any async)
+    const val=e.target.value;
+    const cursorPos=e.target.selectionStart;
+    clearTimeout(custTimer);
+    custTimer=setTimeout(()=>{
+      S._custSearch=val;
       S._custVScrollBatch=100;
       render();
+      // Restore focus and cursor after re-render (prevents backwards text)
       const el2=document.getElementById('cust-search-input');
-      if(el2){try{el2.focus();}catch(ex){}}
-    },300);});
+      if(el2){
+        try{
+          el2.value=val; // ensure value matches
+          el2.focus();
+          el2.setSelectionRange(cursorPos,cursorPos);
+        }catch(ex){}
+      }
+    },150);
+  });
   ctrlRow.appendChild(searchInp);
   // View mode
   if(!S._custViewMode) S._custViewMode='tree';
@@ -8999,10 +9012,12 @@ function renderContracts(c) {
       }
       const expandBtn=el('button',{class:'btn-xs btn-ghost'});
       expandBtn.textContent='▼ Hide';
-      expandBtn.onclick=function(){
-        const isNowHidden = contractBody.style.display !== 'none';
-        contractBody.style.display = isNowHidden ? 'none' : 'block';
-        expandBtn.textContent = isNowHidden ? '▶ Show' : '▼ Hide';
+      const _contractBodyRef = contractBody;
+      expandBtn.onclick=function(e){
+        e.stopPropagation();
+        const isVisible = _contractBodyRef.style.display !== 'none';
+        _contractBodyRef.style.display = isVisible ? 'none' : 'block';
+        expandBtn.textContent = isVisible ? '▶ Show' : '▼ Hide';
       };
       cardHdr.appendChild(expandBtn);
       card.appendChild(cardHdr);
@@ -9133,7 +9148,10 @@ function renderSpendTable(wrap) {
   const totalExpected=totals.totalExpected||0;
   const gapVendors=vendorSpend.filter(v=>v.gap<-0.01).length;
   const actualRate=totalSpend>0?((totalFees/totalSpend)*100).toFixed(2):0;
-  const kpiRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'8px',marginBottom:'12px'}});
+  // Remove existing kpiRow if present (prevents duplicates on filter change)
+  const existingKpi=wrap.querySelector('.spend-kpi-row');
+  if(existingKpi) existingKpi.remove();
+  const kpiRow=el('div',{class:'spend-kpi-row',style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'8px',marginBottom:'12px'}});
   [{label:'Total Spend',val:'$'+Math.round(totalSpend).toLocaleString(),color:'var(--blue)',sub:''},
    {label:'Fees Received',val:'$'+Math.round(totalFees).toLocaleString(),color:'var(--green)',sub:'Actual: '+actualRate+'%'},
    {label:'Expected Commission',val:'$'+Math.round(totalExpected).toLocaleString(),color:'var(--muted)',sub:'At contracted rates'},
@@ -9285,6 +9303,9 @@ function renderSpend(c) {
   }
 
   if(SPEND_STATE.data){
+    // Remove existing table before re-render
+    const existingTbl=wrap.querySelector('.tbl-wrap');
+    if(existingTbl) existingTbl.remove();
     renderSpendTable(wrap);
   }
 
