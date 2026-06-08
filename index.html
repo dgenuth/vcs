@@ -3387,7 +3387,6 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     loadVendorContractFiles(_cfsName, contractFilesList);
   }
   body.appendChild(acts);
-  // contractFilesSection appended at end of openDetail after all sections
 
   // Find cross-tab data for this vendor using exact name matching + aliases
   const psdVendor = vendor.source==='psd' ? vendor : findPSDVendor(vendor.name);
@@ -3596,6 +3595,9 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   }
   trainSec.appendChild(trainBody);
   body.appendChild(trainSec);
+
+  // ── Contract Files from Drive ──
+  body.appendChild(contractFilesSection);
 
   // ── Vendor Relationships ──
   if (vendor.source === 'psd') renderRelationshipsSection(body, vendor);
@@ -3931,9 +3933,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     body.appendChild(tlSec);
   }
   // ── Contract Files ──
-  body.appendChild(contractFilesSection);
-  // ── Contract Files from Drive — placed near bottom of panel ──
-  body.appendChild(contractFilesSection);
+  // (appended in the right position below)
 
   showDetailPanel();
 }
@@ -15800,19 +15800,16 @@ function updateClock() {
 async function loadVendorContractFiles(vendorName, container) {
   if (!vendorName) return;
   container.innerHTML = '<span style="color:var(--muted);font-size:9px">⏳ Loading contract files...</span>';
-  
-  // Also try canonical name if this vendor is an alias
-  const canonicalName = S.vendorAliases ? (S.vendorAliases[normName(vendorName)] || vendorName) : vendorName;
-  // Try both the given name and canonical name
-  const namesToTry = [...new Set([vendorName, canonicalName])];
-  
   try {
+    // Try vendor name and canonical alias
+    const canonical = S.vendorAliases ? (S.vendorAliases[normName(vendorName)] || vendorName) : vendorName;
+    const namesToTry = [...new Set([canonical, vendorName])];
     let d = null;
     for (const nameToTry of namesToTry) {
-      const resp2 = await fetch(VCS_PROXY_URL + '?action=listVendorFiles&vendorName=' + encodeURIComponent(nameToTry));
-      const d2 = await resp2.json();
-      if (d2.status === 'ok' && d2.folderFound) { d = d2; break; }
-      if (!d) d = d2; // keep last result for error display
+      const resp = await fetch(VCS_PROXY_URL + '?action=listVendorFiles&vendorName=' + encodeURIComponent(nameToTry));
+      const result = await resp.json();
+      if (result.status === 'ok' && result.folderFound) { d = result; break; }
+      if (!d) d = result;
     }
     container.innerHTML = '';
     if (!d || d.status !== 'ok') {
@@ -15820,106 +15817,119 @@ async function loadVendorContractFiles(vendorName, container) {
       return;
     }
     if (!d.folderFound) {
-      container.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'No Drive folder found for this vendor. Upload a file to create one.'));
+      container.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'No Drive folder found for this vendor.'));
       return;
     }
     if (!d.files || !d.files.length) {
       container.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'No files in this vendor Drive folder yet.'));
       return;
     }
-
-    // Cache the raw files on the container for folder expand/collapse
-    container._cachedFiles = d.files;
-    // Filter out system files
-    const skipFiles = ['Thumbs.db', 'desktop.ini', '.DS_Store'];
+    const skipFiles = ['Thumbs.db','desktop.ini','.DS_Store'];
     const files = d.files.filter(f => !skipFiles.includes(f.name) && !f.name.startsWith('.'));
 
-    if(d && d.files) renderContractFilesFromData(container, vendorName, d.files, d);
-    else container.innerHTML = '<span style="color:var(--muted);font-size:9px">No files found</span>';
+    // Sort controls
+    if(!container._sortKey) container._sortKey='date';
+    if(!container._sortDir) container._sortDir=-1;
+    const sortRow=el('div',{style:{display:'flex',gap:'4px',alignItems:'center',marginBottom:'4px',fontSize:'8px',color:'var(--muted)'}});
+    sortRow.appendChild(el('span',{},'Sort:'));
+    ['date','name','type'].forEach(key=>{
+      const isActive=container._sortKey===key;
+      sortRow.appendChild(el('button',{style:{fontSize:'8px',padding:'1px 5px',borderRadius:'3px',
+        border:'1px solid var(--border)',background:isActive?'var(--blue)':'var(--card)',
+        color:isActive?'white':'var(--muted)',cursor:'pointer'},
+        onclick(){
+          container._sortKey=key;
+          container._sortDir=isActive?-container._sortDir:-1;
+          container._cachedData=d;
+          loadVendorContractFiles(vendorName,container);
+        }
+      },key+(isActive?(container._sortDir>0?' ↑':' ↓'):'')));
+    });
+    container.appendChild(sortRow);
+
+    // Sort files
+    const sorted = [...files].sort((a,b)=>{
+      if(container._sortKey==='date') return container._sortDir*(new Date(b.modifiedTime)-new Date(a.modifiedTime));
+      if(container._sortKey==='name') return container._sortDir*a.name.localeCompare(b.name);
+      return container._sortDir*(a.mimeType||'').localeCompare(b.mimeType||'');
+    });
+
+    // Build folder tree
+    const folderTree={};
+    const rootFiles=[];
+    sorted.forEach(file=>{
+      const parts=file.path.split('/');
+      if(parts.length===1) rootFiles.push(file);
+      else {
+        const folder=parts.slice(0,-1).join('/');
+        if(!folderTree[folder]) folderTree[folder]=[];
+        folderTree[folder].push(file);
+      }
+    });
+
+    const renderFileRow=(file)=>{
+      const icon=file.mimeType?.includes('pdf')?'📄':file.mimeType?.includes('word')?'📝':file.mimeType?.includes('sheet')?'📊':'📎';
+      const isPricing=/pric|tier|rate|fee/i.test(file.name);
+      const row=el('div',{style:{display:'flex',gap:'4px',alignItems:'center',padding:'2px 0',
+        borderBottom:'1px solid rgba(255,255,255,.04)',cursor:'pointer'},
+        onclick(){window.open(file.url,'_blank');}});
+      const nameDiv=el('div',{style:{flex:'1',minWidth:'0'}});
+      const nameLine=el('div',{style:{fontSize:'9px',fontWeight:file.suggested?'700':'400',
+        overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',
+        color:file.suggested?'#34d399':isPricing?'#f59e0b':'var(--text)'}});
+      nameLine.textContent=icon+' '+file.name;
+      if(file.suggested) nameLine.appendChild(el('span',{style:{fontSize:'7px',background:'rgba(52,211,153,.15)',color:'#34d399',borderRadius:'2px',padding:'0 3px',marginLeft:'3px'}},'★ KEY'));
+      if(isPricing) nameLine.appendChild(el('span',{style:{fontSize:'7px',background:'rgba(245,158,11,.15)',color:'#f59e0b',borderRadius:'2px',padding:'0 3px',marginLeft:'3px'}},'💰'));
+      nameDiv.appendChild(nameLine);
+      nameDiv.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)'}},
+        new Date(file.modifiedTime).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})+
+        (file.size?' · '+(file.size>1048576?(file.size/1048576).toFixed(1)+'MB':Math.round(file.size/1024)+'KB'):'')));
+      row.appendChild(nameDiv);
+      return row;
+    };
+
+    rootFiles.forEach(f=>container.appendChild(renderFileRow(f)));
+
+    if(!container._folderOpen) container._folderOpen={};
+    Object.entries(folderTree).forEach(([folderPath,folderFiles])=>{
+      if(!folderFiles.length) return;
+      const isOpen=container._folderOpen[folderPath]===true;
+      const folderEl=el('div',{style:{marginTop:'4px',border:'1px solid var(--border)',borderRadius:'3px',overflow:'hidden'}});
+      const folderHdr=el('div',{style:{display:'flex',gap:'4px',alignItems:'center',padding:'3px 6px',
+        background:'var(--card)',cursor:'pointer',fontSize:'9px',fontWeight:'600'},
+        onclick(e){
+          e.stopPropagation();
+          container._folderOpen[folderPath]=!isOpen;
+          container.innerHTML='';
+          loadVendorContractFiles(vendorName,container);
+        }});
+      folderHdr.appendChild(el('span',{style:{fontSize:'9px'}},isOpen?'📂':'📁'));
+      folderHdr.appendChild(el('span',{style:{flex:'1'}},folderPath.split('/').pop()));
+      folderHdr.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'8px'}},folderFiles.length+' files'));
+      folderHdr.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'8px'}},isOpen?'▲':'▼'));
+      folderEl.appendChild(folderHdr);
+      if(isOpen) folderFiles.forEach(f=>{
+        const fr=renderFileRow(f);
+        fr.style.paddingLeft='8px';
+        folderEl.appendChild(fr);
+      });
+      container.appendChild(folderEl);
+    });
+
+    // Footer
+    const footer=el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'6px',textAlign:'right'}});
+    footer.textContent=d.fileCount+' file'+(d.fileCount!==1?'s':'')+' · ';
+    if(d.folderId){
+      const fl=el('a',{href:'https://drive.google.com/drive/folders/'+d.folderId,target:'_blank',style:{color:'var(--blue)'}});
+      fl.textContent='Open in Drive';
+      footer.appendChild(fl);
+    }
+    container.appendChild(footer);
   } catch(err) {
-    container.innerHTML = '<span style="color:var(--muted);font-size:9px">Could not load files: ' + err.message + '</span>';
+    container.innerHTML='<span style="color:var(--muted);font-size:9px">Could not load files: '+err.message+'</span>';
   }
 }
 
-async function loadAnalyticsSpend() {
-  // If Spend page data is already loaded, use it directly — no duplicate query needed
-  if(SPEND_STATE.data?.vendors?.length){
-    console.log('[Analytics] Using cached spend data:', SPEND_STATE.data.vendors.length, 'vendors');
-    S._analyticsSpendData=SPEND_STATE.data.vendors.map(v=>({
-      name:v.name, totalSpend:v.totalSpend, category:v.category,
-      adminFeePct:v.contractedPct||null,
-      expectedRevenue:v.expectedRevenue||0,
-      actualFees:v.totalFees||0,
-      actualPct:v.actualPct||0,
-      gap:v.gap||0,
-    }));
-    S._analyticsSpendLoaded=new Date().toLocaleTimeString()+' (from Spend page)';
-    S._analyticsSpendLoading=false;
-    render(); return;
-  }
-  if(!USER.sfToken){
-    S._analyticsSpendLoading=false;
-    toast('Load Spend page data first, or connect Salesforce','#f59e0b');
-    render(); return;
-  }
-  if(!USER.sfInstance){
-    const base=S.settings?.sfLoginUrl||'https://psgpo.my.salesforce.com';
-    USER.sfInstance=base.includes('.my.salesforce.com')||base.includes('.force.com')?base:'https://psgpo.my.salesforce.com';
-  }
-  S._analyticsSpendData=null; S._analyticsSpendLoading=true;
-  render();
-  try {
-    // Use the same query pattern as Spend page (works with 1040 records)
-    console.log('[Analytics] Querying SF spend data via Spend__c...');
-    const spendResult=await sfQuery('SELECT Id,Name,Vendor__c,Vendor__r.Name,Reported_Date__c,Category__c,Sales__c,Admin_Fee__c FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= '+new Date().getFullYear()+'-01-01 ORDER BY Reported_Date__c DESC LIMIT 2000');
-    console.log('[Analytics] Result:', spendResult?.records?.length, spendResult?._error||'ok', spendResult===null?'NULL - sfQuery blocked':'');
-    if(!spendResult){
-      S._analyticsSpendData=[]; S._analyticsSpendLoading=false;
-      toast('Analytics: SF not responding. Try loading Spend page first.','#f59e0b');
-      render(); return;
-    }
-    if(spendResult._error){
-      S._analyticsSpendData=[]; S._analyticsSpendLoading=false;
-      toast('Analytics SF error: '+spendResult._message,'#ef4444');
-      render(); return;
-    }
-    if(!spendResult.records?.length){
-      S._analyticsSpendData=[]; S._analyticsSpendLoading=false;
-      toast('Analytics: No spend records found for this year','#f59e0b');
-      render(); return;
-    }
-    // Aggregate same way as Spend page
-    const byVendor={};
-    spendResult.records.forEach(rec=>{
-      const vName=rec['Vendor__r']?.Name||''; if(!vName) return;
-      if(!byVendor[vName]) byVendor[vName]={name:vName,totalSpend:0,totalFees:0,categories:new Set()};
-      byVendor[vName].totalSpend+=Number(rec.Sales__c||0);
-      byVendor[vName].totalFees+=Number(rec.Admin_Fee__c||0);
-      if(rec.Category__c) byVendor[vName].categories.add(rec.Category__c);
-    });
-    Object.values(byVendor).forEach(v=>{v.category=[...v.categories].join(', ');delete v.categories;});
-    const vendors=Object.values(byVendor).map(v=>{
-      const vcsV=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
-      const contractedPct=parseFee(vcsV?.adminFee)||0;
-      const actualPct=v.totalSpend>0?((v.totalFees/v.totalSpend)*100):0;
-      return {...v,adminFeePct:contractedPct||null,actualPct,
-        expectedRevenue:contractedPct?Math.round(v.totalSpend*contractedPct/100):0,
-        gap:v.totalFees-(contractedPct?Math.round(v.totalSpend*contractedPct/100):0),
-        category:vcsV?.category||v.category};
-    });
-    S._analyticsSpendData=vendors;
-    S._analyticsSpendLoaded=new Date().toLocaleTimeString();
-    S._analyticsSpendLoading=false;
-    render();
-  } catch(e){
-    console.error('[Analytics] Error:',e);
-    S._analyticsSpendData=[]; S._analyticsSpendLoading=false;
-    toast('Analytics error: '+e.message,'#ef4444'); render();
-  }
-}
-
-
-function openAddNewVendorModal() { openAddVendorRecordModal({destination:'psd'}); }
 
 function renderContractFilesFromData(container, vendorName, allFiles, responseData) {
   if(!allFiles) return;
