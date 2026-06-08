@@ -3096,9 +3096,17 @@ async function generateRenzoOutreach(vendor, trigger) {
 
   // Route through GAS proxy server-side to avoid CORS on meetrenzo.com
   // Send as text/plain to skip CORS preflight (GAS reads postData.contents regardless)
+  // Send flat fields — GAS can lose nested objects when merging params
+  const senderName = (S.settings?.userName || S.settings?.userFullName || USER.name || 'David Genuth').trim();
+  const senderRole = (S.settings?.userTitle || 'COO, Prime Source Expense Experts').trim();
   const payload = {
     action: 'renzoGenerate',
-    renzoContact: { name: contactName, company: companyName, email, notes },
+    renzoName: contactName,
+    renzoCompany: companyName,
+    renzoEmail: email,
+    renzoNotes: notes,
+    renzoSenderName: senderName,
+    renzoSenderRole: senderRole,
     renzoTrigger: trigger || 'Check in on relationship'
   };
   const resp = await fetch(VCS_PROXY_URL, {
