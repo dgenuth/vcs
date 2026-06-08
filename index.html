@@ -3388,9 +3388,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   if(S._cfsOpen?.[cfsVendorKey]){
     const contractFilesList=el('div',{style:{fontSize:'10px',padding:'6px 8px'}});
     contractFilesSection.appendChild(contractFilesList);
-    // Try vendor name and any aliases
-    const _cfsName = S.vendorAliases?.[normName(vendor.name)] || vendor.name;
-    loadVendorContractFiles(_cfsName, contractFilesList);
+    // Use vendor name directly (proxy does alias matching)
+    loadVendorContractFiles(vendor.name, contractFilesList);
   }
   body.appendChild(acts);
 
@@ -3607,12 +3606,6 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
   // ── Vendor Relationships ──
   if (vendor.source === 'psd') renderRelationshipsSection(body, vendor);
-
-  // ── Contracts from Drive ──────────────────────────────────────────────────
-  const contractPerms = ['admin','procurement','manager','cro','finance_sr'].includes(USER.role);
-  if (contractPerms) {
-    try { addContractsDrawerSection(body, vendor); } catch(e) { console.warn('[VCS] Contracts drawer error:',e); }
-  }
 
   // ── Notes: PSD contract notes + ITW pipeline notes in unified timeline ──
   if (hasPermission('editNotes') || ['admin','procurement','manager','cro'].includes(USER.role)) {
@@ -14608,7 +14601,7 @@ function renderSettings(c) {
   // ── Phone Connection Wizard ──
   const phoneGuide = el('div',{style:{marginTop:'12px',background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'6px',padding:'10px 12px'}});
   phoneGuide.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'8px',color:'var(--blue)'}},'📱 Connect Your Phone'));
-  phoneGuide.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'10px'}},'Click a phone number in VCS and have it instantly dial your mobile.'));
+  phoneGuide.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'10px'}},'Set up your preferred dialer above. For Google Voice: select it, then go to voice.google.com → Settings → Linked numbers → add your cell. Click ☎️ on any vendor number to dial.'));
 
   // My phone number field with save button
   const myPhoneSec = el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',padding:'8px 10px',marginBottom:'10px'}});
@@ -14638,94 +14631,21 @@ function renderSettings(c) {
   const isWindows = navigator.platform.toLowerCase().includes('win');
   const isMac = navigator.platform.toLowerCase().includes('mac');
 
-  // Step-through wizard state
-  if(!S._phoneWizard) S._phoneWizard = {os: isWindows?'windows':isMac?'mac':'windows', step:0};
-  const wz = S._phoneWizard;
-
-  const wizCard = el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',padding:'8px 10px'}});
-  wizCard.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',marginBottom:'6px'}},'Connect Phone Link (dial from VCS → rings your phone)'));
-
-  // OS selector
-  const osRow = el('div',{style:{display:'flex',gap:'4px',marginBottom:'8px'}});
-  ['windows','mac'].forEach(os=>{
-    const btn = el('button',{class:'col-toggle-btn'+(wz.os===os?' on':''),onclick(){
-      S._phoneWizard={os,step:0};render();
-    }},os==='windows'?'🪟 Windows':'🍎 Mac');
-    osRow.appendChild(btn);
+  // Simple dialer options card
+  const optCard = el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',padding:'10px',marginTop:'8px'}});
+  optCard.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',marginBottom:'8px'}},'Which dialer works best for you?'));
+  [
+    ['Google Voice (free, recommended)','Select "Google Voice" above. Go to voice.google.com → Settings → Linked numbers → add your cell. Each ☎️ click opens Google Voice and rings you.','#34d399'],
+    ['Zoom Phone','Select "Zoom Phone" above. Requires Zoom Phone license. Clicking ☎️ opens Zoom and dials.','#4f7cff'],
+    ['RingCentral','Select "RingCentral" above. Requires RingCentral account. Clicking ☎️ opens the app.','#f59e0b'],
+    ['Default (tel: link)','Leave as Default. Works if your PC has a softphone or Phone Link paired. Clicking ☎️ opens whatever app handles calls on your computer.','#6b7280'],
+  ].forEach(([title, note, color])=>{
+    const item = el('div',{style:{marginBottom:'8px',paddingBottom:'8px',borderBottom:'1px solid var(--border)'}});
+    item.appendChild(el('div',{style:{fontWeight:'600',fontSize:'9px',color,marginBottom:'2px'}},title));
+    item.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',lineHeight:'1.5'}},note));
+    optCard.appendChild(item);
   });
-  wizCard.appendChild(osRow);
-
-  // Steps by OS
-  const steps = {
-    windows:[
-      {label:'Open Phone Link', action:'Open Phone Link',
-       btn:'Open Phone Link →', onclick(){window.open('ms-settings:mobile-devices','_blank');},
-       note:'Windows will open Settings → Bluetooth & devices → Phone Link'},
-      {label:'Sign in to Microsoft', action:'',
-       btn:'Continue →', onclick(){S._phoneWizard.step=2;render();},
-       note:'Sign into the same Microsoft account you use on your Android phone'},
-      {label:'Install Link to Windows on Android',
-       btn:'Open Play Store →', onclick(){window.open('https://play.google.com/store/apps/details?id=com.microsoft.appmanager','_blank');},
-       note:'On your Android phone — install Link to Windows from the Play Store, sign in with the same Microsoft account'},
-      {label:'Done! Test it', action:'',
-       btn:'Send test 📲', onclick(){
-         const raw=(S.settings.myPhone||'').replace(/[^\d+]/g,'');
-         if(!raw){toast('Enter your mobile number above first','#f59e0b');return;}
-         window.open('sms:'+raw+'?body=VCS+Phone+Link+test+-+reply+to+confirm!','_blank');
-       },
-       note:'Click any vendor phone number in VCS — it will ring your paired Android phone'},
-    ],
-    mac:[
-      {label:'Enable iPhone Handoff', btn:'Open Mac Settings →',
-       onclick(){window.open('x-apple.systempreferences:com.apple.preference.general','_blank');},
-       note:'Go to System Settings → General → AirDrop & Handoff → turn on "Calls on Other Devices" and "iPhone Cellular Calls"'},
-      {label:'On your iPhone: Settings → Phone',
-       btn:'Continue →', onclick(){S._phoneWizard.step=2;render();},
-       note:'On iPhone → Settings → Phone → Calls on Other Devices → turn on, and enable your Mac in the list'},
-      {label:'Sign in to same Apple ID',
-       btn:'Continue →', onclick(){S._phoneWizard.step=3;render();},
-       note:'Both iPhone and Mac must be signed into the same Apple ID and on the same Wi-Fi network'},
-      {label:'Done! Test it', btn:'Send test 📲',
-       onclick(){
-         const raw=(S.settings.myPhone||'').replace(/[^\d+]/g,'');
-         if(!raw){toast('Enter your mobile number above first','#f59e0b');return;}
-         window.open('sms:'+raw+'?body=VCS+Phone+Link+test!','_blank');
-       },
-       note:'Click any ☎️ on a vendor phone number — your iPhone will ring'},
-    ]
-  };
-
-  const curSteps = steps[wz.os]||steps.windows;
-  const curStep = curSteps[wz.step]||curSteps[curSteps.length-1];
-
-  // Progress dots
-  const dots = el('div',{style:{display:'flex',gap:'4px',marginBottom:'8px',alignItems:'center'}});
-  curSteps.forEach((s,i)=>{
-    const dot = el('div',{style:{width:'20px',height:'20px',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',
-      fontSize:'9px',fontWeight:'700',cursor:'pointer',
-      background:i<wz.step?'var(--green)':i===wz.step?'var(--blue)':'var(--border)',
-      color:i<=wz.step?'white':'var(--muted)'},
-      onclick(){S._phoneWizard.step=i;render();}
-    },''+( i<wz.step?'✓':(i+1)));
-    dots.appendChild(dot);
-    if(i<curSteps.length-1) dots.appendChild(el('div',{style:{flex:'1',height:'1px',background:i<wz.step?'var(--green)':'var(--border)'}}));
-  });
-  wizCard.appendChild(dots);
-
-  // Current step card
-  const stepCard = el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'4px',padding:'10px'}});
-  stepCard.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',marginBottom:'4px'}},'Step '+(wz.step+1)+': '+curStep.label));
-  stepCard.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},curStep.note));
-  const stepBtnRow = el('div',{style:{display:'flex',gap:'6px'}});
-  if(wz.step>0) stepBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._phoneWizard.step--;render();}},'← Back'));
-  const nextBtn = el('button',{class:'btn-xs btn-blue',onclick:curStep.onclick},curStep.btn);
-  stepBtnRow.appendChild(nextBtn);
-  if(wz.step<curSteps.length-1 && wz.step>0){
-    stepBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._phoneWizard.step++;render();}},'Skip →'));
-  }
-  stepCard.appendChild(stepBtnRow);
-  wizCard.appendChild(stepCard);
-  phoneGuide.appendChild(wizCard);
+  phoneGuide.appendChild(optCard);
   secDialer.appendChild(phoneGuide);
 
   makeCollapsibleSection(secDialer,'📞 Click-to-Call & Phone Connect','vcs_s_dialer',false);
