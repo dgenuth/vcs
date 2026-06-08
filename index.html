@@ -14538,40 +14538,130 @@ function renderSettings(c) {
   urlInp.addEventListener('input',updateDialerPreview); updateDialerPreview();
   secDialer.appendChild(dialerTest);
 
-  // ── Phone Connection Guide ──
-  const phoneGuide = el('div',{style:{marginTop:'12px',background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px',padding:'10px 12px'}});
-  phoneGuide.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',marginBottom:'8px',color:'var(--blue)'}},'📱 How to receive calls on your phone from VCS'));
-  const guideSteps = [
-    ['Option A — Microsoft Teams (recommended if you use Teams)',
-     '1. Select "Microsoft Teams" from the preset buttons above\n2. Make sure Teams is installed on your phone\n3. When you click a phone number in VCS, Teams opens on your desktop and rings your phone automatically via Teams\'s mobile sync\n4. Accept the call on your phone'],
-    ['Option B — Google Voice (free, personal)',
-     '1. Go to voice.google.com → set up a Google Voice number\n2. In Google Voice settings → enable "Ring linked numbers" and add your mobile\n3. In VCS dialer above, enter: https://voice.google.com/calls?a=nc&num={e164}\n4. When you click a number in VCS, Google Voice rings both your computer and your phone simultaneously'],
-    ['Option C — RingCentral / Zoom Phone',
-     '1. Select "RingCentral" or "Zoom Phone" preset above\n2. Install the app on your phone and log in with the same account\n3. Clicking a number in VCS opens the desktop app, which rings your mobile through the same business line'],
-    ['Option D — Your phone\'s built-in SMS (simplest)',
-     '1. Leave the dialer URL blank (uses system tel: link)\n2. On Windows: go to Settings → Phone Link → pair your Android phone\n3. On Mac: iPhone calls/texts sync automatically via Handoff if signed into same Apple ID\n4. Clicking ☎️ on a number will ring your paired phone directly'],
-  ];
-  guideSteps.forEach(([title, steps]) => {
-    const item = el('div',{style:{marginBottom:'8px'}});
-    item.appendChild(el('div',{style:{fontWeight:'600',fontSize:'9px',marginBottom:'2px'}},title));
-    const pre = el('div',{style:{fontSize:'8px',color:'var(--muted)',lineHeight:'1.6',whiteSpace:'pre-wrap'}});
-    pre.textContent = steps;
-    item.appendChild(pre);
-    phoneGuide.appendChild(item);
-  });
-  // User's own mobile number for SMS send-to-phone
-  phoneGuide.appendChild(el('div',{style:{marginTop:'8px',borderTop:'1px solid rgba(79,124,255,.15)',paddingTop:'8px'}}));
+  // ── Phone Connection Wizard ──
+  const phoneGuide = el('div',{style:{marginTop:'12px',background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'6px',padding:'10px 12px'}});
+  phoneGuide.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'8px',color:'var(--blue)'}},'📱 Connect Your Phone'));
+  phoneGuide.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'10px'}},'Click a phone number in VCS and have it instantly dial your mobile.'));
+
+  // My phone number field with save button
+  const myPhoneSec = el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',padding:'8px 10px',marginBottom:'10px'}});
+  myPhoneSec.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',marginBottom:'5px'}},'Your Mobile Number'));
   const myPhoneRow = el('div',{style:{display:'flex',gap:'6px',alignItems:'center'}});
-  myPhoneRow.appendChild(el('label',{style:{fontSize:'9px',color:'var(--muted)',flexShrink:'0'}},'Your mobile (for 📲 Send-to-Phone):'));
-  const myPhoneInp = el('input',{type:'tel',class:'modal-input',style:{fontSize:'10px',height:'24px',maxWidth:'150px'},
+  const myPhoneInp = el('input',{type:'tel',class:'modal-input',style:{fontSize:'11px',height:'30px',maxWidth:'160px'},
     placeholder:'+1 (555) 000-0000', value:S.settings.myPhone||''});
-  myPhoneInp.addEventListener('change',()=>{S.settings.myPhone=myPhoneInp.value.trim();debouncedSaveSettings();});
+  const savePhoneBtn = el('button',{class:'btn-xs btn-blue',onclick(){
+    S.settings.myPhone = myPhoneInp.value.trim();
+    debouncedSaveSettings();
+    savePhoneBtn.textContent = '✓ Saved';
+    setTimeout(()=>{ savePhoneBtn.textContent = 'Save'; }, 2000);
+    // Send test SMS
+    const raw = (S.settings.myPhone||'').replace(/[^\d+]/g,'');
+    if(raw){
+      const testUrl = 'sms:'+raw+'?body=Test+from+VCS+-+your+Send+to+Phone+is+working!';
+      window.open(testUrl,'_blank');
+    }
+  }},'Save & Test');
   myPhoneRow.appendChild(myPhoneInp);
-  myPhoneRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'Used to pre-fill SMS with the vendor number'));
-  phoneGuide.appendChild(myPhoneRow);
+  myPhoneRow.appendChild(savePhoneBtn);
+  myPhoneSec.appendChild(myPhoneRow);
+  myPhoneSec.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px'}},'After saving, click 📲 on any vendor phone number to forward it to your mobile.'));
+  phoneGuide.appendChild(myPhoneSec);
+
+  // OS detection for guided wizard
+  const isWindows = navigator.platform.toLowerCase().includes('win');
+  const isMac = navigator.platform.toLowerCase().includes('mac');
+
+  // Step-through wizard state
+  if(!S._phoneWizard) S._phoneWizard = {os: isWindows?'windows':isMac?'mac':'windows', step:0};
+  const wz = S._phoneWizard;
+
+  const wizCard = el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',padding:'8px 10px'}});
+  wizCard.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',marginBottom:'6px'}},'Connect Phone Link (dial from VCS → rings your phone)'));
+
+  // OS selector
+  const osRow = el('div',{style:{display:'flex',gap:'4px',marginBottom:'8px'}});
+  ['windows','mac'].forEach(os=>{
+    const btn = el('button',{class:'col-toggle-btn'+(wz.os===os?' on':''),onclick(){
+      S._phoneWizard={os,step:0};render();
+    }},os==='windows'?'🪟 Windows':'🍎 Mac');
+    osRow.appendChild(btn);
+  });
+  wizCard.appendChild(osRow);
+
+  // Steps by OS
+  const steps = {
+    windows:[
+      {label:'Open Phone Link', action:'Open Phone Link',
+       btn:'Open Phone Link →', onclick(){window.open('ms-settings:mobile-devices','_blank');},
+       note:'Windows will open Settings → Bluetooth & devices → Phone Link'},
+      {label:'Sign in to Microsoft', action:'',
+       btn:'Continue →', onclick(){S._phoneWizard.step=2;render();},
+       note:'Sign into the same Microsoft account you use on your Android phone'},
+      {label:'Install Link to Windows on Android',
+       btn:'Open Play Store →', onclick(){window.open('https://play.google.com/store/apps/details?id=com.microsoft.appmanager','_blank');},
+       note:'On your Android phone — install Link to Windows from the Play Store, sign in with the same Microsoft account'},
+      {label:'Done! Test it', action:'',
+       btn:'Send test 📲', onclick(){
+         const raw=(S.settings.myPhone||'').replace(/[^\d+]/g,'');
+         if(!raw){toast('Enter your mobile number above first','#f59e0b');return;}
+         window.open('sms:'+raw+'?body=VCS+Phone+Link+test+-+reply+to+confirm!','_blank');
+       },
+       note:'Click any vendor phone number in VCS — it will ring your paired Android phone'},
+    ],
+    mac:[
+      {label:'Enable iPhone Handoff', btn:'Open Mac Settings →',
+       onclick(){window.open('x-apple.systempreferences:com.apple.preference.general','_blank');},
+       note:'Go to System Settings → General → AirDrop & Handoff → turn on "Calls on Other Devices" and "iPhone Cellular Calls"'},
+      {label:'On your iPhone: Settings → Phone',
+       btn:'Continue →', onclick(){S._phoneWizard.step=2;render();},
+       note:'On iPhone → Settings → Phone → Calls on Other Devices → turn on, and enable your Mac in the list'},
+      {label:'Sign in to same Apple ID',
+       btn:'Continue →', onclick(){S._phoneWizard.step=3;render();},
+       note:'Both iPhone and Mac must be signed into the same Apple ID and on the same Wi-Fi network'},
+      {label:'Done! Test it', btn:'Send test 📲',
+       onclick(){
+         const raw=(S.settings.myPhone||'').replace(/[^\d+]/g,'');
+         if(!raw){toast('Enter your mobile number above first','#f59e0b');return;}
+         window.open('sms:'+raw+'?body=VCS+Phone+Link+test!','_blank');
+       },
+       note:'Click any ☎️ on a vendor phone number — your iPhone will ring'},
+    ]
+  };
+
+  const curSteps = steps[wz.os]||steps.windows;
+  const curStep = curSteps[wz.step]||curSteps[curSteps.length-1];
+
+  // Progress dots
+  const dots = el('div',{style:{display:'flex',gap:'4px',marginBottom:'8px',alignItems:'center'}});
+  curSteps.forEach((s,i)=>{
+    const dot = el('div',{style:{width:'20px',height:'20px',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',
+      fontSize:'9px',fontWeight:'700',cursor:'pointer',
+      background:i<wz.step?'var(--green)':i===wz.step?'var(--blue)':'var(--border)',
+      color:i<=wz.step?'white':'var(--muted)'},
+      onclick(){S._phoneWizard.step=i;render();}
+    },''+( i<wz.step?'✓':(i+1)));
+    dots.appendChild(dot);
+    if(i<curSteps.length-1) dots.appendChild(el('div',{style:{flex:'1',height:'1px',background:i<wz.step?'var(--green)':'var(--border)'}}));
+  });
+  wizCard.appendChild(dots);
+
+  // Current step card
+  const stepCard = el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'4px',padding:'10px'}});
+  stepCard.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',marginBottom:'4px'}},'Step '+(wz.step+1)+': '+curStep.label));
+  stepCard.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},curStep.note));
+  const stepBtnRow = el('div',{style:{display:'flex',gap:'6px'}});
+  if(wz.step>0) stepBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._phoneWizard.step--;render();}},'← Back'));
+  const nextBtn = el('button',{class:'btn-xs btn-blue',onclick:curStep.onclick},curStep.btn);
+  stepBtnRow.appendChild(nextBtn);
+  if(wz.step<curSteps.length-1 && wz.step>0){
+    stepBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._phoneWizard.step++;render();}},'Skip →'));
+  }
+  stepCard.appendChild(stepBtnRow);
+  wizCard.appendChild(stepCard);
+  phoneGuide.appendChild(wizCard);
   secDialer.appendChild(phoneGuide);
 
-  makeCollapsibleSection(secDialer,'📞 Click-to-Call Dialer','vcs_s_dialer',false);
+  makeCollapsibleSection(secDialer,'📞 Click-to-Call & Phone Connect','vcs_s_dialer',false);
   c.appendChild(secDialer);
 
   const sec1=el('div',{class:'settings-section'});
@@ -14857,23 +14947,103 @@ function renderSettings(c) {
       }
       _rnBody.appendChild(testRow);
 
-      // Instructions
-      const steps=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',padding:'10px',fontSize:'9px',color:'var(--muted)'}});
-      steps.appendChild(el('div',{style:{fontWeight:'700',marginBottom:'6px',color:'var(--text)'}},'Setup Instructions'));
-      const ol=el('ol',{style:{paddingLeft:'16px',lineHeight:'1.8'}});
-      [
-        'Download renzo_connector.gs from the VCS output files',
-        'Open script.google.com → New Project → name it "VCS Renzo Connector"',
-        'Paste the .gs file content as Code.gs',
-        'Project Settings → Script Properties → Add: RENZO_API_KEY = (your key)',
-        'Deploy → New Deployment → Web App → Execute as: Me → Anyone',
-        'Copy the Web App URL and paste it above',
-        'Click Test Connection to verify'
-      ].forEach((step,i)=>{
-        ol.appendChild(el('li',{},step));
+      // ── Renzo Setup Wizard ──
+      const renzoWizSec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',padding:'10px',marginTop:'8px'}});
+      renzoWizSec.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',marginBottom:'8px'}},'🚀 Quick Setup Wizard'));
+
+      if(!S._renzoWizStep) S._renzoWizStep=0;
+      const renzoSteps=[
+        {
+          title:'Generate API Key',
+          note:'VCS will generate a secure API key for the Renzo connector.',
+          btn:'Generate Key →',
+          onclick(){
+            const key='renzo-'+Math.random().toString(36).slice(2)+'-'+Math.random().toString(36).slice(2);
+            S.settings.renzoApiKey=key;
+            keyIn.value=key;
+            saveSettings();
+            S._renzoWizStep=1;
+            render();
+            toast('✓ API key generated and saved');
+          }
+        },
+        {
+          title:'Open Google Apps Script',
+          note:'This will open script.google.com in a new tab. Click "New project" and name it "VCS Renzo Connector".',
+          btn:'Open Google Apps Script →',
+          onclick(){
+            window.open('https://script.google.com/home','_blank');
+            S._renzoWizStep=2;
+            render();
+          }
+        },
+        {
+          title:'Paste the Connector Code',
+          note:'Copy the code below, then in Apps Script: delete everything in Code.gs and paste this in.',
+          btn:'Copy Connector Code →',
+          onclick(){
+            // Build the connector code with the current API key embedded
+            const apiKey=S.settings.renzoApiKey||'YOUR_API_KEY_HERE';
+            const connectorCode=`const RENZO_API_KEY='${apiKey}';
+function doGet(e){return handleReq(e);}
+function doPost(e){return handleReq(e);}
+function handleReq(e){
+  const p=Object.assign({},e.parameter||{});
+  if(e.postData){try{Object.assign(p,JSON.parse(e.postData.contents));}catch(err){}}
+  const key=(p.renzoKey||p.apiKey||'').trim();
+  if(key&&key!==RENZO_API_KEY)return out({error:'Unauthorized'});
+  if(p.action==='ping'||!p.action)return out({status:'ok',version:'1.0',message:'VCS Renzo Connector is live!'});
+  return out({error:'Unknown action: '+p.action});
+}
+function out(o){return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);}`;
+            navigator.clipboard.writeText(connectorCode).then(()=>{
+              toast('✓ Connector code copied — paste into Code.gs in Apps Script');
+              S._renzoWizStep=3;
+              render();
+            }).catch(()=>{
+              toast('Could not auto-copy — see code below','#f59e0b');
+            });
+          }
+        },
+        {
+          title:'Deploy as Web App',
+          note:'In Apps Script: click Deploy → New Deployment → Type: Web App → Execute as: Me → Who has access: Anyone → Deploy → Copy the URL.',
+          btn:'I deployed it — paste URL above →',
+          onclick(){S._renzoWizStep=4;render();}
+        },
+        {
+          title:'Test the connection',
+          note:'Paste the web app URL in the "Connector URL" field above, then click Test Connection.',
+          btn:'Test Connection →',
+          onclick(){testBtn.click();}
+        },
+      ];
+
+      // Progress bar
+      const wDots=el('div',{style:{display:'flex',gap:'4px',marginBottom:'8px',alignItems:'center'}});
+      renzoSteps.forEach((_,i)=>{
+        const dot=el('div',{style:{width:'18px',height:'18px',borderRadius:'50%',display:'flex',alignItems:'center',
+          justifyContent:'center',fontSize:'8px',fontWeight:'700',cursor:'pointer',flexShrink:'0',
+          background:i<S._renzoWizStep?'var(--green)':i===S._renzoWizStep?'var(--blue)':'var(--border)',
+          color:i<=S._renzoWizStep?'white':'var(--muted)'},
+          onclick(){S._renzoWizStep=i;render();}
+        },''+( i<S._renzoWizStep?'✓':(i+1)));
+        wDots.appendChild(dot);
+        if(i<renzoSteps.length-1) wDots.appendChild(el('div',{style:{flex:'1',height:'1px',background:i<S._renzoWizStep?'var(--green)':'var(--border)'}}));
       });
-      steps.appendChild(ol);
-      _rnBody.appendChild(steps);
+      renzoWizSec.appendChild(wDots);
+
+      const curRStep=renzoSteps[Math.min(S._renzoWizStep,renzoSteps.length-1)];
+      const rStepCard=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'4px',padding:'10px'}});
+      rStepCard.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',marginBottom:'4px'}},'Step '+(S._renzoWizStep+1)+': '+curRStep.title));
+      rStepCard.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},curRStep.note));
+      const rBtnRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center'}});
+      if(S._renzoWizStep>0) rBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._renzoWizStep--;render();}},'← Back'));
+      rBtnRow.appendChild(el('button',{class:'btn-xs btn-blue',onclick:curRStep.onclick},curRStep.btn));
+      if(S._renzoWizStep<renzoSteps.length-1) rBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._renzoWizStep++;render();}},'Skip →'));
+      rStepCard.appendChild(rBtnRow);
+      renzoWizSec.appendChild(rStepCard);
+      _rnBody.appendChild(renzoWizSec);
       renzoSec.appendChild(_rnBody);
     }
     c.appendChild(renzoSec);
