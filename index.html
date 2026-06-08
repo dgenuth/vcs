@@ -3341,14 +3341,20 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   // ── Contract Files section — collapsible ──
   if(!S._cfsOpen) S._cfsOpen = {};
   const cfsVendorKey = vendor.name;
-  const cfsIsOpen = S._cfsOpen[cfsVendorKey] === true; // default CLOSED - saves space
+  if(!S._cfsOpen) S._cfsOpen = {};
+  const cfsIsOpen = S._cfsOpen[cfsVendorKey] === true; // default CLOSED
   const contractFilesSection = el('div',{style:{marginTop:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
   const cfsHdr = el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'6px 10px',
     background:'var(--card)',cursor:'pointer',userSelect:'none'},
-    onclick(e){e.stopPropagation();S._cfsOpen[cfsVendorKey]=!cfsIsOpen;render();}});
+    onclick(e){
+      e.stopPropagation();
+      if(!S._cfsOpen) S._cfsOpen={};
+      S._cfsOpen[cfsVendorKey] = !S._cfsOpen[cfsVendorKey];
+      render();
+    }});
   cfsHdr.appendChild(el('span',{style:{fontSize:'11px'}},'📁'));
   cfsHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Contract Files'));
-  cfsHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},cfsIsOpen?'▲ collapse':'▼ expand'));
+  cfsHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},S._cfsOpen?.[cfsVendorKey]?'▲ collapse':'▼ expand'));
   // Upload button
   if(_canAct){
     const upBtn=el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'auto'},onclick(){
@@ -3379,7 +3385,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     cfsHdr.appendChild(upBtn);
   }
   contractFilesSection.appendChild(cfsHdr);
-  if(cfsIsOpen){
+  if(S._cfsOpen?.[cfsVendorKey]){
     const contractFilesList=el('div',{style:{fontSize:'10px',padding:'6px 8px'}});
     contractFilesSection.appendChild(contractFilesList);
     // Try vendor name and any aliases
@@ -9048,20 +9054,21 @@ function renderContracts(c) {
         }, _isExecuted ? 'Apply to VCS' : '⚠ Apply (Unexecuted)');
         cardHdr.appendChild(applyBtn);
       }
+      // Define contractBody BEFORE expandBtn so the closure can reference it
+      const contractBody=el('div',{style:{padding:'0'}});
+      const body2=el('div',{style:{padding:'10px 12px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:'4px 16px',fontSize:'10px'}});
       const expandBtn=el('button',{class:'btn-xs btn-ghost'});
       expandBtn.textContent='▼ Hide';
-      const _contractBodyRef = contractBody;
       expandBtn.onclick=function(e){
         e.stopPropagation();
-        const isVisible = _contractBodyRef.style.display !== 'none';
-        _contractBodyRef.style.display = isVisible ? 'none' : 'block';
+        const isVisible = contractBody.style.display !== 'none';
+        contractBody.style.display = isVisible ? 'none' : 'block';
         expandBtn.textContent = isVisible ? '▶ Show' : '▼ Hide';
       };
       cardHdr.appendChild(expandBtn);
       card.appendChild(cardHdr);
 
-      // Card body — extracted data
-      const body2=el('div',{style:{padding:'10px 12px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:'4px 16px',fontSize:'10px'}});
+      // body2 placeholder - actual definition above
       const field=(label,val,highlight)=>{
         if(!val&&val!==0) return;
         const row=el('div',{style:{display:'flex',gap:'4px',alignItems:'flex-start',padding:'2px 0',borderBottom:'1px solid var(--border)'}});
@@ -9150,7 +9157,8 @@ function renderContracts(c) {
         body2.appendChild(notesRow);
       }
 
-      card.appendChild(body2);
+      contractBody.appendChild(body2);
+      card.appendChild(contractBody);
       vBody.appendChild(card);
     });
         if(vIsOpen) vSec.appendChild(vBody);
@@ -15900,7 +15908,10 @@ async function loadVendorContractFiles(vendorName, container) {
         onclick(e){
           e.stopPropagation();
           container._folderOpen[folderPath]=!isOpen;
+          // Preserve sort state across reload
+          const _sk=container._sortKey, _sd=container._sortDir, _fo=container._folderOpen;
           container.innerHTML='';
+          container._sortKey=_sk; container._sortDir=_sd; container._folderOpen=_fo;
           loadVendorContractFiles(vendorName,container);
         }});
       folderHdr.appendChild(el('span',{style:{fontSize:'9px'}},isOpen?'📂':'📁'));
