@@ -3350,11 +3350,24 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       e.stopPropagation();
       if(!S._cfsOpen) S._cfsOpen={};
       S._cfsOpen[cfsVendorKey] = !S._cfsOpen[cfsVendorKey];
-      render();
+      // Toggle in-place without full render (avoids closing vendor panel)
+      const isNowOpen = S._cfsOpen[cfsVendorKey];
+      // Update the collapse/expand label
+      const lbl = cfsHdr.querySelector('.cfs-toggle-lbl');
+      if(lbl) lbl.textContent = isNowOpen ? '▲ collapse' : '▼ expand';
+      // Show/hide the file list
+      const existingList = contractFilesSection.querySelector('.cfs-file-list');
+      if(existingList) {
+        existingList.style.display = isNowOpen ? '' : 'none';
+      } else if(isNowOpen) {
+        const contractFilesList = el('div',{class:'cfs-file-list',style:{fontSize:'10px',padding:'6px 8px'}});
+        contractFilesSection.appendChild(contractFilesList);
+        loadVendorContractFiles(vendor.name, contractFilesList);
+      }
     }});
   cfsHdr.appendChild(el('span',{style:{fontSize:'11px'}},'📁'));
   cfsHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Contract Files'));
-  cfsHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},S._cfsOpen?.[cfsVendorKey]?'▲ collapse':'▼ expand'));
+  cfsHdr.appendChild(el('span',{class:'cfs-toggle-lbl',style:{fontSize:'9px',color:'var(--muted)'}},S._cfsOpen?.[cfsVendorKey]?'▲ collapse':'▼ expand'));
   // Upload button
   if(_canAct){
     const upBtn=el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'auto'},onclick(){
@@ -3376,7 +3389,15 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
           const resp=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
             body:JSON.stringify({action:'uploadVendorFile',vendorName:vendor.name,fileName:file.name,fileContent:b64,mimeType:file.type||'application/octet-stream'})});
           const d=await resp.json();
-          if(d.status==='ok'){toast('✓ '+file.name+' uploaded to Drive');loadVendorContractFiles(vendor.name,contractFilesList);}
+          if(d.status==='ok'){
+            toast('✓ '+file.name+' uploaded to Drive');
+            // Ensure section is open and reload files
+            if(!S._cfsOpen) S._cfsOpen={};
+            S._cfsOpen[vendor.name]=true;
+            const lst=contractFilesSection.querySelector('.cfs-file-list')||
+              (()=>{const l=el('div',{class:'cfs-file-list',style:{fontSize:'10px',padding:'6px 8px'}});contractFilesSection.appendChild(l);return l;})();
+            loadVendorContractFiles(vendor.name,lst);
+          }
           else toast('⚠ Upload failed: '+d.message,'#ef4444');
         }catch(err){toast('⚠ Upload error: '+err.message,'#ef4444');}
       };
@@ -3385,12 +3406,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     cfsHdr.appendChild(upBtn);
   }
   contractFilesSection.appendChild(cfsHdr);
-  if(S._cfsOpen?.[cfsVendorKey]){
-    const contractFilesList=el('div',{style:{fontSize:'10px',padding:'6px 8px'}});
-    contractFilesSection.appendChild(contractFilesList);
-    // Use vendor name directly (proxy does alias matching)
-    loadVendorContractFiles(vendor.name, contractFilesList);
-  }
+  // Files load on expand click (in-place, no re-render needed)
   body.appendChild(acts);
 
   // Find cross-tab data for this vendor using exact name matching + aliases
@@ -14614,12 +14630,7 @@ function renderSettings(c) {
     debouncedSaveSettings();
     savePhoneBtn.textContent = '✓ Saved';
     setTimeout(()=>{ savePhoneBtn.textContent = 'Save'; }, 2000);
-    // Send test SMS
-    const raw = (S.settings.myPhone||'').replace(/[^\d+]/g,'');
-    if(raw){
-      const testUrl = 'sms:'+raw+'?body=Test+from+VCS+-+your+Send+to+Phone+is+working!';
-      window.open(testUrl,'_blank');
-    }
+    toast('✓ Mobile number saved');
   }},'Save & Test');
   myPhoneRow.appendChild(myPhoneInp);
   myPhoneRow.appendChild(savePhoneBtn);
