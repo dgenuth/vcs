@@ -3094,7 +3094,8 @@ async function generateRenzoOutreach(vendor, trigger) {
     lastComm ? ('Last contact: ' + lastComm) : '',
   ].filter(Boolean).join(' | ').slice(0, 1200);
 
-  // Route through GAS proxy to avoid browser CORS restriction on meetrenzo.com
+  // Route through GAS proxy server-side to avoid CORS on meetrenzo.com
+  // Send as text/plain to skip CORS preflight (GAS reads postData.contents regardless)
   const payload = {
     action: 'renzoGenerate',
     renzoContact: { name: contactName, company: companyName, email, notes },
@@ -3102,10 +3103,12 @@ async function generateRenzoOutreach(vendor, trigger) {
   };
   const resp = await fetch(VCS_PROXY_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify(payload)
   });
-  const data = await resp.json();
+  const text = await resp.text();
+  let data;
+  try { data = JSON.parse(text); } catch(e) { throw new Error('Proxy response not JSON: ' + text.slice(0,100)); }
   if (data.error) throw new Error(data.error);
   const message = data.message || data.text || data.content;
   if (!message) throw new Error('Renzo returned no message content');
@@ -12252,7 +12255,6 @@ function renderCallSheet(c) {
       actBtns.appendChild(el('button',{class:'btn-xs btn-green',title:'Mark done',onclick(e){e.stopPropagation();openDoneModal(v);}},'✓'));
       actBtns.appendChild(el('button',{class:'btn-xs btn-blue',title:'Email',onclick(e){e.stopPropagation();openEmailModal(v);}},'✉'));
       actBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'AI Briefing',onclick(e){e.stopPropagation();openAIBriefingModal(v);}},'🤖'));
-      actBtns.appendChild(makeRenzoBtn(v, null, 'Check in on relationship', null, 'xs'));
       actBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Schedule',onclick(e){e.stopPropagation();openCalendarEventModal(isoDate(today),v.name);}},'📅'));
       [
         prepToggle,
@@ -17226,3 +17228,4 @@ try {
 </script>
 </body>
 </html>
+  
