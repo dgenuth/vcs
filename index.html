@@ -3074,6 +3074,185 @@ function openEditNotesModal(vendor) {
   });
 }
 
+// ─── Renzo AI Outreach — shared helper ───────────────────────────────────────
+// Returns a Promise<string> with the generated message, or throws on error.
+// All communication modals use this so the API call lives in one place.
+async function generateRenzoOutreach(vendor, trigger) {
+  const contactName = vendor.procContact || '';
+  const companyName = vendor.name || '';
+  const email       = vendor.email || '';
+  const lastComm    = vendor.lastComm ? fmtDate(parseDate(vendor.lastComm)) : '';
+  const contractStatus = vendor.status || '';
+  const expiry      = getCurrentExpiry(vendor);
+  const expiryStr   = expiry ? ('Expires: ' + fmtDate(expiry)) : '';
+  const fee         = vendor.adminFee ? ('Admin fee: ' + vendor.adminFee) : '';
+  const notes = [
+    vendor.notes || '',
+    contractStatus ? ('Contract status: ' + contractStatus) : '',
+    expiryStr,
+    fee,
+    lastComm ? ('Last contact: ' + lastComm) : '',
+  ].filter(Boolean).join(' | ').slice(0, 1200);
+
+  const resp = await fetch('https://www.meetrenzo.com/api/ai', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': '06372c63ed5b787fa50ed060633ddbf05284384b90ff6da671af2689d274df24'
+    },
+    body: JSON.stringify({
+      action: 'generate',
+      contact: { name: contactName, company: companyName, email, notes },
+      trigger: trigger || 'Check in on relationship'
+    })
+  });
+  const data = await resp.json();
+  if (!resp.ok || data.error) throw new Error(data.error || data.message || ('HTTP ' + resp.status));
+  const message = data.message || data.text || data.content;
+  if (!message) throw new Error('Renzo returned no message content');
+  return message;
+}
+
+// ── Renzo brand helpers ──────────────────────────────────────────────────────
+// SVG logomark — the "R" on cream, used in buttons and modal header
+function renzoLogoSVG(size) {
+  size = size || 18;
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns,'svg');
+  svg.setAttribute('width', size); svg.setAttribute('height', size);
+  svg.setAttribute('viewBox','0 0 32 32');
+  svg.style.cssText = 'display:inline-block;vertical-align:middle;flex-shrink:0';
+  // Cream circle background
+  const circle = document.createElementNS(ns,'circle');
+  circle.setAttribute('cx','16'); circle.setAttribute('cy','16'); circle.setAttribute('r','16');
+  circle.setAttribute('fill','#f5f0eb');
+  // Green R lettermark
+  const text = document.createElementNS(ns,'text');
+  text.setAttribute('x','16'); text.setAttribute('y','22');
+  text.setAttribute('text-anchor','middle');
+  text.setAttribute('font-family','Georgia, serif');
+  text.setAttribute('font-size','20');
+  text.setAttribute('font-weight','bold');
+  text.setAttribute('fill','#1F6B47');
+  text.textContent = 'R';
+  svg.appendChild(circle); svg.appendChild(text);
+  return svg;
+}
+
+// Returns a branded Renzo button DOM element
+// size: 'sm' (default, fits inline action bars) | 'xs' (tight rows) | 'md' (modal buttons)
+function renzoButton(label, size) {
+  const heights = {xs:'20px', sm:'26px', md:'30px'};
+  const fonts   = {xs:'9px',  sm:'10px', md:'11px'};
+  const pads    = {xs:'0 6px', sm:'0 8px', md:'0 10px'};
+  const logoSz  = {xs:14, sm:16, md:18};
+  const s = size || 'sm';
+  const btn = document.createElement('button');
+  btn.style.cssText = [
+    'display:inline-flex','align-items:center','gap:5px',
+    'height:'+heights[s],'padding:'+pads[s],
+    'background:#1F6B47','color:#f5f0eb',
+    'border:1px solid #1F6B47','border-radius:4px',
+    'font-size:'+fonts[s],'font-weight:600',
+    'cursor:pointer','transition:background .15s',
+    'white-space:nowrap','flex-shrink:0',
+  ].join(';');
+  btn.onmouseenter = ()=>{ btn.style.background='#2d7a52'; btn.style.borderColor='#2d7a52'; };
+  btn.onmouseleave = ()=>{ btn.style.background='#1F6B47'; btn.style.borderColor='#1F6B47'; };
+  btn.appendChild(renzoLogoSVG(logoSz[s]));
+  const span = document.createElement('span');
+  span.textContent = label || 'Renzo';
+  btn.appendChild(span);
+  return btn;
+}
+
+// Show the full Renzo result modal (copy + open in mail) — branded
+function showRenzoModal(vendor, message) {
+  openModal(body => {
+    // Branded header
+    const hdr = el('div',{style:{display:'flex',gap:'10px',alignItems:'center',marginBottom:'14px',
+      padding:'10px 12px',background:'#f5f0eb',borderRadius:'6px',border:'1px solid #d6cfc6'}});
+    hdr.appendChild(renzoLogoSVG(28));
+    const htxt = el('div',{style:{flex:'1'}});
+    htxt.appendChild(el('div',{style:{fontWeight:'700',fontSize:'13px',color:'#1F6B47',fontFamily:'Georgia,serif'}},'Renzo'));
+    const email = vendor.email || '';
+    const contact = vendor.procContact || '';
+    htxt.appendChild(el('div',{style:{fontSize:'10px',color:'#6b7280',marginTop:'1px'}},
+      vendor.name + (contact?' · '+contact:'') + (email?' · '+email:'')));
+    hdr.appendChild(htxt);
+    body.appendChild(hdr);
+    const msgBox = el('div',{style:{
+      background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'6px',
+      padding:'12px',fontSize:'11px',lineHeight:'1.7',color:'var(--text)',
+      whiteSpace:'pre-wrap',maxHeight:'400px',overflowY:'auto',
+      marginBottom:'12px',userSelect:'text'
+    }}, message);
+    body.appendChild(msgBox);
+    const btnRow = el('div',{class:'modal-btns'});
+    // Copy button — branded green
+    const copyBtn = el('button',{style:{
+      display:'inline-flex',alignItems:'center',gap:'5px',
+      padding:'6px 14px',background:'#1F6B47',color:'#f5f0eb',
+      border:'1px solid #1F6B47',borderRadius:'4px',fontSize:'11px',
+      fontWeight:'600',cursor:'pointer',transition:'background .15s'
+    },onmouseenter(){this.style.background='#2d7a52';},
+      onmouseleave(){this.style.background='#1F6B47';},
+    onclick(){
+      navigator.clipboard.writeText(message).then(()=>{
+        copyBtn.querySelector('span').textContent='✓ Copied!';
+        copyBtn.style.background='#2d7a52';
+        setTimeout(()=>{copyBtn.querySelector('span').textContent='📋 Copy to Clipboard';copyBtn.style.background='#1F6B47';},2000);
+      }).catch(()=>{
+        const ta=document.createElement('textarea');
+        ta.value=message; ta.style.position='fixed'; ta.style.opacity='0';
+        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+        copyBtn.querySelector('span').textContent='✓ Copied!';
+        setTimeout(()=>{copyBtn.querySelector('span').textContent='📋 Copy to Clipboard';},2000);
+      });
+    }});
+    copyBtn.appendChild(renzoLogoSVG(14));
+    const copySpan = document.createElement('span'); copySpan.textContent='📋 Copy to Clipboard';
+    copyBtn.appendChild(copySpan);
+    if (email) {
+      btnRow.appendChild(el('button',{class:'btn-ghost',onclick(){
+        const subject = encodeURIComponent('Checking In — ' + vendor.name);
+        window.open('mailto:'+email+'?subject='+subject+'&body='+encodeURIComponent(message),'_blank');
+      }},'✉ Open in Mail'));
+    }
+    btnRow.appendChild(copyBtn);
+    btnRow.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));
+    body.appendChild(btnRow);
+  });
+}
+
+// Factory: returns a branded Renzo button that calls the API and shows the result modal
+// size: 'xs' | 'sm' (default) | 'md'
+// trigger: optional Renzo trigger string override
+function makeRenzoBtn(vendor, _unused, trigger, _unusedLabel, size) {
+  const btn = renzoButton('Renzo', size || 'sm');
+  btn.title = 'Generate personalized outreach with Renzo AI';
+  const labelSpan = btn.querySelector('span');
+  btn.addEventListener('click', async function() {
+    const origLabel = labelSpan.textContent;
+    labelSpan.textContent = 'Generating...';
+    btn.disabled = true;
+    btn.style.opacity = '0.7';
+    try {
+      const msg = await generateRenzoOutreach(vendor, trigger || 'Check in on relationship');
+      labelSpan.textContent = origLabel;
+      btn.disabled = false;
+      btn.style.opacity = '';
+      showRenzoModal(vendor, msg);
+    } catch(err) {
+      labelSpan.textContent = origLabel;
+      btn.disabled = false;
+      btn.style.opacity = '';
+      toast('⚠ Renzo: ' + err.message, '#ef4444');
+    }
+  });
+  return btn;
+}
+
 function openEmailModal(vendor) {
   openModal(body => {
     body.appendChild(el('h3',{},`✉️ Draft Email — ${vendor.name}`));
@@ -3109,7 +3288,28 @@ function openEmailModal(vendor) {
     const subjIn=el('input',{type:'text',class:'modal-input',value:subj,placeholder:'Subject'});
     const draftTA=el('textarea',{class:'modal-textarea',style:{height:'160px'}},draft);
     body.appendChild(el('label',{},'Subject:')); body.appendChild(subjIn);
-    body.appendChild(el('label',{},'Draft (editable):')); body.appendChild(draftTA);
+    // Renzo generate-into-draft row
+    const renzoRow=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',margin:'6px 0 2px'}});
+    renzoRow.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',flex:'1'}},'Draft (editable):'));
+    const renzoEmailBtn=renzoButton('Generate with Renzo','xs');
+    renzoEmailBtn.title='Let Renzo write a personalized draft based on vendor context';
+    renzoEmailBtn.addEventListener('click', async function(){
+      const span=renzoEmailBtn.querySelector('span');
+      const orig=span.textContent;
+      span.textContent='Generating...'; renzoEmailBtn.disabled=true; renzoEmailBtn.style.opacity='0.7';
+      try{
+        const msg=await generateRenzoOutreach(vendor,'Check in on relationship');
+        draftTA.value=msg;
+        span.textContent='✓ Done'; renzoEmailBtn.style.background='#2d7a52';
+        setTimeout(()=>{span.textContent=orig;renzoEmailBtn.style.background='#1F6B47';renzoEmailBtn.disabled=false;renzoEmailBtn.style.opacity='';},2000);
+      }catch(err){
+        span.textContent=orig; renzoEmailBtn.disabled=false; renzoEmailBtn.style.opacity='';
+        toast('⚠ Renzo: '+err.message,'#ef4444');
+      }
+    });
+    renzoRow.appendChild(renzoEmailBtn);
+    body.appendChild(renzoRow);
+    body.appendChild(draftTA);
     const btns=el('div',{class:'modal-btns'});
     btns.appendChild(el('button',{class:'btn-primary',onclick(){navigator.clipboard.writeText(draftTA.value).then(()=>toast('📋 Copied!'));}},'📋 Copy'));
     btns.appendChild(el('button',{class:'btn-secondary',onclick(){
@@ -3345,6 +3545,9 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   else acts.appendChild(el('button',{class:'btn-ghost btn-action',onclick(){openDismissConfirm(vendor);}}, '✕ Dismiss')); }
   // Data Sheet button — generate Word doc for Finance/Ops
   if (_canAct) acts.appendChild(el('button',{class:'btn-ghost btn-action',style:{color:'#38bdf8',borderColor:'rgba(56,189,248,.3)'},title:'Generate a data sheet Word document for Finance/Operations',onclick(){generateVendorDataSheet(vendor);}},'📄 Data Sheet'));
+
+  // ── Renzo Outreach Button ──
+  if (_canAct) acts.appendChild(makeRenzoBtn(vendor, null, 'Check in on relationship', null, 'sm'));
 
   // ── Contract Files section — collapsible ──
   if(!S._cfsOpen) S._cfsOpen = {};
@@ -7273,7 +7476,28 @@ function openBulkEmailModal(vendors) {
             const defSubj=(vs.customSubj||subjTmpl.value).replace(/{vendor}/g,vs.vendor.name).replace(/{contact}/g,vs.vendor.procContact||'Team').replace(/{expiry}/g,fmtDate(exp2)||'N/A');
             const defBody=(vs.customBody||bodyTmpl.value).replace(/{vendor}/g,vs.vendor.name).replace(/{contact}/g,vs.vendor.procContact||'Team').replace(/{expiry}/g,fmtDate(exp2)||'N/A');
             b2.appendChild(el('label',{},'Subject:')); const s2=el('input',{type:'text',class:'modal-input',value:defSubj}); b2.appendChild(s2);
-            b2.appendChild(el('label',{style:{marginTop:'5px',display:'block'}},'Body:')); const bod2=el('textarea',{class:'modal-textarea',style:{height:'160px'}},defBody); b2.appendChild(bod2);
+            // Renzo row — generates personalized body into textarea
+            const renzoRow2=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',margin:'6px 0 2px'}});
+            renzoRow2.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',flex:'1'}},'Body:'));
+            const renzoBulkBtn=renzoButton('Generate with Renzo','xs');
+            renzoBulkBtn.title='Let Renzo write a personalized draft for this vendor';
+            renzoBulkBtn.addEventListener('click', async function(){
+              const span=renzoBulkBtn.querySelector('span');
+              const orig=span.textContent;
+              span.textContent='Generating...'; renzoBulkBtn.disabled=true; renzoBulkBtn.style.opacity='0.7';
+              try{
+                const msg=await generateRenzoOutreach(vs.vendor,'Check in on relationship');
+                bod2.value=msg;
+                span.textContent='✓ Done'; renzoBulkBtn.style.background='#2d7a52';
+                setTimeout(()=>{span.textContent=orig;renzoBulkBtn.style.background='#1F6B47';renzoBulkBtn.disabled=false;renzoBulkBtn.style.opacity='';},2000);
+              }catch(err){
+                span.textContent=orig; renzoBulkBtn.disabled=false; renzoBulkBtn.style.opacity='';
+                toast('⚠ Renzo: '+err.message,'#ef4444');
+              }
+            });
+            renzoRow2.appendChild(renzoBulkBtn);
+            b2.appendChild(renzoRow2);
+            const bod2=el('textarea',{class:'modal-textarea',style:{height:'160px'}},defBody); b2.appendChild(bod2);
             const btns2=el('div',{class:'modal-btns'});
             btns2.appendChild(el('button',{class:'btn-primary',onclick(){vs.customSubj=s2.value;vs.customBody=bod2.value;closeModal();toast(`✓ Custom draft saved for ${vs.vendor.name}`);}}, 'Save Custom'));
             btns2.appendChild(el('button',{class:'btn-ghost btn-action',onclick(){vs.customSubj='';vs.customBody='';closeModal();toast('Reset to template');}}, 'Reset to Template'));
@@ -11983,6 +12207,7 @@ function renderCallSheet(c) {
       actBtns.appendChild(el('button',{class:'btn-xs btn-green',title:'Mark done',onclick(e){e.stopPropagation();openDoneModal(v);}},'✓'));
       actBtns.appendChild(el('button',{class:'btn-xs btn-blue',title:'Email',onclick(e){e.stopPropagation();openEmailModal(v);}},'✉'));
       actBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'AI Briefing',onclick(e){e.stopPropagation();openAIBriefingModal(v);}},'🤖'));
+      actBtns.appendChild(makeRenzoBtn(v, null, 'Check in on relationship', null, 'xs'));
       actBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Schedule',onclick(e){e.stopPropagation();openCalendarEventModal(isoDate(today),v.name);}},'📅'));
       [
         prepToggle,
@@ -12828,6 +13053,7 @@ function openAIBriefingModal(vendor) {
     const btns=el('div',{class:'modal-btns'});
     btns.appendChild(el('button',{class:'btn-primary',onclick(){closeModal();openCalendarEventModal(isoDate(today),vendor.name);}},'📅 Schedule Meeting'));
     btns.appendChild(el('button',{class:'btn-blue btn-action',onclick(){closeModal();openEmailModal(vendor);}},'✉ Draft Email'));
+    btns.appendChild(makeRenzoBtn(vendor, null, 'Check in on relationship', null, 'sm'));
     btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));
     body.appendChild(btns);
   });
