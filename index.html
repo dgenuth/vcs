@@ -3110,7 +3110,7 @@ async function generateRenzoOutreach(vendor, trigger) {
   let data;
   try { data = JSON.parse(text); } catch(e) { throw new Error('Proxy response not JSON: ' + text.slice(0,100)); }
   if (data.error) throw new Error(data.error);
-  const message = data.message || data.text || data.content;
+  const message = data.draft || data.message || data.text || data.content;
   if (!message) throw new Error('Renzo returned no message content');
   return message;
 }
@@ -17228,4 +17228,3 @@ try {
 </script>
 </body>
 </html>
-  
