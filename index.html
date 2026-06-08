@@ -1665,6 +1665,15 @@ async function loadFile(file) {
           }
           // Restore vendor aliases
           if (saved.vendorAliases) Object.assign(S.vendorAliases, saved.vendorAliases);
+    // Restore contract records from Drive config
+    if (saved.contractRecords) {
+      window._driveContractRecords = saved.contractRecords;
+      // Also pre-populate S_contractStore
+      if(!window.S_contractStore) window.S_contractStore = {};
+      Object.keys(saved.contractRecords).forEach(k=>{
+        if(!window.S_contractStore[k]) window.S_contractStore[k] = saved.contractRecords[k];
+      });
+    }
       // Also check localStorage settings for aliases
       try {
         const ls = JSON.parse(localStorage.getItem('vcs_user_settings_v2')||'{}');
@@ -3373,7 +3382,9 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   if(cfsIsOpen){
     const contractFilesList=el('div',{style:{fontSize:'10px',padding:'6px 8px'}});
     contractFilesSection.appendChild(contractFilesList);
-    loadVendorContractFiles(vendor.name, contractFilesList);
+    // Try vendor name and any aliases
+    const _cfsName = S.vendorAliases?.[normName(vendor.name)] || vendor.name;
+    loadVendorContractFiles(_cfsName, contractFilesList);
   }
   body.appendChild(acts);
   // contractFilesSection appended at end of openDetail after all sections
@@ -8390,20 +8401,47 @@ if(!window.S_contractStore) window.S_contractStore = {}; // vendorName → array
 
 function saveContractRecord(vendorName, record) {
   if(!window.S_contractStore[vendorName]) window.S_contractStore[vendorName]=[];
-  const existing = window.S_contractStore[vendorName].findIndex(r=>r.fileName===record.fileName);
-  if(existing>=0) window.S_contractStore[vendorName][existing]=record;
-  else window.S_contractStore[vendorName].unshift(record);
+  // Strip large binary data before saving (keep extracted data, not raw file bytes)
+  const toStore = Object.assign({}, record);
+  delete toStore._fileRef;
+  delete toStore.rawText;
+  const existing = window.S_contractStore[vendorName].findIndex(r=>r.fileName===toStore.fileName);
+  if(existing>=0) window.S_contractStore[vendorName][existing]=toStore;
+  else window.S_contractStore[vendorName].unshift(toStore);
+  // Save to localStorage
   try { localStorage.setItem('vcs_contracts_'+btoa(unescape(encodeURIComponent(vendorName))).slice(0,20), JSON.stringify(window.S_contractStore[vendorName])); } catch(e){}
+  // Also persist to Drive config (survives localStorage clears)
+  try {
+    const allContracts = {};
+    Object.keys(window.S_contractStore).forEach(k=>{
+      if(window.S_contractStore[k]?.length) allContracts[k]=window.S_contractStore[k];
+    });
+    // Save asynchronously - don't block UI
+    setTimeout(async ()=>{
+      try{
+        await fetch(VCS_PROXY_URL, {method:'POST', headers:{'Content-Type':'text/plain'},
+          body: JSON.stringify({action:'saveConfig', config: JSON.stringify(
+            Object.assign({}, JSON.parse(localStorage.getItem('vcs_config')||'{}'), {contractRecords: allContracts})
+          )})
+        });
+      }catch(e){}
+    }, 500);
+  } catch(e){}
 }
 
 function loadContractRecords(vendorName) {
   if(!window.S_contractStore) window.S_contractStore={};
   if(!window.S_contractStore[vendorName]) {
+    // Try localStorage first
     try {
       const key = 'vcs_contracts_'+btoa(unescape(encodeURIComponent(vendorName))).slice(0,20);
       const stored = localStorage.getItem(key);
       if(stored) window.S_contractStore[vendorName]=JSON.parse(stored);
     } catch(e){}
+    // If still empty, check the Drive-persisted config (loaded at startup)
+    if(!window.S_contractStore[vendorName] && window._driveContractRecords?.[vendorName]) {
+      window.S_contractStore[vendorName] = window._driveContractRecords[vendorName];
+    }
   }
   return window.S_contractStore[vendorName]||[];
 }
@@ -14524,7 +14562,7 @@ function renderSettings(c) {
   const DIALER_PRESETS=[
     {name:'Default (tel: link)', url:''},
     {name:'Commpeak', url:'https://app.commpeak.com/dialer?number={phone}'},
-    {name:'Google Voice', url:'https://voice.google.com/calls?a=nc,+1{phone}'},
+    {name:'Google Voice', url:'https://voice.google.com/calls?a=nc&num={e164}'},
     {name:'Zoom Phone', url:'zoomphonecall:{phone}'},
     {name:'RingCentral', url:'rcmobile://call?number={e164}'},
     {name:'Custom…', url:'custom'},
