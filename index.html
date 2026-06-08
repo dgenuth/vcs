@@ -1664,7 +1664,15 @@ async function loadFile(file) {
             }
           }
           // Restore vendor aliases
-          if (saved.vendorAliases) Object.assign(S.vendorAliases, saved.vendorAliases);
+          if (saved.vendorAliases && typeof saved.vendorAliases === 'object') {
+      if (!S.vendorAliases) S.vendorAliases = {};
+      Object.assign(S.vendorAliases, saved.vendorAliases);
+    }
+    // Restore vendor aliases from Drive config
+    if (saved.vendorAliases && typeof saved.vendorAliases === 'object') {
+      if (!S.vendorAliases) S.vendorAliases = {};
+      Object.assign(S.vendorAliases, saved.vendorAliases);
+    }
     // Restore contract records from Drive config
     if (saved.contractRecords) {
       window._driveContractRecords = saved.contractRecords;
@@ -4300,7 +4308,10 @@ function offerSessionRestore() {
       if (saved.calEvents) S.calEvents={...saved.calEvents};
       if (saved.snoozed) Object.entries(saved.snoozed).forEach(([k,v])=>{S.snoozed[k]=new Date(v);});
       if (saved.dismissed) saved.dismissed.forEach(n=>S.dismissed.add(n));
-      if (saved.vendorAliases) Object.assign(S.vendorAliases, saved.vendorAliases);
+      if (saved.vendorAliases && typeof saved.vendorAliases === 'object') {
+      if (!S.vendorAliases) S.vendorAliases = {};
+      Object.assign(S.vendorAliases, saved.vendorAliases);
+    }
       // Re-save session so dirty state persists through further page loads
       saveSessionState();
       closeModal(); render(); updateSidebar();
@@ -4365,6 +4376,12 @@ function loadSettings() {
     if (saved.dbHiddenCols) {
       S.dbHiddenCols = new Set(Array.isArray(saved.dbHiddenCols) ? saved.dbHiddenCols : []);
       delete saved.dbHiddenCols;
+    }
+    // Restore vendorAliases to S directly (not S.settings)
+    if (saved.vendorAliases && typeof saved.vendorAliases === 'object') {
+      if (!S.vendorAliases) S.vendorAliases = {};
+      Object.assign(S.vendorAliases, saved.vendorAliases);
+      delete saved.vendorAliases;
     }
     Object.assign(S.settings, saved);
     // Restore googleClientId from sessionStorage backup if missing
@@ -6524,23 +6541,50 @@ function openVendorAliasModal(vendor) {
       if(!selectedVendor) return;
       const aliasKey=normName(vendor.name);
       S.vendorAliases[aliasKey]=selectedVendor.name;
-      // Write to spreadsheet via dirty: find or create a PSD vendor record for the alias source
-      // If review/ITW vendor exists in PSD by exact match, write vendorAliasOf to col BU
-      const vendorInPSD=S.vendors.find(v=>vendorNamesMatch(v.name,vendor.name));
-      if(vendorInPSD){
-        vendorInPSD.vendorAliasOf=selectedVendor.name;
+      // Write vendorAliasOf to spreadsheet:
+      // 1. Try to find the review/ITW vendor in PSD by name
+      // 2. If not found, find any PSD vendor with this alias already, or use target
+      let vendorInPSD = S.vendors.find(v => v.source==='psd' && vendorNamesMatch(v.name, vendor.name));
+      // If review vendor not in PSD, write aliasOf on the TARGET PSD vendor instead
+      // (stores the mapping in the spreadsheet either way)
+      if (!vendorInPSD) {
+        vendorInPSD = selectedVendor; // target PSD vendor (Nestle Health Science)
+      }
+      if (vendorInPSD) {
+        vendorInPSD.vendorAliasOf = vendorInPSD === selectedVendor
+          ? '' // target doesn't alias itself
+          : selectedVendor.name;
+        // Actually: store the reverse mapping so the target knows about its aliases
+        if (!vendorInPSD.vendorAliases) vendorInPSD.vendorAliases = [];
+        if (!vendorInPSD.vendorAliases.includes(vendor.name)) {
+          vendorInPSD.vendorAliases.push(vendor.name);
+        }
         markDirty(vendorInPSD);
       }
       // Log to history so it appears in audit trail and can be reviewed
       logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendor.name,action:'Linked alias to "'+selectedVendor.name+'"',note:'Vendor alias created — '+vendor.name+' → '+selectedVendor.name});
       saveSessionState();
-      // Also save alias to Drive config immediately so it persists across sessions
-      // without requiring a full VCS save
+      // Save alias to localStorage immediately (no full VCS save needed)
       try {
         const aliasConfig = JSON.parse(localStorage.getItem('vcs_user_settings_v2')||'{}');
         if(!aliasConfig.vendorAliases) aliasConfig.vendorAliases={};
         aliasConfig.vendorAliases[normName(vendor.name)] = selectedVendor.name;
         localStorage.setItem('vcs_user_settings_v2', JSON.stringify(aliasConfig));
+      } catch(e){}
+      // Also save to Drive config so it survives localStorage clears
+      try {
+        const existingConfig = JSON.parse(localStorage.getItem('vcs_config')||'{}');
+        if(!existingConfig.vendorAliases) existingConfig.vendorAliases={};
+        existingConfig.vendorAliases[normName(vendor.name)] = selectedVendor.name;
+        localStorage.setItem('vcs_config', JSON.stringify(existingConfig));
+        // Push to Drive asynchronously
+        setTimeout(async ()=>{
+          try{
+            const cfg = JSON.parse(localStorage.getItem('vcs_config')||'{}');
+            await fetch(VCS_PROXY_URL, {method:'POST', headers:{'Content-Type':'text/plain'},
+              body: JSON.stringify({action:'saveConfig', config: JSON.stringify(cfg)})});
+          }catch(e){}
+        }, 300);
       } catch(e){}
       closeModal();
       render();
