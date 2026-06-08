@@ -3685,6 +3685,77 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   // ── Contract Files from Drive ──
   body.appendChild(contractFilesSection);
 
+  // ── Linked Aliases (vendors pointing to this record) ──
+  if (vendor.source === 'psd') {
+    // Find all aliases in S.vendorAliases that point to this vendor
+    const aliases = Object.entries(S.vendorAliases || {})
+      .filter(([key, target]) => vendorNamesMatch(target, vendor.name))
+      .map(([key, target]) => {
+        // Find the actual vendor object (could be review or ITW)
+        const aliasVendor = S.vendors.find(v => normName(v.name) === key)
+          || [...(S.channelVendors||[])].find(v => normName(v.name) === key);
+        return { key, name: aliasVendor?.name || key, vendor: aliasVendor };
+      });
+
+    if (aliases.length) {
+      const aliasSec = el('div',{style:{marginBottom:'8px',background:'rgba(34,197,94,.04)',
+        border:'1px solid rgba(34,197,94,.2)',borderRadius:'5px',padding:'8px 10px'}});
+      const aliasHdr = el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'6px'}});
+      aliasHdr.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'700',color:'var(--green)'}},'🔗 Also known as / Linked aliases'));
+      aliasHdr.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)',flex:'1'}},'These vendors point to this record'));
+      aliasSec.appendChild(aliasHdr);
+
+      aliases.forEach(({key, name, vendor: av}) => {
+        const row = el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 0',
+          borderBottom:'1px solid rgba(34,197,94,.1)'}});
+        // Clickable alias name — opens that vendor's panel
+        const nameBtn = el('button',{class:'btn-xs btn-ghost',style:{flex:'1',textAlign:'left',
+          color:'var(--text)',fontWeight:'500'},
+          onclick(){if(av) openDetail(av); else toast('Vendor "'+name+'" not found','#f59e0b');}
+        }, name);
+        row.appendChild(nameBtn);
+        if (av?.source) {
+          row.appendChild(el('span',{style:{fontSize:'7px',padding:'1px 4px',borderRadius:'3px',
+            background:av.source==='reviews'?'rgba(139,92,246,.15)':'rgba(79,124,255,.15)',
+            color:av.source==='reviews'?'#a78bfa':'var(--blue)'}},
+            av.source==='reviews'?'REVIEW':'ITW'));
+        }
+        // Unlink button
+        if (_canAct) {
+          row.appendChild(el('button',{class:'btn-xs btn-ghost',
+            style:{color:'var(--muted)',fontSize:'8px',padding:'1px 5px'},
+            title:'Remove this alias link',
+            onclick(){
+              if(!confirm('Unlink "'+name+'" from this vendor record?')) return;
+              if(S.vendorAliases) delete S.vendorAliases[key];
+              try {
+                const ls = JSON.parse(localStorage.getItem('vcs_user_settings_v2')||'{}');
+                if(ls.vendorAliases) delete ls.vendorAliases[key];
+                localStorage.setItem('vcs_user_settings_v2', JSON.stringify(ls));
+              } catch(e){}
+              try {
+                const cfg = JSON.parse(localStorage.getItem('vcs_config')||'{}');
+                if(cfg.vendorAliases) delete cfg.vendorAliases[key];
+                localStorage.setItem('vcs_config', JSON.stringify(cfg));
+                setTimeout(async()=>{
+                  try{ await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
+                    body:JSON.stringify({action:'saveConfig',config:JSON.stringify(cfg)})}); }catch(e){}
+                },300);
+              } catch(e){}
+              logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),
+                vendor:vendor.name,action:'Unlinked alias "'+name+'"',note:'Alias removed from vendor record'});
+              saveSessionState();
+              toast('"'+name+'" unlinked');
+              render();
+            }
+          },'✕'));
+        }
+        aliasSec.appendChild(row);
+      });
+      body.appendChild(aliasSec);
+    }
+  }
+
   // ── Vendor Relationships ──
   if (vendor.source === 'psd') renderRelationshipsSection(body, vendor);
 
