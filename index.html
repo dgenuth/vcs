@@ -3443,11 +3443,68 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     // Auto-redirect to full record after a brief moment
     setTimeout(()=>{ closeDetail(); openDetail(_linkedPSD); }, 150);
     return; // Don't render the stub panel — redirect immediately
-  } else if (!psdVendor && vendor.source !== 'psd' && _canAct) {
-    // No PSD match — offer to link
-    const linkBanner=el('div',{style:{background:'rgba(245,158,11,.06)',border:'1px solid rgba(245,158,11,.2)',borderRadius:'5px',padding:'7px 10px',marginBottom:'8px',display:'flex',gap:'8px',alignItems:'center'}});
-    linkBanner.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',flex:'1'}},'No Vendor Database record found for this name.'));
-    linkBanner.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--blue)',border:'1px solid rgba(59,130,246,.3)'},onclick(){openVendorAliasModal(vendor);}}, '🔗 Link to Vendor DB Record'));
+  } else if (vendor.source !== 'psd' && _canAct) {
+    // Show link status banner for non-PSD vendors (review/ITW)
+    const aliasKey = normName(vendor.name);
+    const linkedName = S.vendorAliases?.[aliasKey];
+    const linkBanner = el('div',{style:{borderRadius:'5px',padding:'7px 10px',marginBottom:'8px',display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap',
+      background: linkedName ? 'rgba(34,197,94,.06)' : 'rgba(245,158,11,.06)',
+      border: '1px solid ' + (linkedName ? 'rgba(34,197,94,.25)' : 'rgba(245,158,11,.2)')}});
+    if (linkedName) {
+      // Show who it's linked to + unlink button
+      linkBanner.appendChild(el('span',{style:{fontSize:'10px',color:'var(--green)',fontWeight:'600'}},'🔗 Linked to:'));
+      const linkedBtn = el('button',{class:'btn-xs btn-ghost',style:{color:'var(--green)',border:'1px solid rgba(34,197,94,.3)',fontWeight:'600'},
+        onclick(){
+          // Open the linked PSD vendor
+          const target = S.vendors.find(v=>v.source==='psd' && vendorNamesMatch(v.name, linkedName));
+          if(target) openDetail(target);
+          else toast('Linked vendor "'+linkedName+'" not found in database','#f59e0b');
+        }
+      }, linkedName + ' ↗');
+      linkBanner.appendChild(linkedBtn);
+      linkBanner.appendChild(el('span',{style:{flex:'1'}}));
+      if (_canAct) {
+        linkBanner.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--muted)',fontSize:'8px'},
+          onclick(){
+            if(!confirm('Unlink "'+vendor.name+'" from "'+linkedName+'"?')) return;
+            // Remove alias
+            const key = normName(vendor.name);
+            if(S.vendorAliases) delete S.vendorAliases[key];
+            // Remove from localStorage
+            try {
+              const ls = JSON.parse(localStorage.getItem('vcs_user_settings_v2')||'{}');
+              if(ls.vendorAliases) delete ls.vendorAliases[key];
+              localStorage.setItem('vcs_user_settings_v2', JSON.stringify(ls));
+            } catch(e){}
+            // Remove from Drive config
+            try {
+              const cfg = JSON.parse(localStorage.getItem('vcs_config')||'{}');
+              if(cfg.vendorAliases) delete cfg.vendorAliases[key];
+              localStorage.setItem('vcs_config', JSON.stringify(cfg));
+              setTimeout(async()=>{
+                try{ await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
+                  body:JSON.stringify({action:'saveConfig',config:JSON.stringify(cfg)})}); }catch(e){}
+              },300);
+            } catch(e){}
+            // Clear vendorAliasOf on the PSD vendor
+            const psd = S.vendors.find(v=>v.source==='psd'&&vendorNamesMatch(v.name,linkedName));
+            if(psd){ psd.vendorAliasOf=''; markDirty(psd); }
+            logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),
+              vendor:vendor.name,action:'Unlinked alias from "'+linkedName+'"',note:'Vendor alias removed'});
+            saveSessionState();
+            toast('"'+vendor.name+'" unlinked from "'+linkedName+'"');
+            render();
+          }
+        }, '✕ Unlink'));
+        linkBanner.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--blue)',fontSize:'8px',border:'1px solid rgba(59,130,246,.3)'},
+          onclick(){openVendorAliasModal(vendor);}}, '↔ Change'));
+      }
+    } else {
+      // Not linked
+      linkBanner.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',flex:'1'}},'Not linked to a Vendor Database record.'));
+      linkBanner.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--blue)',border:'1px solid rgba(59,130,246,.3)'},
+        onclick(){openVendorAliasModal(vendor);}}, '🔗 Link to Vendor DB Record'));
+    }
     body.appendChild(linkBanner);
   }
 
