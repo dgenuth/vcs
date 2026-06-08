@@ -3094,20 +3094,19 @@ async function generateRenzoOutreach(vendor, trigger) {
     lastComm ? ('Last contact: ' + lastComm) : '',
   ].filter(Boolean).join(' | ').slice(0, 1200);
 
-  const resp = await fetch('https://www.meetrenzo.com/api/ai', {
+  // Route through GAS proxy to avoid browser CORS restriction on meetrenzo.com
+  const payload = {
+    action: 'renzoGenerate',
+    renzoContact: { name: contactName, company: companyName, email, notes },
+    renzoTrigger: trigger || 'Check in on relationship'
+  };
+  const resp = await fetch(VCS_PROXY_URL, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-API-Key': '06372c63ed5b787fa50ed060633ddbf05284384b90ff6da671af2689d274df24'
-    },
-    body: JSON.stringify({
-      action: 'generate',
-      contact: { name: contactName, company: companyName, email, notes },
-      trigger: trigger || 'Check in on relationship'
-    })
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
   });
   const data = await resp.json();
-  if (!resp.ok || data.error) throw new Error(data.error || data.message || ('HTTP ' + resp.status));
+  if (data.error) throw new Error(data.error);
   const message = data.message || data.text || data.content;
   if (!message) throw new Error('Renzo returned no message content');
   return message;
@@ -3548,8 +3547,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   // Data Sheet button — generate Word doc for Finance/Ops
   if (_canAct) acts.appendChild(el('button',{class:'btn-ghost btn-action',style:{color:'#38bdf8',borderColor:'rgba(56,189,248,.3)'},title:'Generate a data sheet Word document for Finance/Operations',onclick(){generateVendorDataSheet(vendor);}},'📄 Data Sheet'));
 
-  // ── Renzo Outreach Button ──
-  if (_canAct) acts.appendChild(makeRenzoBtn(vendor, null, 'Check in on relationship', null, 'sm'));
+  // Renzo lives inside the Email modal — not as a standalone action bar button
 
   // ── Contract Files section — collapsible ──
   if(!S._cfsOpen) S._cfsOpen = {};
@@ -5883,7 +5881,7 @@ function renderContactsSection(body, vendor) {
 
     // Contact buttons row
     const btns = el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap'}});
-    if(contact.email) btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){launchMailto(contact.email,'Re: '+vendor.name,'');}}, '✉ '+contact.email.slice(0,28)+(contact.email.length>28?'…':'')));
+    if(contact.email) btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){openEmailModal(vendor);}}, '✉ '+contact.email.slice(0,28)+(contact.email.length>28?'…':'')));
     if(contact.phone) btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){dialPhone(contact.phone, vendor.name||'');}}, '📞 '+contact.phone));
     if(contact.mobile) btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){dialPhone(contact.mobile, vendor.name||'');}}, '📱 '+contact.mobile));
     if(btns.children.length) card.appendChild(btns);
@@ -6602,9 +6600,6 @@ function actionBtns(vendor) {
   const wrap=el('div',{class:'action-cell'});
   wrap.appendChild(el('button',{class:'btn-xs btn-green',title:'Mark Done',onclick(e){e.stopPropagation();openDoneModal(vendor);}},'✓'));
   wrap.appendChild(el('button',{class:'btn-xs btn-blue',title:'Email',onclick(e){e.stopPropagation();openEmailModal(vendor);}},'✉'));
-  const _rzBtn=makeRenzoBtn(vendor,null,'Check in on relationship',null,'xs');
-  _rzBtn.addEventListener('click',e=>e.stopPropagation(),true);
-  wrap.appendChild(_rzBtn);
   wrap.appendChild(el('button',{class:'btn-xs btn-amber',title:'Snooze',onclick(e){e.stopPropagation();openSnoozeModal(vendor);}},'💤'));
   if (S.dismissed.has(vendor.name)) wrap.appendChild(el('button',{class:'undismiss-btn',title:'Restore',onclick(e){e.stopPropagation();undismissVendor(vendor);}},'↩'));
   else wrap.appendChild(el('button',{class:'btn-xs btn-danger',title:'Dismiss',onclick(e){e.stopPropagation();openDismissConfirm(vendor);}},'✕'));
@@ -7473,6 +7468,7 @@ function openBulkEmailModal(vendors) {
         const cb=el('input',{type:'checkbox'}); cb.checked=vs.included; cb.addEventListener('change',()=>{vs.included=cb.checked;renderRecipients();});
         const nameSpan=el('span',{style:{flex:'1',fontSize:'10px',fontWeight:'500'}},vs.vendor.name);
         const emailSpan=el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},vs.vendor.email||'');
+        const renzoTag=vs.customBody?el('span',{style:{fontSize:'8px',color:'#1F6B47',fontWeight:'700',background:'rgba(31,107,71,.1)',padding:'1px 5px',borderRadius:'3px',flexShrink:'0'}},'R✓'):null;
         const editBtn=el('button',{class:'btn-xs btn-ghost',onclick(){
           // Open individual editor
           openModal(b2=>{
@@ -7511,11 +7507,51 @@ function openBulkEmailModal(vendors) {
           });
         }},'Edit');
         if (vs.customSubj||vs.customBody) editBtn.style.color='var(--green)';
-        row.append(cb,nameSpan,emailSpan,editBtn); recipList.appendChild(row);
+        row.append(cb,nameSpan,emailSpan);
+        if(renzoTag) row.appendChild(renzoTag);
+        row.appendChild(editBtn);
+        recipList.appendChild(row);
       });
     }
     renderRecipients();
     body.appendChild(recipList);
+
+    // ── Generate All with Renzo ──
+    const renzoAllRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'10px',background:'rgba(31,107,71,.06)',border:'1px solid rgba(31,107,71,.2)',borderRadius:'5px',marginBottom:'8px'}});
+    renzoAllRow.appendChild(renzoLogoSVG(20));
+    const renzoAllInfo=el('div',{style:{flex:'1'}});
+    renzoAllInfo.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',color:'#1F6B47'}},'Generate All Drafts with Renzo'));
+    renzoAllInfo.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},'Replaces the generic template with a personalized draft for each selected vendor'));
+    renzoAllRow.appendChild(renzoAllInfo);
+    const renzoAllStatus=el('span',{style:{fontSize:'9px',color:'var(--muted)',flexShrink:'0'}});
+    renzoAllRow.appendChild(renzoAllStatus);
+    const renzoAllBtn=renzoButton('Generate All','sm');
+    renzoAllBtn.addEventListener('click', async function(){
+      const toGen=vendorStates.filter(vs=>vs.included&&vs.vendor.email);
+      if(!toGen.length){toast('No vendors selected','#f59e0b');return;}
+      renzoAllBtn.disabled=true; renzoAllBtn.style.opacity='0.7';
+      renzoAllBtn.querySelector('span').textContent='Generating...';
+      let done=0, failed=0;
+      renzoAllStatus.textContent=`0 / ${toGen.length}`;
+      for(const vs of toGen){
+        try{
+          const msg=await generateRenzoOutreach(vs.vendor,'Check in on relationship');
+          vs.customBody=msg;
+          done++;
+        }catch(e){
+          failed++;
+          console.warn('[Renzo bulk] '+vs.vendor.name+': '+e.message);
+        }
+        renzoAllStatus.textContent=`${done+failed} / ${toGen.length}${failed?' ('+failed+' failed)':''}`;
+        renderRecipients();
+      }
+      renzoAllBtn.disabled=false; renzoAllBtn.style.opacity='';
+      renzoAllBtn.querySelector('span').textContent='Generate All';
+      if(failed===0) toast(`✓ Renzo generated ${done} personalized drafts`);
+      else toast(`✓ ${done} done, ${failed} failed — check console`,'#f59e0b');
+    });
+    renzoAllRow.appendChild(renzoAllBtn);
+    body.appendChild(renzoAllRow);
 
     // Send buttons
     const sendCount=()=>vendorStates.filter(vs=>vs.included).length;
@@ -7938,7 +7974,11 @@ function renderCustomers(c) {
       tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},ct.Title||'—'));
       tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},ct.Account?.Name||'—'));
       tr.appendChild(el('td',{style:{fontSize:'10px'}},ct.Phone?el('a',{href:'tel:'+ct.Phone,style:{color:'var(--blue)',textDecoration:'none'}},ct.Phone):'—'));
-      tr.appendChild(el('td',{style:{fontSize:'9px'}},ct.Email?el('a',{href:'mailto:'+ct.Email,style:{color:'var(--blue)',textDecoration:'none'}},ct.Email):'—'));
+      tr.appendChild(el('td',{style:{fontSize:'9px'}},ct.Email?el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){
+        // Build a minimal vendor-like object for email modal
+        const sfContact={name:ct.Account?.Name||ct.Name||'',email:ct.Email,procContact:ct.Name||''};
+        openEmailModal(sfContact);
+      }},ct.Email):'—'));
       tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},ct.Owner?.Name||'—'));
       tbody.appendChild(tr);
     });
@@ -8358,8 +8398,7 @@ function renderSFVendorBrief(wrap, opps, cases, tasks, spendLeaderboard) {
   const btnRow=el('div',{style:{display:'flex',gap:'6px',flexShrink:'0',flexWrap:'wrap',alignItems:'center'}});
   if(vcsV){
     if(vcsV.phone) btnRow.appendChild(el('a',{href:'tel:'+vcsV.phone.replace(/\D/g,''),class:'btn-xs btn-ghost',style:{textDecoration:'none'}},'📞 Call'));
-    if(vcsV.email) btnRow.appendChild(el('a',{href:'mailto:'+vcsV.email,class:'btn-xs btn-ghost',style:{textDecoration:'none'}},'✉ Email'));
-    btnRow.appendChild(makeRenzoBtn(vcsV, null, 'Check in on relationship', null, 'xs'));
+    if(vcsV.email) btnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){openEmailModal(vcsV);}},'✉ Email'));
     btnRow.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){openDetail(vcsV);}},'Open Panel →'));
   }
   nameRow.appendChild(btnRow);
@@ -12073,7 +12112,6 @@ function renderToday(c) {
       // Right: action buttons
       const btns=el('div',{style:{display:'flex',gap:'4px',flexShrink:'0'}});
       btns.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){$('ai-input').value='Draft an outreach email to '+v.name+' — reasons: '+reasons.join(', ');if(!S.aiOpen){S.aiOpen=true;render();}else{$('ai-input').focus();}}}, '✍ Draft'));
-      btns.appendChild(makeRenzoBtn(v, null, 'Check in on relationship', null, 'xs'));
       btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){openDetail(v);}}, '→'));
       row.appendChild(btns);
       list.appendChild(row);
@@ -12147,7 +12185,7 @@ function renderCallSheet(c) {
       const con=contacts[0];
       const conRow=el('div',{style:{marginTop:'4px',paddingTop:'4px',borderTop:'1px solid var(--border)'}});
       conRow.appendChild(el('div',{style:{fontWeight:'600'}},con.name||'(no name)'));
-      if(con.email) conRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginTop:'2px'},onclick(e){e.stopPropagation();launchMailto(con.email,'Following up — '+v.name,'');}},  '✉ '+con.email.slice(0,28)));
+      if(con.email) conRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginTop:'2px'},onclick(e){e.stopPropagation();openEmailModal(v);}},  '✉ '+con.email.slice(0,28)));
       if(con.phone||con.mobile) conRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginTop:'2px'},onclick(e){e.stopPropagation();dialPhone(con.phone||con.mobile, v.name);}}, '📞 '+(con.phone||con.mobile)));
       col2.appendChild(conRow);
     }
@@ -13060,7 +13098,6 @@ function openAIBriefingModal(vendor) {
     const btns=el('div',{class:'modal-btns'});
     btns.appendChild(el('button',{class:'btn-primary',onclick(){closeModal();openCalendarEventModal(isoDate(today),vendor.name);}},'📅 Schedule Meeting'));
     btns.appendChild(el('button',{class:'btn-blue btn-action',onclick(){closeModal();openEmailModal(vendor);}},'✉ Draft Email'));
-    btns.appendChild(makeRenzoBtn(vendor, null, 'Check in on relationship', null, 'sm'));
     btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));
     body.appendChild(btns);
   });
