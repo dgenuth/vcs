@@ -15738,9 +15738,15 @@ function updateClock() {
 // ─── Vendor Contract Files Loader ────────────────────────────────────────────
 async function loadVendorContractFiles(vendorName, container) {
   if (!vendorName) return;
+
+  // If we have cached data, re-render from it (no network call)
+  if (container._cachedFiles && container._cachedFiles.length) {
+    renderCFSFromCache(container, vendorName);
+    return;
+  }
+
   container.innerHTML = '<span style="color:var(--muted);font-size:9px">⏳ Loading contract files...</span>';
   try {
-    // Try vendor name and canonical alias
     const canonical = S.vendorAliases ? (S.vendorAliases[normName(vendorName)] || vendorName) : vendorName;
     const namesToTry = [...new Set([canonical, vendorName])];
     let d = null;
@@ -15750,258 +15756,147 @@ async function loadVendorContractFiles(vendorName, container) {
       if (result.status === 'ok' && result.folderFound) { d = result; break; }
       if (!d) d = result;
     }
-    container.innerHTML = '';
     if (!d || d.status !== 'ok') {
-      container.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'⚠ ' + (d?.message || 'Could not connect to Drive')));
+      container.innerHTML = '<span style="color:var(--muted);font-size:9px">⚠ ' + (d?.message || 'Could not connect to Drive') + '</span>';
       return;
     }
     if (!d.folderFound) {
-      container.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'No Drive folder found for this vendor.'));
+      container.innerHTML = '<span style="color:var(--muted);font-size:9px">No Drive folder found for this vendor.</span>';
       return;
     }
     if (!d.files || !d.files.length) {
-      container.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'No files in this vendor Drive folder yet.'));
+      container.innerHTML = '<span style="color:var(--muted);font-size:9px">No files in this vendor Drive folder yet.</span>';
       return;
     }
     const skipFiles = ['Thumbs.db','desktop.ini','.DS_Store'];
-    const files = d.files.filter(f => !skipFiles.includes(f.name) && !f.name.startsWith('.'));
+    // Cache all data on container
+    container._cachedFiles = d.files.filter(f => !skipFiles.includes(f.name) && !f.name.startsWith('.'));
+    container._responseData = d;
+    if (!container._sortKey) container._sortKey = 'date';
+    if (!container._sortDir) container._sortDir = -1;
+    if (!container._folderOpen) container._folderOpen = {};
+    renderCFSFromCache(container, vendorName);
+  } catch(err) {
+    container.innerHTML = '<span style="color:var(--muted);font-size:9px">Could not load files: ' + err.message + '</span>';
+  }
+}
 
-    // Sort controls
-    if(!container._sortKey) container._sortKey='date';
-    if(!container._sortDir) container._sortDir=-1;
-    const sortRow=el('div',{style:{display:'flex',gap:'4px',alignItems:'center',marginBottom:'4px',fontSize:'8px',color:'var(--muted)'}});
-    sortRow.appendChild(el('span',{},'Sort:'));
-    ['date','name','type'].forEach(key=>{
-      const isActive=container._sortKey===key;
-      sortRow.appendChild(el('button',{style:{fontSize:'8px',padding:'1px 5px',borderRadius:'3px',
-        border:'1px solid var(--border)',background:isActive?'var(--blue)':'var(--card)',
-        color:isActive?'white':'var(--muted)',cursor:'pointer'},
-        onclick(){
-          container._sortKey=key;
-          container._sortDir=isActive?-container._sortDir:-1;
-          container._cachedData=d;
-          loadVendorContractFiles(vendorName,container);
-        }
-      },key+(isActive?(container._sortDir>0?' ↑':' ↓'):'')));
-    });
-    container.appendChild(sortRow);
+function renderCFSFromCache(container, vendorName) {
+  const files = container._cachedFiles || [];
+  const d = container._responseData || {};
+  container.innerHTML = '';
 
-    // Sort files
-    const sorted = [...files].sort((a,b)=>{
-      if(container._sortKey==='date') return container._sortDir*(new Date(b.modifiedTime)-new Date(a.modifiedTime));
-      if(container._sortKey==='name') return container._sortDir*a.name.localeCompare(b.name);
-      return container._sortDir*(a.mimeType||'').localeCompare(b.mimeType||'');
-    });
-
-    // Build folder tree
-    const folderTree={};
-    const rootFiles=[];
-    sorted.forEach(file=>{
-      const parts=file.path.split('/');
-      if(parts.length===1) rootFiles.push(file);
-      else {
-        const folder=parts.slice(0,-1).join('/');
-        if(!folderTree[folder]) folderTree[folder]=[];
-        folderTree[folder].push(file);
+  // Sort controls — instant, no re-fetch
+  const sortRow = el('div',{style:{display:'flex',gap:'4px',alignItems:'center',marginBottom:'4px',fontSize:'8px',color:'var(--muted)'}});
+  sortRow.appendChild(el('span',{},'Sort:'));
+  ['date','name','type'].forEach(key => {
+    const isActive = container._sortKey === key;
+    sortRow.appendChild(el('button',{
+      style:{fontSize:'8px',padding:'1px 5px',borderRadius:'3px',border:'1px solid var(--border)',
+        background:isActive?'var(--blue)':'var(--card)',color:isActive?'white':'var(--muted)',cursor:'pointer'},
+      onclick(){
+        container._sortKey = key;
+        container._sortDir = isActive ? -container._sortDir : -1;
+        renderCFSFromCache(container, vendorName); // instant re-render from cache
       }
-    });
+    }, key + (isActive ? (container._sortDir > 0 ? ' ↑' : ' ↓') : '')));
+  });
+  // Refresh button to re-fetch from Drive
+  sortRow.appendChild(el('button',{
+    style:{fontSize:'8px',padding:'1px 5px',borderRadius:'3px',border:'1px solid var(--border)',
+      background:'var(--card)',color:'var(--muted)',cursor:'pointer',marginLeft:'4px'},
+    title:'Reload from Drive',
+    onclick(){
+      container._cachedFiles = null;
+      loadVendorContractFiles(vendorName, container);
+    }
+  },'↻'));
+  container.appendChild(sortRow);
 
-    const renderFileRow=(file)=>{
-      const icon=file.mimeType?.includes('pdf')?'📄':file.mimeType?.includes('word')?'📝':file.mimeType?.includes('sheet')?'📊':'📎';
-      const isPricing=/pric|tier|rate|fee/i.test(file.name);
-      const row=el('div',{style:{display:'flex',gap:'4px',alignItems:'center',padding:'2px 0',
-        borderBottom:'1px solid rgba(255,255,255,.04)',cursor:'pointer'},
-        onclick(){window.open(file.url,'_blank');}});
-      const nameDiv=el('div',{style:{flex:'1',minWidth:'0'}});
-      const nameLine=el('div',{style:{fontSize:'9px',fontWeight:file.suggested?'700':'400',
-        overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',
-        color:file.suggested?'#34d399':isPricing?'#f59e0b':'var(--text)'}});
-      nameLine.textContent=icon+' '+file.name;
-      if(file.suggested) nameLine.appendChild(el('span',{style:{fontSize:'7px',background:'rgba(52,211,153,.15)',color:'#34d399',borderRadius:'2px',padding:'0 3px',marginLeft:'3px'}},'★ KEY'));
-      if(isPricing) nameLine.appendChild(el('span',{style:{fontSize:'7px',background:'rgba(245,158,11,.15)',color:'#f59e0b',borderRadius:'2px',padding:'0 3px',marginLeft:'3px'}},'💰'));
-      nameDiv.appendChild(nameLine);
-      nameDiv.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)'}},
-        new Date(file.modifiedTime).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})+
-        (file.size?' · '+(file.size>1048576?(file.size/1048576).toFixed(1)+'MB':Math.round(file.size/1024)+'KB'):'')));
-      row.appendChild(nameDiv);
-      return row;
-    };
+  // Sort files
+  const sorted = [...files].sort((a,b) => {
+    if (container._sortKey === 'date') return container._sortDir * (new Date(b.modifiedTime) - new Date(a.modifiedTime));
+    if (container._sortKey === 'name') return container._sortDir * a.name.localeCompare(b.name);
+    return container._sortDir * (a.mimeType||'').localeCompare(b.mimeType||'');
+  });
 
-    rootFiles.forEach(f=>container.appendChild(renderFileRow(f)));
+  // Build folder tree
+  const folderTree = {};
+  const rootFiles = [];
+  sorted.forEach(file => {
+    const parts = file.path.split('/');
+    if (parts.length === 1) rootFiles.push(file);
+    else {
+      const folder = parts.slice(0,-1).join('/');
+      if (!folderTree[folder]) folderTree[folder] = [];
+      folderTree[folder].push(file);
+    }
+  });
 
-    if(!container._folderOpen) container._folderOpen={};
-    Object.entries(folderTree).forEach(([folderPath,folderFiles])=>{
-      if(!folderFiles.length) return;
-      const isOpen=container._folderOpen[folderPath]===true;
-      const folderEl=el('div',{style:{marginTop:'4px',border:'1px solid var(--border)',borderRadius:'3px',overflow:'hidden'}});
-      const folderHdr=el('div',{style:{display:'flex',gap:'4px',alignItems:'center',padding:'3px 6px',
-        background:'var(--card)',cursor:'pointer',fontSize:'9px',fontWeight:'600'},
-        onclick(e){
-          e.stopPropagation();
-          container._folderOpen[folderPath]=!isOpen;
-          // Preserve sort state across reload
-          const _sk=container._sortKey, _sd=container._sortDir, _fo=container._folderOpen;
-          container.innerHTML='';
-          container._sortKey=_sk; container._sortDir=_sd; container._folderOpen=_fo;
-          loadVendorContractFiles(vendorName,container);
-        }});
-      folderHdr.appendChild(el('span',{style:{fontSize:'9px'}},isOpen?'📂':'📁'));
-      folderHdr.appendChild(el('span',{style:{flex:'1'}},folderPath.split('/').pop()));
-      folderHdr.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'8px'}},folderFiles.length+' files'));
-      folderHdr.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'8px'}},isOpen?'▲':'▼'));
-      folderEl.appendChild(folderHdr);
-      if(isOpen) folderFiles.forEach(f=>{
-        const fr=renderFileRow(f);
-        fr.style.paddingLeft='8px';
+  const renderFileRow = (file) => {
+    const icon = file.mimeType?.includes('pdf') ? '📄' : file.mimeType?.includes('word') ? '📝' : file.mimeType?.includes('sheet') ? '📊' : '📎';
+    const isPricing = /pric|tier|rate|fee/i.test(file.name);
+    const row = el('div',{style:{display:'flex',gap:'4px',alignItems:'center',padding:'2px 0',
+      borderBottom:'1px solid rgba(255,255,255,.04)',cursor:'pointer'},
+      onclick(){ window.open(file.url,'_blank'); }});
+    const nameDiv = el('div',{style:{flex:'1',minWidth:'0'}});
+    const nameLine = el('div',{style:{fontSize:'9px',fontWeight:file.suggested?'700':'400',
+      overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',
+      color:file.suggested?'#34d399':isPricing?'#f59e0b':'var(--text)'}});
+    nameLine.textContent = icon + ' ' + file.name;
+    if (file.suggested) nameLine.appendChild(el('span',{style:{fontSize:'7px',background:'rgba(52,211,153,.15)',color:'#34d399',borderRadius:'2px',padding:'0 3px',marginLeft:'3px'}},'★ KEY'));
+    if (isPricing) nameLine.appendChild(el('span',{style:{fontSize:'7px',background:'rgba(245,158,11,.15)',color:'#f59e0b',borderRadius:'2px',padding:'0 3px',marginLeft:'3px'}},'💰'));
+    nameDiv.appendChild(nameLine);
+    nameDiv.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)'}},
+      new Date(file.modifiedTime).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) +
+      (file.size ? ' · ' + (file.size > 1048576 ? (file.size/1048576).toFixed(1)+'MB' : Math.round(file.size/1024)+'KB') : '')));
+    row.appendChild(nameDiv);
+    return row;
+  };
+
+  // Root files
+  rootFiles.forEach(f => container.appendChild(renderFileRow(f)));
+
+  // Folders — expand/collapse from cache, instant
+  Object.entries(folderTree).forEach(([folderPath, folderFiles]) => {
+    if (!folderFiles.length) return;
+    const isOpen = container._folderOpen[folderPath] === true;
+    const folderEl = el('div',{style:{marginTop:'4px',border:'1px solid var(--border)',borderRadius:'3px',overflow:'hidden'}});
+    const folderHdr = el('div',{style:{display:'flex',gap:'4px',alignItems:'center',padding:'3px 6px',
+      background:'var(--card)',cursor:'pointer',fontSize:'9px',fontWeight:'600',userSelect:'none'},
+      onclick(e){
+        e.stopPropagation();
+        container._folderOpen[folderPath] = !isOpen;
+        renderCFSFromCache(container, vendorName); // instant re-render, no fetch
+      }});
+    folderHdr.appendChild(el('span',{style:{fontSize:'9px'}}, isOpen ? '📂' : '📁'));
+    folderHdr.appendChild(el('span',{style:{flex:'1'}}, folderPath.split('/').pop()));
+    folderHdr.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'8px'}}, folderFiles.length + ' files'));
+    folderHdr.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'8px'}}, isOpen ? '▲' : '▼'));
+    folderEl.appendChild(folderHdr);
+    if (isOpen) {
+      folderFiles.forEach(f => {
+        const fr = renderFileRow(f);
+        fr.style.paddingLeft = '8px';
         folderEl.appendChild(fr);
       });
-      container.appendChild(folderEl);
-    });
+    }
+    container.appendChild(folderEl);
+  });
 
-    // Footer
-    const footer=el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'6px',textAlign:'right'}});
-    footer.textContent=d.fileCount+' file'+(d.fileCount!==1?'s':'')+' · ';
-    if(d.folderId){
-      const fl=el('a',{href:'https://drive.google.com/drive/folders/'+d.folderId,target:'_blank',style:{color:'var(--blue)'}});
-      fl.textContent='Open in Drive';
+  // Footer
+  if (d.fileCount) {
+    const footer = el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'6px',textAlign:'right'}});
+    footer.textContent = d.fileCount + ' file' + (d.fileCount!==1?'s':'') + ' · ';
+    if (d.folderId) {
+      const fl = el('a',{href:'https://drive.google.com/drive/folders/'+d.folderId,target:'_blank',style:{color:'var(--blue)'}});
+      fl.textContent = 'Open in Drive';
       footer.appendChild(fl);
     }
     container.appendChild(footer);
-  } catch(err) {
-    container.innerHTML='<span style="color:var(--muted);font-size:9px">Could not load files: '+err.message+'</span>';
   }
 }
 
-
-function renderContractFilesFromData(container, vendorName, allFiles, responseData) {
-  if(!allFiles) return;
-  // Clear except sort/folder state
-  const savedSortKey = container._sortKey || 'date';
-  const savedSortDir = container._sortDir || -1;
-  const savedFolderOpen = container._folderOpen || {};
-  const savedCachedFiles = container._cachedFiles || allFiles;
-  container.innerHTML = '';
-  container._sortKey = savedSortKey;
-  container._sortDir = savedSortDir;
-  container._folderOpen = savedFolderOpen;
-  container._cachedFiles = savedCachedFiles;
-  if(responseData) container._responseData = responseData;
-  const rd = responseData || container._responseData || {};
-
-  const skipFiles = ['Thumbs.db', 'desktop.ini', '.DS_Store'];
-  const files = allFiles.filter(f => !skipFiles.includes(f.name) && !f.name.startsWith('.'));
-
-  if(!files.length){
-    container.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'No files in this vendor Drive folder yet.'));
-    return;
-  }
-
-  // Build folder tree structure
-  const folderTree = {}; // { folderPath: [files] }
-  const rootFiles = [];
-    files.forEach(file => {
-      const pathParts = file.path.split('/');
-      if (pathParts.length === 1) {
-        rootFiles.push(file);
-      } else {
-        const folder = pathParts.slice(0, -1).join('/');
-        if (!folderTree[folder]) folderTree[folder] = [];
-        folderTree[folder].push(file);
-      }
-    });
-
-    // Sort state
-    if (!container._sortKey) container._sortKey = 'date';
-    if (!container._sortDir) container._sortDir = -1;
-
-    const sortFiles = (arr) => {
-      return [...arr].sort((a, b) => {
-        if (container._sortKey === 'date') return container._sortDir * (new Date(b.modifiedTime) - new Date(a.modifiedTime));
-        if (container._sortKey === 'name') return container._sortDir * a.name.localeCompare(b.name);
-        if (container._sortKey === 'type') return container._sortDir * (a.mimeType||'').localeCompare(b.mimeType||'');
-        return 0;
-      });
-    };
-
-    // Sort controls
-    const sortRow = el('div',{style:{display:'flex',gap:'4px',alignItems:'center',marginBottom:'4px',fontSize:'8px',color:'var(--muted)'}});
-    sortRow.appendChild(el('span',{},'Sort:'));
-    ['date','name','type'].forEach(key => {
-      const isActive = container._sortKey === key;
-      const btn = el('button',{style:{fontSize:'8px',padding:'1px 5px',borderRadius:'3px',border:'1px solid var(--border)',
-        background:isActive?'var(--blue)':'var(--card)',color:isActive?'white':'var(--muted)',cursor:'pointer'},
-        onclick(){container._sortKey=key;container._sortDir=isActive?-container._sortDir:-1;
-          renderContractFilesFromData(container, vendorName, container._cachedFiles || allFiles || [], container._responseData);}
-      }, key+(isActive?(container._sortDir>0?' ↑':' ↓'):''));
-      sortRow.appendChild(btn);
-    });
-    container.appendChild(sortRow);
-
-    const renderFileRow = (file) => {
-      const icon = file.mimeType && file.mimeType.includes('pdf') ? '📄' :
-                   file.mimeType && file.mimeType.includes('word') ? '📝' :
-                   file.mimeType && file.mimeType.includes('sheet') ? '📊' :
-                   file.mimeType && file.mimeType.includes('presentation') ? '📊' : '📎';
-      const isPricing = /pric|tier|rate|fee/i.test(file.name);
-      const row = el('div',{style:{display:'flex',gap:'4px',alignItems:'center',padding:'2px 0',
-        borderBottom:'1px solid rgba(255,255,255,.04)',cursor:'pointer'},
-        onclick(){window.open(file.url,'_blank');}});
-      const nameEl = el('div',{style:{flex:'1',minWidth:'0'}});
-      const nameLine = el('div',{style:{fontSize:'9px',fontWeight:file.suggested?'700':'400',
-        overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',
-        color:file.suggested?'#34d399':isPricing?'#f59e0b':'var(--text)'}});
-      nameLine.textContent = icon + ' ' + file.name;
-      if (file.suggested) nameLine.appendChild(el('span',{style:{fontSize:'7px',background:'rgba(52,211,153,.15)',color:'#34d399',borderRadius:'2px',padding:'0 3px',marginLeft:'3px'}},'★ KEY'));
-      if (isPricing) nameLine.appendChild(el('span',{style:{fontSize:'7px',background:'rgba(245,158,11,.15)',color:'#f59e0b',borderRadius:'2px',padding:'0 3px',marginLeft:'3px'}},'💰 PRICING'));
-      nameEl.appendChild(nameLine);
-      nameEl.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)'}},
-        new Date(file.modifiedTime).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) +
-        (file.size ? ' · ' + (file.size>1048576?(file.size/1048576).toFixed(1)+'MB':Math.round(file.size/1024)+'KB') : '')));
-      row.appendChild(nameEl);
-      return row;
-    };
-
-    // Render root files first
-    sortFiles(rootFiles).forEach(file => container.appendChild(renderFileRow(file)));
-
-    // Render folders as collapsible sections
-    Object.entries(folderTree).forEach(([folderPath, folderFiles]) => {
-      if (!folderFiles.length) return;
-      const folderKey = 'folder_' + folderPath;
-      if (!container._folderOpen) container._folderOpen = {};
-      const isOpen = container._folderOpen[folderKey];
-      const folderEl = el('div',{style:{marginTop:'4px',border:'1px solid var(--border)',borderRadius:'3px',overflow:'hidden'}});
-      const folderHdr = el('div',{style:{display:'flex',gap:'4px',alignItems:'center',padding:'3px 6px',
-        background:'var(--card)',cursor:'pointer',fontSize:'9px',fontWeight:'600'},
-        onclick(e){
-          e.stopPropagation();
-          container._folderOpen[folderKey]=!isOpen;
-          // Re-render from cached data without re-fetching
-          renderContractFilesFromData(container, vendorName, container._cachedFiles || allFiles || [], container._responseData);
-        }});
-      folderHdr.appendChild(el('span',{style:{fontSize:'9px'}},isOpen?'📂':'📁'));
-      folderHdr.appendChild(el('span',{style:{flex:'1'}},folderPath.split('/').pop()));
-      folderHdr.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'8px'}},folderFiles.length+' files'));
-      folderHdr.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'8px'}},isOpen?'▲':'▼'));
-      folderEl.appendChild(folderHdr);
-      if (isOpen) {
-        const folderBody = el('div',{style:{padding:'4px 6px'}});
-        sortFiles(folderFiles).forEach(file => folderBody.appendChild(renderFileRow(file)));
-        folderEl.appendChild(folderBody);
-      }
-      container.appendChild(folderEl);
-    });
-
-    // Dummy forEach start to match closing brace below
-    
-    // Footer with folder link
-    const footer = el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'6px',textAlign:'right'}});
-    footer.textContent = (rd.fileCount||allFiles.length) + ' file' + ((rd.fileCount||allFiles.length)!==1?'s':'') + ' · ';
-    const folderLink = el('a',{href:'https://drive.google.com/drive/folders/'+(rd.folderId||''),target:'_blank',style:{color:'var(--blue)'}});
-    folderLink.textContent = 'Open folder in Drive';
-    footer.appendChild(folderLink);
-    container.appendChild(footer);
-}
 
 // ─── Data Sheet Generator ─────────────────────────────────────────────────────
 function generateVendorDataSheet(vendor) {
