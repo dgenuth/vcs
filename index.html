@@ -7989,7 +7989,7 @@ function renderSFBoard(c) {
   }
 
   // ── Spend Leaderboard ──
-  if(spendLeaderboard.length){
+  if(displayLeaderboard.length){
     const spendSec=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'12px'}});
     spendSec.appendChild(el('div',{style:{padding:'10px 12px',borderBottom:'1px solid var(--border)',background:'var(--card)',fontWeight:'700',fontSize:'11px'}},'📊 YTD Spend Leaderboard'));
     const maxSpend=spendLeaderboard[0]?.spend||1;
@@ -8056,12 +8056,13 @@ function renderSFBoard(c) {
 
 // ── SF Board: Vendor Brief View ──────────────────────────────────────────────
 function renderSFVendorBrief(wrap, opps, cases, tasks, spendLeaderboard) {
-  // Vendor picker — searchable combo
+  // Vendor picker — VCS vendors + VCS-matched SF names only (not all SF accounts)
   const allBriefNames=[...new Set([
-    ...opps.map(o=>o._accountName),
-    ...cases.map(c=>c._accountName),
-    ...spendLeaderboard.map(s=>s.name),
-    ...S.vendors.filter(v=>v.tier==='CALL'||v.tier==='EMAIL').map(v=>v.name)
+    ...S.vendors.map(v=>v.name),
+    ...opps.filter(o=>o._isVCS).map(o=>o._accountName),
+    ...cases.filter(c=>c._isVCS).map(c=>c._accountName),
+    ...(SPEND_STATE.data?.vendors||[]).map(s=>s.name),
+    ...(spendLeaderboard||[]).map(s=>s.name),
   ].filter(Boolean).sort())];
   const pickerRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'12px',flexWrap:'wrap'}});
   pickerRow.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'600',flexShrink:'0'}},'Select Vendor:'));
@@ -8101,12 +8102,16 @@ function renderSFVendorBrief(wrap, opps, cases, tasks, spendLeaderboard) {
   const vOpps=opps.filter(o=>vendorNamesMatch(o._accountName,vName));
   const vCases=cases.filter(c=>vendorNamesMatch(c._accountName,vName));
   const vTasks=tasks.filter(t=>vendorNamesMatch(t._accountName||'',vName));
-  const vSpend=spendLeaderboard.find(s=>vendorNamesMatch(s.name,vName));
+  // Prefer SPEND_STATE (has fees received too), fall back to leaderboard
+  const _ssV=SPEND_STATE.data?.vendors?.find(v=>vendorNamesMatch(v.name,vName));
+  const _lbV=(spendLeaderboard||[]).find(s=>vendorNamesMatch(s.name,vName));
+  const actualSpend=_ssV?.totalSpend||_lbV?.spend||0;
+  const feesReceived=_ssV?.totalFees||0;
   const exp=vcsV?getCurrentExpiry(vcsV):null;
   const fee=vcsV?parseFee(vcsV.adminFee):null;
   const contractedPct=fee||0;
-  const actualSpend=vSpend?.spend||0;
   const expectedRev=contractedPct?Math.round(actualSpend*contractedPct/100):0;
+  const revGap=feesReceived>0?(feesReceived-expectedRev):null;
 
   // Brief header
   const briefHdr=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'16px',marginBottom:'12px'}});
@@ -8121,7 +8126,13 @@ function renderSFVendorBrief(wrap, opps, cases, tasks, spendLeaderboard) {
     nameInfo.appendChild(badges);
   }
   nameRow.appendChild(nameInfo);
-  if(vcsV) nameRow.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){openDetail(vcsV);}},'Open Vendor Panel →'));
+  const btnRow=el('div',{style:{display:'flex',gap:'6px',flexShrink:'0',flexWrap:'wrap',alignItems:'center'}});
+  if(vcsV){
+    if(vcsV.phone) btnRow.appendChild(el('a',{href:'tel:'+vcsV.phone.replace(/\D/g,''),class:'btn-xs btn-ghost',style:{textDecoration:'none'}},'📞 Call'));
+    if(vcsV.email) btnRow.appendChild(el('a',{href:'mailto:'+vcsV.email,class:'btn-xs btn-ghost',style:{textDecoration:'none'}},'✉ Email'));
+    btnRow.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){openDetail(vcsV);}},'Open Panel →'));
+  }
+  nameRow.appendChild(btnRow);
   briefHdr.appendChild(nameRow);
 
   // Contract snapshot
@@ -8144,11 +8155,15 @@ function renderSFVendorBrief(wrap, opps, cases, tasks, spendLeaderboard) {
   if(actualSpend>0){
     const revSec=el('div',{style:{background:'rgba(34,197,94,.05)',border:'1px solid rgba(34,197,94,.2)',borderRadius:'6px',padding:'12px',marginBottom:'12px'}});
     revSec.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'8px'}},'💰 Revenue Story'));
-    const revGrid=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:'8px'}});
-    [{label:'YTD Spend',val:'$'+Math.round(actualSpend).toLocaleString(),color:'var(--blue)'},
-     {label:'Expected Commission',val:expectedRev?'$'+expectedRev.toLocaleString():'Set fee first',color:expectedRev?'var(--green)':'var(--muted)'},
-     {label:'Fee Rate',val:contractedPct?(contractedPct+'%'):'Not contracted',color:contractedPct?'var(--text)':'var(--amber)'},
-    ].forEach(k=>{
+    const revCols=feesReceived>0?'repeat(4,1fr)':'repeat(3,1fr)';
+    const revGrid=el('div',{style:{display:'grid',gridTemplateColumns:revCols,gap:'8px'}});
+    const revTiles=[
+      {label:'YTD Spend',val:'$'+Math.round(actualSpend).toLocaleString(),color:'var(--blue)'},
+      {label:'Expected Commission',val:expectedRev?'$'+expectedRev.toLocaleString():'Set fee first',color:expectedRev?'var(--green)':'var(--muted)'},
+      {label:'Fee Rate',val:contractedPct?(contractedPct+'%'):'Not contracted',color:contractedPct?'var(--text)':'var(--amber)'},
+    ];
+    if(feesReceived>0) revTiles.push({label:'Fees Received vs Expected',val:'$'+feesReceived.toLocaleString()+(revGap!==null?(revGap>=0?' ✓':' ⚠ $'+Math.abs(revGap).toLocaleString()+' short'):''),color:revGap!==null?(revGap>=0?'var(--green)':'var(--red)'):'var(--text)'});
+    revTiles.forEach(k=>{
       const t=el('div',{style:{textAlign:'center',padding:'6px',background:'var(--sb)',borderRadius:'4px'}});
       t.appendChild(el('div',{style:{fontWeight:'700',fontSize:'15px',color:k.color}},k.val));
       t.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)'}},k.label));
@@ -8236,7 +8251,12 @@ function renderSFFinanceView(wrap, spendLeaderboard, trueUpAlerts) {
     return s+Math.round((v.totalSpend||v.spend||0)*fee/100);
   },0);
   // Build display leaderboard from best source
-  const displayLeaderboard=(SPEND_STATE.data?.vendors||spendLeaderboard.map(v=>({name:v.name,totalSpend:v.spend,totalFees:0}))).slice(0,25);
+  // Normalize to unified {name, spend} shape regardless of source
+  const displayLeaderboard=(
+    SPEND_STATE.data?.vendors?.length>0
+      ? SPEND_STATE.data.vendors.map(v=>({name:v.name,spend:v.totalSpend||0,totalFees:v.totalFees||0,contractedPct:v.contractedPct||0}))
+      : (spendLeaderboard||[]).map(v=>({name:v.name,spend:v.spend||0,totalFees:0,contractedPct:0}))
+  ).slice(0,25);
   const kRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'8px',marginBottom:'16px'}});
   [{label:'YTD Total Spend',val:'$'+Math.round(totalSpend).toLocaleString(),color:'var(--blue)',sub:'Across all SF vendors'},
    {label:'Expected Commission',val:'$'+Math.round(totalExpected).toLocaleString(),color:'var(--green)',sub:'Based on contracted rates'},
@@ -8262,14 +8282,18 @@ function renderSFFinanceView(wrap, spendLeaderboard, trueUpAlerts) {
     displayLeaderboard.forEach(v=>{
       const vcsV=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
       const fee=parseFee(vcsV?.adminFee)||0;
-      const exp=Math.round(v.spend*fee/100);
-      const status=!fee?{t:'⚠ No fee',c:'var(--red)'}:{t:'✓ Set',c:'var(--green)'};
+      const spend=v.spend||0;
+      const exp=Math.round(spend*fee/100);
+      const received=v.totalFees||0;
+      const gap=received>0?(received-exp):null;
+      const statusTxt=!fee?'⚠ No fee':received>0?(gap>=0?'✓ On track':'⚠ Gap'):('✓ Set');
+      const statusCol=!fee?'var(--red)':received>0?(gap>=0?'var(--green)':'var(--red)'):'var(--green)';
       const tr=el('tr');
       tr.appendChild(el('td',{style:{fontWeight:'600',fontSize:'10px',cursor:'pointer'},onclick(){S._sfBriefVendor=v.name;S._sfBoardView='vendor';render();}},v.name));
-      tr.appendChild(el('td',{style:{color:'var(--blue)',fontSize:'10px',fontWeight:'600'}},'$'+Math.round(v.spend).toLocaleString()));
+      tr.appendChild(el('td',{style:{color:'var(--blue)',fontSize:'10px',fontWeight:'600'}},'$'+Math.round(spend).toLocaleString()));
       tr.appendChild(el('td',{style:{color:fee?'var(--text)':'var(--red)',fontSize:'10px'}},fee?(fee+'%'):'Not set'));
       tr.appendChild(el('td',{style:{color:'var(--green)',fontSize:'10px',fontWeight:'600'}},exp?'$'+exp.toLocaleString():'—'));
-      tr.appendChild(el('td',{},el('span',{style:{fontSize:'9px',color:status.c,fontWeight:'600'}},status.t)));
+      tr.appendChild(el('td',{},el('span',{style:{fontSize:'9px',color:statusCol,fontWeight:'600'}},statusTxt)));
       tbody.appendChild(tr);
     });
     tbl.appendChild(tbody); sec.appendChild(tbl);
@@ -8307,7 +8331,7 @@ function renderSFProcurementView(wrap, opps, cases, expiringWithOpps) {
     {label:'⏰ Expiring 31-90d',val:exp90.length,color:'var(--amber)',click(){S.view='expiring';render();}},
     {label:'⚡ AR Notice Due',val:autoRisk.length,color:autoRisk.length?'var(--red)':'var(--green)',click(){S.view='expiring';render();}},
     {label:'📅 Overdue FU',val:overdue.length,color:overdue.length>0?'var(--amber)':'var(--green)',click(){S.view='callsheet';render();}},
-    {label:'🎫 Open Cases',val:cases.filter(c=>c.Priority==='High').length,color:'var(--red)',click(){}},
+    {label:'🎫 Open Cases',val:cases.filter(c=>c._isVCS&&c.Priority==='High').length,color:'var(--red)',click(){}},
   ];
   const kRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'8px',marginBottom:'16px'}});
   tiles.forEach(k=>{
@@ -8345,7 +8369,7 @@ function renderSFProcurementView(wrap, opps, cases, expiringWithOpps) {
   }
 
   // High priority cases
-  const highCases=cases.filter(c=>c.Priority==='High').slice(0,8);
+  const highCases=cases.filter(c=>c._isVCS&&c.Priority==='High').slice(0,8);
   if(highCases.length){
     const caseSec=el('div',{style:{background:'rgba(239,68,68,.05)',border:'1px solid rgba(239,68,68,.2)',borderRadius:'6px',padding:'12px'}});
     caseSec.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',color:'var(--red)',marginBottom:'8px'}},'🚨 High Priority Cases ('+highCases.length+')'));
@@ -8450,14 +8474,15 @@ async function loadSFBoard(){
       if(!sfName) return false;
       return S.vendors.some(v=>vendorNamesMatch(v.name, sfName));
     }
+    // Keep ALL opps/cases for Sales view — tag VCS-matched ones with _isVCS for Procurement/Brief
     const opps=(openOpps?.records||[]).map(o=>{
       const n=o.Vendor__r?.Name||o.Account?.Name||'';
-      return {...o,_accountName:n};
-    }).filter(o=>sfNameMatchesVCS(o._accountName));
+      return {...o,_accountName:n,_isVCS:sfNameMatchesVCS(n)};
+    });
     const cases=(openCases?.records||[]).map(c2=>{
       const n=c2.Vendor__r?.Name||c2.Account?.Name||'';
-      return {...c2,_accountName:n};
-    }).filter(c2=>sfNameMatchesVCS(c2._accountName));
+      return {...c2,_accountName:n,_isVCS:sfNameMatchesVCS(n)};
+    });
     const tasks=(openTasks?.records||[]).map(t=>({...t,_accountName:''}));
 
     // Spend leaderboard
@@ -10706,6 +10731,91 @@ if (!S.feeRecords) S.feeRecords = [];
 
 function renderContractEconomics(c) {
   c.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.6'}},'Reverse-engineer the full admin fee paid by vendors to channel partners. Enter what you received and your split %, and this engine calculates the full picture — including whether you were paid correctly.'));
+
+  // ── Auto Fee Gap Analysis (from SF Spend Data) ──
+  const autoSec=el('div',{class:'summary-section'});
+  autoSec.appendChild(el('h3',{},'📊 Fee Gap Analysis — Auto-Calculated'));
+  if(!SPEND_STATE.data?.vendors?.length){
+    const noDataRow=el('div',{style:{display:'flex',gap:'10px',alignItems:'center',padding:'12px',background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'5px',marginBottom:'8px'}});
+    noDataRow.appendChild(el('span',{style:{fontSize:'20px'}},'📡'));
+    const msg=el('div');
+    msg.appendChild(el('div',{style:{fontWeight:'600',fontSize:'11px',marginBottom:'2px'}},'No SF Spend Data Loaded'));
+    msg.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)'}},'Load spend data from the Analytics page → Salesforce Revenue Intelligence, or visit the SF Board and click Load / Refresh.'));
+    noDataRow.appendChild(msg);
+    autoSec.appendChild(noDataRow);
+  } else {
+    // Build auto fee analysis from SPEND_STATE cross-referenced with channel partner splits
+    const {vendors:spVendors, totals} = SPEND_STATE.data;
+    // Summary KPIs
+    const autoTotSpend=spVendors.reduce((s,v)=>s+(v.totalSpend||0),0);
+    const autoTotFees=spVendors.reduce((s,v)=>s+(v.totalFees||0),0);
+    const autoTotExpected=spVendors.reduce((s,v)=>s+(v.expectedRevenue||Math.round((v.totalSpend||0)*(v.contractedPct||0)/100)),0);
+    const autoGap=autoTotFees-autoTotExpected;
+    const gapVendors=spVendors.filter(v=>v.gap<-0.01);
+    const kRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'8px',marginBottom:'12px'}});
+    [
+      {label:'Total YTD Spend',val:'$'+Math.round(autoTotSpend).toLocaleString(),color:'var(--blue)',sub:'From Salesforce'},
+      {label:'Fees Received',val:'$'+Math.round(autoTotFees).toLocaleString(),color:autoTotFees>0?'var(--green)':'var(--muted)',sub:'Actual admin fees in SF'},
+      {label:'Expected Commission',val:'$'+Math.round(autoTotExpected).toLocaleString(),color:'var(--text)',sub:'At contracted rates'},
+      {label:'Gap',val:(autoGap>=0?'+':'')+'$'+Math.round(Math.abs(autoGap)).toLocaleString(),color:autoGap<-100?'var(--red)':autoGap<0?'var(--amber)':'var(--green)',sub:gapVendors.length+' vendors under-paying'},
+    ].forEach(k=>{
+      const card=el('div',{style:{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'5px',padding:'10px',textAlign:'center'}});
+      card.appendChild(el('div',{style:{fontSize:'18px',fontWeight:'700',color:k.color}},String(k.val)));
+      card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px'}},k.label));
+      if(k.sub) card.appendChild(el('div',{style:{fontSize:'8px',fontStyle:'italic',color:'var(--muted)'}},k.sub));
+      kRow.appendChild(card);
+    });
+    autoSec.appendChild(kRow);
+
+    // Channel partner fee table — show each vendor's channel partner assignment + gap
+    const tbl=el('table',{class:'data-table'});
+    const thead=el('thead'); const hrow=el('tr');
+    ['Vendor','Category','Channel Partner','Your Split','YTD Spend','Exp. Commission','Fees Received','Gap','Status'].forEach(h=>hrow.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+    thead.appendChild(hrow); tbl.appendChild(thead);
+    const tbody=el('tbody');
+    // Sort gap vendors first, then by spend
+    const sorted=[...spVendors].sort((a,b)=>{
+      const aGap=a.gap||0, bGap=b.gap||0;
+      if(aGap<-0.01&&bGap>=-0.01) return -1;
+      if(bGap<-0.01&&aGap>=-0.01) return 1;
+      return (b.totalSpend||0)-(a.totalSpend||0);
+    });
+    sorted.slice(0,30).forEach(v=>{
+      const vcsV=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
+      // Match channel partner agreement — check vendor notes/category for partner name
+      const cpMatch=S.channelPartnerAgreements.find(cp=>{
+        if(cp.name==='Prime Source Direct') return false;
+        return (vcsV?.notes||'').toLowerCase().includes(cp.name.toLowerCase())
+          || (vcsV?.category||'').toLowerCase().includes(cp.name.toLowerCase())
+          || (v.name||'').toLowerCase().includes(cp.name.toLowerCase());
+      })||null;
+      const cpName=cpMatch?cpMatch.name:'Prime Source Direct';
+      const splitPct=cpMatch?cpMatch.splitPct:100;
+      const spend=v.totalSpend||0;
+      const fees=v.totalFees||0;
+      const contractedPct=v.contractedPct||parseFee(vcsV?.adminFee)||0;
+      const expected=Math.round(spend*contractedPct/100*(splitPct/100));
+      const gap=fees>0?(fees-expected):null;
+      const statusTxt=!contractedPct?'No fee set':gap===null?'No fee data':Math.abs(gap)<1?'✓ On track':gap<0?'⚠ Under':'ℹ Over';
+      const statusCol=!contractedPct?'var(--red)':gap===null?'var(--muted)':Math.abs(gap)<1?'var(--green)':gap<0?'var(--red)':'var(--amber)';
+      const tr=el('tr',{style:{cursor:'pointer'},onclick(){vcsV&&openDetail(vcsV);}});
+      tr.appendChild(el('td',{style:{fontWeight:'600',fontSize:'10px'}},v.name));
+      tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},(v.category||vcsV?.category||'—')));
+      tr.appendChild(el('td',{style:{fontSize:'9px',color:cpMatch?'var(--blue)':'var(--muted)'}},(cpName)));
+      tr.appendChild(el('td',{style:{fontSize:'9px',textAlign:'center'}},splitPct+'%'));
+      tr.appendChild(el('td',{style:{color:'var(--blue)',fontSize:'10px',fontWeight:'600'}},'$'+Math.round(spend).toLocaleString()));
+      tr.appendChild(el('td',{style:{fontSize:'10px'}},expected?'$'+expected.toLocaleString():'—'));
+      tr.appendChild(el('td',{style:{fontSize:'10px',color:fees>0?'var(--green)':'var(--muted)'}},fees>0?'$'+Math.round(fees).toLocaleString():'—'));
+      tr.appendChild(el('td',{style:{fontSize:'10px',fontWeight:'600',color:statusCol}},gap!==null?(gap>=0?'+':'')+'$'+Math.round(gap).toLocaleString():'—'));
+      tr.appendChild(el('td',{},el('span',{style:{fontSize:'9px',color:statusCol,fontWeight:'600'}},statusTxt)));
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);
+    const tblWrap=el('div',{class:'tbl-wrap'}); tblWrap.appendChild(tbl);
+    autoSec.appendChild(tblWrap);
+    autoSec.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'6px',fontStyle:'italic'}},'Channel partner assigned by matching vendor notes/category. Override by editing channel partner agreements below or vendor notes.'));
+  }
+  c.appendChild(autoSec);
 
   // ── Channel Partner Split Agreements ──
   const splitSec=el('div',{class:'summary-section'});
