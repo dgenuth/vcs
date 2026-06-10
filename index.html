@@ -773,6 +773,24 @@ async function completeLogin() {
     const driveConfigLoaded = await loadConfigFromDrive();
     if (driveConfigLoaded) updateUserBadge(); // refresh badge with Drive user data
   } catch(e) { console.warn('Drive config load on login:', e.message); }
+  // Check Drive for a newer session from another device
+  try {
+    const driveSession = await loadSessionFromDrive();
+    if (driveSession && driveSession._driveTs) {
+      const localSession = loadSessionState();
+      const driveTs = new Date(driveSession._driveTs);
+      const localTs = localSession ? new Date(localSession.ts) : new Date(0);
+      const ageMins = Math.round((Date.now() - driveTs) / 60000);
+      // If Drive session is newer than local AND less than 7 days old AND has changes
+      if (driveTs > localTs && ageMins < 7*24*60 &&
+          (driveSession.dirtyVendors?.length || driveSession.dirtyReviews?.length || driveSession.dirtyITW?.length)) {
+        // Merge Drive session into local — Drive wins for dirty records
+        localStorage.setItem(SESSION_KEY, JSON.stringify({...driveSession, ts: driveSession._driveTs}));
+        console.log('[VCS] Cross-device session restored from Drive ('+ageMins+'m ago)');
+        toast('☁ Session synced from Drive ('+(driveSession.dirtyVendors?.length||0)+' pending changes)');
+      }
+    }
+  } catch(e) { console.warn('[VCS] Drive session check failed:', e.message); }
   setTimeout(applyCopyProtection, 300);
   const autoLoaded = S.settings.driveAutoSync && S.settings.driveFileId && S.settings.googleClientId
     ? await tryAutoLoadFromDrive()
@@ -4562,6 +4580,8 @@ function saveSessionState() {
       })),
     };
     localStorage.setItem(SESSION_KEY, JSON.stringify(toSave));
+    // Also push to Drive for cross-device continuity (debounced 3s)
+    debouncedSaveSessionToDrive();
   } catch(e) { console.warn('Session save failed:', e); }
 }
 
@@ -4573,6 +4593,71 @@ function loadSessionState() {
 
 function clearSessionState() {
   localStorage.removeItem(SESSION_KEY);
+}
+
+// ── Drive session sync — cross-device session continuity ──
+let _sessionDriveSaveTimer = null;
+async function saveSessionToDrive() {
+  if (!GDriveToken || Date.now() >= GDriveTokenExpiry - 5000) return;
+  if (!USER.email || !S.loaded) return;
+  try {
+    const sessionData = JSON.parse(localStorage.getItem(SESSION_KEY)||'null');
+    if (!sessionData) return;
+    sessionData._driveTs = new Date().toISOString();
+    sessionData._userEmail = USER.email.toLowerCase();
+    // Find or create session file per user
+    const fileName = 'vcs_session_' + USER.email.toLowerCase().replace(/[^a-z0-9]/g,'_') + '.json';
+    const searchResp = await fetch(
+      'https://www.googleapis.com/drive/v3/files?q=name="'+fileName+'" and trashed=false&fields=files(id)',
+      {headers:{Authorization:'Bearer '+GDriveToken}}
+    );
+    let fileId = null;
+    if (searchResp.ok) {
+      const sr = await searchResp.json();
+      fileId = sr.files?.[0]?.id || null;
+    }
+    const body = JSON.stringify(sessionData, null, 2);
+    const blob = new Blob([body], {type:'application/json'});
+    if (fileId) {
+      await fetch('https://www.googleapis.com/upload/drive/v3/files/'+fileId+'?uploadType=media',
+        {method:'PATCH', headers:{Authorization:'Bearer '+GDriveToken,'Content-Type':'application/json'}, body});
+    } else {
+      const meta = JSON.stringify({name:fileName, mimeType:'application/json'});
+      const form = new FormData();
+      form.append('metadata', new Blob([meta],{type:'application/json'}));
+      form.append('file', blob);
+      await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+        {method:'POST', headers:{Authorization:'Bearer '+GDriveToken}, body:form});
+    }
+    console.log('[VCS] Session synced to Drive');
+  } catch(e) { console.warn('[VCS] Session Drive sync failed:', e.message); }
+}
+
+async function loadSessionFromDrive() {
+  if (!GDriveToken || Date.now() >= GDriveTokenExpiry - 5000) return null;
+  if (!USER.email) return null;
+  try {
+    const fileName = 'vcs_session_' + USER.email.toLowerCase().replace(/[^a-z0-9]/g,'_') + '.json';
+    const searchResp = await fetch(
+      'https://www.googleapis.com/drive/v3/files?q=name="'+fileName+'" and trashed=false&fields=files(id)',
+      {headers:{Authorization:'Bearer '+GDriveToken}}
+    );
+    if (!searchResp.ok) return null;
+    const sr = await searchResp.json();
+    const fileId = sr.files?.[0]?.id;
+    if (!fileId) return null;
+    const dataResp = await fetch(
+      'https://www.googleapis.com/drive/v3/files/'+fileId+'?alt=media',
+      {headers:{Authorization:'Bearer '+GDriveToken}}
+    );
+    if (!dataResp.ok) return null;
+    return await dataResp.json();
+  } catch(e) { console.warn('[VCS] Load session from Drive failed:', e.message); return null; }
+}
+
+function debouncedSaveSessionToDrive() {
+  if (_sessionDriveSaveTimer) clearTimeout(_sessionDriveSaveTimer);
+  _sessionDriveSaveTimer = setTimeout(()=>saveSessionToDrive(), 3000); // 3s debounce
 }
 
 function offerSessionRestore() {
@@ -7001,7 +7086,7 @@ function renderVendorDB(c) {
     all: {label:`All (${S.allVendors.length})`, data:S.allVendors, desc:'Full universe of all vendor contracts across all GPOs'},
   };
   for (const [key, {label}] of Object.entries(sourcePool)) {
-    sourceBar.appendChild(el('button',{class:'col-toggle-btn'+(S.dbSource===key?' on':''),onclick(){S.dbSource=key;S.dbFilters={};render();}},label));
+    sourceBar.appendChild(el('button',{class:'col-toggle-btn'+(S.dbSource===key?' on':''),onclick(){S.dbSource=key;S.dbFilters={};S._dbPage=0;render();}},label));
   }
   const desc=el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'8px'}},sourcePool[S.dbSource].desc);
   sourceBar.appendChild(desc);
@@ -7332,13 +7417,21 @@ function renderVendorDB(c) {
       }
     tr.appendChild(td); tbody.appendChild(tr);
   } else {
-    vendors.forEach(v=>{
+    // Paginated render — show PAGE_SIZE rows at a time for instant tab switching
+    const PAGE_SIZE = 100;
+    if (!S._dbPage) S._dbPage = 0;
+    // Reset page if filtered set changed size
+    if (!S._dbLastCount || S._dbLastCount !== vendors.length) { S._dbPage = 0; }
+    S._dbLastCount = vendors.length;
+    const totalPages = Math.ceil(vendors.length / PAGE_SIZE);
+    const page = Math.min(S._dbPage, totalPages - 1);
+    const pageVendors = vendors.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+    pageVendors.forEach(v=>{
       const tr=el('tr',{style:{cursor:'pointer'},title:`Click to open ${v.name}`});
       tr.addEventListener('click',()=>openDetail(v));
-      // Checkbox
       const cbTd=el('td',{style:{padding:'3px',textAlign:'center'},onclick(e){e.stopPropagation();}});
       const cb=el('input',{type:'checkbox'}); cb.setAttribute('data-name',v.name); cbTd.appendChild(cb); tr.appendChild(cbTd);
-      // Data cells
       VISIBLE_COLS.forEach(col=>{
         const td=el('td');
         try {
@@ -7353,6 +7446,26 @@ function renderVendorDB(c) {
     });
   }
   table.appendChild(tbody); tblWrap.appendChild(table); c.appendChild(tblWrap);
+
+  // Pagination controls (only shown when more than PAGE_SIZE vendors)
+  const PAGE_SIZE_ctrl = 100;
+  const totalPages_ctrl = Math.ceil(vendors.length / PAGE_SIZE_ctrl);
+  if (totalPages_ctrl > 1) {
+    const pagBar = el('div',{style:{display:'flex',gap:'6px',alignItems:'center',justifyContent:'center',padding:'10px 0',flexWrap:'wrap'}});
+    const curPage = S._dbPage||0;
+    pagBar.appendChild(el('button',{class:'btn-xs btn-ghost',disabled:curPage===0,onclick(){S._dbPage=0;render();}}, '«'));
+    pagBar.appendChild(el('button',{class:'btn-xs btn-ghost',disabled:curPage===0,onclick(){S._dbPage=Math.max(0,curPage-1);render();}}, '‹ Prev'));
+    // Page number buttons — show window of 5 around current
+    const startP = Math.max(0, curPage-2);
+    const endP = Math.min(totalPages_ctrl-1, startP+4);
+    for (let p=startP; p<=endP; p++) {
+      pagBar.appendChild(el('button',{class:'btn-xs '+(p===curPage?'btn-blue':'btn-ghost'),onclick:(pg=>()=>{S._dbPage=pg;render();})(p)},String(p+1)));
+    }
+    pagBar.appendChild(el('button',{class:'btn-xs btn-ghost',disabled:curPage>=totalPages_ctrl-1,onclick(){S._dbPage=Math.min(totalPages_ctrl-1,curPage+1);render();}}, 'Next ›'));
+    pagBar.appendChild(el('button',{class:'btn-xs btn-ghost',disabled:curPage>=totalPages_ctrl-1,onclick(){S._dbPage=totalPages_ctrl-1;render();}}, '»'));
+    pagBar.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},`Page ${curPage+1} of ${totalPages_ctrl} · ${vendors.length} vendors`));
+    c.appendChild(pagBar);
+  }
 }
 
 function openColumnFilterModal(col, filteredVendors) {
@@ -9307,6 +9420,136 @@ function applyContractToVendor(vendor, extracted) {
   return changed;
 }
 
+// ── Drive File Picker Modal ──────────────────────────────────────────────────
+function openDriveFilePicker(files, onSelect) {
+  openModal(body=>{
+    body.appendChild(el('h3',{},'☁ Browse Drive — Vendor Contracts & Pricing'));
+    if(files&&files.length){
+      body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},files.length+' files found in this vendor Drive folder'));
+      const list=el('div',{style:{maxHeight:'320px',overflowY:'auto',border:'1px solid var(--border)',borderRadius:'5px'}});
+      files.forEach(f=>{
+        const row=el('div',{style:{display:'flex',alignItems:'center',gap:'10px',padding:'8px 12px',borderBottom:'1px solid var(--border)',cursor:'pointer'},
+          onmouseenter(e){e.currentTarget.style.background='rgba(79,124,255,.08)';},
+          onmouseleave(e){e.currentTarget.style.background='';},
+          onclick(){closeModal();onSelect(f);}});
+        const icon=f.mimeType?.includes('pdf')?'📕':f.mimeType?.includes('word')?'📘':'📄';
+        row.appendChild(el('span',{style:{fontSize:'16px'}},icon));
+        const info=el('div',{style:{flex:'1'}});
+        info.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px'}},f.name));
+        info.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},new Date(f.modifiedTime).toLocaleDateString()+(f.suggested?' · ⭐ Suggested':'')));
+        row.appendChild(info);
+        if(f.suggested) row.style.background='rgba(34,197,94,.04)';
+        list.appendChild(row);
+      });
+      body.appendChild(list);
+    } else {
+      body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--muted)',textAlign:'center',padding:'20px'}},'No files found for this vendor in Drive. Check that files are in the Vendor Contracts and Pricing folder.'));
+    }
+    const btns=el('div',{class:'modal-btns'});
+    btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
+    body.appendChild(btns);
+  });
+}
+
+async function loadDriveFileIntoContract(driveFile, dropLabel, statusEl, callback) {
+  if(!GDriveToken||Date.now()>=GDriveTokenExpiry-5000){toast('Drive token expired','#f59e0b');return;}
+  try {
+    dropLabel.children[0].textContent='⏳';
+    dropLabel.children[1].textContent='Loading from Drive: '+driveFile.name;
+    const resp=await fetch('https://www.googleapis.com/drive/v3/files/'+driveFile.id+'?alt=media',
+      {headers:{Authorization:'Bearer '+GDriveToken}});
+    if(!resp.ok) throw new Error('Drive fetch failed: '+resp.status);
+    const blob=await resp.blob();
+    const file=new File([blob],driveFile.name,{type:driveFile.mimeType||'application/octet-stream'});
+    const text=await extractFileText(file);
+    dropLabel.children[0].textContent='✓';
+    dropLabel.children[1].textContent=driveFile.name;
+    dropLabel.children[1].style.color='var(--green)';
+    dropLabel.children[2].textContent=typeof text==='string'?Math.round(text.length/1000)+'K chars (from Drive)':'Loaded from Drive';
+    callback(text);
+    // Show in viewer if present
+    const vw=document.getElementById('contract-inline-viewer');
+    const vb=document.getElementById('contract-viewer-body');
+    const vf=document.getElementById('viewer-filename');
+    if(vw&&vb&&vf){
+      vf.textContent=driveFile.name+' (Drive)';
+      vb.textContent=typeof text==='string'?text:'Preview not available';
+      vw.style.display='block';
+    }
+  } catch(e){
+    dropLabel.children[0].textContent='⚠';
+    dropLabel.children[1].textContent='Drive load error: '+e.message;
+    if(statusEl) statusEl.style.color='var(--red)';
+    toast('Drive load failed: '+e.message,'#ef4444');
+  }
+}
+
+// ── Editable Contract Apply Modal ─────────────────────────────────────────────
+function openEditableApplyModal(vendor, extracted) {
+  if(!vendor||!extracted) return;
+  openModal(body=>{
+    body.appendChild(el('h3',{},'📋 Review & Apply Contract Data'));
+    body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.5'}},
+      'Review what Claude extracted. Edit any field before applying — Claude can make mistakes. Uncheck fields you do not want to apply.'));
+
+    const confidence=extracted.extractionConfidence||'MEDIUM';
+    const confColor=confidence==='HIGH'?'var(--green)':confidence==='MEDIUM'?'var(--amber)':'var(--red)';
+    body.appendChild(el('div',{style:{fontSize:'9px',color:confColor,fontWeight:'600',marginBottom:'10px'}},
+      'Confidence: '+confidence+(confidence!=='HIGH'?' — review carefully':' — still verify before applying')));
+
+    const fieldList=el('div',{style:{maxHeight:'420px',overflowY:'auto',border:'1px solid var(--border)',borderRadius:'5px',marginBottom:'10px'}});
+
+    // Build editable field list from CONTRACT_FIELD_MAP
+    const edits={};
+    const checks={};
+    CONTRACT_FIELD_MAP.forEach(({field,label,extract})=>{
+      const extracted_val=extract(extracted);
+      if(!extracted_val) return; // skip empty
+      edits[field]=extracted_val;
+      checks[field]=true;
+      const current=vendor[field];
+      const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'flex-start',padding:'8px 10px',borderBottom:'1px solid var(--border)',background:current?'':'rgba(34,197,94,.04)'}});
+      const cb=el('input',{type:'checkbox',checked:true,style:{marginTop:'3px',flexShrink:'0'}});
+      cb.addEventListener('change',()=>{checks[field]=cb.checked;});
+      row.appendChild(cb);
+      const info=el('div',{style:{flex:'1'}});
+      info.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',marginBottom:'2px'}},(label||field)));
+      if(current) info.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'3px'}},'Current: '+String(current).slice(0,60)));
+      const inp=el('input',{type:'text',class:'detail-edit-field',style:{width:'100%',fontSize:'10px'},value:String(extracted_val)});
+      inp.addEventListener('input',()=>{edits[field]=inp.value;});
+      info.appendChild(inp);
+      row.appendChild(info);
+      fieldList.appendChild(row);
+    });
+
+    body.appendChild(fieldList);
+
+    // Perpetuity correction helper
+    if(extracted.perpetuity!==undefined){
+      const perpNote=el('div',{style:{fontSize:'9px',color:'var(--amber)',padding:'6px 8px',background:'rgba(240,160,32,.08)',borderRadius:'4px',marginBottom:'8px',lineHeight:'1.5'}});
+      perpNote.textContent='⚠ Perpetuity: Claude sometimes misidentifies "fees for life of relationship" clauses. If the contract states admin fees continue indefinitely or for the life of the vendor relationship, that IS perpetuity — correct it above if needed.';
+      body.appendChild(perpNote);
+    }
+
+    const btns=el('div',{class:'modal-btns'});
+    btns.appendChild(el('button',{class:'btn-primary',onclick(){
+      // Apply only checked fields with edited values
+      let changed=0;
+      CONTRACT_FIELD_MAP.forEach(({field})=>{
+        if(checks[field]&&edits[field]!==undefined){
+          vendor[field]=edits[field];
+          changed++;
+        }
+      });
+      if(changed>0){markDirty(vendor);saveSessionState();render();}
+      closeModal();
+      toast('✓ Applied '+changed+' field'+(changed!==1?'s':'')+' to '+vendor.name+'. Save to persist.');
+    }},'✅ Apply to VCS'));
+    btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
+    body.appendChild(btns);
+  });
+}
+
 function renderContracts(c) {
   c.innerHTML='';
   // Ensure contract store is initialized
@@ -9404,6 +9647,21 @@ function renderContracts(c) {
       dropLabel.children[1].style.color='var(--green)';
       dropLabel.children[2].textContent=typeof selectedFileText==='string'?Math.round(selectedFileText.length/1000)+'K chars extracted':'PDF (will send to Claude directly)';
       extractBtn.disabled=false; extractBtn.style.opacity='1';
+      // Show inline viewer
+      const vw=document.getElementById('contract-inline-viewer');
+      const vb=document.getElementById('contract-viewer-body');
+      const vf=document.getElementById('viewer-filename');
+      if(vw&&vb&&vf){
+        vf.textContent=file.name;
+        if(typeof selectedFileText==='string'&&selectedFileText.length>0){
+          vb.textContent=selectedFileText;
+        } else if(file.type==='application/pdf'){
+          vb.innerHTML='<iframe src="'+URL.createObjectURL(file)+'" style="width:100%;height:100%;border:none"></iframe>';
+        } else {
+          vb.textContent='Preview not available for this file type.';
+        }
+        vw.style.display='block';
+      }
     } catch(e) {
       dropLabel.children[0].textContent='⚠';
       dropLabel.children[1].textContent='Read error: '+e.message;
@@ -9418,6 +9676,59 @@ function renderContracts(c) {
   dropZone.ondrop=(e)=>{e.preventDefault();dropZone.style.borderColor='var(--border)';if(e.dataTransfer.files[0])handleFile(e.dataTransfer.files[0]);};
   dropZone.appendChild(fileInp);
   uploadSec.appendChild(dropZone);
+
+  // Load from Drive button
+  const driveRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'8px'}});
+  const driveBtn=el('button',{class:'btn-xs btn-ghost',style:{display:'flex',gap:'6px',alignItems:'center'},onclick:async()=>{
+    const vName=selectedVendorName||comboInput.value.trim();
+    if(!GDriveToken||Date.now()>=GDriveTokenExpiry-5000){toast('Connect Google Drive first','#f59e0b');return;}
+    driveBtn.disabled=true; driveBtn.textContent='⏳ Loading Drive files...';
+    try {
+      // List files in Vendor Contracts and Pricing folder for this vendor
+      const nameToSearch = vName || '';
+      const resp = await fetch(VCS_PROXY_URL+'?action=listVendorFiles&vendorName='+encodeURIComponent(nameToSearch));
+      const d = await resp.json();
+      driveBtn.disabled=false; driveBtn.textContent='☁ Load from Drive';
+      if(!d.folderFound||!d.files?.length){
+        // Show all vendors folder picker
+        openDriveFilePicker(null, async(file)=>{
+          if(!file) return;
+          await loadDriveFileIntoContract(file, dropLabel, statusEl, (ft)=>{selectedFileText=ft;selectedFile={name:file.name,type:file.mimeType,_driveId:file.id};extractBtn.disabled=false;extractBtn.style.opacity='1';});
+        });
+        return;
+      }
+      openDriveFilePicker(d.files, async(file)=>{
+        if(!file) return;
+        await loadDriveFileIntoContract(file, dropLabel, statusEl, (ft)=>{selectedFileText=ft;selectedFile={name:file.name,type:file.mimeType,_driveId:file.id};extractBtn.disabled=false;extractBtn.style.opacity='1';});
+      });
+    } catch(e){ driveBtn.disabled=false; driveBtn.textContent='☁ Load from Drive'; toast('Drive error: '+e.message,'#ef4444'); }
+  }});
+  driveBtn.innerHTML='<span style="font-size:14px">☁</span> Load from Drive';
+  driveRow.appendChild(driveBtn);
+  driveRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Browse Vendor Contracts & Pricing folder'));
+  uploadSec.appendChild(driveRow);
+
+  // Inline contract viewer (shown after file loaded)
+  const viewerWrap=el('div',{id:'contract-inline-viewer',style:{display:'none',marginTop:'8px',border:'1px solid var(--border)',borderRadius:'5px',overflow:'hidden'}});
+  const viewerHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'6px 10px',background:'var(--sb)',borderBottom:'1px solid var(--border)'}});
+  viewerHdr.appendChild(el('span',{id:'viewer-filename',style:{flex:'1',fontWeight:'600',fontSize:'10px'}},''));
+  const viewerToggle=el('button',{class:'btn-xs btn-ghost',onclick(){
+    const body=document.getElementById('contract-viewer-body');
+    const isHidden=body.style.display==='none';
+    body.style.display=isHidden?'block':'none';
+    viewerToggle.textContent=isHidden?'▲ Collapse':'▼ Expand';
+  }},'▲ Collapse');
+  viewerHdr.appendChild(viewerToggle);
+  const viewerResize=el('input',{type:'range',min:'200',max:'800',value:'400',style:{width:'80px'},oninput(e){
+    document.getElementById('contract-viewer-body').style.height=e.target.value+'px';
+  }});
+  viewerHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Height:'));
+  viewerHdr.appendChild(viewerResize);
+  viewerWrap.appendChild(viewerHdr);
+  const viewerBody=el('div',{id:'contract-viewer-body',style:{height:'400px',overflow:'auto',background:'var(--bg)',padding:'12px',fontSize:'10px',lineHeight:'1.7',whiteSpace:'pre-wrap',fontFamily:'Georgia,serif'}});
+  viewerWrap.appendChild(viewerBody);
+  uploadSec.appendChild(viewerWrap);
+
   uploadSec.appendChild(statusEl);
 
   const btnRow=el('div',{style:{display:'flex',gap:'8px'}});
@@ -9538,7 +9849,7 @@ function renderContracts(c) {
             if(!_isExecuted){
               if(!confirm('⚠ This contract appears to be a '+_cStatus+', not a fully executed agreement.\n\nApplying unexecuted contracts may overwrite valid data.\n\nAre you sure you want to proceed?')) return;
             }
-            openApplyContractModal(vendor, ex, ()=>render());
+            openEditableApplyModal(vendor, ex);
           }
         }, _isExecuted ? 'Apply to VCS' : '⚠ Apply (Unexecuted)');
         cardHdr.appendChild(applyBtn);
@@ -10344,12 +10655,35 @@ function renderContractCompare(c) {
       statusEl.textContent='⏳ Reading...'; statusEl.style.color='var(--amber)';
       try {
         const text=await extractFileText(file);
-        if(isA){CMP.docAName=file.name;CMP.docAText=text;}
-        else{CMP.docBName=file.name;CMP.docBText=text;}
+        if(isA){CMP.docAName=file.name;CMP.docAText=text;CMP.docAFile=file;}
+        else{CMP.docBName=file.name;CMP.docBText=text;CMP.docBFile=file;}
         CMP.result=null;CMP.error='';render();
       } catch(err){statusEl.textContent='⚠ '+err.message;}
     };
     card.appendChild(label); card.appendChild(sub); card.appendChild(statusEl); card.appendChild(inp);
+    // Drive loader button
+    const cmpDriveBtn=el('button',{class:'btn-xs btn-ghost',style:{marginTop:'6px',fontSize:'9px',display:'flex',gap:'4px',alignItems:'center',margin:'6px auto 0'},onclick:async(e)=>{
+      e.stopPropagation();
+      if(!GDriveToken||Date.now()>=GDriveTokenExpiry-5000){toast('Connect Google Drive first','#f59e0b');return;}
+      const vn=S._cmpVendor||'';
+      cmpDriveBtn.textContent='⏳...';
+      try {
+        const r=await fetch(VCS_PROXY_URL+'?action=listVendorFiles&vendorName='+encodeURIComponent(vn));
+        const d=await r.json();
+        cmpDriveBtn.textContent='☁ Drive';
+        openDriveFilePicker(d.files?.length?d.files:null, async(file)=>{
+          statusEl.textContent='⏳ Loading from Drive...'; statusEl.style.color='var(--amber)';
+          const blob=await fetch('https://www.googleapis.com/drive/v3/files/'+file.id+'?alt=media',{headers:{Authorization:'Bearer '+GDriveToken}}).then(r=>r.blob());
+          const f2=new File([blob],file.name,{type:file.mimeType});
+          const text=await extractFileText(f2);
+          if(isA){CMP.docAName=file.name;CMP.docAText=text;CMP.docAFile=f2;}
+          else{CMP.docBName=file.name;CMP.docBText=text;CMP.docBFile=f2;}
+          CMP.result=null;CMP.error='';render();
+        });
+      } catch(e2){cmpDriveBtn.textContent='☁ Drive';toast('Drive error: '+e2.message,'#ef4444');}
+    }});
+    cmpDriveBtn.innerHTML='<span>☁</span> Load from Drive';
+    card.appendChild(cmpDriveBtn);
     if(docName){
       const clear=el('button',{class:'btn-xs btn-ghost',style:{marginTop:'6px',fontSize:'9px'},onclick(e){
         e.stopPropagation();
@@ -10384,6 +10718,56 @@ function renderContractCompare(c) {
     loader.appendChild(el('div',{style:{fontSize:'10px',marginTop:'4px'}},'Claude is reviewing every clause. This takes 15–30 seconds.'));
     wrap.appendChild(loader);
     c.appendChild(wrap); return;
+  }
+
+  // ── Document viewers — show as soon as docs are loaded (even before running) ──
+  if(CMP.docAText || CMP.docBText) {
+    if(!S._cmpViewerOpen) S._cmpViewerOpen = {A:false, B:false};
+    const preViewRow=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'12px'}});
+    ['A','B'].forEach(side=>{
+      const isA=side==='A';
+      const docName=isA?CMP.docAName:CMP.docBName;
+      const docText=isA?CMP.docAText:CMP.docBText;
+      const textStr=typeof docText==='string'?docText:'';
+      const isOpen=S._cmpViewerOpen[side];
+      const panel=el('div',{style:{border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden',background:'var(--sb)'}});
+      const pHdr=el('div',{style:{padding:'6px 10px',fontSize:'9px',fontWeight:'700',color:'var(--muted)',display:'flex',justifyContent:'space-between',alignItems:'center',background:'var(--card)',cursor:'pointer',userSelect:'none'},
+        onclick(){S._cmpViewerOpen[side]=!S._cmpViewerOpen[side];render();}});
+      pHdr.appendChild(el('span',{},('Doc '+side+(docName?' — '+docName.slice(0,35)+(docName.length>35?'…':''):'(not loaded)'))));
+      pHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--blue)',fontWeight:'600'}},isOpen?'▲ Collapse':'▼ View Document'));
+      panel.appendChild(pHdr);
+      if(isOpen){
+        const docFile=isA?CMP.docAFile:CMP.docBFile;
+        const isPdf=docFile?.type==='application/pdf'||(docFile?.name||'').toLowerCase().endsWith('.pdf');
+        const hasPdfB64=docText?.__pdf_base64__;
+        const panelBody=el('div',{style:{height:'380px',borderTop:'1px solid #ddd',position:'relative',overflow:'hidden'}});
+        const rszBar=el('div',{style:{position:'absolute',bottom:'0',left:'0',right:'0',height:'6px',cursor:'ns-resize',background:'rgba(0,0,0,.1)',zIndex:'2',display:'flex',alignItems:'center',justifyContent:'center'}});
+        rszBar.innerHTML='<span style="color:#888;font-size:8px">⋯</span>';
+        let rszH=380;
+        rszBar.addEventListener('mousedown',e=>{e.preventDefault();const sy=e.pageY;rszH=panelBody.offsetHeight;
+          const mm=ev=>{panelBody.style.height=Math.max(150,rszH+ev.pageY-sy)+'px';};
+          const mu=()=>{document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);};
+          document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);});
+        panelBody.appendChild(rszBar);
+        if((isPdf||hasPdfB64)&&(docFile||hasPdfB64)){
+          const src=hasPdfB64?('data:application/pdf;base64,'+hasPdfB64):URL.createObjectURL(docFile);
+          const iframe=document.createElement('iframe');
+          iframe.src=src; iframe.style.cssText='width:100%;height:100%;border:none;background:#fff;';
+          panelBody.appendChild(iframe);
+        } else if(textStr){
+          const td2=el('div',{style:{height:'100%',overflowY:'auto',padding:'16px 18px',fontSize:'10px',lineHeight:'1.7',color:'#1a1a1a',background:'#fff',fontFamily:'Georgia,serif',whiteSpace:'pre-wrap',wordBreak:'break-word'}});
+          td2.textContent=textStr.slice(0,50000)+(textStr.length>50000?'\n\n[First 50K of '+Math.round(textStr.length/1000)+'K chars shown]':'');
+          panelBody.appendChild(td2);
+        } else {
+          panelBody.appendChild(el('div',{style:{padding:'20px',fontSize:'9px',color:'var(--muted)',textAlign:'center'}},'No preview available'));
+        }
+        panel.appendChild(panelBody);
+      } else if(!docName){
+        panel.appendChild(el('div',{style:{padding:'8px',fontSize:'9px',color:'var(--muted)',fontStyle:'italic'}},'No document loaded'));
+      }
+      preViewRow.appendChild(panel);
+    });
+    wrap.appendChild(preViewRow);
   }
 
   if(CMP.result) {
@@ -10452,18 +10836,34 @@ function renderContractCompare(c) {
         const toggleBtn=el('span',{style:{fontSize:'9px',color:'var(--blue)',fontWeight:'600'}},isOpen?'▲ Collapse':'▼ Expand to read');
         pHdr.appendChild(toggleBtn);
         panel.appendChild(pHdr);
-        if(textStr && isOpen){
-          // White background regardless of theme — contract reads like paper
-          const textDiv=el('div',{style:{
-            height:'320px',overflowY:'auto',padding:'16px 18px',
-            fontSize:'10px',lineHeight:'1.7',
-            color:'#1a1a1a',background:'#ffffff',
-            fontFamily:'Georgia, serif',whiteSpace:'pre-wrap',wordBreak:'break-word',
-            borderTop:'1px solid #ddd',resize:'vertical'
-          }});
-          textDiv.textContent=textStr+(textStr.length>50000?'\n\n[Full document — '+Math.round(textStr.length/1000)+'K chars total]':'');
-          panel.appendChild(textDiv);
-        } else {
+        if(isOpen){
+          const docFile=isA?CMP.docAFile:CMP.docBFile;
+          const isPdf=docFile?.type==='application/pdf'||(docFile?.name||'').toLowerCase().endsWith('.pdf');
+          const hasPdfB64=docText?.__pdf_base64__;
+          const panelBody=el('div',{style:{height:'380px',borderTop:'1px solid #ddd',position:'relative',overflow:'hidden'}});
+          // Drag-to-resize bar
+          const rszBar=el('div',{style:{position:'absolute',bottom:'0',left:'0',right:'0',height:'6px',cursor:'ns-resize',background:'rgba(0,0,0,.1)',zIndex:'2',display:'flex',alignItems:'center',justifyContent:'center'}});
+          rszBar.innerHTML='<span style="color:#888;font-size:8px">⋯</span>';
+          let rszH=380;
+          rszBar.addEventListener('mousedown',e=>{e.preventDefault();const sy=e.pageY;rszH=panelBody.offsetHeight;
+            const mm=ev=>{panelBody.style.height=Math.max(150,rszH+ev.pageY-sy)+'px';};
+            const mu=()=>{document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);};
+            document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);});
+          panelBody.appendChild(rszBar);
+          if((isPdf||hasPdfB64)&&(docFile||hasPdfB64)){
+            const src=hasPdfB64?('data:application/pdf;base64,'+hasPdfB64):URL.createObjectURL(docFile);
+            const iframe=document.createElement('iframe');
+            iframe.src=src; iframe.style.cssText='width:100%;height:100%;border:none;background:#fff;';
+            panelBody.appendChild(iframe);
+          } else if(textStr){
+            const textDiv=el('div',{style:{height:'100%',overflowY:'auto',padding:'16px 18px',fontSize:'10px',lineHeight:'1.7',color:'#1a1a1a',background:'#ffffff',fontFamily:'Georgia, serif',whiteSpace:'pre-wrap',wordBreak:'break-word'}});
+            textDiv.textContent=textStr+(textStr.length>50000?'\n\n[Showing first 50K of '+Math.round(textStr.length/1000)+'K chars]':'');
+            panelBody.appendChild(textDiv);
+          } else {
+            panelBody.appendChild(el('div',{style:{padding:'20px',fontSize:'9px',color:'var(--muted)',fontStyle:'italic',textAlign:'center'}},'No preview available — upload a file to view it here'));
+          }
+          panel.appendChild(panelBody);
+        } else if(!docName){
           panel.appendChild(el('div',{style:{padding:'8px',fontSize:'9px',color:'var(--muted)',fontStyle:'italic'}},'No document loaded'));
         }
         viewerRow.appendChild(panel);
