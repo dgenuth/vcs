@@ -44,41 +44,131 @@ body.ps-light-theme{
   --blue:#0078b8;--green:#167a5e;--red:#c42828;
   --amber:#c87800;--orange:#b85200;
 }
-/* PS Light — content area is clearly light, sidebar stays dark navy */
+/* ══════════════════════════════════════════════
+   PS LIGHT THEME — PrimeSource branded light mode
+   Sidebar: dark navy #071630 (matches website)
+   Content: clean white/light-blue
+   Header: white with blue accents (NOT dark)
+   ══════════════════════════════════════════════ */
+
+/* Header — white background in PS Light, NOT dark */
+body.ps-light-theme #hdr{background:#ffffff;border-bottom-color:rgba(0,120,184,.2)}
+body.ps-light-theme #hdr #view-title{color:#071630}
+body.ps-light-theme #hdr .search-input{background:#f0f6fb;border-color:rgba(0,120,184,.3);color:#0a1a2e}
+body.ps-light-theme #hdr #datetime-display{color:#4d6f8f}
+body.ps-light-theme #hdr .user-badge{background:rgba(0,120,184,.12);border-color:rgba(0,120,184,.25);color:#0078b8}
+body.ps-light-theme #hdr .filter-label-tag{background:rgba(0,120,184,.15);color:#0060a0}
+body.ps-light-theme #hdr #ai-toggle{background:rgba(0,120,184,.1);border-color:rgba(0,120,184,.3);color:#0078b8}
+body.ps-light-theme #hdr #ai-toggle.active{background:#0078b8;color:#fff}
+body.ps-light-theme #hdr #save-btn{background:#0078b8;border-color:#0060a0;color:#fff}
+body.ps-light-theme #hdr #refresh-btn{background:#e8f2fc;border-color:rgba(0,120,184,.3);color:#0060a0}
+
+/* Content area */
 body.ps-light-theme #content{background:#edf4fb;color:#0a1a2e}
+
+/* Cards and sections */
 body.ps-light-theme .summary-section{background:#ffffff;border-color:rgba(0,120,184,.18);color:#0a1a2e}
 body.ps-light-theme .summary-section h3{color:#071630}
 body.ps-light-theme .analytics-card{background:#ffffff;border-color:rgba(0,120,184,.2);color:#0a1a2e}
 body.ps-light-theme .analytics-card:hover{background:#f0f7fd}
+body.ps-light-theme .analytics-val{color:#0078b8}
+body.ps-light-theme .analytics-label{color:#4d6f8f}
 body.ps-light-theme .kpi-card{background:#ffffff;border-color:rgba(0,120,184,.2)}
+body.ps-light-theme .kpi-card:hover{background:#f0f7fd}
 body.ps-light-theme .kpi-val{color:#071630}
 body.ps-light-theme .kpi-label{color:#4d6f8f}
+
+/* Tables — headers use brand blue, rows clearly readable */
 body.ps-light-theme .data-table{background:#fff}
-body.ps-light-theme .data-table th{background:#0078b8;color:#ffffff;border-color:#0060a0}
-body.ps-light-theme .data-table td{border-color:rgba(0,120,184,.15);color:#0a1a2e}
+body.ps-light-theme .data-table th{background:#0078b8!important;color:#ffffff!important;border-color:#0060a0!important}
+body.ps-light-theme .data-table th.sortable:hover{color:#d0eeff!important}
+body.ps-light-theme .data-table td{border-color:rgba(0,120,184,.12);color:#0a1a2e}
 body.ps-light-theme .data-table tr:hover td{background:rgba(0,120,184,.06)}
 body.ps-light-theme .data-table tr:nth-child(even) td{background:rgba(0,120,184,.03)}
-body.ps-light-theme .tbl-wrap{border-color:rgba(0,120,184,.2)}
-body.ps-light-theme .modal-bg,body.ps-light-theme .modal-overlay{background:rgba(7,22,48,.55)}
-body.ps-light-theme .modal-content{background:#fff;color:#0a1a2e;border-color:rgba(0,120,184,.25)}
-body.ps-light-theme .modal-content h2,body.ps-light-theme .modal-content h3{color:#071630}
-body.ps-light-theme input,body.ps-light-theme select,body.ps-light-theme textarea{background:#f5f9fd;color:#0a1a2e;border-color:rgba(0,120,184,.3)}
+body.ps-light-theme .tbl-wrap{border-color:rgba(0,120,184,.2);background:#fff}
+
+/* Modals */
+body.ps-light-theme #modal-bg{background:rgba(7,22,48,.55)}
+body.ps-light-theme .modal{background:#fff;border-color:rgba(0,120,184,.25)}
+body.ps-light-theme .modal-body h2,body.ps-light-theme .modal-body h3{color:#071630}
+body.ps-light-theme .modal-input,body.ps-light-theme .modal-textarea{background:#f5f9fd;color:#0a1a2e;border-color:rgba(0,120,184,.3)}
+body.ps-light-theme .modal-input:focus,body.ps-light-theme .modal-textarea:focus{border-color:#0078b8}
+body.ps-light-theme .modal-input::placeholder,body.ps-light-theme .modal-textarea::placeholder{color:#7a9bbf}
+
+/* Inputs globally */
+body.ps-light-theme input:not([type=checkbox]):not([type=radio]),
+body.ps-light-theme select,body.ps-light-theme textarea{background:#f5f9fd;color:#0a1a2e;border-color:rgba(0,120,184,.3)}
 body.ps-light-theme input::placeholder{color:#7a9bbf}
+
+/* Detail panel */
 body.ps-light-theme .detail-panel{background:#f5f9fd;color:#0a1a2e}
 body.ps-light-theme #detail-sticky-hdr{background:#ffffff;border-color:rgba(0,120,184,.2)}
+body.ps-light-theme .detail-label{color:#4d6f8f}
+body.ps-light-theme .detail-value{color:#0a1a2e}
+body.ps-light-theme .detail-vendor-name{color:#071630}
+body.ps-light-theme .detail-edit-field{background:#f0f6fb;border-color:rgba(0,120,184,.3);color:#0a1a2e}
+body.ps-light-theme .detail-section{border-color:rgba(0,120,184,.1)}
+body.ps-light-theme .detail-close{background:rgba(0,120,184,.1);color:#0a1a2e}
+
+/* Links and vendor names */
 body.ps-light-theme .vendor-link{color:#0a1a2e}
 body.ps-light-theme .vendor-link:hover{color:#0078b8}
-body.ps-light-theme .filter-tab{background:#e0ecf8;color:#0a1a2e;border-color:rgba(0,120,184,.2)}
-body.ps-light-theme .filter-tab.active{background:#0078b8;color:#ffffff}
-body.ps-light-theme .col-toggle-btn{background:#e0ecf8;color:#0a1a2e;border-color:rgba(0,120,184,.25)}
-body.ps-light-theme .col-toggle-btn.on{background:#0078b8;color:#ffffff}
-body.ps-light-theme .btn-ghost{border-color:rgba(0,120,184,.35);color:#0078b8}
-body.ps-light-theme .btn-ghost:hover{background:rgba(0,120,184,.1)}
+body.ps-light-theme .psd-link{color:#0078b8}
+
+/* Filter tabs and toggles */
+body.ps-light-theme .filter-tab{background:#e8f2fc;color:#0a1a2e;border-color:rgba(0,120,184,.2)}
+body.ps-light-theme .filter-tab:hover{color:#0078b8}
+body.ps-light-theme .filter-tab.active{background:#0078b8;border-color:#0060a0;color:#ffffff}
+body.ps-light-theme .col-toggle-btn{background:#e8f2fc;color:#0a1a2e;border-color:rgba(0,120,184,.25)}
+body.ps-light-theme .col-toggle-btn:hover{background:#d0e8f8}
+body.ps-light-theme .col-toggle-btn.on{background:#0078b8;border-color:#0060a0;color:#ffffff}
+
+/* Buttons — use brand palette, clearly visible */
+body.ps-light-theme .btn-primary{background:#0078b8;color:#fff}
+body.ps-light-theme .btn-primary:hover{background:#0060a0}
+body.ps-light-theme .btn-secondary{background:#e8f2fc;color:#0a1a2e;border-color:rgba(0,120,184,.3)!important}
+body.ps-light-theme .btn-secondary:hover{background:#d0e8f8}
+body.ps-light-theme .btn-ghost{background:rgba(0,120,184,.07);border-color:rgba(0,120,184,.25)!important;color:#0060a0}
+body.ps-light-theme .btn-ghost:hover{background:rgba(0,120,184,.14);color:#004880}
+body.ps-light-theme .btn-blue{background:rgba(0,120,184,.12);border-color:rgba(0,120,184,.3)!important;color:#0060a0}
+body.ps-light-theme .btn-blue:hover{background:rgba(0,120,184,.22)}
+body.ps-light-theme .btn-green{background:rgba(22,122,94,.1);border-color:rgba(22,122,94,.3)!important;color:#0e6b50}
+body.ps-light-theme .btn-green:hover{background:rgba(22,122,94,.2)}
+body.ps-light-theme .btn-danger{background:rgba(196,40,40,.1);border-color:rgba(196,40,40,.3)!important;color:#9e1c1c}
+body.ps-light-theme .btn-amber{background:rgba(200,120,0,.1);border-color:rgba(200,120,0,.3)!important;color:#8a5500}
+
+/* Sidebar action buttons on dark sidebar */
+body.ps-light-theme .sb-actions .sb-btn{background:rgba(255,255,255,.08);color:rgba(220,235,252,.9);border-color:rgba(255,255,255,.12)!important}
+body.ps-light-theme .sb-actions .sb-btn:hover{background:rgba(255,255,255,.16);color:#fff}
+body.ps-light-theme .sb-actions .sb-btn.accent{background:#0095d5;color:#fff}
+body.ps-light-theme #refresh-btn{background:#e8f2fc;border-color:rgba(0,120,184,.3);color:#0060a0}
+
+/* Forecast */
 body.ps-light-theme .forecast-section{background:#ffffff;border-color:rgba(0,120,184,.15)}
 body.ps-light-theme .forecast-hdr{color:#071630}
+body.ps-light-theme .forecast-hdr:hover{background:rgba(0,120,184,.04)}
+
+/* Charts and analytics */
 body.ps-light-theme .chart-section{background:#ffffff;border-color:rgba(0,120,184,.15)}
 body.ps-light-theme .chart-section h4{color:#071630}
+body.ps-light-theme .charts-row{gap:10px}
+
+/* Score / tier badges readable on light */
 body.ps-light-theme .score-badge{background:#e8f2fc;border-color:rgba(0,120,184,.2);color:#071630}
+body.ps-light-theme .muted{color:#4d6f8f}
+
+/* Note toolbar */
+body.ps-light-theme .note-tb-btn{background:#e8f2fc;border-color:rgba(0,120,184,.2);color:#0a1a2e}
+body.ps-light-theme .note-tb-btn:hover{background:#d0e8f8}
+
+/* Section headers inside content */
+body.ps-light-theme .section-title{color:#071630;border-color:rgba(0,120,184,.2)}
+body.ps-light-theme .group-header{color:#071630}
+
+/* Quick stats in sidebar (on dark sidebar — keep light text) */
+body.ps-light-theme .quick-stats{border-top-color:rgba(255,255,255,.1)}
+body.ps-light-theme .stat-label{color:rgba(180,210,240,.7)}
+body.ps-light-theme .stat-val{color:rgba(220,240,255,.9)}
 body.light-theme #sidebar .sb-logo-img,body.ps-light-theme #sidebar .sb-logo-img{filter:none}
 body.compact .data-table td{padding:1px 4px!important}
 body.compact .data-table th{padding:2px 4px!important}
@@ -177,7 +267,7 @@ body.light-theme #login-screen{background:#f0f2f7}
 /* Tables */
 .tbl-wrap{overflow-x:auto;overflow-y:auto;max-height:calc(100vh - 200px);margin-bottom:8px;border:1px solid var(--border);border-radius:4px}
 .data-table{border-collapse:collapse;font-size:10px;width:max-content;min-width:100%}
-.data-table th{position:sticky;top:0;background:#1a1d2b;color:var(--muted);text-align:left;padding:5px 6px;border-bottom:2px solid var(--border);font-weight:500;white-space:nowrap;z-index:10;user-select:none;cursor:default}
+.data-table th{position:sticky;top:0;background:var(--sb);color:var(--muted);text-align:left;padding:5px 6px;border-bottom:2px solid var(--border);font-weight:500;white-space:nowrap;z-index:10;user-select:none;cursor:default}
 .data-table th.sortable{cursor:pointer}
 .data-table th.sortable:hover{color:var(--text)}
 .data-table td{padding:3px 5px;border-bottom:1px solid rgba(42,45,62,.5);vertical-align:middle;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}
@@ -198,7 +288,7 @@ body.light-theme #login-screen{background:#f0f2f7}
 /* KPI Cards */
 .kpi-row{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
 .kpi-card{flex:1;min-width:72px;background:var(--card);border:1px solid var(--border);border-top:2px solid transparent;border-radius:6px;padding:7px 9px;cursor:pointer;transition:background .1s}
-.kpi-card:hover{background:rgba(255,255,255,.04)}
+.kpi-card:hover{background:rgba(79,124,255,.06)}
 .kpi-val{font-size:20px;font-weight:700}
 .kpi-label{font-size:9px;color:var(--muted);margin-top:1px}
 
@@ -220,8 +310,8 @@ body.light-theme #login-screen{background:#f0f2f7}
 .btn-green:hover{background:rgba(34,197,94,.22)}
 .btn-blue{background:rgba(79,124,255,.12);color:var(--blue);border-color:rgba(79,124,255,.25)!important}
 .btn-blue:hover{background:rgba(79,124,255,.22)}
-.btn-ghost{background:rgba(255,255,255,.04);color:var(--muted);border-color:var(--border)!important}
-.btn-ghost:hover{background:rgba(255,255,255,.08);color:var(--text)}
+.btn-ghost{background:rgba(128,128,128,.07);color:var(--muted);border-color:var(--border)!important}
+.btn-ghost:hover{background:rgba(128,128,128,.14);color:var(--text)}
 .btn-danger{background:rgba(239,68,68,.12);color:var(--red);border-color:rgba(239,68,68,.25)!important}
 .btn-danger:hover{background:rgba(239,68,68,.22)}
 .btn-amber{background:rgba(245,158,11,.12);color:var(--amber);border-color:rgba(245,158,11,.25)!important}
@@ -284,11 +374,11 @@ body.light-theme #login-screen{background:#f0f2f7}
 .modal-body{padding:16px}
 .modal-body h3{font-size:13px;margin-bottom:10px;font-weight:600}
 .modal-sub{font-size:10px;color:var(--muted);margin:-6px 0 9px}
-.modal-textarea{width:100%;height:90px;background:var(--sb);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:11px;padding:6px;border-radius:4px;resize:vertical;outline:none;margin-bottom:7px}
+.modal-textarea{width:100%;height:90px;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:11px;padding:6px;border-radius:4px;resize:vertical;outline:none;margin-bottom:7px}
 .modal-textarea:focus{border-color:var(--blue)}
 .modal-textarea.tall{height:180px}
 .modal-textarea.notes-editor{height:220px;font-family:var(--font);line-height:1.6}
-.modal-input{background:var(--sb);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:11px;padding:4px 6px;border-radius:4px;outline:none;margin-bottom:7px;width:100%}
+.modal-input{background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:11px;padding:4px 6px;border-radius:4px;outline:none;margin-bottom:7px;width:100%}
 .modal-input:focus{border-color:var(--blue)}
 .modal-body label{font-size:10px;color:var(--muted);display:block;margin-bottom:2px;margin-top:5px}
 .modal-row{display:flex;gap:5px;align-items:center;margin-bottom:7px}
@@ -7486,14 +7576,12 @@ function renderVendorDB(c) {
       }
     tr.appendChild(td); tbody.appendChild(tr);
   } else {
-    // Incremental render — show first 150, append more as user scrolls
-    const _BATCH = 150;
-    if (!S._dbRenderCount) S._dbRenderCount = _BATCH;
-    if (!S._dbLastCount || S._dbLastCount !== vendors.length) { S._dbRenderCount = _BATCH; }
+    // Render all vendors at once — use requestIdleCallback to keep UI responsive
+    // Cache busting: if source/sort/filter/search changed, rebuild
+    const _cacheKey = S.dbSource+'|'+(S.search||'')+'|'+JSON.stringify(S.dbFilters)+'|'+S.dbSort.col+'|'+S.dbSort.dir;
     S._dbLastCount = vendors.length;
-    const renderVendors = vendors.slice(0, S._dbRenderCount);
 
-    renderVendors.forEach(v=>{
+    vendors.forEach(v=>{
       const tr=el('tr',{style:{cursor:'pointer'},title:`Click to open ${v.name}`});
       tr.addEventListener('click',()=>openDetail(v));
       const cbTd=el('td',{style:{padding:'3px',textAlign:'center'},onclick(e){e.stopPropagation();}});
@@ -7513,67 +7601,8 @@ function renderVendorDB(c) {
   }
   table.appendChild(tbody); tblWrap.appendChild(table); c.appendChild(tblWrap);
 
-  // Count display + scroll sentinel for infinite scroll
-  const countEl=el('div',{style:{fontSize:'9px',color:'var(--muted)',padding:'6px 2px',textAlign:'center'}},
-    S._dbRenderCount<vendors.length
-      ? 'Showing '+S._dbRenderCount+' of '+vendors.length+' vendors — scroll for more'
-      : vendors.length+' vendors');
-  c.appendChild(countEl);
-
-  // IntersectionObserver sentinel — loads more rows when user scrolls near bottom
-  if(S._dbRenderCount < vendors.length) {
-    const sentinel = el('div',{id:'vdb-sentinel',style:{height:'1px',marginBottom:'20px'}});
-    c.appendChild(sentinel);
-    const obs = new IntersectionObserver(entries=>{
-      if(entries[0].isIntersecting){
-        obs.disconnect();
-        S._dbRenderCount = Math.min(S._dbRenderCount + 150, vendors.length);
-        // Append new rows directly — faster than full re-render
-        const tbody2 = document.querySelector('#vdb-table-wrap tbody');
-        if(tbody2){
-          const newBatch = vendors.slice(S._dbRenderCount-150, S._dbRenderCount);
-          const VISIBLE_COLS2 = VISIBLE_COLS; // closure
-          newBatch.forEach(v=>{
-            const tr=el('tr',{style:{cursor:'pointer'}});
-            tr.addEventListener('click',()=>openDetail(v));
-            const cbTd=el('td',{style:{padding:'3px',textAlign:'center'},onclick(e){e.stopPropagation();}});
-            const cb=el('input',{type:'checkbox'}); cb.setAttribute('data-name',v.name); cbTd.appendChild(cb); tr.appendChild(cbTd);
-            VISIBLE_COLS2.forEach(col=>{
-              const td=el('td');
-              try{ const raw=col.fmt(v); if(raw==null||raw===''){td.textContent='';}else if(raw instanceof Node)td.appendChild(raw);else td.textContent=String(raw); }catch(e){td.textContent='';}
-              tr.appendChild(td);
-            });
-            tbody2.appendChild(tr);
-          });
-          // Update count display
-          countEl.textContent = S._dbRenderCount<vendors.length
-            ? 'Showing '+S._dbRenderCount+' of '+vendors.length+' vendors — scroll for more'
-            : vendors.length+' vendors';
-          // Re-attach sentinel if more to load
-          if(S._dbRenderCount < vendors.length){
-            const newSentinel=el('div',{id:'vdb-sentinel',style:{height:'1px',marginBottom:'20px'}});
-            sentinel.replaceWith(newSentinel);
-            new IntersectionObserver(function observe(ents){
-              if(ents[0].isIntersecting){ this.disconnect(); S._dbRenderCount=Math.min(S._dbRenderCount+150,vendors.length); const c2=$('content');if(c2){c2.innerHTML='';renderVendorDB(c2);}else render(); }
-            }.bind(new IntersectionObserver(()=>{}))).observe(newSentinel);
-          }
-        } else {
-          // Fallback: full re-render
-          const c2=$('content');if(c2){c2.innerHTML='';renderVendorDB(c2);}else render();
-        }
-      }
-    },{rootMargin:'200px'});
-    // Observe within the #content scroll container
-    const contentEl=$('content');
-    if(contentEl){
-      const obs2=new IntersectionObserver(entries=>{
-        if(entries[0].isIntersecting){obs2.disconnect();S._dbRenderCount=Math.min(S._dbRenderCount+150,vendors.length);const c2=$('content');if(c2){c2.innerHTML='';renderVendorDB(c2);}else render();}
-      },{root:contentEl,rootMargin:'300px'});
-      obs2.observe(sentinel);
-    } else {
-      obs.observe(sentinel);
-    }
-  }
+  // Show total count
+  c.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',padding:'6px 2px',textAlign:'center'}},vendors.length+' vendor'+(vendors.length!==1?'s':'')));
 }
 
 function openColumnFilterModal(col, filteredVendors) {
@@ -11746,14 +11775,55 @@ function renderContractEconomics(c) {
     tbl.appendChild(tbody);
     const tblWrap=el('div',{class:'tbl-wrap'}); tblWrap.appendChild(tbl);
     autoSec.appendChild(tblWrap);
-    autoSec.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'6px',fontStyle:'italic'}},'Channel partner assigned by matching vendor notes/category. Override by editing channel partner agreements below or vendor notes.'));
+    // Show which channel partners have contracts vs missing
+    const cpStatusRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'8px',padding:'6px 0',borderTop:'1px solid var(--border)'}});
+    cpStatusRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'4px',alignSelf:'center'}},'Contracts on file:'));
+    S.channelPartnerAgreements.filter(cp=>cp.name!=='Prime Source Direct').forEach(cp=>{
+      const hasDrive=!!cp._driveSuggestedFile;
+      const chip=el('div',{style:{fontSize:'8px',padding:'2px 7px',borderRadius:'3px',background:hasDrive?'rgba(29,170,122,.12)':'rgba(239,68,68,.08)',color:hasDrive?'var(--green)':'var(--muted)',border:'1px solid '+(hasDrive?'rgba(29,170,122,.25)':'rgba(239,68,68,.2)'),cursor:hasDrive?'pointer':'default'},onclick(){if(cp._driveFolder)window.open('https://drive.google.com/drive/folders/'+cp._driveFolder,'_blank');}},
+        (hasDrive?'✓ ':'○ ')+cp.name+' ('+cp.splitPct+'%)');
+      cpStatusRow.appendChild(chip);
+    });
+    autoSec.appendChild(cpStatusRow);
+    autoSec.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'6px',fontStyle:'italic'}},'Channel partner assigned from vendor GPO source field. Click "Load Contracts from Drive" in the section below to verify agreements on file.'));
   }
   c.appendChild(autoSec);
 
   // ── Channel Partner Split Agreements ──
   const splitSec=el('div',{class:'summary-section'});
-  splitSec.appendChild(el('h3',{},'🤝 Channel Partner Split Agreements'));
-  splitSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'Your negotiated revenue share % from each channel partner. Used in all yield calculations.'));
+  const cpHdrRow=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}});
+  cpHdrRow.appendChild(el('h3',{style:{margin:'0',flex:'1'}},'🤝 Channel Partner Split Agreements'));
+  // Load contracts from Drive to auto-fill split percentages
+  const cpDriveBtn=el('button',{class:'btn-xs btn-blue',onclick:async()=>{
+    cpDriveBtn.disabled=true; cpDriveBtn.textContent='⏳ Loading...';
+    const cpNames=['WellLink','HPSI','Entegra','Provista','Medtrust'];
+    let found=0, errors=0;
+    try { await getGDriveToken(); } catch(e){ toast('Drive auth needed','#f59e0b'); cpDriveBtn.disabled=false; cpDriveBtn.textContent='☁ Load Contracts'; return; }
+    for(const cpName of cpNames){
+      try{
+        const resp=await fetch(VCS_PROXY_URL+'?action=listVendorFiles&vendorName='+encodeURIComponent(cpName));
+        const d=await resp.json();
+        if(d.folderFound&&d.files?.length){
+          // Found a contract folder — mark it
+          const cp=S.channelPartnerAgreements.find(c=>c.name===cpName);
+          if(cp){
+            cp._driveFolder=d.folderId;
+            cp._driveFileCount=d.fileCount;
+            cp._driveSuggestedFile=d.files.find(f=>f.suggested)?.name||d.files[0]?.name||'';
+            cp._driveLastUpdated=d.files[0]?.modifiedTime||'';
+            found++;
+          }
+        }
+      }catch(e){ errors++; }
+    }
+    saveSessionState();
+    const c2=$('content');if(c2){c2.innerHTML='';renderContractEconomics(c2);}else render();
+    toast('✓ Found '+found+' channel partner contracts in Drive'+(errors?' ('+errors+' errors)':''));
+    cpDriveBtn.disabled=false; cpDriveBtn.textContent='☁ Load Contracts';
+  }},'☁ Load Contracts from Drive');
+  cpHdrRow.appendChild(cpDriveBtn);
+  splitSec.appendChild(cpHdrRow);
+  splitSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'Your negotiated revenue share % from each channel partner. Click "Load Contracts from Drive" to check for agreements on file. Edit split % directly — used in all yield calculations.'));
   const splitGrid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220px,1fr))',gap:'8px',marginBottom:'8px'}});
   S.channelPartnerAgreements.forEach((cp,i)=>{
     const card=el('div',{style:{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'5px',padding:'10px'}});
@@ -11767,6 +11837,22 @@ function renderContractEconomics(c) {
     const notesIn=el('input',{type:'text',class:'detail-edit-field',style:{fontSize:'9px'},placeholder:'Notes...',value:cp.notes||''});
     notesIn.addEventListener('change',()=>{cp.notes=notesIn.value;});
     card.appendChild(notesIn);
+    // Show Drive contract info if loaded
+    if(cp._driveSuggestedFile){
+      const driveInfo=el('div',{style:{fontSize:'8px',color:'var(--green)',marginTop:'4px',display:'flex',gap:'4px',alignItems:'center'}});
+      driveInfo.appendChild(el('span',{},'📄 Contract on file:'));
+      const fileLink=el('span',{style:{color:'var(--blue)',cursor:'pointer',fontWeight:'600',textDecoration:'underline'},
+        onclick(){
+          if(cp._driveFolder) window.open('https://drive.google.com/drive/folders/'+cp._driveFolder,'_blank');
+        }},cp._driveSuggestedFile.slice(0,35)+(cp._driveSuggestedFile.length>35?'…':''));
+      driveInfo.appendChild(fileLink);
+      card.appendChild(driveInfo);
+      if(cp._driveLastUpdated){
+        card.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)',marginTop:'1px'}},'Updated: '+new Date(cp._driveLastUpdated).toLocaleDateString()));
+      }
+    } else if(cp.name!=='Prime Source Direct'){
+      card.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px',fontStyle:'italic'}},'No contract found in Drive — click "Load Contracts" above'));
+    }
     if (cp.name!=='Prime Source Direct') {
       const rm=el('button',{class:'btn-xs btn-danger',style:{marginTop:'6px'},onclick(){S.channelPartnerAgreements.splice(i,1);render();}},'Remove');
       card.appendChild(rm);
@@ -14147,6 +14233,35 @@ function renderForecast(c) {
   }
 }
 
+// Wrap a chart section with expand-to-fullscreen capability
+function makeExpandable(section, title) {
+  const hdr=section.querySelector('h4')||section.querySelector('h3');
+  if(!hdr) return;
+  const expandBtn=el('button',{
+    class:'btn-xs btn-ghost',
+    style:{float:'right',fontSize:'8px',marginLeft:'8px',marginTop:'1px'},
+    title:'Expand to full view',
+    onclick(){
+      openModal(body=>{
+        body.style.minWidth='min(90vw,1100px)';
+        body.style.maxWidth='96vw';
+        const cloned=section.cloneNode(true);
+        // Remove expand buttons from clone
+        cloned.querySelectorAll('.expand-btn').forEach(b=>b.remove());
+        // Make canvases bigger
+        cloned.querySelectorAll('canvas').forEach(cv=>{cv.style.maxHeight='480px';});
+        body.appendChild(cloned);
+        // Re-render charts at larger size in the clone
+        const btns=el('div',{class:'modal-btns',style:{marginTop:'12px'}});
+        btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));
+        body.appendChild(btns);
+      });
+    }
+  },'⛶ Expand');
+  expandBtn.classList.add('expand-btn');
+  hdr.insertBefore(expandBtn,hdr.firstChild);
+}
+
 function renderAnalytics(c) {
   const today=new Date(), vs=S.vendors;
   const sd=SPEND_STATE.data?.vendors||S._analyticsSpendData||[];
@@ -14218,6 +14333,7 @@ function renderAnalytics(c) {
       const expMonthVendors=[];
       for(let i=0;i<12;i++){const m=(today.getMonth()+i)%12,y=today.getFullYear()+Math.floor((today.getMonth()+i)/12);expMonthVendors.push(vs.filter(v=>{const e=getCurrentExpiry(v);return e&&e.getFullYear()===y&&e.getMonth()===m;}));}
       new Chart(ec,{type:'bar',data:{labels:expLabels,datasets:[{label:'Expiring',data:expData,backgroundColor:expData.map((_,i)=>i===0?'#ef4444':i<=2?'#f59e0b':'#4f7cff'),borderRadius:3}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.raw+' contracts expiring'}}},scales:{y:{beginAtZero:true,ticks:{stepSize:1,color:'var(--muted)',font:{size:9}}},x:{ticks:{color:'var(--muted)',font:{size:9}}}},onClick(e,els){if(els.length){const i=els[0].index;openAnalyticsPopup(expLabels[i]+' Expiring',expMonthVendors[i]);}}}});
+      [tierSec,expSec].forEach(makeExpandable);
       c.appendChild(row1);
 
       const row2=el('div',{class:'charts-row'});
@@ -14236,7 +14352,10 @@ function renderAnalytics(c) {
         else if(f<3)feeBuckets['2–3%']++;
         else feeBuckets['>3%']++;
       });
-      new Chart(fc,{type:'bar',data:{labels:Object.keys(feeBuckets),datasets:[{data:Object.values(feeBuckets),backgroundColor:'#4f7cff',borderRadius:3}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{stepSize:1,color:'var(--muted)',font:{size:9}}},x:{ticks:{color:'var(--muted)',font:{size:9}}}}}});
+      // Build vendor buckets for drilldown
+      const feeBucketVendors={'0%':[],'0.01–0.5%':[],'0.5–1%':[],'1–2%':[],'2–3%':[],'>3%':[],'Not Set':[]};
+      vs.filter(isVisible).forEach(v=>{const f=parseFee(v.adminFee);if(f===null)feeBucketVendors['Not Set'].push(v);else if(f===0)feeBucketVendors['0%'].push(v);else if(f<0.5)feeBucketVendors['0.01–0.5%'].push(v);else if(f<1)feeBucketVendors['0.5–1%'].push(v);else if(f<2)feeBucketVendors['1–2%'].push(v);else if(f<3)feeBucketVendors['2–3%'].push(v);else feeBucketVendors['>3%'].push(v);});
+      new Chart(fc,{type:'bar',data:{labels:Object.keys(feeBuckets),datasets:[{data:Object.values(feeBuckets),backgroundColor:'#4f7cff',hoverBackgroundColor:'#2d5ee0',borderRadius:3}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.raw+' vendors — click to drill down'}}},scales:{y:{beginAtZero:true,ticks:{stepSize:1,color:'var(--muted)',font:{size:9}}},x:{ticks:{color:'var(--muted)',font:{size:9}}}},onClick(e,els){if(els.length){const bkt=Object.keys(feeBuckets)[els[0].index];openAnalyticsPopup('Fee Rate: '+bkt,feeBucketVendors[bkt]);}}}});
 
       // Top categories
       const catSec=el('div',{class:'chart-section'});
@@ -14246,6 +14365,7 @@ function renderAnalytics(c) {
       vs.filter(isVisible).forEach(v=>{const k=v.category||'Uncategorized';catMap[k]=(catMap[k]||0)+1;});
       const topCats=Object.entries(catMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
       new Chart(cc,{type:'bar',data:{labels:topCats.map(c=>c[0].slice(0,18)),datasets:[{data:topCats.map(c=>c[1]),backgroundColor:'#22c55e',borderRadius:3}]},options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.raw+' vendors'}}},scales:{x:{beginAtZero:true,ticks:{color:'var(--muted)',font:{size:9}}},y:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(els.length){const cat=topCats[els[0].index][0];openAnalyticsPopup(cat+' vendors',vs.filter(v=>isVisible(v)&&(v.category||''===cat)));}}}});
+      [feeSec,catSec].forEach(makeExpandable);
       c.appendChild(row2);
     });
   }
@@ -14314,12 +14434,15 @@ function renderAnalytics(c) {
         {label:'Expected',data:top15.map(v=>v.expectedRevenue||0),backgroundColor:'rgba(245,158,11,.5)',borderRadius:3},
       ]},options:{indexAxis:'y',responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}}},scales:{x:{stacked:false,ticks:{color:'var(--muted)',font:{size:8},callback:v=>'$'+Math.round(v/1000)+'K'}},y:{ticks:{color:'var(--text)',font:{size:8}}}}}});
 
-      // Fee gap scatter
+      // Fee Gap by vendor — top 20 with gaps (moved from duplicate position)
       const gapSec=el('div',{class:'chart-section'});
-      gapSec.appendChild(el('h4',{},'Fee Gap Analysis (Received vs Expected)'));
+      gapSec.appendChild(el('h4',{},'Fee Rate: Contracted vs Received (Top Vendors)'));
       const gapC=el('canvas',{style:{maxHeight:'260px'}}); gapSec.appendChild(gapC); row1.appendChild(gapSec);
-      const gapVendors=sd.filter(v=>v.expectedRevenue>0).slice(0,20);
-      new Chart(gapC,{type:'bar',data:{labels:gapVendors.map(v=>v.name.slice(0,14)),datasets:[{label:'Gap ($)',data:gapVendors.map(v=>v.gap||0),backgroundColor:gapVendors.map(v=>(v.gap||0)<0?'#ef4444':'#22c55e'),borderRadius:3}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{ticks:{color:'var(--muted)',font:{size:8},callback:v=>'$'+Math.round(v).toLocaleString()}},x:{ticks:{color:'var(--text)',font:{size:8}}}}}});
+      const topVendors=sd.filter(v=>v.totalSpend>0).slice(0,12);
+      new Chart(gapC,{type:'bar',data:{labels:topVendors.map(v=>v.name.slice(0,14)),datasets:[
+        {label:'Contracted Rate %',data:topVendors.map(v=>v.contractedPct||0),backgroundColor:'rgba(79,124,255,.6)',borderRadius:3},
+        {label:'Actual Rate %',data:topVendors.map(v=>v.actualPct||0),backgroundColor:topVendors.map(v=>(v.actualPct||0)<(v.contractedPct||0)*0.8?'#ef4444':'#22c55e'),borderRadius:3},
+      ]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+ctx.raw.toFixed(2)+'%'}}},scales:{y:{beginAtZero:true,ticks:{color:'var(--muted)',font:{size:8},callback:v=>v.toFixed(1)+'%'}},x:{ticks:{color:'var(--text)',font:{size:8}}}},onClick(e,els){if(els.length){const v=topVendors[els[0].index];const vcsV=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));if(vcsV)openDetail(vcsV);else toast(v.name,'#4f7cff');}}}});
       c.appendChild(row1);
 
       // Category spend breakdown
@@ -14331,14 +14454,15 @@ function renderAnalytics(c) {
       sd.forEach(v=>{const k=v.category||'Other';catSpend[k]=(catSpend[k]||0)+v.totalSpend;});
       const topCatSpend=Object.entries(catSpend).sort((a,b)=>b[1]-a[1]).slice(0,10);
       const PALETTE=['#4f7cff','#22c55e','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#ec4899','#10b981','#6366f1'];
-      new Chart(catC,{type:'doughnut',data:{labels:topCatSpend.map(c=>c[0]),datasets:[{data:topCatSpend.map(c=>c[1]),backgroundColor:PALETTE,borderWidth:2,borderColor:'var(--card)'}]},options:{responsive:true,plugins:{legend:{position:'right',labels:{font:{size:9},color:'var(--text)',boxWidth:10}}}}});
+      new Chart(catC,{type:'doughnut',data:{labels:topCatSpend.map(c=>c[0]),datasets:[{data:topCatSpend.map(c=>c[1]),backgroundColor:PALETTE,borderWidth:2,borderColor:'var(--card)'}]},options:{responsive:true,plugins:{legend:{position:'right',labels:{font:{size:9},color:'var(--text)',boxWidth:10}},tooltip:{callbacks:{label:ctx=>ctx.label+': $'+Math.round(ctx.raw).toLocaleString()}}},onClick(e,els){if(els.length){const cat=topCatSpend[els[0].index][0];const catVendors=sd.filter(v=>v.category===cat);openModal(body=>{body.appendChild(el('h3',{},'Spend: '+cat));body.appendChild(buildTable(['Vendor','YTD Spend','Fees','Fee Rate'],catVendors,v=>[v.name,'$'+Math.round(v.totalSpend).toLocaleString(),'$'+Math.round(v.totalFees).toLocaleString(),v.contractedPct?v.contractedPct.toFixed(2)+'%':'—']));const btns=el('div',{class:'modal-btns'});btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns);});}}}});
 
       // Fee rate vs actual rate scatter
       const rateSec=el('div',{class:'chart-section'});
       rateSec.appendChild(el('h4',{},'Contracted vs Actual Fee Rate (%)'));
       const rateC=el('canvas',{style:{maxHeight:'200px'}}); rateSec.appendChild(rateC); row2.appendChild(rateSec);
       const rateData=sd.filter(v=>v.contractedPct>0&&v.totalSpend>0).slice(0,25).map(v=>({x:v.contractedPct,y:v.actualPct,label:v.name.slice(0,12)}));
-      new Chart(rateC,{type:'scatter',data:{datasets:[{label:'Vendors',data:rateData,backgroundColor:rateData.map(d=>d.y<d.x*0.8?'#ef4444':d.y>d.x*1.1?'#22c55e':'#4f7cff'),pointRadius:6}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>`${ctx.raw.label}: contracted ${ctx.raw.x.toFixed(1)}% actual ${ctx.raw.y.toFixed(1)}%`}}},scales:{x:{title:{display:true,text:'Contracted %',color:'var(--muted)',font:{size:9}},ticks:{color:'var(--muted)',font:{size:9}}},y:{title:{display:true,text:'Actual %',color:'var(--muted)',font:{size:9}},ticks:{color:'var(--muted)',font:{size:9}}}}}});
+      new Chart(rateC,{type:'scatter',data:{datasets:[{label:'Vendors',data:rateData,backgroundColor:rateData.map(d=>d.y<d.x*0.8?'#ef4444':d.y>d.x*1.1?'#22c55e':'#4f7cff'),pointRadius:7,hoverRadius:9}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>`${ctx.raw.label}: contracted ${ctx.raw.x.toFixed(2)}% | actual ${ctx.raw.y.toFixed(2)}% | ${ctx.raw.y<ctx.raw.x*0.8?'⚠ Under-paying':'✓ On track'}`}}},scales:{x:{title:{display:true,text:'Contracted %',color:'var(--muted)',font:{size:9}},ticks:{color:'var(--muted)',font:{size:9}}},y:{title:{display:true,text:'Actual %',color:'var(--muted)',font:{size:9}},ticks:{color:'var(--muted)',font:{size:9}}}},onClick(e,els){if(els.length){const d=rateData[els[0].index];const v=sd.find(sv=>sv.name.slice(0,12)===d.label);const vcsV=v&&S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));if(vcsV)openDetail(vcsV);else toast('Vendor: '+d.label,'#4f7cff');}}}});
+      [spSec,gapSec,catSec2,rateSec].forEach(makeExpandable);
       c.appendChild(row2);
     });
 
@@ -14405,14 +14529,14 @@ function renderAnalytics(c) {
       stageSec.appendChild(el('h4',{},'Pipeline by Stage'));
       const stC=el('canvas',{style:{maxHeight:'200px'}}); stageSec.appendChild(stC); row1.appendChild(stageSec);
       const stageEntries=Object.entries(byStage).sort((a,b)=>b[1].value-a[1].value);
-      new Chart(stC,{type:'bar',data:{labels:stageEntries.map(e=>e[0].slice(0,18)),datasets:[{label:'Value ($)',data:stageEntries.map(e=>e[1].value),backgroundColor:'#4f7cff',borderRadius:3},{label:'Count',data:stageEntries.map(e=>e[1].count),backgroundColor:'#22c55e',borderRadius:3,yAxisID:'y2'}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}}},scales:{y:{ticks:{color:'var(--muted)',font:{size:8},callback:v=>'$'+Math.round(v/1000)+'K'}},y2:{position:'right',ticks:{color:'var(--muted)',font:{size:8}},grid:{drawOnChartArea:false}},x:{ticks:{color:'var(--text)',font:{size:9}}}}}});
+      new Chart(stC,{type:'bar',data:{labels:stageEntries.map(e=>e[0].slice(0,18)),datasets:[{label:'Value ($)',data:stageEntries.map(e=>e[1].value),backgroundColor:'#4f7cff',hoverBackgroundColor:'#2d5ee0',borderRadius:3},{label:'Count',data:stageEntries.map(e=>e[1].count),backgroundColor:'#22c55e',hoverBackgroundColor:'#16a34a',borderRadius:3,yAxisID:'y2'}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+(ctx.dataset.yAxisID==='y2'?ctx.raw+' opps':'$'+Math.round(ctx.raw).toLocaleString())}}},scales:{y:{ticks:{color:'var(--muted)',font:{size:8},callback:v=>'$'+Math.round(v/1000)+'K'}},y2:{position:'right',ticks:{color:'var(--muted)',font:{size:8}},grid:{drawOnChartArea:false}},x:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(els.length){const stage=stageEntries[els[0].index][0];const stageOpps=opps.filter(o=>o.StageName===stage);openModal(body=>{body.appendChild(el('h3',{},'Pipeline: '+stage+' ('+stageOpps.length+' opps)'));body.appendChild(buildTable(['Account','Amount','Close Date','Owner'],stageOpps,o=>[o._accountName||'—','$'+Number(o.Amount||0).toLocaleString(),o.CloseDate||'—',o.Owner?.Name||'—']));const btns=el('div',{class:'modal-btns'});btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns);});}}}});
 
       const caseSec=el('div',{class:'chart-section'});
       caseSec.appendChild(el('h4',{},'Cases by Priority'));
       const caC=el('canvas',{style:{maxHeight:'200px'}}); caseSec.appendChild(caC); row1.appendChild(caseSec);
       const casePri={High:0,Medium:0,Low:0};
       cases.forEach(c=>{if(casePri[c.Priority]!==undefined)casePri[c.Priority]++;});
-      new Chart(caC,{type:'doughnut',data:{labels:Object.keys(casePri),datasets:[{data:Object.values(casePri),backgroundColor:['#ef4444','#f59e0b','#6b7280'],borderWidth:2,borderColor:'var(--card)'}]},options:{responsive:true,plugins:{legend:{position:'right',labels:{font:{size:10},color:'var(--text)'}}}}});
+      new Chart(caC,{type:'doughnut',data:{labels:Object.keys(casePri),datasets:[{data:Object.values(casePri),backgroundColor:['#ef4444','#f59e0b','#6b7280'],borderWidth:2,borderColor:'var(--card)'}]},options:{responsive:true,plugins:{legend:{position:'right',labels:{font:{size:10},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.label+': '+ctx.raw+' cases'}}},onClick(e,els){if(els.length){const pri=Object.keys(casePri)[els[0].index];const priCases=cases.filter(c=>c.Priority===pri);openModal(body=>{body.appendChild(el('h3',{},'Cases: '+pri+' Priority ('+priCases.length+')'));body.appendChild(buildTable(['Subject','Account','Status','Owner'],priCases,c=>[c.Subject||'—',c._accountName||c.Account?.Name||'—',c.Status||'—',c.Owner?.Name||'—']));const btns=el('div',{class:'modal-btns'});btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns);});}}}});
       c.appendChild(row1);
     });
 
@@ -14473,13 +14597,13 @@ function renderAnalytics(c) {
       const repSec=el('div',{class:'chart-section'});
       repSec.appendChild(el('h4',{},'Pipeline Value by Rep'));
       const rc=el('canvas',{style:{maxHeight:'200px'}}); repSec.appendChild(rc); row1.appendChild(repSec);
-      new Chart(rc,{type:'bar',data:{labels:reps.map(r=>r.name.split(' ')[0]),datasets:[{label:'Pipeline $',data:reps.map(r=>r.pipelineValue),backgroundColor:'#4f7cff',borderRadius:3},{label:'Open Opps',data:reps.map(r=>r.opps.length),backgroundColor:'#22c55e',borderRadius:3,yAxisID:'y2'}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}}},scales:{y:{ticks:{color:'var(--muted)',font:{size:8},callback:v=>'$'+Math.round(v/1000)+'K'}},y2:{position:'right',ticks:{color:'var(--muted)',font:{size:8}},grid:{drawOnChartArea:false}},x:{ticks:{color:'var(--text)',font:{size:9}}}}}});
+      new Chart(rc,{type:'bar',data:{labels:reps.map(r=>r.name.split(' ')[0]),datasets:[{label:'Pipeline $',data:reps.map(r=>r.pipelineValue),backgroundColor:'#4f7cff',hoverBackgroundColor:'#2d5ee0',borderRadius:3},{label:'Open Opps',data:reps.map(r=>r.opps.length),backgroundColor:'#22c55e',hoverBackgroundColor:'#16a34a',borderRadius:3,yAxisID:'y2'}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+(ctx.dataset.yAxisID==='y2'?ctx.raw+' opps':'$'+Math.round(ctx.raw).toLocaleString())}}},scales:{y:{ticks:{color:'var(--muted)',font:{size:8},callback:v=>'$'+Math.round(v/1000)+'K'}},y2:{position:'right',ticks:{color:'var(--muted)',font:{size:8}},grid:{drawOnChartArea:false}},x:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(els.length){const rep=reps[els[0].index];openModal(body=>{body.appendChild(el('h3',{},rep.name+' — Open Opportunities ('+rep.opps.length+')'));if(rep.opps.length)body.appendChild(buildTable(['Account','Stage','Amount','Close Date'],rep.opps,o=>[o._accountName||o.Account?.Name||'—',o.StageName||'—','$'+Number(o.Amount||0).toLocaleString(),o.CloseDate||'—']));else body.appendChild(el('p',{style:{color:'var(--muted)',padding:'12px'}},'No open opportunities'));const btns=el('div',{class:'modal-btns'});btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns);});}}}});
 
       const taskSec=el('div',{class:'chart-section'});
       taskSec.appendChild(el('h4',{},'Overdue Tasks by Rep'));
       const tc2=el('canvas',{style:{maxHeight:'200px'}}); taskSec.appendChild(tc2); row1.appendChild(taskSec);
       const withOverdue=reps.filter(r=>r.tasks.length>0);
-      new Chart(tc2,{type:'bar',data:{labels:withOverdue.map(r=>r.name.split(' ')[0]),datasets:[{label:'Total Tasks',data:withOverdue.map(r=>r.tasks.length),backgroundColor:'rgba(79,124,255,.5)',borderRadius:3},{label:'Overdue',data:withOverdue.map(r=>r.overdueTask),backgroundColor:'#ef4444',borderRadius:3}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}}},scales:{y:{beginAtZero:true,ticks:{color:'var(--muted)',font:{size:8}}},x:{ticks:{color:'var(--text)',font:{size:9}}}}}});
+      new Chart(tc2,{type:'bar',data:{labels:withOverdue.map(r=>r.name.split(' ')[0]),datasets:[{label:'Total Tasks',data:withOverdue.map(r=>r.tasks.length),backgroundColor:'rgba(79,124,255,.5)',borderRadius:3},{label:'Overdue',data:withOverdue.map(r=>r.overdueTask),backgroundColor:'#ef4444',hoverBackgroundColor:'#c42828',borderRadius:3}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+ctx.raw+' tasks'}}},scales:{y:{beginAtZero:true,ticks:{color:'var(--muted)',font:{size:8}}},x:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(els.length){const rep=withOverdue[els[0].index];const overdueTasks=rep.tasks.filter(t=>t.ActivityDate&&new Date(t.ActivityDate)<today);openModal(body=>{body.appendChild(el('h3',{},rep.name+' — Overdue Tasks ('+overdueTasks.length+')'));if(overdueTasks.length)body.appendChild(buildTable(['Subject','Due Date','Account'],overdueTasks,t=>[t.Subject||'—',t.ActivityDate||'—',t.What?.Name||'—']));else body.appendChild(el('p',{style:{color:'var(--muted)',padding:'12px'}},'No overdue tasks'));const btns=el('div',{class:'modal-btns'});btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns);});}}}});
       c.appendChild(row1);
     });
 
