@@ -32,8 +32,23 @@ body.midnight-theme{--bg:#0a0a12;--sb:#10101c;--card:#14141f;--border:#22223a;--
 body.slate-theme{--bg:#0f172a;--sb:#1e293b;--card:#1e293b;--border:#334155;--text:#f1f5f9;--muted:#64748b;--blue:#60a5fa;--green:#4ade80;--red:#f87171;--amber:#facc15;--orange:#fb923c}
 body.warm-theme{--bg:#1c1410;--sb:#241c16;--card:#2a2018;--border:#3d2e22;--text:#f5ede0;--muted:#9c7c5a;--blue:#fbbf24;--green:#86efac;--red:#f87171;--amber:#fde68a;--orange:#fdba74}
 body.rose-theme{--bg:#0f0a0a;--sb:#1a1010;--card:#1f1414;--border:#3a1f1f;--text:#f0e0e0;--muted:#9a6060;--blue:#fb7185;--green:#34d399;--red:#f87171;--amber:#fcd34d;--orange:#fb923c}
-body.ps-dark-theme{--bg:#0a0f1a;--sb:#0c1628;--card:#112038;--border:rgba(0,128,192,.2);--text:#ddeeff;--muted:#6b8aaa;--blue:#0080c0;--green:#20a080;--red:#e04040;--amber:#f0a020;--orange:#e07020}
-body.ps-light-theme{--bg:#f0f6fb;--sb:#0c1e38;--card:#ffffff;--border:rgba(0,128,192,.18);--text:#0c1e38;--muted:#4a6a8a;--blue:#0080c0;--green:#1a8a6a;--red:#c83030;--amber:#d08000;--orange:#c05800}
+body.ps-dark-theme{
+  --bg:#0b1526;--sb:#071020;--card:#0f1e35;
+  --border:rgba(0,140,210,.22);--text:#e8f2fc;--muted:#7a9bbf;
+  --blue:#0095d5;--green:#1daa7a;--red:#e84545;
+  --amber:#f0a820;--orange:#e07825;
+}
+body.ps-light-theme{
+  --bg:#edf4fb;--sb:#071630;--card:#ffffff;
+  --border:rgba(0,130,195,.2);--text:#0a1a2e;--muted:#4d6f8f;
+  --blue:#0078b8;--green:#167a5e;--red:#c42828;
+  --amber:#c87800;--orange:#b85200;
+}
+body.ps-light-theme #content,body.ps-light-theme .summary-section,body.ps-light-theme .analytics-card{background:var(--card);color:var(--text)}
+body.ps-light-theme .data-table th{background:rgba(0,120,184,.08);color:#0a1a2e}
+body.ps-light-theme .data-table tr:nth-child(even){background:rgba(0,120,184,.04)}
+body.ps-light-theme .modal-overlay{background:rgba(7,22,48,.6)}
+body.ps-light-theme input,body.ps-light-theme select,body.ps-light-theme textarea{background:#f5f9fd;color:#0a1a2e;border-color:rgba(0,120,184,.3)}
 body.light-theme #sidebar .sb-logo-img,body.ps-light-theme #sidebar .sb-logo-img{filter:none}
 body.compact .data-table td{padding:1px 4px!important}
 body.compact .data-table th{padding:2px 4px!important}
@@ -287,12 +302,16 @@ body.light-theme .cal-closed-label{background:rgba(220,38,38,.15);color:#991b1b}
 body.light-theme .score-pill{color:#fff}
 body.light-theme .tier-tag{color:#fff}
 body.light-theme .nav-btn.active{background:rgba(37,99,235,.1)}
-body.ps-dark-theme .nav-btn.active{background:rgba(0,128,192,.2);border-left:2px solid #0080c0}
-body.ps-light-theme .nav-btn.active{background:rgba(0,128,192,.15);border-left:2px solid #0080c0}
-body.ps-light-theme .nav-btn{color:rgba(221,238,255,.85)}
-body.ps-light-theme .nav-btn:hover{color:#ddeeff;background:rgba(0,128,192,.15)}
-body.ps-dark-theme .sb-logo-img,body.ps-light-theme .sb-logo-img{filter:brightness(1.1)}
+body.ps-dark-theme .nav-btn.active{background:rgba(0,149,213,.18);border-left:3px solid #0095d5}
+body.ps-dark-theme .nav-btn:hover{background:rgba(0,149,213,.1);color:#e8f2fc}
+body.ps-light-theme .nav-btn{color:rgba(220,235,252,.88)}
+body.ps-light-theme .nav-btn:hover{color:#ffffff;background:rgba(0,149,213,.18)}
+body.ps-light-theme .nav-btn.active{background:rgba(0,149,213,.22);border-left:3px solid #0095d5;color:#ffffff}
+body.ps-light-theme .sb-logo-text,.ps-dark-theme .sb-logo-text{color:#e8f2fc}
+body.ps-dark-theme .sb-logo-img,body.ps-light-theme .sb-logo-img{filter:brightness(1.08) saturate(1.1)}
 body.light-theme .sb-logo-img{filter:none}
+body.ps-light-theme .sb-actions .sb-btn{background:rgba(255,255,255,.1);color:rgba(220,235,252,.9)}
+body.ps-light-theme .sb-actions .sb-btn:hover{background:rgba(255,255,255,.18);color:#fff}
 body.light-theme .filter-tab.active{background:var(--blue);color:#fff}
 body.light-theme .kpi-card{box-shadow:0 1px 4px rgba(0,0,0,.08)}
 body.light-theme .health-bar-marker{border-color:#f0f2f7}
@@ -645,7 +664,9 @@ async function signInWithGoogle() {
         },
         error_callback: (err) => reject(new Error(err.type || 'Google auth error'))
       });
-      client.requestAccessToken({ prompt: 'select_account' });
+      // Use silent prompt if we've authed before this session; only show account picker first time
+      const _hadToken = !!GDriveToken;
+      client.requestAccessToken({ prompt: _hadToken ? '' : 'select_account' });
     });
     // Fetch user info with token
     const userResp = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
@@ -6645,10 +6666,11 @@ function closeDetail() {
 }
 
 // ─── Table Builder ────────────────────────────────────────────────────────────
-function buildTable(headers, rows, rowFn) {
+function buildTable(headers, rows, rowFn, opts) {
   if (!rows.length) return el('p',{class:'muted',style:{padding:'10px 0'}},'No results.');
   const wrap=el('div',{class:'tbl-wrap'});
   const tbl=el('table',{class:'data-table'});
+  if(opts&&opts.fixedLayout) tbl.style.tableLayout='fixed';
   const thead=el('thead'); const trh=el('tr');
   for (let hi=0;hi<headers.length;hi++) {
     const h=headers[hi];
@@ -7817,9 +7839,9 @@ function renderCustomers(c) {
   ctrlRow.appendChild(searchInp);
   // View mode
   if(!S._custViewMode) S._custViewMode='tree';
-  ['tree','flat','opps','cases','contacts'].forEach(mode=>{
+  ['tree','flat','opps','cases','contacts','performance','repschedule'].forEach(mode=>{
     ctrlRow.appendChild(el('button',{class:'col-toggle-btn'+(S._custViewMode===mode?' on':''),onclick(){S._custViewMode=mode;render();}},
-      {tree:'🌳 Hierarchy',flat:'📋 List',opps:'💼 Opps',cases:'🎫 Cases',contacts:'👤 Contacts'}[mode]));
+      {tree:'🌳 Hierarchy',flat:'📋 List',opps:'💼 Opps',cases:'🎫 Cases',contacts:'👤 Contacts',performance:'📊 Performance',repschedule:'📅 Rep Schedule'}[mode]));
   });
   const loadBtn=el('button',{class:'btn-primary',onclick(){loadCustomerData();}},S._custLoading?'⏳ Loading...':'🔄 Refresh');
   loadBtn.disabled=S._custLoading;
@@ -8122,6 +8144,140 @@ function renderCustomers(c) {
       tbody.appendChild(tr);
     });
     tbl.appendChild(tbody); const tw=el('div',{class:'tbl-wrap'});tw.appendChild(tbl);wrap.appendChild(tw);
+  }
+
+
+  else if(S._custViewMode==='performance'){
+    const accts=S._custData?.accounts||[];
+    const opps=S._custData?.opps||[];
+    const cases=S._custData?.cases||[];
+    if(!accts.length){
+      wrap.appendChild(el('p',{style:{color:'var(--muted)',padding:'20px',textAlign:'center'}},'Load customer data first — click Refresh above.'));
+      c.appendChild(wrap); return;
+    }
+    wrap.appendChild(el('h3',{style:{marginBottom:'8px'}},'📊 Customer Performance Review'));
+    wrap.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'12px',lineHeight:'1.6'}},'Identifies customers to prioritize for outreach: upsell opportunities, stale relationships, and routine business reviews.'));
+
+    // Build performance profile per account
+    const profiles=accts.filter(a=>!a.ParentId).map(a=>{
+      const children=accts.filter(c=>c.ParentId===a.Id);
+      const aOpps=opps.filter(o=>o.AccountId===a.Id||children.some(c=>c.Id===o.AccountId));
+      const aCases=cases.filter(c=>c.AccountId===a.Id||children.some(ch=>ch.Id===c.AccountId));
+      const lastActivity=a.LastActivityDate?new Date(a.LastActivityDate):null;
+      const daysSince=lastActivity?Math.round((Date.now()-lastActivity)/86400000):999;
+      const annualRev=Number(a.AnnualRevenue||0);
+      // Score: higher = needs attention
+      const urgency=(daysSince>90?3:daysSince>60?2:daysSince>30?1:0)
+        +(aCases.filter(c=>c.Priority==='High').length>0?2:0)
+        +(aOpps.filter(o=>['Proposal/Price Quote','Value Proposition','Needs Analysis'].includes(o.StageName)).length>0?1:0);
+      const flag=daysSince>90?'🔴 Overdue':daysSince>60?'🟡 Stale':daysSince>30?'🟢 Active':'✅ Recent';
+      return {a,children,aOpps,aCases,daysSince,annualRev,urgency,flag,lastActivity};
+    }).sort((x,y)=>y.urgency-x.urgency||x.daysSince-y.daysSince);
+
+    // Summary tiles
+    const pKpi=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'8px',marginBottom:'14px'}});
+    const overdue=profiles.filter(p=>p.daysSince>90);
+    const stale=profiles.filter(p=>p.daysSince>60&&p.daysSince<=90);
+    const withOpps=profiles.filter(p=>p.aOpps.length>0);
+    const highCasePct=profiles.filter(p=>p.aCases.filter(c=>c.Priority==='High').length>0);
+    [
+      {label:'Need Outreach',val:overdue.length,color:'var(--red)',sub:'>90 days no activity'},
+      {label:'Going Stale',val:stale.length,color:'var(--amber)',sub:'60–90 days'},
+      {label:'Open Opportunities',val:withOpps.length,color:'var(--green)',sub:'Upsell potential'},
+      {label:'High Priority Cases',val:highCasePct.length,color:'var(--red)',sub:'Urgent attention'},
+    ].forEach(k=>{
+      const card=el('div',{class:'analytics-card',style:{textAlign:'center',padding:'10px'}});
+      card.appendChild(el('div',{style:{fontSize:'22px',fontWeight:'700',color:k.color}},String(k.val)));
+      card.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginTop:'2px'}},k.label));
+      card.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)'}},k.sub));
+      pKpi.appendChild(card);
+    });
+    wrap.appendChild(pKpi);
+
+    // Performance table
+    wrap.appendChild(buildTable(
+      ['Account','# Sites','Last Activity','Days Since','Open Opps','Cases','Status','Action'],
+      profiles.slice(0,50),
+      p=>{
+        const emailBtn=el('button',{class:'btn-xs btn-blue',onclick(){
+          const acctVendor={name:p.a.Name,email:p.a.Website||'',procContact:p.a.Name,phone:p.a.Phone||''};
+          openEmailModal(acctVendor);
+        }},'✉ Email');
+        return [
+          el('span',{style:{fontWeight:'600',fontSize:'10px'}},p.a.Name),
+          p.children.length||'—',
+          p.lastActivity?p.lastActivity.toLocaleDateString():'Never',
+          el('span',{style:{color:p.daysSince>90?'var(--red)':p.daysSince>60?'var(--amber)':'var(--green)',fontWeight:p.daysSince>60?'700':'400'}},p.daysSince===999?'—':p.daysSince+'d'),
+          p.aOpps.length||'—',
+          el('span',{style:{color:p.aCases.filter(c=>c.Priority==='High').length>0?'var(--red)':'var(--text)'}},p.aCases.length||'—'),
+          el('span',{style:{fontSize:'9px'}},p.flag),
+          emailBtn,
+        ];
+      }
+    ));
+  }
+
+  else if(S._custViewMode==='repschedule'){
+    const opps=S._custData?.opps||[];
+    const cases=S._custData?.cases||[];
+    const accts=S._custData?.accounts||[];
+    // Group by rep (account owner)
+    const repOwners={};
+    accts.forEach(a=>{
+      const owner=a.Owner?.Name||'Unassigned';
+      if(!repOwners[owner]) repOwners[owner]={name:owner,accounts:[],opps:[],cases:[],overdueAccts:[]};
+      repOwners[owner].accounts.push(a);
+      const lastAct=a.LastActivityDate?new Date(a.LastActivityDate):null;
+      if(!lastAct||Math.round((Date.now()-lastAct)/86400000)>60) repOwners[owner].overdueAccts.push(a);
+    });
+    opps.forEach(o=>{const owner=o.Owner?.Name||'Unassigned';if(repOwners[owner])repOwners[owner].opps.push(o);});
+    cases.forEach(ca=>{const owner=ca.Owner?.Name||'Unassigned';if(repOwners[owner])repOwners[owner].cases.push(ca);});
+    const reps=Object.values(repOwners).sort((a,b)=>b.overdueAccts.length-a.overdueAccts.length);
+
+    wrap.appendChild(el('h3',{style:{marginBottom:'8px'}},'📅 Rep Outreach Schedule'));
+    wrap.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'12px',lineHeight:'1.6'}},'Book-of-business view for each rep — accounts needing attention, open opportunities, and case workload.'));
+
+    if(!reps.length){
+      wrap.appendChild(el('p',{style:{color:'var(--muted)',padding:'20px',textAlign:'center'}},'Load customer data first — click Refresh above.'));
+      c.appendChild(wrap); return;
+    }
+
+    reps.forEach(rep=>{
+      const sec=el('div',{class:'summary-section',style:{marginBottom:'12px'}});
+      const secHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'10px',marginBottom:'8px'}});
+      secHdr.appendChild(el('h3',{style:{margin:'0',flex:'1'}},rep.name));
+      secHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},rep.accounts.length+' accounts · '+rep.opps.length+' opps · '+rep.overdueAccts.length+' need outreach'));
+      sec.appendChild(secHdr);
+
+      if(rep.overdueAccts.length){
+        sec.appendChild(el('div',{style:{fontSize:'10px',fontWeight:'600',color:'var(--amber)',marginBottom:'4px'}},'⚠ Needs Outreach (60+ days no activity)'));
+        rep.overdueAccts.slice(0,8).forEach(a=>{
+          const row=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'4px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
+          const lastAct=a.LastActivityDate?new Date(a.LastActivityDate):null;
+          const days=lastAct?Math.round((Date.now()-lastAct)/86400000):999;
+          row.appendChild(el('span',{style:{flex:'1',fontWeight:'500'}},a.Name));
+          row.appendChild(el('span',{style:{color:days>90?'var(--red)':'var(--amber)',fontWeight:'600',fontSize:'9px'}},days===999?'Never':days+'d ago'));
+          const emailBtn=el('button',{class:'btn-xs btn-ghost',onclick(){
+            openEmailModal({name:a.Name,email:a.Website||'',procContact:rep.name});
+          }},'✉');
+          row.appendChild(emailBtn);
+          sec.appendChild(row);
+        });
+        if(rep.overdueAccts.length>8) sec.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',padding:'4px 0'}},'+'+( rep.overdueAccts.length-8)+' more...'));
+      }
+
+      if(rep.opps.length){
+        sec.appendChild(el('div',{style:{fontSize:'10px',fontWeight:'600',color:'var(--green)',margin:'8px 0 4px'}},'💼 Open Opportunities ('+rep.opps.length+')'));
+        rep.opps.slice(0,5).forEach(o=>{
+          const row=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'3px 0',fontSize:'10px',borderBottom:'1px solid var(--border)'}});
+          row.appendChild(el('span',{style:{flex:'1'}},o.Name||o.Account?.Name||'—'));
+          row.appendChild(el('span',{style:{color:'var(--blue)',fontWeight:'600'}},o.StageName||'—'));
+          row.appendChild(el('span',{style:{color:'var(--green)',fontWeight:'600'}},'$'+Number(o.Amount||0).toLocaleString()));
+          sec.appendChild(row);
+        });
+      }
+      wrap.appendChild(sec);
+    });
   }
 
   c.appendChild(wrap);
@@ -8927,6 +9083,8 @@ async function loadSFBoard(){
     S._sfBoard.data={opps,cases,tasks,spendLeaderboard,trueUpAlerts,expiringWithOpps};
     S._sfBoard.lastLoaded=new Date().toLocaleTimeString()+(sfErrors.length?' ⚠':'');
     S._sfBoard.loading=false;
+    // Cache for Analytics tab — makes rep performance + pipeline available without re-loading
+    S._sfBoardData={opps,cases,tasks,spendLeaderboard};
     render();
   }catch(e){
     console.error('[SF Board] Error:', e);
@@ -9464,7 +9622,7 @@ function openDriveFilePicker(files, onSelect) {
 }
 
 async function loadDriveFileIntoContract(driveFile, dropLabel, statusEl, callback) {
-  if(!GDriveToken||Date.now()>=GDriveTokenExpiry-5000){toast('Drive token expired','#f59e0b');return;}
+  try { await getGDriveToken(); } catch(e) { toast('Drive auth failed: '+e.message,'#ef4444'); return; }
   try {
     dropLabel.children[0].textContent='⏳';
     dropLabel.children[1].textContent='Loading from Drive: '+driveFile.name;
@@ -9693,8 +9851,8 @@ function renderContracts(c) {
   const driveRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'8px'}});
   const driveBtn=el('button',{class:'btn-xs btn-ghost',style:{display:'flex',gap:'6px',alignItems:'center'},onclick:async()=>{
     const vName=selectedVendorName||comboInput.value.trim();
-    if(!GDriveToken||Date.now()>=GDriveTokenExpiry-5000){toast('Connect Google Drive first','#f59e0b');return;}
-    driveBtn.disabled=true; driveBtn.textContent='⏳ Loading Drive files...';
+    driveBtn.disabled=true; driveBtn.textContent='⏳ Connecting...';
+    try { await getGDriveToken(); } catch(e) { toast('Google Drive auth failed: '+e.message,'#ef4444'); driveBtn.disabled=false; driveBtn.textContent='☁ Load from Drive'; return; }
     try {
       // List files in Vendor Contracts and Pricing folder for this vendor
       const nameToSearch = vName || '';
@@ -10676,7 +10834,7 @@ function renderContractCompare(c) {
     // Drive loader button
     const cmpDriveBtn=el('button',{class:'btn-xs btn-ghost',style:{marginTop:'6px',fontSize:'9px',display:'flex',gap:'4px',alignItems:'center',margin:'6px auto 0'},onclick:async(e)=>{
       e.stopPropagation();
-      if(!GDriveToken||Date.now()>=GDriveTokenExpiry-5000){toast('Connect Google Drive first','#f59e0b');return;}
+      try { await getGDriveToken(); } catch(e) { toast('Google Drive auth failed: '+e.message,'#ef4444'); return; }
       const vn=S._cmpVendor||'';
       cmpDriveBtn.textContent='⏳...';
       try {
@@ -13886,7 +14044,7 @@ function renderForecast(c) {
     sec.appendChild(hdr);
     if (vendors.length) {
       sec.appendChild(buildTable(
-        ['Vendor','Expires','Days','AR','Admin Fee','Notice','Tier','Action'],
+        ['Vendor','Expires','Days Left','AR','Fee','Notice','Tier','Act'],
         vendors.sort((a,b)=>getCurrentExpiry(a)-getCurrentExpiry(b)),
         v=>{
           const exp=getCurrentExpiry(v), d=dayDiff(exp,today);
@@ -13911,357 +14069,356 @@ function renderForecast(c) {
 
 function renderAnalytics(c) {
   const today=new Date(), vs=S.vendors;
-  const statDefs=[
-    {label:'Total Active',color:'#22c55e',fn:()=>vs.filter(isVisible)},
-    {label:'Expired',color:'#ef4444',fn:()=>vs.filter(v=>{const e=getCurrentExpiry(v);return e&&dayDiff(e,today)<0&&!isAutoRenew(v);})},
-    {label:'Expiring ≤30d',color:'#f59e0b',fn:()=>vs.filter(v=>{const e=getCurrentExpiry(v);if(!e)return false;const d=dayDiff(e,today);return d>=0&&d<=30;})},
-    {label:'Expiring 31–90d',color:'#f97316',fn:()=>vs.filter(v=>{const e=getCurrentExpiry(v);if(!e)return false;const d=dayDiff(e,today);return d>30&&d<=90;})},
-    {label:'CALL Tier',color:'#ef4444',fn:()=>vs.filter(v=>v.tier==='CALL')},
-    {label:'EMAIL Tier',color:'#f59e0b',fn:()=>vs.filter(v=>v.tier==='EMAIL')},
-    {label:'REVIEW Tier',color:'#4f7cff',fn:()=>vs.filter(v=>v.tier==='REVIEW')},
-    {label:'Overdue Follow-Ups',color:'#f97316',fn:()=>vs.filter(v=>{const fu=parseDate(v.followUp);return fu&&dayDiff(today,fu)>0;})},
-    {label:'No Contact',color:'#6b7280',fn:()=>vs.filter(v=>!v.procContact)},
-    {label:'No Email',color:'#6b7280',fn:()=>vs.filter(v=>!v.email)},
-    {label:'No Expiry',color:'#6b7280',fn:()=>vs.filter(v=>!v.expiry)},
+  const sd=SPEND_STATE.data?.vendors||S._analyticsSpendData||[];
+
+  // ── Tab bar ──
+  if(!S._analyticsTab) S._analyticsTab='contract';
+  const tabs=[
+    {id:'contract',label:'📋 Contract Health'},
+    {id:'revenue',label:'💰 Revenue & Spend'},
+    {id:'pipeline',label:'🎯 SF Pipeline'},
+    {id:'performance',label:'👤 Rep Performance'},
   ];
-  const grid=el('div',{class:'analytics-grid'});
-  for (const s of statDefs) {
-    const list=s.fn();
-    const card=el('div',{class:'analytics-card',onclick(){openAnalyticsPopup(s.label,list);}});
-    card.appendChild(el('div',{class:'analytics-val',style:{color:s.color}},list.length));
-    card.appendChild(el('div',{class:'analytics-label'},s.label));
-    grid.appendChild(card);
-  }
-  c.appendChild(grid);
-  // Charts
-  requestAnimationFrame(()=>{
-    const tierCounts={CALL:vs.filter(v=>v.tier==='CALL').length,EMAIL:vs.filter(v=>v.tier==='EMAIL').length,REVIEW:vs.filter(v=>v.tier==='REVIEW').length,MONITOR:vs.filter(v=>v.tier==='MONITOR').length};
-    // Row 1: Tier doughnut + Expiry timeline
-    const row1=el('div',{class:'charts-row',style:{marginTop:'10px'}});
-
-    const tierSec=el('div',{class:'chart-section'});
-    tierSec.appendChild(el('h4',{},'Action Tier Distribution'));
-    const tierCanvas=el('canvas',{style:{maxHeight:'180px'}});
-    tierSec.appendChild(tierCanvas); row1.appendChild(tierSec);
-
-    const expSec=el('div',{class:'chart-section'});
-    expSec.appendChild(el('h4',{},'Expiry Timeline (12 months)'));
-    const expCanvas=el('canvas',{style:{maxHeight:'180px'}});
-    expSec.appendChild(expCanvas); row1.appendChild(expSec);
-    c.appendChild(row1);
-
-    // Row 2: Admin fee distribution + AR rate by category
-    const row2=el('div',{class:'charts-row'});
-
-    const feeSec=el('div',{class:'chart-section'});
-    feeSec.appendChild(el('h4',{},'Admin Fee Distribution'));
-    const feeCanvas=el('canvas',{style:{maxHeight:'180px'}});
-    feeSec.appendChild(feeCanvas); row2.appendChild(feeSec);
-
-    const arSec=el('div',{class:'chart-section'});
-    arSec.appendChild(el('h4',{},'Auto-Renew Rate'));
-    const arCanvas=el('canvas',{style:{maxHeight:'180px'}});
-    arSec.appendChild(arCanvas); row2.appendChild(arSec);
-    c.appendChild(row2);
-
-    // Row 3: Top categories + Score distribution
-    const row3=el('div',{class:'charts-row'});
-
-    const catSec=el('div',{class:'chart-section'});
-    catSec.appendChild(el('h4',{},'Top 10 Categories'));
-    const catCanvas=el('canvas',{style:{maxHeight:'220px'}});
-    catSec.appendChild(catCanvas); row3.appendChild(catSec);
-
-    const scoreSec=el('div',{class:'chart-section'});
-    scoreSec.appendChild(el('h4',{},'Score Distribution'));
-    const scoreCanvas=el('canvas',{style:{maxHeight:'220px'}});
-    scoreSec.appendChild(scoreCanvas); row3.appendChild(scoreSec);
-    c.appendChild(row3);
-
-    // Helper: chart click opens popup with matching vendors
-    const chartClick=(filterFn,label)=>(evt,elems,chart)=>{
-      if(!elems.length) return;
-      const idx=elems[0].index;
-      const lbl=chart.data.labels[idx];
-      const matched=vs.filter(v=>filterFn(v,lbl));
-      openAnalyticsPopup(`${label}: ${lbl} (${matched.length})`,matched);
-    };
-    const legendClick=()=>{}; // disable legend toggle
-
-    // Tier doughnut
-    const tierFns={CALL:v=>v.tier==='CALL',EMAIL:v=>v.tier==='EMAIL',REVIEW:v=>v.tier==='REVIEW',MONITOR:v=>v.tier==='MONITOR'};
-    new Chart(tierCanvas.getContext('2d'),{type:'doughnut',data:{labels:['CALL','EMAIL','REVIEW','MONITOR'],datasets:[{data:Object.values(tierCounts),backgroundColor:['#ef4444','#f59e0b','#4f7cff','#374151'],borderWidth:0,hoverOffset:6}]},options:{responsive:true,plugins:{legend:{labels:{color:'#6b7280',font:{size:9}},onClick:legendClick}},onClick:(e,el,ch)=>{if(!el.length)return;openAnalyticsPopup('Tier: '+ch.data.labels[el[0].index],vs.filter(v=>v.tier===ch.data.labels[el[0].index]));}}});
-
-    const months=[],expiryData=[],expiryMonthDates=[];
-    for (let i=0;i<12;i++){const m=(today.getMonth()+i)%12,y=today.getFullYear()+Math.floor((today.getMonth()+i)/12);months.push(new Date(y,m,1).toLocaleDateString('en-US',{month:'short',year:'2-digit'}));expiryMonthDates.push({m,y});expiryData.push(vs.filter(v=>{const e=getCurrentExpiry(v);return e&&e.getFullYear()===y&&e.getMonth()===m;}).length);}
-    new Chart(expCanvas.getContext('2d'),{type:'bar',data:{labels:months,datasets:[{label:'Expiring',data:expiryData,backgroundColor:'rgba(79,124,255,.5)',borderColor:'#4f7cff',borderWidth:1,hoverBackgroundColor:'rgba(79,124,255,.85)'}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#6b7280',font:{size:9}}},y:{ticks:{color:'#6b7280',font:{size:9}},grid:{color:'rgba(255,255,255,.05)'}}},onClick:(e,el,ch)=>{if(!el.length)return;const idx=el[0].index;const{m,y}=expiryMonthDates[idx];const matched=vs.filter(v=>{const exp=getCurrentExpiry(v);return exp&&exp.getFullYear()===y&&exp.getMonth()===m;});openAnalyticsPopup(`Expiring ${months[idx]}`,matched);}}});
-
-    const feeBuckets={'0%':[],'1-2%':[],'3-4%':[],'5-6%':[],'7%+':[],'Unknown':[]};
-    for (const v of vs){const m=String(v.adminFee||'').match(/(\d+)/);if(!m){feeBuckets['Unknown'].push(v);continue;}const f=parseInt(m[1]);if(f===0)feeBuckets['0%'].push(v);else if(f<=2)feeBuckets['1-2%'].push(v);else if(f<=4)feeBuckets['3-4%'].push(v);else if(f<=6)feeBuckets['5-6%'].push(v);else feeBuckets['7%+'].push(v);}
-    const feeVendorMap=feeBuckets;
-    new Chart(feeCanvas.getContext('2d'),{type:'doughnut',data:{labels:Object.keys(feeBuckets),datasets:[{data:Object.values(feeBuckets).map(a=>a.length),backgroundColor:['#374151','#22c55e','#4f7cff','#f59e0b','#ef4444','#6b7280'],borderWidth:0,hoverOffset:6}]},options:{responsive:true,plugins:{legend:{labels:{color:'#6b7280',font:{size:9}},onClick:legendClick}},onClick:(e,el,ch)=>{if(!el.length)return;const lbl=ch.data.labels[el[0].index];openAnalyticsPopup('Admin Fee '+lbl,feeVendorMap[lbl]);}}});
-
-    const arYes=vs.filter(v=>isAutoRenew(v)), arNo=vs.filter(v=>!isAutoRenew(v));
-    new Chart(arCanvas.getContext('2d'),{type:'doughnut',data:{labels:['Auto-Renew','No Auto-Renew'],datasets:[{data:[arYes.length,arNo.length],backgroundColor:['#22c55e','#ef4444'],borderWidth:0,hoverOffset:6}]},options:{responsive:true,plugins:{legend:{labels:{color:'#6b7280',font:{size:9}},onClick:legendClick}},onClick:(e,el,ch)=>{if(!el.length)return;openAnalyticsPopup(ch.data.labels[el[0].index],[arYes,arNo][el[0].index]);}}});
-
-    const catCounts={};
-    for (const v of vs){const cat=v.category||'Unknown';catCounts[cat]=(catCounts[cat]||0)+1;}
-    const topCats=Object.entries(catCounts).sort((a,b)=>b[1]-a[1]).slice(0,10);
-    new Chart(catCanvas.getContext('2d'),{type:'bar',data:{labels:topCats.map(c=>c[0]),datasets:[{label:'Vendors',data:topCats.map(c=>c[1]),backgroundColor:'rgba(79,124,255,.5)',borderColor:'#4f7cff',borderWidth:1,hoverBackgroundColor:'rgba(79,124,255,.9)'}]},options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#6b7280',font:{size:9}},grid:{color:'rgba(255,255,255,.05)'}},y:{ticks:{color:'#6b7280',font:{size:8}}}},onClick:(e,el,ch)=>{if(!el.length)return;const cat=ch.data.labels[el[0].index];openAnalyticsPopup('Category: '+cat,vs.filter(v=>(v.category||'Unknown')===cat));}}});
-
-    const scoreBucketMap={'1-2':v=>v.score<=2,'3-4':v=>v.score>2&&v.score<=4,'5-6':v=>v.score>4&&v.score<=6,'7-8':v=>v.score>6&&v.score<=8,'9-10':v=>v.score>8};
-    const scoreData=Object.entries(scoreBucketMap).map(([k,fn])=>vs.filter(fn).length);
-    new Chart(scoreCanvas.getContext('2d'),{type:'bar',data:{labels:Object.keys(scoreBucketMap),datasets:[{label:'Vendors',data:scoreData,backgroundColor:['#374151','#22c55e','#4f7cff','#f59e0b','#ef4444'],borderWidth:0,hoverBackgroundColor:['#4b5563','#16a34a','#2563eb','#d97706','#b91c1c']}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#6b7280',font:{size:9}}},y:{ticks:{color:'#6b7280',font:{size:9}},grid:{color:'rgba(255,255,255,.05)'}}},onClick:(e,el,ch)=>{if(!el.length)return;const label=ch.data.labels[el[0].index];openAnalyticsPopup('Score '+label,vs.filter(scoreBucketMap[label]));}}});
+  const tabBar=el('div',{style:{display:'flex',gap:'4px',marginBottom:'12px',borderBottom:'2px solid var(--border)',paddingBottom:'0',flexWrap:'wrap'}});
+  tabs.forEach(t=>{
+    const btn=el('button',{style:{padding:'6px 14px',fontSize:'11px',fontWeight:'600',border:'none',cursor:'pointer',borderBottom:S._analyticsTab===t.id?'2px solid var(--blue)':'2px solid transparent',marginBottom:'-2px',background:'transparent',color:S._analyticsTab===t.id?'var(--blue)':'var(--muted)',transition:'all .15s'},
+      onclick(){S._analyticsTab=t.id;const c2=$('content');if(c2){c2.innerHTML='';renderAnalytics(c2);}else render();}},t.label);
+    tabBar.appendChild(btn);
   });
+  c.appendChild(tabBar);
 
-  // ── Negotiation Opportunities Section ──────────────────────────────────────
-  const negoSec=el('div',{class:'summary-section',style:{marginTop:'12px'}});
-  negoSec.appendChild(el('h3',{},'💬 Negotiation Opportunities'));
-  negoSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Vendors where your admin fee is below the category average across all GPOs — ranked by renegotiation impact.'));
-
-  // Build opportunity list
-  const opps=[];
-  const ALL_V=S.allVendors||S.vendors;
-  vs.filter(isVisible).forEach(v=>{
-    const fee=parseFee(v.adminFee);
-    if(fee===null||!v.category) return;
-    const catFees=ALL_V.filter(x=>x.category===v.category&&x.name!==v.name&&parseFee(x.adminFee)!==null).map(x=>parseFee(x.adminFee));
-    if(catFees.length<2) return;
-    const avg=catFees.reduce((a,b)=>a+b,0)/catFees.length;
-    const max=Math.max(...catFees);
-    if(fee<avg*0.95) opps.push({vendor:v,fee,avg,max,gap:avg-fee,gapToMax:max-fee});
-  });
-  opps.sort((a,b)=>b.gap-a.gap);
-
-  if(!opps.length) {
-    negoSec.appendChild(el('p',{class:'muted'},'All fees are at or above category averages. ✅'));
-  } else {
-    negoSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--amber)',marginBottom:'6px'}},opps.length+' vendor'+(opps.length!==1?'s':'')+' with fees below category average — sorted by renegotiation gap'));
-    negoSec.appendChild(buildTable(
-      ['Vendor','Category','Your Fee','Avg','Max','Gap','Potential Ask','Action'],
-      opps.slice(0,15),
-      ({vendor:v,fee,avg,max,gap,gapToMax})=>{
-        const potential=Math.min(max+1,Math.ceil(avg*1.1));
-        return [
-          vLink(v),
-          v.category||'',
-          el('span',{style:{color:'var(--red)',fontWeight:'700'}},fee+'%'),
-          el('span',{style:{color:'var(--muted)'}},avg.toFixed(1)+'%'),
-          max+'%',
-          el('span',{style:{color:'var(--amber)',fontWeight:'600'}},'+'+gap.toFixed(1)+'%'),
-          el('span',{style:{color:'var(--green)',fontWeight:'700'}},potential+'%'),
-          el('button',{class:'btn-xs btn-ghost',onclick(){openAIBriefingModal(v);}}, '🤖 Brief'),
-        ];
-      }
-    ));
-  }
-  c.appendChild(negoSec);
-
-  // ── Revenue Potential (if we close all gaps) ───────────────────────────────
-  const totalGap=opps.reduce((sum,o)=>sum+o.gap,0);
-  if(totalGap>0) {
-    const revSec=el('div',{class:'summary-section',style:{marginTop:'8px'}});
-    revSec.appendChild(el('h3',{},'📈 Portfolio Revenue Summary'));
-    const revGrid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',gap:'8px',marginTop:'8px'}});
-    const withFee=vs.filter(v=>parseFee(v.adminFee)!==null);
-    const avgFee=withFee.length?withFee.reduce((s,v)=>s+parseFee(v.adminFee),0)/withFee.length:0;
-    const pctWithFee=Math.round(withFee.length/vs.length*100);
-    const pctWithAR=Math.round(vs.filter(isAutoRenew).length/vs.length*100);
-    const noContact=vs.filter(v=>!v.procContact).length;
-    [
-      [withFee.length+' / '+vs.length,'Have Admin Fee',pctWithFee+'% of portfolio','#4f7cff'],
-      [avgFee.toFixed(1)+'%','Portfolio Avg Fee','Across '+withFee.length+' contracts','#22c55e'],
-      [pctWithAR+'%','Auto-Renew Rate',vs.filter(isAutoRenew).length+' of '+vs.length+' vendors','#4f7cff'],
-      [opps.length,'Renegotiation Opps','Below-avg fee vendors','#f59e0b'],
-      [noContact,'Missing Contact',noContact+' vendors with no contact','#ef4444'],
-    ].forEach(([val,label,sub,color])=>{
-      const card=el('div',{class:'analytics-card',style:{textAlign:'left',padding:'10px'}});
-      card.appendChild(el('div',{style:{fontSize:'20px',fontWeight:'700',color}},String(val)));
-      card.appendChild(el('div',{style:{fontSize:'10px',fontWeight:'600',margin:'2px 0'}},label));
-      card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},sub));
-      revGrid.appendChild(card);
-    });
-    revSec.appendChild(revGrid);
-    c.appendChild(revSec);
-  }
-
-  // ── SF Spend Analytics Section ───────────────────────────────────────────
-  if(USER.sfToken){
-    const sfAnalyticsSec=el('div',{style:{marginTop:'16px'}});
-    sfAnalyticsSec.appendChild(el('h3',{style:{fontSize:'13px',fontWeight:'700',marginBottom:'4px'}},'☁ Revenue Intelligence (Salesforce)'));
-    sfAnalyticsSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'Commission benchmarking and spend trends from live Salesforce data.'));
-
-    if(S._analyticsSpendLoading){
-      const loadingDiv=el('div',{style:{padding:'20px',textAlign:'center',color:'var(--muted)',fontSize:'11px'}});
-      loadingDiv.appendChild(el('div',{style:{fontSize:'20px',marginBottom:'6px'}},'⏳'));
-      loadingDiv.appendChild(el('div',{},'Loading Salesforce revenue data...'));
-      sfAnalyticsSec.appendChild(loadingDiv);
-    } else if(!S._analyticsSpendData){
-      const hasCached=!!(SPEND_STATE.data?.vendors?.length);
-      const loadBtn=el('button',{class:'btn-xs btn-blue',onclick(){loadAnalyticsSpend();}}, hasCached?'⚡ Load Revenue Intelligence (instant)':'☁ Load SF Revenue Data');
-      if(!hasCached){const hint=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'4px'}});hint.textContent='Tip: Load the Spend page first for instant results';sfAnalyticsSec.appendChild(hint);}
-      sfAnalyticsSec.appendChild(loadBtn);
-    } else {
-      const spendData=S._analyticsSpendData;
-
-      // Category benchmarking
-      const catBenchmark={};
-      spendData.forEach(v=>{
-        const cat=v.category||'Unknown';
-        if(!catBenchmark[cat]) catBenchmark[cat]={vendors:[],rates:[],totalSpend:0};
-        catBenchmark[cat].vendors.push(v);
-        catBenchmark[cat].totalSpend+=v.totalSpend||0;
-        if(v.adminFeePct) catBenchmark[cat].rates.push(v.adminFeePct);
-      });
-
-      // Render benchmark cards
-      const benchHdr=el('div',{style:{fontWeight:'600',fontSize:'11px',marginBottom:'6px'}});
-      benchHdr.textContent='Commission Rate by Category';
-      sfAnalyticsSec.appendChild(benchHdr);
-
-      const benchGrid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220px,1fr))',gap:'6px',marginBottom:'12px'}});
-      Object.entries(catBenchmark)
-        .filter(([,d])=>d.rates.length>0&&d.totalSpend>0)
-        .sort((a,b)=>b[1].totalSpend-a[1].totalSpend)
-        .slice(0,12)
-        .forEach(([cat,data])=>{
-          const avgRate=data.rates.reduce((s,r)=>s+r,0)/data.rates.length;
-          const maxRate=Math.max(...data.rates);
-          const minRate=Math.min(...data.rates);
-          const totalExpected=data.vendors.reduce((s,v)=>s+(v.expectedRevenue||0),0);
-          const card=el('div',{style:{border:'1px solid var(--border)',borderRadius:'5px',padding:'9px 11px',background:'var(--sb)'}});
-          const top=el('div',{style:{display:'flex',gap:'4px',alignItems:'center',marginBottom:'5px'}});
-          top.appendChild(el('span',{style:{fontWeight:'600',fontSize:'10px',flex:'1'}},cat));
-          top.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},data.vendors.length+' vendors'));
-          card.appendChild(top);
-          const rateRow=el('div',{style:{display:'flex',gap:'8px',marginBottom:'3px',fontSize:'10px'}});
-          rateRow.appendChild(el('span',{style:{color:'var(--muted)'}},'Avg rate:'));
-          rateRow.appendChild(el('span',{style:{fontWeight:'700',color:'var(--blue)'}},avgRate.toFixed(1)+'%'));
-          rateRow.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'('+minRate+'–'+maxRate+'%)'));
-          card.appendChild(rateRow);
-          const spendRow=el('div',{style:{fontSize:'9px',color:'var(--muted)'}});
-          spendRow.textContent='Spend: $'+data.totalSpend.toLocaleString()+' · Expected: $'+totalExpected.toLocaleString();
-          card.appendChild(spendRow);
-          // Rate range bar
-          const barWrap=el('div',{style:{marginTop:'5px',background:'rgba(255,255,255,.07)',borderRadius:'3px',height:'4px',overflow:'hidden'}});
-          const barFill=el('div',{style:{height:'100%',background:'var(--blue)',width:Math.min(100,avgRate/10*100)+'%',borderRadius:'3px'}});
-          barWrap.appendChild(barFill); card.appendChild(barWrap);
-          benchGrid.appendChild(card);
-        });
-      sfAnalyticsSec.appendChild(benchGrid);
-
-      // Top vendors by spend
-      const topBySpend=[...spendData].sort((a,b)=>(b.totalSpend||0)-(a.totalSpend||0)).slice(0,10);
-      if(topBySpend.length){
-        sfAnalyticsSec.appendChild(el('div',{style:{fontWeight:'600',fontSize:'11px',marginBottom:'6px'}},'Top Vendors by Spend'));
-        const tbl=el('div',{class:'tbl-wrap'});
-        const table=el('table',{class:'data-table'});
-        const thead=el('thead'); const hr=el('tr');
-        ['Vendor','Category','Admin Fee %','Total Spend','Expected Commission','Status'].forEach(h=>hr.appendChild(el('th',{},h)));
-        thead.appendChild(hr); table.appendChild(thead);
-        const tbody=el('tbody');
-        topBySpend.forEach(v=>{
-          const vendor=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
-          const tr=el('tr',{style:{cursor:vendor?'pointer':'default'},onclick(){if(vendor)openDetail(vendor);}});
-          const gapColor=v.gap<-100?'var(--red)':v.gap<0?'var(--amber)':'var(--green)';
-          [
-            vendor?vLink(vendor):el('span',{},v.name),
-            el('span',{style:{fontSize:'9px',color:'var(--muted)'}},v.category||'—'),
-            el('span',{style:{color:v.adminFeePct?'var(--green)':'var(--red)',fontWeight:'600'}},v.adminFeePct?(v.adminFeePct+'%'):'⚠ Not set'),
-            '$'+v.totalSpend.toLocaleString(),
-            v.expectedRevenue?'$'+v.expectedRevenue.toLocaleString():'—',
-            el('span',{style:{fontSize:'9px',color:gapColor,fontWeight:'600'}},v.gap<-100?'⚠ Gap':v.adminFeePct?'✓':'—'),
-          ].forEach(cell=>{const td=el('td');if(cell instanceof Node)td.appendChild(cell);else td.textContent=String(cell||'');tr.appendChild(td);});
-          tbody.appendChild(tr);
-        });
-        table.appendChild(tbody); tbl.appendChild(table);
-        sfAnalyticsSec.appendChild(tbl);
-      }
-
-      const refreshRow=el('div',{style:{marginTop:'8px',display:'flex',gap:'6px',alignItems:'center'}});
-      refreshRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._analyticsSpendData=null;render();loadAnalyticsSpend();}}, '↻ Refresh'));
-      if(S._analyticsSpendLoaded) refreshRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Last loaded: '+S._analyticsSpendLoaded));
-      sfAnalyticsSec.appendChild(refreshRow);
+  // ── CONTRACT HEALTH TAB ──
+  if(S._analyticsTab==='contract'){
+    const statDefs=[
+      {label:'Total Active',color:'var(--green)',fn:()=>vs.filter(isVisible)},
+      {label:'Expired',color:'var(--red)',fn:()=>vs.filter(v=>{const e=getCurrentExpiry(v);return e&&dayDiff(e,today)<0&&!isAutoRenew(v);})},
+      {label:'Expiring ≤30d',color:'var(--red)',fn:()=>vs.filter(v=>{const e=getCurrentExpiry(v);if(!e)return false;const d=dayDiff(e,today);return d>=0&&d<=30;})},
+      {label:'Expiring 31–90d',color:'var(--amber)',fn:()=>vs.filter(v=>{const e=getCurrentExpiry(v);if(!e)return false;const d=dayDiff(e,today);return d>30&&d<=90;})},
+      {label:'Auto-Renewing',color:'var(--blue)',fn:()=>vs.filter(v=>isAutoRenew(v)&&isVisible(v))},
+      {label:'CALL Tier',color:'var(--red)',fn:()=>vs.filter(v=>v.tier==='CALL')},
+      {label:'EMAIL Tier',color:'var(--amber)',fn:()=>vs.filter(v=>v.tier==='EMAIL')},
+      {label:'Overdue Follow-Ups',color:'var(--orange)',fn:()=>vs.filter(v=>{const fu=parseDate(v.followUp);return fu&&dayDiff(today,fu)>0;})},
+      {label:'No Contract Date',color:'var(--muted)',fn:()=>vs.filter(v=>isVisible(v)&&!v.expiry)},
+      {label:'No Admin Fee',color:'var(--muted)',fn:()=>vs.filter(v=>isVisible(v)&&!parseFee(v.adminFee))},
+      {label:'No Contact',color:'var(--muted)',fn:()=>vs.filter(v=>isVisible(v)&&!v.procContact)},
+      {label:'No Email',color:'var(--muted)',fn:()=>vs.filter(v=>isVisible(v)&&!v.email)},
+    ];
+    const grid=el('div',{class:'analytics-grid'});
+    for(const s of statDefs){
+      const list=s.fn();
+      const card=el('div',{class:'analytics-card',onclick(){openAnalyticsPopup(s.label,list);}});
+      card.appendChild(el('div',{class:'analytics-val',style:{color:s.color}},list.length));
+      card.appendChild(el('div',{class:'analytics-label'},s.label));
+      grid.appendChild(card);
     }
-    c.appendChild(sfAnalyticsSec);
+    c.appendChild(grid);
+
+    requestAnimationFrame(()=>{
+      if(typeof Chart==='undefined') return;
+      const row1=el('div',{class:'charts-row',style:{marginTop:'12px'}});
+
+      // Tier doughnut
+      const tierSec=el('div',{class:'chart-section'});
+      tierSec.appendChild(el('h4',{},'Action Tier Distribution'));
+      const tc=el('canvas',{style:{maxHeight:'180px'}}); tierSec.appendChild(tc); row1.appendChild(tierSec);
+      const tierCounts={CALL:vs.filter(v=>v.tier==='CALL').length,EMAIL:vs.filter(v=>v.tier==='EMAIL').length,REVIEW:vs.filter(v=>v.tier==='REVIEW').length,MONITOR:vs.filter(v=>v.tier==='MONITOR').length};
+      new Chart(tc,{type:'doughnut',data:{labels:Object.keys(tierCounts),datasets:[{data:Object.values(tierCounts),backgroundColor:['#ef4444','#f59e0b','#4f7cff','#6b7280'],borderWidth:2,borderColor:'var(--card)'}]},options:{responsive:true,plugins:{legend:{position:'right',labels:{font:{size:10},color:'var(--text)'}}}}});
+
+      // Expiry timeline bar
+      const expSec=el('div',{class:'chart-section'});
+      expSec.appendChild(el('h4',{},'Expiry Timeline — Next 12 Months'));
+      const ec=el('canvas',{style:{maxHeight:'180px'}}); expSec.appendChild(ec); row1.appendChild(expSec);
+      const expLabels=[],expData=[];
+      for(let i=0;i<12;i++){
+        const m=(today.getMonth()+i)%12, y=today.getFullYear()+Math.floor((today.getMonth()+i)/12);
+        expLabels.push(new Date(y,m,1).toLocaleDateString('en-US',{month:'short',year:'2-digit'}));
+        expData.push(vs.filter(v=>{const e=getCurrentExpiry(v);return e&&e.getFullYear()===y&&e.getMonth()===m;}).length);
+      }
+      new Chart(ec,{type:'bar',data:{labels:expLabels,datasets:[{label:'Expiring',data:expData,backgroundColor:expData.map((_,i)=>i===0?'#ef4444':i<=2?'#f59e0b':'#4f7cff'),borderRadius:3}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{stepSize:1,color:'var(--muted)',font:{size:9}}},x:{ticks:{color:'var(--muted)',font:{size:9}}}}}});
+      c.appendChild(row1);
+
+      const row2=el('div',{class:'charts-row'});
+      // Admin fee buckets
+      const feeSec=el('div',{class:'chart-section'});
+      feeSec.appendChild(el('h4',{},'Admin Fee Rate Distribution'));
+      const fc=el('canvas',{style:{maxHeight:'180px'}}); feeSec.appendChild(fc); row2.appendChild(feeSec);
+      const feeBuckets={'0%':0,'0.01–0.5%':0,'0.5–1%':0,'1–2%':0,'2–3%':0,'>3%':0,'Not Set':0};
+      vs.filter(isVisible).forEach(v=>{
+        const f=parseFee(v.adminFee);
+        if(f===null)feeBuckets['Not Set']++;
+        else if(f===0)feeBuckets['0%']++;
+        else if(f<0.5)feeBuckets['0.01–0.5%']++;
+        else if(f<1)feeBuckets['0.5–1%']++;
+        else if(f<2)feeBuckets['1–2%']++;
+        else if(f<3)feeBuckets['2–3%']++;
+        else feeBuckets['>3%']++;
+      });
+      new Chart(fc,{type:'bar',data:{labels:Object.keys(feeBuckets),datasets:[{data:Object.values(feeBuckets),backgroundColor:'#4f7cff',borderRadius:3}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{stepSize:1,color:'var(--muted)',font:{size:9}}},x:{ticks:{color:'var(--muted)',font:{size:9}}}}}});
+
+      // Top categories
+      const catSec=el('div',{class:'chart-section'});
+      catSec.appendChild(el('h4',{},'Top 10 Categories by Vendor Count'));
+      const cc=el('canvas',{style:{maxHeight:'180px'}}); catSec.appendChild(cc); row2.appendChild(catSec);
+      const catMap={};
+      vs.filter(isVisible).forEach(v=>{const k=v.category||'Uncategorized';catMap[k]=(catMap[k]||0)+1;});
+      const topCats=Object.entries(catMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
+      new Chart(cc,{type:'bar',data:{labels:topCats.map(c=>c[0].slice(0,18)),datasets:[{data:topCats.map(c=>c[1]),backgroundColor:'#22c55e',borderRadius:3}]},options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false}},scales:{x:{beginAtZero:true,ticks:{color:'var(--muted)',font:{size:9}}},y:{ticks:{color:'var(--text)',font:{size:9}}}}}});
+      c.appendChild(row2);
+    });
+  }
+
+  // ── REVENUE & SPEND TAB ──
+  else if(S._analyticsTab==='revenue'){
+    // Load SF data if not loaded
+    const hasSF=sd.length>0;
+    if(!hasSF){
+      const loadSec=el('div',{class:'summary-section',style:{textAlign:'center',padding:'24px'}});
+      loadSec.appendChild(el('p',{style:{fontSize:'12px',color:'var(--muted)',marginBottom:'12px'}},'Connect Salesforce to see revenue analytics — spend by vendor, fee gaps, YTD totals.'));
+      const loadBtn=el('button',{class:'btn-primary',onclick:async()=>{
+        loadBtn.disabled=true;loadBtn.textContent='⏳ Loading...';
+        await loadSpendData();
+        S._analyticsSpendData=SPEND_STATE.data?.vendors||[];
+        S._analyticsSpendLoaded=new Date().toLocaleTimeString();
+        const c2=$('content');if(c2){c2.innerHTML='';renderAnalytics(c2);}
+      }},'🔗 Load from Salesforce');
+      loadSec.appendChild(loadBtn);
+      c.appendChild(loadSec);
+      return;
+    }
+
+    const totSpend=sd.reduce((s,v)=>s+v.totalSpend,0);
+    const totFees=sd.reduce((s,v)=>s+v.totalFees,0);
+    const totExp=sd.reduce((s,v)=>s+(v.expectedRevenue||0),0);
+    const totGap=totFees-totExp;
+    const refreshRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'8px'}});
+    if(S._analyticsSpendLoaded) refreshRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Last loaded: '+S._analyticsSpendLoaded));
+    refreshRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:async()=>{
+      await loadSpendData();
+      S._analyticsSpendData=SPEND_STATE.data?.vendors||[];
+      S._analyticsSpendLoaded=new Date().toLocaleTimeString();
+      const c2=$('content');if(c2){c2.innerHTML='';renderAnalytics(c2);}
+    }},'↻ Refresh'));
+    c.appendChild(refreshRow);
+
+    // KPI tiles
+    const kRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'8px',marginBottom:'14px'}});
+    [
+      {label:'YTD Spend',val:'$'+Math.round(totSpend).toLocaleString(),color:'var(--blue)',sub:sd.length+' vendors'},
+      {label:'Fees Received',val:'$'+Math.round(totFees).toLocaleString(),color:'var(--green)',sub:'Actual admin fees'},
+      {label:'Expected Fees',val:'$'+Math.round(totExp).toLocaleString(),color:'var(--text)',sub:'At contracted rates'},
+      {label:'Fee Gap',val:(totGap<0?'-':'+')+' $'+Math.round(Math.abs(totGap)).toLocaleString(),color:totGap<-500?'var(--red)':totGap<0?'var(--amber)':'var(--green)',sub:totGap<0?'Under-collecting':'On track'},
+    ].forEach(k=>{
+      const card=el('div',{class:'analytics-card',style:{textAlign:'center',padding:'10px'}});
+      card.appendChild(el('div',{style:{fontSize:'20px',fontWeight:'700',color:k.color}},k.val));
+      card.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginTop:'2px'}},k.label));
+      card.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)'}},k.sub));
+      kRow.appendChild(card);
+    });
+    c.appendChild(kRow);
+
+    requestAnimationFrame(()=>{
+      if(typeof Chart==='undefined') return;
+      const row1=el('div',{class:'charts-row'});
+
+      // Top 10 vendors by spend — horizontal bar
+      const spSec=el('div',{class:'chart-section',style:{flex:'2'}});
+      spSec.appendChild(el('h4',{},'Top 15 Vendors by YTD Spend'));
+      const spC=el('canvas',{style:{maxHeight:'260px'}}); spSec.appendChild(spC); row1.appendChild(spSec);
+      const top15=sd.slice(0,15);
+      new Chart(spC,{type:'bar',data:{labels:top15.map(v=>v.name.slice(0,20)),datasets:[
+        {label:'Spend',data:top15.map(v=>v.totalSpend),backgroundColor:'rgba(79,124,255,.7)',borderRadius:3},
+        {label:'Fees Received',data:top15.map(v=>v.totalFees),backgroundColor:'rgba(34,197,94,.7)',borderRadius:3},
+        {label:'Expected',data:top15.map(v=>v.expectedRevenue||0),backgroundColor:'rgba(245,158,11,.5)',borderRadius:3},
+      ]},options:{indexAxis:'y',responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}}},scales:{x:{stacked:false,ticks:{color:'var(--muted)',font:{size:8},callback:v=>'$'+Math.round(v/1000)+'K'}},y:{ticks:{color:'var(--text)',font:{size:8}}}}}});
+
+      // Fee gap scatter
+      const gapSec=el('div',{class:'chart-section'});
+      gapSec.appendChild(el('h4',{},'Fee Gap Analysis (Received vs Expected)'));
+      const gapC=el('canvas',{style:{maxHeight:'260px'}}); gapSec.appendChild(gapC); row1.appendChild(gapSec);
+      const gapVendors=sd.filter(v=>v.expectedRevenue>0).slice(0,20);
+      new Chart(gapC,{type:'bar',data:{labels:gapVendors.map(v=>v.name.slice(0,14)),datasets:[{label:'Gap ($)',data:gapVendors.map(v=>v.gap||0),backgroundColor:gapVendors.map(v=>(v.gap||0)<0?'#ef4444':'#22c55e'),borderRadius:3}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{ticks:{color:'var(--muted)',font:{size:8},callback:v=>'$'+Math.round(v).toLocaleString()}},x:{ticks:{color:'var(--text)',font:{size:8}}}}}});
+      c.appendChild(row1);
+
+      // Category spend breakdown
+      const row2=el('div',{class:'charts-row'});
+      const catSec2=el('div',{class:'chart-section'});
+      catSec2.appendChild(el('h4',{},'Spend by Category (YTD)'));
+      const catC=el('canvas',{style:{maxHeight:'200px'}}); catSec2.appendChild(catC); row2.appendChild(catSec2);
+      const catSpend={};
+      sd.forEach(v=>{const k=v.category||'Other';catSpend[k]=(catSpend[k]||0)+v.totalSpend;});
+      const topCatSpend=Object.entries(catSpend).sort((a,b)=>b[1]-a[1]).slice(0,10);
+      const PALETTE=['#4f7cff','#22c55e','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#ec4899','#10b981','#6366f1'];
+      new Chart(catC,{type:'doughnut',data:{labels:topCatSpend.map(c=>c[0]),datasets:[{data:topCatSpend.map(c=>c[1]),backgroundColor:PALETTE,borderWidth:2,borderColor:'var(--card)'}]},options:{responsive:true,plugins:{legend:{position:'right',labels:{font:{size:9},color:'var(--text)',boxWidth:10}}}}});
+
+      // Fee rate vs actual rate scatter
+      const rateSec=el('div',{class:'chart-section'});
+      rateSec.appendChild(el('h4',{},'Contracted vs Actual Fee Rate (%)'));
+      const rateC=el('canvas',{style:{maxHeight:'200px'}}); rateSec.appendChild(rateC); row2.appendChild(rateSec);
+      const rateData=sd.filter(v=>v.contractedPct>0&&v.totalSpend>0).slice(0,25).map(v=>({x:v.contractedPct,y:v.actualPct,label:v.name.slice(0,12)}));
+      new Chart(rateC,{type:'scatter',data:{datasets:[{label:'Vendors',data:rateData,backgroundColor:rateData.map(d=>d.y<d.x*0.8?'#ef4444':d.y>d.x*1.1?'#22c55e':'#4f7cff'),pointRadius:6}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>`${ctx.raw.label}: contracted ${ctx.raw.x.toFixed(1)}% actual ${ctx.raw.y.toFixed(1)}%`}}},scales:{x:{title:{display:true,text:'Contracted %',color:'var(--muted)',font:{size:9}},ticks:{color:'var(--muted)',font:{size:9}}},y:{title:{display:true,text:'Actual %',color:'var(--muted)',font:{size:9}},ticks:{color:'var(--muted)',font:{size:9}}}}}});
+      c.appendChild(row2);
+    });
+
+    // Fee gap table — drillable
+    const gapSec2=el('div',{class:'summary-section',style:{marginTop:'12px'}});
+    gapSec2.appendChild(el('h3',{},'⚠ Fee Gap Detail — Vendors Under-Collecting'));
+    const underPaying=sd.filter(v=>v.expectedRevenue>0&&(v.gap||0)<-50).sort((a,b)=>(a.gap||0)-(b.gap||0));
+    if(underPaying.length){
+      gapSec2.appendChild(buildTable(
+        ['Vendor','Category','YTD Spend','Contracted %','Fees Received','Expected','Gap'],
+        underPaying.slice(0,20),
+        v=>{
+          const vcsV=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
+          return [
+            vcsV?el('span',{style:{color:'var(--blue)',cursor:'pointer',fontWeight:'600'},onclick(){openDetail(vcsV);}},v.name):v.name,
+            v.category||'—',
+            '$'+Math.round(v.totalSpend).toLocaleString(),
+            v.contractedPct?v.contractedPct.toFixed(2)+'%':'Not set',
+            '$'+Math.round(v.totalFees).toLocaleString(),
+            '$'+Math.round(v.expectedRevenue).toLocaleString(),
+            el('span',{style:{color:'var(--red)',fontWeight:'700'}},'$'+Math.round(v.gap).toLocaleString()),
+          ];
+        }
+      ));
+    } else {
+      gapSec2.appendChild(el('p',{style:{color:'var(--green)',fontSize:'11px',padding:'8px 0'}},'✓ No significant fee gaps detected.'));
+    }
+    c.appendChild(gapSec2);
+  }
+
+  // ── SF PIPELINE TAB ──
+  else if(S._analyticsTab==='pipeline'){
+    const sb=S._sfBoardData;
+    if(!sb||!sb.opps?.length){
+      const loadSec=el('div',{class:'summary-section',style:{textAlign:'center',padding:'24px'}});
+      loadSec.appendChild(el('p',{style:{fontSize:'12px',color:'var(--muted)',marginBottom:'12px'}},'Load the Salesforce Board to see pipeline analytics.'));
+      loadSec.appendChild(el('button',{class:'btn-primary',onclick(){S.view='sfboard';render();}},'→ Open SF Board'));
+      c.appendChild(loadSec);
+      return;
+    }
+    const opps=sb.opps||[], cases=sb.cases||[];
+    const totalPipeline=opps.reduce((s,o)=>s+Number(o.Amount||0),0);
+    const byStage={};
+    opps.forEach(o=>{const st=o.StageName||'Unknown';if(!byStage[st])byStage[st]={count:0,value:0};byStage[st].count++;byStage[st].value+=Number(o.Amount||0);});
+
+    const kRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'8px',marginBottom:'14px'}});
+    [
+      {label:'Open Opps',val:opps.length,color:'var(--blue)'},
+      {label:'Pipeline Value',val:'$'+Math.round(totalPipeline).toLocaleString(),color:'var(--green)'},
+      {label:'Open Cases',val:cases.length,color:'var(--amber)'},
+      {label:'High Priority Cases',val:cases.filter(c=>c.Priority==='High').length,color:'var(--red)'},
+    ].forEach(k=>{
+      const card=el('div',{class:'analytics-card',style:{textAlign:'center',padding:'10px'}});
+      card.appendChild(el('div',{style:{fontSize:'18px',fontWeight:'700',color:k.color}},String(k.val)));
+      card.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginTop:'2px'}},k.label));
+      kRow.appendChild(card);
+    });
+    c.appendChild(kRow);
+
+    requestAnimationFrame(()=>{
+      if(typeof Chart==='undefined') return;
+      const row1=el('div',{class:'charts-row'});
+      const stageSec=el('div',{class:'chart-section',style:{flex:'1.5'}});
+      stageSec.appendChild(el('h4',{},'Pipeline by Stage'));
+      const stC=el('canvas',{style:{maxHeight:'200px'}}); stageSec.appendChild(stC); row1.appendChild(stageSec);
+      const stageEntries=Object.entries(byStage).sort((a,b)=>b[1].value-a[1].value);
+      new Chart(stC,{type:'bar',data:{labels:stageEntries.map(e=>e[0].slice(0,18)),datasets:[{label:'Value ($)',data:stageEntries.map(e=>e[1].value),backgroundColor:'#4f7cff',borderRadius:3},{label:'Count',data:stageEntries.map(e=>e[1].count),backgroundColor:'#22c55e',borderRadius:3,yAxisID:'y2'}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}}},scales:{y:{ticks:{color:'var(--muted)',font:{size:8},callback:v=>'$'+Math.round(v/1000)+'K'}},y2:{position:'right',ticks:{color:'var(--muted)',font:{size:8}},grid:{drawOnChartArea:false}},x:{ticks:{color:'var(--text)',font:{size:9}}}}}});
+
+      const caseSec=el('div',{class:'chart-section'});
+      caseSec.appendChild(el('h4',{},'Cases by Priority'));
+      const caC=el('canvas',{style:{maxHeight:'200px'}}); caseSec.appendChild(caC); row1.appendChild(caseSec);
+      const casePri={High:0,Medium:0,Low:0};
+      cases.forEach(c=>{if(casePri[c.Priority]!==undefined)casePri[c.Priority]++;});
+      new Chart(caC,{type:'doughnut',data:{labels:Object.keys(casePri),datasets:[{data:Object.values(casePri),backgroundColor:['#ef4444','#f59e0b','#6b7280'],borderWidth:2,borderColor:'var(--card)'}]},options:{responsive:true,plugins:{legend:{position:'right',labels:{font:{size:10},color:'var(--text)'}}}}});
+      c.appendChild(row1);
+    });
+
+    // Open opps table
+    const oppSec=el('div',{class:'summary-section',style:{marginTop:'12px'}});
+    oppSec.appendChild(el('h3',{},'📋 Open Opportunities'));
+    oppSec.appendChild(buildTable(
+      ['Account','Stage','Amount','Close Date','Owner'],
+      opps.slice(0,30),
+      o=>[o._accountName||o.Account?.Name||'—',o.StageName||'—','$'+Number(o.Amount||0).toLocaleString(),o.CloseDate||'—',o.Owner?.Name||'—']
+    ));
+    c.appendChild(oppSec);
+  }
+
+  // ── REP PERFORMANCE TAB ──
+  else if(S._analyticsTab==='performance'){
+    const sb=S._sfBoardData;
+    const opps=sb?.opps||[], tasks=sb?.tasks||[], cases=sb?.cases||[];
+    if(!opps.length&&!tasks.length){
+      const loadSec=el('div',{class:'summary-section',style:{textAlign:'center',padding:'24px'}});
+      loadSec.appendChild(el('p',{style:{fontSize:'12px',color:'var(--muted)',marginBottom:'12px'}},'Load the Salesforce Board to see rep performance data.'));
+      loadSec.appendChild(el('button',{class:'btn-primary',onclick(){S.view='sfboard';render();}},'→ Open SF Board'));
+      c.appendChild(loadSec);
+      return;
+    }
+    // Group by owner
+    const repMap={};
+    const addRep=name=>{if(!repMap[name])repMap[name]={name,opps:[],tasks:[],cases:[],pipelineValue:0,overdueTask:0};};
+    opps.forEach(o=>{const n=o.Owner?.Name||'Unknown';addRep(n);repMap[n].opps.push(o);repMap[n].pipelineValue+=Number(o.Amount||0);});
+    tasks.forEach(t=>{const n=t.Owner?.Name||'Unknown';addRep(n);repMap[n].tasks.push(t);if(t.ActivityDate&&new Date(t.ActivityDate)<today)repMap[n].overdueTask++;});
+    cases.forEach(ca=>{const n=ca.Owner?.Name||'Unknown';addRep(n);repMap[ca.Owner?.Name||'Unknown'].cases.push(ca);});
+    const reps=Object.values(repMap).sort((a,b)=>b.pipelineValue-a.pipelineValue);
+
+    // Rep KPI cards
+    const repGrid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:'8px',marginBottom:'12px'}});
+    reps.forEach(rep=>{
+      const card=el('div',{class:'analytics-card',style:{textAlign:'left',padding:'12px'}});
+      card.appendChild(el('div',{style:{fontWeight:'700',fontSize:'12px',marginBottom:'6px',color:'var(--text)'}},rep.name));
+      [
+        ['Pipeline','$'+Math.round(rep.pipelineValue).toLocaleString(),'var(--blue)'],
+        ['Open Opps',rep.opps.length,'var(--text)'],
+        ['Open Tasks',rep.tasks.length,rep.overdueTask>0?'var(--red)':'var(--text)'],
+        ['Overdue Tasks',rep.overdueTask,rep.overdueTask>0?'var(--red)':'var(--green)'],
+        ['Cases',rep.cases.length,'var(--muted)'],
+      ].forEach(([lbl,val,col])=>{
+        const row=el('div',{style:{display:'flex',justifyContent:'space-between',fontSize:'10px',padding:'1px 0'}});
+        row.appendChild(el('span',{style:{color:'var(--muted)'}},lbl));
+        row.appendChild(el('span',{style:{color:col,fontWeight:'600'}},String(val)));
+        card.appendChild(row);
+      });
+      repGrid.appendChild(card);
+    });
+    c.appendChild(repGrid);
+
+    requestAnimationFrame(()=>{
+      if(typeof Chart==='undefined'||!reps.length) return;
+      const row1=el('div',{class:'charts-row'});
+      const repSec=el('div',{class:'chart-section'});
+      repSec.appendChild(el('h4',{},'Pipeline Value by Rep'));
+      const rc=el('canvas',{style:{maxHeight:'200px'}}); repSec.appendChild(rc); row1.appendChild(repSec);
+      new Chart(rc,{type:'bar',data:{labels:reps.map(r=>r.name.split(' ')[0]),datasets:[{label:'Pipeline $',data:reps.map(r=>r.pipelineValue),backgroundColor:'#4f7cff',borderRadius:3},{label:'Open Opps',data:reps.map(r=>r.opps.length),backgroundColor:'#22c55e',borderRadius:3,yAxisID:'y2'}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}}},scales:{y:{ticks:{color:'var(--muted)',font:{size:8},callback:v=>'$'+Math.round(v/1000)+'K'}},y2:{position:'right',ticks:{color:'var(--muted)',font:{size:8}},grid:{drawOnChartArea:false}},x:{ticks:{color:'var(--text)',font:{size:9}}}}}});
+
+      const taskSec=el('div',{class:'chart-section'});
+      taskSec.appendChild(el('h4',{},'Overdue Tasks by Rep'));
+      const tc2=el('canvas',{style:{maxHeight:'200px'}}); taskSec.appendChild(tc2); row1.appendChild(taskSec);
+      const withOverdue=reps.filter(r=>r.tasks.length>0);
+      new Chart(tc2,{type:'bar',data:{labels:withOverdue.map(r=>r.name.split(' ')[0]),datasets:[{label:'Total Tasks',data:withOverdue.map(r=>r.tasks.length),backgroundColor:'rgba(79,124,255,.5)',borderRadius:3},{label:'Overdue',data:withOverdue.map(r=>r.overdueTask),backgroundColor:'#ef4444',borderRadius:3}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}}},scales:{y:{beginAtZero:true,ticks:{color:'var(--muted)',font:{size:8}}},x:{ticks:{color:'var(--text)',font:{size:9}}}}}});
+      c.appendChild(row1);
+    });
+
+    // Detailed rep table
+    c.appendChild(buildTable(
+      ['Rep','Opps','Pipeline','Overdue Tasks','Cases'],
+      reps,
+      r=>[r.name,r.opps.length,'$'+Math.round(r.pipelineValue).toLocaleString(),
+        el('span',{style:{color:r.overdueTask>0?'var(--red)':'var(--green)',fontWeight:r.overdueTask>0?'700':'400'}},String(r.overdueTask)),
+        r.cases.length]
+    ));
   }
 }
 
 async function loadAnalyticsSpend() {
-  // If Spend page data is already loaded, use it directly — no duplicate query needed
-  if(SPEND_STATE.data?.vendors?.length){
-    console.log('[Analytics] Using cached spend data:', SPEND_STATE.data.vendors.length, 'vendors');
-    S._analyticsSpendData=SPEND_STATE.data.vendors.map(v=>({
-      name:v.name, totalSpend:v.totalSpend, category:v.category,
-      adminFeePct:v.contractedPct||null,
-      expectedRevenue:v.expectedRevenue||0,
-      actualFees:v.totalFees||0,
-      actualPct:v.actualPct||0,
-      gap:v.gap||0,
-    }));
-    S._analyticsSpendLoaded=new Date().toLocaleTimeString()+' (from Spend page)';
-    S._analyticsSpendLoading=false;
-    render(); return;
-  }
-  if(!USER.sfToken){
-    S._analyticsSpendLoading=false;
-    toast('Load Spend page data first, or connect Salesforce','#f59e0b');
-    render(); return;
-  }
-  if(!USER.sfInstance){
-    const base=S.settings?.sfLoginUrl||'https://psgpo.my.salesforce.com';
-    USER.sfInstance=base.includes('.my.salesforce.com')||base.includes('.force.com')?base:'https://psgpo.my.salesforce.com';
-  }
-  S._analyticsSpendData=null; S._analyticsSpendLoading=true;
-  render();
-  try {
-    // Use the same query pattern as Spend page (works with 1040 records)
-    console.log('[Analytics] Querying SF spend data via Spend__c...');
-    const spendResult=await sfQuery('SELECT Id,Name,Vendor__c,Vendor__r.Name,Reported_Date__c,Category__c,Sales__c,Admin_Fee__c FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= '+new Date().getFullYear()+'-01-01 ORDER BY Reported_Date__c DESC LIMIT 2000');
-    console.log('[Analytics] Result:', spendResult?.records?.length, spendResult?._error||'ok', spendResult===null?'NULL - sfQuery blocked':'');
-    if(!spendResult){
-      S._analyticsSpendData=[]; S._analyticsSpendLoading=false;
-      toast('Analytics: SF not responding. Try loading Spend page first.','#f59e0b');
-      render(); return;
-    }
-    if(spendResult._error){
-      S._analyticsSpendData=[]; S._analyticsSpendLoading=false;
-      toast('Analytics SF error: '+spendResult._message,'#ef4444');
-      render(); return;
-    }
-    if(!spendResult.records?.length){
-      S._analyticsSpendData=[]; S._analyticsSpendLoading=false;
-      toast('Analytics: No spend records found for this year','#f59e0b');
-      render(); return;
-    }
-    // Aggregate same way as Spend page
-    const byVendor={};
-    spendResult.records.forEach(rec=>{
-      const vName=rec['Vendor__r']?.Name||''; if(!vName) return;
-      if(!byVendor[vName]) byVendor[vName]={name:vName,totalSpend:0,totalFees:0,categories:new Set()};
-      byVendor[vName].totalSpend+=Number(rec.Sales__c||0);
-      byVendor[vName].totalFees+=Number(rec.Admin_Fee__c||0);
-      if(rec.Category__c) byVendor[vName].categories.add(rec.Category__c);
-    });
-    Object.values(byVendor).forEach(v=>{v.category=[...v.categories].join(', ');delete v.categories;});
-    const vendors=Object.values(byVendor).map(v=>{
-      const vcsV=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
-      const contractedPct=parseFee(vcsV?.adminFee)||0;
-      const actualPct=v.totalSpend>0?((v.totalFees/v.totalSpend)*100):0;
-      return {...v,adminFeePct:contractedPct||null,actualPct,
-        expectedRevenue:contractedPct?Math.round(v.totalSpend*contractedPct/100):0,
-        gap:v.totalFees-(contractedPct?Math.round(v.totalSpend*contractedPct/100):0),
-        category:vcsV?.category||v.category};
-    });
-    S._analyticsSpendData=vendors;
-    S._analyticsSpendLoaded=new Date().toLocaleTimeString();
-    S._analyticsSpendLoading=false;
-    render();
-  } catch(e){
-    console.error('[Analytics] Error:',e);
-    S._analyticsSpendData=[]; S._analyticsSpendLoading=false;
-    toast('Analytics error: '+e.message,'#ef4444'); render();
-  }
+  // Wrapper — routes through the main loadSpendData pipeline
+  await loadSpendData();
+  S._analyticsSpendData = SPEND_STATE.data?.vendors||[];
+  S._analyticsSpendLoaded = new Date().toLocaleTimeString();
+  const c2=$('content');
+  if(c2&&S.view==='analytics'){c2.innerHTML='';renderAnalytics(c2);}
+  else render();
 }
 
 function renderSummary(c) {
