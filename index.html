@@ -169,6 +169,35 @@ body.ps-light-theme .group-header{color:#071630}
 body.ps-light-theme .quick-stats{border-top-color:rgba(255,255,255,.1)}
 body.ps-light-theme .stat-label{color:rgba(180,210,240,.7)}
 body.ps-light-theme .stat-val{color:rgba(220,240,255,.9)}
+
+/* Fix hardcoded near-transparent backgrounds that look dark in PS Light */
+body.ps-light-theme .forecast-section,
+body.ps-light-theme .chart-section,
+body.ps-light-theme .analytics-card,
+body.ps-light-theme .summary-section{background:#ffffff!important;color:#0a1a2e!important}
+body.ps-light-theme .forecast-section *,
+body.ps-light-theme .chart-section *,
+body.ps-light-theme .summary-section *{color:inherit}
+body.ps-light-theme h3,body.ps-light-theme h4,body.ps-light-theme h2{color:#071630!important}
+/* Chip/badge areas that used rgba(255,255,255,.04) — near-invisible on white */
+body.ps-light-theme [style*="rgba(255,255,255,.04)"],
+body.ps-light-theme [style*="rgba(255,255,255,.03)"],
+body.ps-light-theme [style*="rgba(255,255,255,.05)"],
+body.ps-light-theme [style*="rgba(255,255,255,.06)"]{background:rgba(0,120,184,.06)!important;color:#0a1a2e!important}
+/* Dark overlay chips on forecast/summary pages */
+body.ps-light-theme [style*="rgba(0,0,0,.12)"]{background:rgba(0,120,184,.08)!important}
+/* The SF signals section and other sidebar-colored sections */
+body.ps-light-theme [style*="background:var(--sb)"]{background:#f0f6fb!important;color:#0a1a2e!important}
+/* Hover rows that used white-transparent */
+body.ps-light-theme .data-table tr:hover td{background:rgba(0,120,184,.06)!important}
+/* Note lines — currently #adb5c7 (grey) — need dark text in light mode */  
+body.ps-light-theme .note-line{color:#3a4a5e!important}
+body.ps-light-theme .note-header{color:#071630!important}
+body.ps-light-theme .note-bullet{color:#1a2a40!important}
+/* Score/contract health section */
+body.ps-light-theme .detail-sec-title{background:rgba(0,120,184,.08)!important;color:#071630!important}
+/* User management pill badges */
+body.ps-light-theme [style*="rgba(255,255,255,.05)"]{background:rgba(0,120,184,.08)!important;border-color:rgba(0,120,184,.2)!important}
 body.light-theme #sidebar .sb-logo-img,body.ps-light-theme #sidebar .sb-logo-img{filter:none}
 body.compact .data-table td{padding:1px 4px!important}
 body.compact .data-table th{padding:2px 4px!important}
@@ -12559,7 +12588,9 @@ function renderToday(c) {
     card.appendChild(el('div',{class:'kpi-label'},label));
     kpis.appendChild(card);
   });
-  if (S.settings.showKPIs !== false) c.appendChild(kpis);
+  // Sticky header zone — KPIs + filter tabs stay visible while scrolling
+  const stickyHdr=el('div',{style:{position:'sticky',top:'-8px',zIndex:'14',background:'var(--bg)',marginTop:'-8px',paddingTop:'8px',paddingBottom:'4px',marginLeft:'-12px',paddingLeft:'12px',marginRight:'-12px',paddingRight:'12px',borderBottom:'1px solid var(--border)'}});
+  if (S.settings.showKPIs !== false) stickyHdr.appendChild(kpis);
 
   const tabs=el('div',{class:'filter-tabs'});
   const fDefs=[
@@ -12586,7 +12617,8 @@ function renderToday(c) {
   const dimCb=el('input',{type:'checkbox'}); dimCb.checked=S.showDismissed;
   dimCb.addEventListener('change',()=>{S.showDismissed=dimCb.checked;render();});
   dimLabel.append(dimCb,' Show dismissed'); tabs.appendChild(dimLabel);
-  c.appendChild(tabs);
+  stickyHdr.appendChild(tabs);
+  c.appendChild(stickyHdr);
 
   // ── SF-Powered Signals (if connected) ──────────────────────────────────────
   if(USER.sfToken && S._sfSignals !== false) {
@@ -14308,7 +14340,13 @@ function renderAnalytics(c) {
     }
     c.appendChild(grid);
 
-    requestAnimationFrame(()=>{
+    const chartZone2=el('div',{id:'analytics-chart-zone-contract'});
+    c.appendChild(chartZone2);
+    if(window._analyticsRaf2) cancelAnimationFrame(window._analyticsRaf2);
+    window._analyticsRaf2=requestAnimationFrame(()=>{
+      window._analyticsRaf2=null;
+      const cz2=document.getElementById('analytics-chart-zone-contract');
+      if(!cz2) return;
       if(typeof Chart==='undefined') return;
       const row1=el('div',{class:'charts-row',style:{marginTop:'12px'}});
 
@@ -14318,6 +14356,7 @@ function renderAnalytics(c) {
       const tc=el('canvas',{style:{maxHeight:'180px'}}); tierSec.appendChild(tc); row1.appendChild(tierSec);
       const tierCounts={CALL:vs.filter(v=>v.tier==='CALL').length,EMAIL:vs.filter(v=>v.tier==='EMAIL').length,REVIEW:vs.filter(v=>v.tier==='REVIEW').length,MONITOR:vs.filter(v=>v.tier==='MONITOR').length};
       new Chart(tc,{type:'doughnut',data:{labels:Object.keys(tierCounts),datasets:[{data:Object.values(tierCounts),backgroundColor:['#ef4444','#f59e0b','#4f7cff','#6b7280'],borderWidth:2,borderColor:'var(--card)'}]},options:{responsive:true,plugins:{legend:{position:'right',labels:{font:{size:10},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.label+': '+ctx.raw+' vendors'}}},onClick(e,els){if(els.length){const t=Object.keys(tierCounts)[els[0].index];openAnalyticsPopup(t+' Tier',vs.filter(v=>v.tier===t));}}}});
+      if(tc) tc._chartInstance=Chart.getChart(tc);
 
       // Expiry timeline bar
       const expSec=el('div',{class:'chart-section'});
@@ -14333,8 +14372,9 @@ function renderAnalytics(c) {
       const expMonthVendors=[];
       for(let i=0;i<12;i++){const m=(today.getMonth()+i)%12,y=today.getFullYear()+Math.floor((today.getMonth()+i)/12);expMonthVendors.push(vs.filter(v=>{const e=getCurrentExpiry(v);return e&&e.getFullYear()===y&&e.getMonth()===m;}));}
       new Chart(ec,{type:'bar',data:{labels:expLabels,datasets:[{label:'Expiring',data:expData,backgroundColor:expData.map((_,i)=>i===0?'#ef4444':i<=2?'#f59e0b':'#4f7cff'),borderRadius:3}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.raw+' contracts expiring'}}},scales:{y:{beginAtZero:true,ticks:{stepSize:1,color:'var(--muted)',font:{size:9}}},x:{ticks:{color:'var(--muted)',font:{size:9}}}},onClick(e,els){if(els.length){const i=els[0].index;openAnalyticsPopup(expLabels[i]+' Expiring',expMonthVendors[i]);}}}});
+      if(ec) ec._chartInstance=Chart.getChart(ec);
       [tierSec,expSec].forEach(makeExpandable);
-      c.appendChild(row1);
+      cz2.appendChild(row1);
 
       const row2=el('div',{class:'charts-row'});
       // Admin fee buckets
@@ -14356,6 +14396,7 @@ function renderAnalytics(c) {
       const feeBucketVendors={'0%':[],'0.01–0.5%':[],'0.5–1%':[],'1–2%':[],'2–3%':[],'>3%':[],'Not Set':[]};
       vs.filter(isVisible).forEach(v=>{const f=parseFee(v.adminFee);if(f===null)feeBucketVendors['Not Set'].push(v);else if(f===0)feeBucketVendors['0%'].push(v);else if(f<0.5)feeBucketVendors['0.01–0.5%'].push(v);else if(f<1)feeBucketVendors['0.5–1%'].push(v);else if(f<2)feeBucketVendors['1–2%'].push(v);else if(f<3)feeBucketVendors['2–3%'].push(v);else feeBucketVendors['>3%'].push(v);});
       new Chart(fc,{type:'bar',data:{labels:Object.keys(feeBuckets),datasets:[{data:Object.values(feeBuckets),backgroundColor:'#4f7cff',hoverBackgroundColor:'#2d5ee0',borderRadius:3}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.raw+' vendors — click to drill down'}}},scales:{y:{beginAtZero:true,ticks:{stepSize:1,color:'var(--muted)',font:{size:9}}},x:{ticks:{color:'var(--muted)',font:{size:9}}}},onClick(e,els){if(els.length){const bkt=Object.keys(feeBuckets)[els[0].index];openAnalyticsPopup('Fee Rate: '+bkt,feeBucketVendors[bkt]);}}}});
+      if(fc) fc._chartInstance=Chart.getChart(fc);
 
       // Top categories
       const catSec=el('div',{class:'chart-section'});
@@ -14365,8 +14406,9 @@ function renderAnalytics(c) {
       vs.filter(isVisible).forEach(v=>{const k=v.category||'Uncategorized';catMap[k]=(catMap[k]||0)+1;});
       const topCats=Object.entries(catMap).sort((a,b)=>b[1]-a[1]).slice(0,10);
       new Chart(cc,{type:'bar',data:{labels:topCats.map(c=>c[0].slice(0,18)),datasets:[{data:topCats.map(c=>c[1]),backgroundColor:'#22c55e',borderRadius:3}]},options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.raw+' vendors'}}},scales:{x:{beginAtZero:true,ticks:{color:'var(--muted)',font:{size:9}}},y:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(els.length){const cat=topCats[els[0].index][0];openAnalyticsPopup(cat+' vendors',vs.filter(v=>isVisible(v)&&(v.category||''===cat)));}}}});
+      if(cc) cc._chartInstance=Chart.getChart(cc);
       [feeSec,catSec].forEach(makeExpandable);
-      c.appendChild(row2);
+      cz2.appendChild(row2);
     });
   }
 
@@ -14419,7 +14461,15 @@ function renderAnalytics(c) {
     });
     c.appendChild(kRow);
 
-    requestAnimationFrame(()=>{
+    // Create a stable container for charts — prevents stale rAF from appending twice
+    const chartZone=el('div',{id:'analytics-chart-zone-revenue'});
+    c.appendChild(chartZone);
+    // Cancel any pending rAF from previous render
+    if(window._analyticsRaf) cancelAnimationFrame(window._analyticsRaf);
+    window._analyticsRaf=requestAnimationFrame(()=>{
+      window._analyticsRaf=null;
+      const cz=document.getElementById('analytics-chart-zone-revenue');
+      if(!cz) return; // stale render — bail
       if(typeof Chart==='undefined') return;
       const row1=el('div',{class:'charts-row'});
 
@@ -14433,6 +14483,7 @@ function renderAnalytics(c) {
         {label:'Fees Received',data:top15.map(v=>v.totalFees),backgroundColor:'rgba(34,197,94,.7)',borderRadius:3},
         {label:'Expected',data:top15.map(v=>v.expectedRevenue||0),backgroundColor:'rgba(245,158,11,.5)',borderRadius:3},
       ]},options:{indexAxis:'y',responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}}},scales:{x:{stacked:false,ticks:{color:'var(--muted)',font:{size:8},callback:v=>'$'+Math.round(v/1000)+'K'}},y:{ticks:{color:'var(--text)',font:{size:8}}}}}});
+      if(spC) spC._chartInstance=Chart.getChart(spC);
 
       // Fee Gap by vendor — top 20 with gaps (moved from duplicate position)
       const gapSec=el('div',{class:'chart-section'});
@@ -14443,7 +14494,8 @@ function renderAnalytics(c) {
         {label:'Contracted Rate %',data:topVendors.map(v=>v.contractedPct||0),backgroundColor:'rgba(79,124,255,.6)',borderRadius:3},
         {label:'Actual Rate %',data:topVendors.map(v=>v.actualPct||0),backgroundColor:topVendors.map(v=>(v.actualPct||0)<(v.contractedPct||0)*0.8?'#ef4444':'#22c55e'),borderRadius:3},
       ]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+ctx.raw.toFixed(2)+'%'}}},scales:{y:{beginAtZero:true,ticks:{color:'var(--muted)',font:{size:8},callback:v=>v.toFixed(1)+'%'}},x:{ticks:{color:'var(--text)',font:{size:8}}}},onClick(e,els){if(els.length){const v=topVendors[els[0].index];const vcsV=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));if(vcsV)openDetail(vcsV);else toast(v.name,'#4f7cff');}}}});
-      c.appendChild(row1);
+      if(gapC) gapC._chartInstance=Chart.getChart(gapC);
+      cz.appendChild(row1);
 
       // Category spend breakdown
       const row2=el('div',{class:'charts-row'});
@@ -14454,7 +14506,8 @@ function renderAnalytics(c) {
       sd.forEach(v=>{const k=v.category||'Other';catSpend[k]=(catSpend[k]||0)+v.totalSpend;});
       const topCatSpend=Object.entries(catSpend).sort((a,b)=>b[1]-a[1]).slice(0,10);
       const PALETTE=['#4f7cff','#22c55e','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#ec4899','#10b981','#6366f1'];
-      new Chart(catC,{type:'doughnut',data:{labels:topCatSpend.map(c=>c[0]),datasets:[{data:topCatSpend.map(c=>c[1]),backgroundColor:PALETTE,borderWidth:2,borderColor:'var(--card)'}]},options:{responsive:true,plugins:{legend:{position:'right',labels:{font:{size:9},color:'var(--text)',boxWidth:10}},tooltip:{callbacks:{label:ctx=>ctx.label+': $'+Math.round(ctx.raw).toLocaleString()}}},onClick(e,els){if(els.length){const cat=topCatSpend[els[0].index][0];const catVendors=sd.filter(v=>v.category===cat);openModal(body=>{body.appendChild(el('h3',{},'Spend: '+cat));body.appendChild(buildTable(['Vendor','YTD Spend','Fees','Fee Rate'],catVendors,v=>[v.name,'$'+Math.round(v.totalSpend).toLocaleString(),'$'+Math.round(v.totalFees).toLocaleString(),v.contractedPct?v.contractedPct.toFixed(2)+'%':'—']));const btns=el('div',{class:'modal-btns'});btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns);});}}}});
+      new Chart(catC,{type:'doughnut',data:{labels:topCatSpend.map(c=>c[0]),datasets:[{data:topCatSpend.map(c=>c[1]),backgroundColor:PALETTE,borderWidth:2,borderColor:'var(--card)'}]},options:{responsive:true,plugins:{legend:{position:'right',labels:{font:{size:9},color:'var(--text)',boxWidth:10}},tooltip:{callbacks:{label:ctx=>ctx.label+': $'+Math.round(ctx.raw).toLocaleString()}}},onClick(e,els){if(els.length){const cat=topCatSpend[els[0].index][0];const catVendors=sd.filter(v=>v.category===cat);openModal(body=>{body.appendChild(el('h3',{},'Spend: '+cat));body.appendChild(buildTable(['Vendor','YTD Spend','Fees','Fee Rate'],catVendors,v=>[v.name,'$'+Math.round(v.totalSpend).toLocaleString(),'$'+Math.round(v.totalFees).toLocaleString(),v.contractedPct?v.contractedPct.toFixed(2)+'%':'—']));const btns=el('div',{class:'modal-btns'});
+      if(catC) catC._chartInstance=Chart.getChart(catC);btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns);});}}}});
 
       // Fee rate vs actual rate scatter
       const rateSec=el('div',{class:'chart-section'});
@@ -14462,8 +14515,9 @@ function renderAnalytics(c) {
       const rateC=el('canvas',{style:{maxHeight:'200px'}}); rateSec.appendChild(rateC); row2.appendChild(rateSec);
       const rateData=sd.filter(v=>v.contractedPct>0&&v.totalSpend>0).slice(0,25).map(v=>({x:v.contractedPct,y:v.actualPct,label:v.name.slice(0,12)}));
       new Chart(rateC,{type:'scatter',data:{datasets:[{label:'Vendors',data:rateData,backgroundColor:rateData.map(d=>d.y<d.x*0.8?'#ef4444':d.y>d.x*1.1?'#22c55e':'#4f7cff'),pointRadius:7,hoverRadius:9}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>`${ctx.raw.label}: contracted ${ctx.raw.x.toFixed(2)}% | actual ${ctx.raw.y.toFixed(2)}% | ${ctx.raw.y<ctx.raw.x*0.8?'⚠ Under-paying':'✓ On track'}`}}},scales:{x:{title:{display:true,text:'Contracted %',color:'var(--muted)',font:{size:9}},ticks:{color:'var(--muted)',font:{size:9}}},y:{title:{display:true,text:'Actual %',color:'var(--muted)',font:{size:9}},ticks:{color:'var(--muted)',font:{size:9}}}},onClick(e,els){if(els.length){const d=rateData[els[0].index];const v=sd.find(sv=>sv.name.slice(0,12)===d.label);const vcsV=v&&S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));if(vcsV)openDetail(vcsV);else toast('Vendor: '+d.label,'#4f7cff');}}}});
+      if(rateC) rateC._chartInstance=Chart.getChart(rateC);
       [spSec,gapSec,catSec2,rateSec].forEach(makeExpandable);
-      c.appendChild(row2);
+      cz.appendChild(row2);
     });
 
     // Fee gap table — drillable
@@ -14529,14 +14583,16 @@ function renderAnalytics(c) {
       stageSec.appendChild(el('h4',{},'Pipeline by Stage'));
       const stC=el('canvas',{style:{maxHeight:'200px'}}); stageSec.appendChild(stC); row1.appendChild(stageSec);
       const stageEntries=Object.entries(byStage).sort((a,b)=>b[1].value-a[1].value);
-      new Chart(stC,{type:'bar',data:{labels:stageEntries.map(e=>e[0].slice(0,18)),datasets:[{label:'Value ($)',data:stageEntries.map(e=>e[1].value),backgroundColor:'#4f7cff',hoverBackgroundColor:'#2d5ee0',borderRadius:3},{label:'Count',data:stageEntries.map(e=>e[1].count),backgroundColor:'#22c55e',hoverBackgroundColor:'#16a34a',borderRadius:3,yAxisID:'y2'}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+(ctx.dataset.yAxisID==='y2'?ctx.raw+' opps':'$'+Math.round(ctx.raw).toLocaleString())}}},scales:{y:{ticks:{color:'var(--muted)',font:{size:8},callback:v=>'$'+Math.round(v/1000)+'K'}},y2:{position:'right',ticks:{color:'var(--muted)',font:{size:8}},grid:{drawOnChartArea:false}},x:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(els.length){const stage=stageEntries[els[0].index][0];const stageOpps=opps.filter(o=>o.StageName===stage);openModal(body=>{body.appendChild(el('h3',{},'Pipeline: '+stage+' ('+stageOpps.length+' opps)'));body.appendChild(buildTable(['Account','Amount','Close Date','Owner'],stageOpps,o=>[o._accountName||'—','$'+Number(o.Amount||0).toLocaleString(),o.CloseDate||'—',o.Owner?.Name||'—']));const btns=el('div',{class:'modal-btns'});btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns);});}}}});
+      new Chart(stC,{type:'bar',data:{labels:stageEntries.map(e=>e[0].slice(0,18)),datasets:[{label:'Value ($)',data:stageEntries.map(e=>e[1].value),backgroundColor:'#4f7cff',hoverBackgroundColor:'#2d5ee0',borderRadius:3},{label:'Count',data:stageEntries.map(e=>e[1].count),backgroundColor:'#22c55e',hoverBackgroundColor:'#16a34a',borderRadius:3,yAxisID:'y2'}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+(ctx.dataset.yAxisID==='y2'?ctx.raw+' opps':'$'+Math.round(ctx.raw).toLocaleString())}}},scales:{y:{ticks:{color:'var(--muted)',font:{size:8},callback:v=>'$'+Math.round(v/1000)+'K'}},y2:{position:'right',ticks:{color:'var(--muted)',font:{size:8}},grid:{drawOnChartArea:false}},x:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(els.length){const stage=stageEntries[els[0].index][0];const stageOpps=opps.filter(o=>o.StageName===stage);openModal(body=>{body.appendChild(el('h3',{},'Pipeline: '+stage+' ('+stageOpps.length+' opps)'));body.appendChild(buildTable(['Account','Amount','Close Date','Owner'],stageOpps,o=>[o._accountName||'—','$'+Number(o.Amount||0).toLocaleString(),o.CloseDate||'—',o.Owner?.Name||'—']));const btns=el('div',{class:'modal-btns'});
+      if(stC) stC._chartInstance=Chart.getChart(stC);btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns);});}}}});
 
       const caseSec=el('div',{class:'chart-section'});
       caseSec.appendChild(el('h4',{},'Cases by Priority'));
       const caC=el('canvas',{style:{maxHeight:'200px'}}); caseSec.appendChild(caC); row1.appendChild(caseSec);
       const casePri={High:0,Medium:0,Low:0};
       cases.forEach(c=>{if(casePri[c.Priority]!==undefined)casePri[c.Priority]++;});
-      new Chart(caC,{type:'doughnut',data:{labels:Object.keys(casePri),datasets:[{data:Object.values(casePri),backgroundColor:['#ef4444','#f59e0b','#6b7280'],borderWidth:2,borderColor:'var(--card)'}]},options:{responsive:true,plugins:{legend:{position:'right',labels:{font:{size:10},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.label+': '+ctx.raw+' cases'}}},onClick(e,els){if(els.length){const pri=Object.keys(casePri)[els[0].index];const priCases=cases.filter(c=>c.Priority===pri);openModal(body=>{body.appendChild(el('h3',{},'Cases: '+pri+' Priority ('+priCases.length+')'));body.appendChild(buildTable(['Subject','Account','Status','Owner'],priCases,c=>[c.Subject||'—',c._accountName||c.Account?.Name||'—',c.Status||'—',c.Owner?.Name||'—']));const btns=el('div',{class:'modal-btns'});btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns);});}}}});
+      new Chart(caC,{type:'doughnut',data:{labels:Object.keys(casePri),datasets:[{data:Object.values(casePri),backgroundColor:['#ef4444','#f59e0b','#6b7280'],borderWidth:2,borderColor:'var(--card)'}]},options:{responsive:true,plugins:{legend:{position:'right',labels:{font:{size:10},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.label+': '+ctx.raw+' cases'}}},onClick(e,els){if(els.length){const pri=Object.keys(casePri)[els[0].index];const priCases=cases.filter(c=>c.Priority===pri);openModal(body=>{body.appendChild(el('h3',{},'Cases: '+pri+' Priority ('+priCases.length+')'));body.appendChild(buildTable(['Subject','Account','Status','Owner'],priCases,c=>[c.Subject||'—',c._accountName||c.Account?.Name||'—',c.Status||'—',c.Owner?.Name||'—']));const btns=el('div',{class:'modal-btns'});
+      if(caC) caC._chartInstance=Chart.getChart(caC);btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns);});}}}});
       c.appendChild(row1);
     });
 
@@ -14597,13 +14653,15 @@ function renderAnalytics(c) {
       const repSec=el('div',{class:'chart-section'});
       repSec.appendChild(el('h4',{},'Pipeline Value by Rep'));
       const rc=el('canvas',{style:{maxHeight:'200px'}}); repSec.appendChild(rc); row1.appendChild(repSec);
-      new Chart(rc,{type:'bar',data:{labels:reps.map(r=>r.name.split(' ')[0]),datasets:[{label:'Pipeline $',data:reps.map(r=>r.pipelineValue),backgroundColor:'#4f7cff',hoverBackgroundColor:'#2d5ee0',borderRadius:3},{label:'Open Opps',data:reps.map(r=>r.opps.length),backgroundColor:'#22c55e',hoverBackgroundColor:'#16a34a',borderRadius:3,yAxisID:'y2'}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+(ctx.dataset.yAxisID==='y2'?ctx.raw+' opps':'$'+Math.round(ctx.raw).toLocaleString())}}},scales:{y:{ticks:{color:'var(--muted)',font:{size:8},callback:v=>'$'+Math.round(v/1000)+'K'}},y2:{position:'right',ticks:{color:'var(--muted)',font:{size:8}},grid:{drawOnChartArea:false}},x:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(els.length){const rep=reps[els[0].index];openModal(body=>{body.appendChild(el('h3',{},rep.name+' — Open Opportunities ('+rep.opps.length+')'));if(rep.opps.length)body.appendChild(buildTable(['Account','Stage','Amount','Close Date'],rep.opps,o=>[o._accountName||o.Account?.Name||'—',o.StageName||'—','$'+Number(o.Amount||0).toLocaleString(),o.CloseDate||'—']));else body.appendChild(el('p',{style:{color:'var(--muted)',padding:'12px'}},'No open opportunities'));const btns=el('div',{class:'modal-btns'});btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns);});}}}});
+      new Chart(rc,{type:'bar',data:{labels:reps.map(r=>r.name.split(' ')[0]),datasets:[{label:'Pipeline $',data:reps.map(r=>r.pipelineValue),backgroundColor:'#4f7cff',hoverBackgroundColor:'#2d5ee0',borderRadius:3},{label:'Open Opps',data:reps.map(r=>r.opps.length),backgroundColor:'#22c55e',hoverBackgroundColor:'#16a34a',borderRadius:3,yAxisID:'y2'}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+(ctx.dataset.yAxisID==='y2'?ctx.raw+' opps':'$'+Math.round(ctx.raw).toLocaleString())}}},scales:{y:{ticks:{color:'var(--muted)',font:{size:8},callback:v=>'$'+Math.round(v/1000)+'K'}},y2:{position:'right',ticks:{color:'var(--muted)',font:{size:8}},grid:{drawOnChartArea:false}},x:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(els.length){const rep=reps[els[0].index];openModal(body=>{body.appendChild(el('h3',{},rep.name+' — Open Opportunities ('+rep.opps.length+')'));if(rep.opps.length)body.appendChild(buildTable(['Account','Stage','Amount','Close Date'],rep.opps,o=>{const an=o._accountName||o.Account?.Name||'—';const vv=S.vendors.find(sv=>vendorNamesMatch(sv.name,an));return [vv?el('span',{class:'vendor-link',onclick(){closeModal();openDetail(vv);}},an):an,o.StageName||'—','$'+Number(o.Amount||0).toLocaleString(),o.CloseDate||'—'];}));else body.appendChild(el('p',{style:{color:'var(--muted)',padding:'12px'}},'No open opportunities'));const btns=el('div',{class:'modal-btns'});
+      if(rc) rc._chartInstance=Chart.getChart(rc);btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns);});}}}});
 
       const taskSec=el('div',{class:'chart-section'});
       taskSec.appendChild(el('h4',{},'Overdue Tasks by Rep'));
       const tc2=el('canvas',{style:{maxHeight:'200px'}}); taskSec.appendChild(tc2); row1.appendChild(taskSec);
       const withOverdue=reps.filter(r=>r.tasks.length>0);
-      new Chart(tc2,{type:'bar',data:{labels:withOverdue.map(r=>r.name.split(' ')[0]),datasets:[{label:'Total Tasks',data:withOverdue.map(r=>r.tasks.length),backgroundColor:'rgba(79,124,255,.5)',borderRadius:3},{label:'Overdue',data:withOverdue.map(r=>r.overdueTask),backgroundColor:'#ef4444',hoverBackgroundColor:'#c42828',borderRadius:3}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+ctx.raw+' tasks'}}},scales:{y:{beginAtZero:true,ticks:{color:'var(--muted)',font:{size:8}}},x:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(els.length){const rep=withOverdue[els[0].index];const overdueTasks=rep.tasks.filter(t=>t.ActivityDate&&new Date(t.ActivityDate)<today);openModal(body=>{body.appendChild(el('h3',{},rep.name+' — Overdue Tasks ('+overdueTasks.length+')'));if(overdueTasks.length)body.appendChild(buildTable(['Subject','Due Date','Account'],overdueTasks,t=>[t.Subject||'—',t.ActivityDate||'—',t.What?.Name||'—']));else body.appendChild(el('p',{style:{color:'var(--muted)',padding:'12px'}},'No overdue tasks'));const btns=el('div',{class:'modal-btns'});btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns);});}}}});
+      new Chart(tc2,{type:'bar',data:{labels:withOverdue.map(r=>r.name.split(' ')[0]),datasets:[{label:'Total Tasks',data:withOverdue.map(r=>r.tasks.length),backgroundColor:'rgba(79,124,255,.5)',borderRadius:3},{label:'Overdue',data:withOverdue.map(r=>r.overdueTask),backgroundColor:'#ef4444',hoverBackgroundColor:'#c42828',borderRadius:3}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+ctx.raw+' tasks'}}},scales:{y:{beginAtZero:true,ticks:{color:'var(--muted)',font:{size:8}}},x:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(els.length){const rep=withOverdue[els[0].index];const overdueTasks=rep.tasks.filter(t=>t.ActivityDate&&new Date(t.ActivityDate)<today);openModal(body=>{body.appendChild(el('h3',{},rep.name+' — Overdue Tasks ('+overdueTasks.length+')'));if(overdueTasks.length)body.appendChild(buildTable(['Subject','Due Date','Account'],overdueTasks,t=>[t.Subject||'—',t.ActivityDate||'—',t.What?.Name||'—']));else body.appendChild(el('p',{style:{color:'var(--muted)',padding:'12px'}},'No overdue tasks'));const btns=el('div',{class:'modal-btns'});
+      if(tc2) tc2._chartInstance=Chart.getChart(tc2);btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns);});}}}});
       c.appendChild(row1);
     });
 
