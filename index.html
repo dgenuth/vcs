@@ -32,8 +32,8 @@ body.midnight-theme{--bg:#0a0a12;--sb:#10101c;--card:#14141f;--border:#22223a;--
 body.slate-theme{--bg:#0f172a;--sb:#1e293b;--card:#1e293b;--border:#334155;--text:#f1f5f9;--muted:#64748b;--blue:#60a5fa;--green:#4ade80;--red:#f87171;--amber:#facc15;--orange:#fb923c}
 body.warm-theme{--bg:#1c1410;--sb:#241c16;--card:#2a2018;--border:#3d2e22;--text:#f5ede0;--muted:#9c7c5a;--blue:#fbbf24;--green:#86efac;--red:#f87171;--amber:#fde68a;--orange:#fdba74}
 body.rose-theme{--bg:#0f0a0a;--sb:#1a1010;--card:#1f1414;--border:#3a1f1f;--text:#f0e0e0;--muted:#9a6060;--blue:#fb7185;--green:#34d399;--red:#f87171;--amber:#fcd34d;--orange:#fb923c}
-body.ps-dark-theme{--bg:#0d1117;--sb:#0f1520;--card:#161e2e;--border:rgba(42,125,225,.14);--text:#e0e8f5;--muted:#6a7d99;--blue:#2a7de1;--green:#3dba6f;--red:#e8453c;--amber:#f0a020;--orange:#f07820}
-body.ps-light-theme{--bg:#f0f5fc;--sb:#1a2a45;--card:#ffffff;--border:rgba(42,125,225,.15);--text:#1a2133;--muted:#5a6880;--blue:#2a7de1;--green:#2ea05a;--red:#d32f2f;--amber:#e08c00;--orange:#d06000}
+body.ps-dark-theme{--bg:#0a0f1a;--sb:#0c1628;--card:#112038;--border:rgba(0,128,192,.2);--text:#ddeeff;--muted:#6b8aaa;--blue:#0080c0;--green:#20a080;--red:#e04040;--amber:#f0a020;--orange:#e07020}
+body.ps-light-theme{--bg:#f0f6fb;--sb:#0c1e38;--card:#ffffff;--border:rgba(0,128,192,.18);--text:#0c1e38;--muted:#4a6a8a;--blue:#0080c0;--green:#1a8a6a;--red:#c83030;--amber:#d08000;--orange:#c05800}
 body.light-theme #sidebar .sb-logo-img,body.ps-light-theme #sidebar .sb-logo-img{filter:none}
 body.compact .data-table td{padding:1px 4px!important}
 body.compact .data-table th{padding:2px 4px!important}
@@ -82,6 +82,7 @@ body.light-theme #login-screen{background:#f0f2f7}
 #sidebar{width:178px;min-width:178px;background:var(--sb);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;transition:width .2s ease,min-width .2s ease}
 #sidebar.collapsed{width:42px;min-width:42px}
 #sidebar.collapsed .sb-logo-text{display:none}
+#sidebar.collapsed .sb-logo-img{display:none}
 #sidebar.collapsed .nav-btn-label{display:none}
 #sidebar.collapsed .nav-btn{padding:7px 0;text-align:center;font-size:15px;overflow:visible}
 #sidebar.collapsed .nav-btn .nav-icon{font-size:15px}
@@ -286,6 +287,12 @@ body.light-theme .cal-closed-label{background:rgba(220,38,38,.15);color:#991b1b}
 body.light-theme .score-pill{color:#fff}
 body.light-theme .tier-tag{color:#fff}
 body.light-theme .nav-btn.active{background:rgba(37,99,235,.1)}
+body.ps-dark-theme .nav-btn.active{background:rgba(0,128,192,.2);border-left:2px solid #0080c0}
+body.ps-light-theme .nav-btn.active{background:rgba(0,128,192,.15);border-left:2px solid #0080c0}
+body.ps-light-theme .nav-btn{color:rgba(221,238,255,.85)}
+body.ps-light-theme .nav-btn:hover{color:#ddeeff;background:rgba(0,128,192,.15)}
+body.ps-dark-theme .sb-logo-img,body.ps-light-theme .sb-logo-img{filter:brightness(1.1)}
+body.light-theme .sb-logo-img{filter:none}
 body.light-theme .filter-tab.active{background:var(--blue);color:#fff}
 body.light-theme .kpi-card{box-shadow:0 1px 4px rgba(0,0,0,.08)}
 body.light-theme .health-bar-marker{border-color:#f0f2f7}
@@ -7086,7 +7093,12 @@ function renderVendorDB(c) {
     all: {label:`All (${S.allVendors.length})`, data:S.allVendors, desc:'Full universe of all vendor contracts across all GPOs'},
   };
   for (const [key, {label}] of Object.entries(sourcePool)) {
-    sourceBar.appendChild(el('button',{class:'col-toggle-btn'+(S.dbSource===key?' on':''),onclick(){S.dbSource=key;S.dbFilters={};S._dbPage=0;render();}},label));
+    sourceBar.appendChild(el('button',{class:'col-toggle-btn'+(S.dbSource===key?' on':''),onclick(){
+      S.dbSource=key;S.dbFilters={};S._dbPage=0;
+      // Fast path: re-render only the DB content, not the whole page
+      if(S.view==='vendordb'){const c2=$('content');if(c2){c2.innerHTML='';renderVendorDB(c2);return;}}
+      render();
+    }},label));
   }
   const desc=el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'8px'}},sourcePool[S.dbSource].desc);
   sourceBar.appendChild(desc);
@@ -7349,10 +7361,10 @@ function renderVendorDB(c) {
       const col=COLS.find(c=>c.key===key);
       const chip=el('span',{style:{background:'rgba(79,124,255,.15)',border:'1px solid rgba(79,124,255,.3)',borderRadius:'4px',padding:'2px 8px',fontSize:'9px',display:'inline-flex',alignItems:'center',gap:'4px',color:'var(--blue)'}});
       chip.appendChild(document.createTextNode(`${col?.label||key}: ${[...vals].slice(0,3).join(', ')}${vals.size>3?' +more':''}`));
-      const x=el('span',{style:{cursor:'pointer',fontWeight:'bold'},onclick(){delete S.dbFilters[key]; render();}},'×');
+      const x=el('span',{style:{cursor:'pointer',fontWeight:'bold'},onclick(){delete S.dbFilters[key];S._dbPage=0;const c2=$('content');if(c2&&S.view==='vendordb'){c2.innerHTML='';renderVendorDB(c2);}else render();}},'×');
       chip.appendChild(x); chipRow.appendChild(chip);
     });
-    chipRow.appendChild(el('button',{class:'btn-xs btn-danger',onclick(){S.dbFilters={};render();}},'✕ Clear All'));
+    chipRow.appendChild(el('button',{class:'btn-xs btn-danger',onclick(){S.dbFilters={};S._dbPage=0;const c2=$('content');if(c2&&S.view==='vendordb'){c2.innerHTML='';renderVendorDB(c2);}else render();}},'✕ Clear All'));
     c.appendChild(chipRow);
   }
 
@@ -7370,7 +7382,7 @@ function renderVendorDB(c) {
   c.appendChild(actionBar);
 
   // ── Table ──
-  const tblWrap=el('div',{id:'vdb-table',class:'tbl-wrap'});
+  const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap'});
   const table=el('table',{class:'data-table',style:{borderCollapse:'collapse'}});
   const thead=el('thead'), trh=el('tr');
 
@@ -7388,7 +7400,7 @@ function renderVendorDB(c) {
     // Sort label
     const lbl=el('span',{style:{cursor:col.sortable?'pointer':'default',color:isSorted?'var(--blue)':hasFilter?'var(--amber)':'var(--muted)',fontSize:'10px'}},
       col.label+(isSorted?(S.dbSort.dir>0?' ↑':' ↓'):''));
-    if (col.sortable) lbl.addEventListener('click',()=>{ if(S.dbSort.col===col.label)S.dbSort.dir*=-1; else{S.dbSort.col=col.label;S.dbSort.dir=1;} render(); });
+    if (col.sortable) lbl.addEventListener('click',()=>{ if(S.dbSort.col===col.label)S.dbSort.dir*=-1; else{S.dbSort.col=col.label;S.dbSort.dir=1;} S._dbPage=0; const c2=$('content');if(c2&&S.view==='vendordb'){c2.innerHTML='';renderVendorDB(c2);}else render(); });
     inner.appendChild(lbl);
     // Filter button
     const fBtn=el('span',{title:`Filter by ${col.label}`,style:{cursor:'pointer',opacity:hasFilter?1:0.35,color:hasFilter?'var(--amber)':'var(--muted)',fontSize:'9px'},
@@ -7453,16 +7465,16 @@ function renderVendorDB(c) {
   if (totalPages_ctrl > 1) {
     const pagBar = el('div',{style:{display:'flex',gap:'6px',alignItems:'center',justifyContent:'center',padding:'10px 0',flexWrap:'wrap'}});
     const curPage = S._dbPage||0;
-    pagBar.appendChild(el('button',{class:'btn-xs btn-ghost',disabled:curPage===0,onclick(){S._dbPage=0;render();}}, '«'));
-    pagBar.appendChild(el('button',{class:'btn-xs btn-ghost',disabled:curPage===0,onclick(){S._dbPage=Math.max(0,curPage-1);render();}}, '‹ Prev'));
+    pagBar.appendChild(el('button',{class:'btn-xs btn-ghost',disabled:curPage===0,onclick(){S._dbPage=0;const c2=$('content');if(c2){c2.innerHTML='';renderVendorDB(c2);}else render();}}, '«'));
+    pagBar.appendChild(el('button',{class:'btn-xs btn-ghost',disabled:curPage===0,onclick(){S._dbPage=Math.max(0,curPage-1);const c2=$('content');if(c2){c2.innerHTML='';renderVendorDB(c2);}else render();}}, '‹ Prev'));
     // Page number buttons — show window of 5 around current
     const startP = Math.max(0, curPage-2);
     const endP = Math.min(totalPages_ctrl-1, startP+4);
     for (let p=startP; p<=endP; p++) {
-      pagBar.appendChild(el('button',{class:'btn-xs '+(p===curPage?'btn-blue':'btn-ghost'),onclick:(pg=>()=>{S._dbPage=pg;render();})(p)},String(p+1)));
+      pagBar.appendChild(el('button',{class:'btn-xs '+(p===curPage?'btn-blue':'btn-ghost'),onclick:(pg=>()=>{S._dbPage=pg;const c2=$('content');if(c2){c2.innerHTML='';renderVendorDB(c2);}else render();})(p)},String(p+1)));
     }
-    pagBar.appendChild(el('button',{class:'btn-xs btn-ghost',disabled:curPage>=totalPages_ctrl-1,onclick(){S._dbPage=Math.min(totalPages_ctrl-1,curPage+1);render();}}, 'Next ›'));
-    pagBar.appendChild(el('button',{class:'btn-xs btn-ghost',disabled:curPage>=totalPages_ctrl-1,onclick(){S._dbPage=totalPages_ctrl-1;render();}}, '»'));
+    pagBar.appendChild(el('button',{class:'btn-xs btn-ghost',disabled:curPage>=totalPages_ctrl-1,onclick(){S._dbPage=Math.min(totalPages_ctrl-1,curPage+1);const c2=$('content');if(c2){c2.innerHTML='';renderVendorDB(c2);}else render();}}, 'Next ›'));
+    pagBar.appendChild(el('button',{class:'btn-xs btn-ghost',disabled:curPage>=totalPages_ctrl-1,onclick(){S._dbPage=totalPages_ctrl-1;const c2=$('content');if(c2){c2.innerHTML='';renderVendorDB(c2);}else render();}}, '»'));
     pagBar.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},`Page ${curPage+1} of ${totalPages_ctrl} · ${vendors.length} vendors`));
     c.appendChild(pagBar);
   }
