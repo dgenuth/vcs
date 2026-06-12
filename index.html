@@ -7852,8 +7852,33 @@ function renderVendorDB(c) {
       slice.forEach(v=>{
         const tr=document.createElement('tr');
         tr.style.cursor='pointer';
-        tr.title='Click to open '+v.name;
+        tr.title='Click to open · Right-click for more options';
         tr.addEventListener('click',()=>openDetail(v));
+        tr.addEventListener('contextmenu',e=>{
+          e.preventDefault();
+          document.querySelectorAll('.vcs-ctx-menu').forEach(m=>m.remove());
+          const menu=document.createElement('div');
+          menu.className='vcs-ctx-menu';
+          menu.style.cssText='position:fixed;z-index:9999;background:var(--card);border:1px solid var(--border);border-radius:5px;box-shadow:0 4px 14px rgba(0,0,0,.2);min-width:165px;overflow:hidden;font-family:var(--font);font-size:10px';
+          menu.style.left=Math.min(e.clientX,window.innerWidth-175)+'px';
+          menu.style.top=Math.min(e.clientY,window.innerHeight-130)+'px';
+          [{label:'👁 Open detail',fn:()=>openDetail(v)},
+           {label:'✉ Email',fn:()=>{openDetail(v);setTimeout(()=>openEmailModal(v),200);}},
+           {label:'📦 Archive',fn:()=>{if(confirm('Archive '+v.name+'? Preserved but hidden.')){v.status='Archived';v._archived=true;v._archivedDate=new Date().toISOString().slice(0,10);markDirty(v);saveSessionState();render();toast('📦 '+v.name+' archived');}},color:'var(--amber)'},
+           {label:'🗑 Delete permanently',fn:()=>{if(confirm('DELETE '+v.name+' permanently? Cannot be undone. Use Archive instead to preserve history.')){const i=S.vendors.findIndex(sv=>sv.name===v.name);if(i>-1)S.vendors.splice(i,1);markDirty(v);saveSessionState();render();toast('🗑 '+v.name+' deleted');}},color:'var(--red)',admin:true},
+          ].forEach(item=>{
+            if(item.admin&&!hasPermission('editAll')) return;
+            const row=document.createElement('div');
+            row.style.cssText='padding:7px 14px;cursor:pointer;color:'+(item.color||'var(--text)');
+            row.textContent=item.label;
+            row.addEventListener('mouseenter',()=>row.style.background='var(--bg)');
+            row.addEventListener('mouseleave',()=>row.style.background='');
+            row.addEventListener('click',()=>{menu.remove();item.fn();});
+            menu.appendChild(row);
+          });
+          document.body.appendChild(menu);
+          setTimeout(()=>document.addEventListener('click',()=>document.querySelectorAll('.vcs-ctx-menu').forEach(m=>m.remove()),{once:true}),0);
+        });
         const cbTd=document.createElement('td');
         cbTd.style.cssText='padding:3px;text-align:center';
         cbTd.addEventListener('click',e=>e.stopPropagation());
@@ -15340,7 +15365,27 @@ function renderAnalytics(c) {
       stageSec.appendChild(el('h4',{},'Pipeline by Stage'));
       const stC=el('canvas',{style:{maxHeight:'200px'}}); stageSec.appendChild(stC); row1.appendChild(stageSec);
       const stageEntries=Object.entries(byStage).sort((a,b)=>b[1].value-a[1].value);
-      new Chart(stC,{type:'bar',data:{labels:stageEntries.map(e=>e[0].slice(0,18)),datasets:[{label:'Value ($)',data:stageEntries.map(e=>e[1].value),backgroundColor:'#4f7cff',hoverBackgroundColor:'#2d5ee0',borderRadius:3},{label:'Count',data:stageEntries.map(e=>e[1].count),backgroundColor:'#22c55e',hoverBackgroundColor:'#16a34a',borderRadius:3,yAxisID:'y2'}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+(ctx.dataset.yAxisID==='y2'?ctx.raw+' opps':'$'+Math.round(ctx.raw).toLocaleString())}}},scales:{y:{ticks:{color:'var(--muted)',font:{size:8},callback:v=>'$'+Math.round(v/1000)+'K'}},y2:{position:'right',ticks:{color:'var(--muted)',font:{size:8}},grid:{drawOnChartArea:false}},x:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(els.length){const stage=stageEntries[els[0].index][0];const stageOpps=opps.filter(o=>o.StageName===stage);openModal(body=>{body.appendChild(el('h3',{},'Pipeline: '+stage+' ('+stageOpps.length+' opps)'));body.appendChild(buildTable(['Account','Amount','Close Date','Owner'],stageOpps,o=>[o._accountName||'—','$'+Number(o.Amount||0).toLocaleString(),o.CloseDate||'—',o.Owner?.Name||'—']));const btns=el('div',{class:'modal-btns'});
+      new Chart(stC,{type:'bar',data:{labels:stageEntries.map(e=>e[0].slice(0,18)),datasets:[{label:'Value ($)',data:stageEntries.map(e=>e[1].value),backgroundColor:'#4f7cff',hoverBackgroundColor:'#2d5ee0',borderRadius:3},{label:'Count',data:stageEntries.map(e=>e[1].count),backgroundColor:'#22c55e',hoverBackgroundColor:'#16a34a',borderRadius:3,yAxisID:'y2'}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+(ctx.dataset.yAxisID==='y2'?ctx.raw+' opps':'$'+Math.round(ctx.raw).toLocaleString())}}},scales:{y:{ticks:{color:'var(--muted)',font:{size:8},callback:v=>'$'+Math.round(v/1000)+'K'}},y2:{position:'right',ticks:{color:'var(--muted)',font:{size:8}},grid:{drawOnChartArea:false}},x:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(els.length){const stage=stageEntries[els[0].index][0];const stageOpps=opps.filter(o=>o.StageName===stage);openModal(body=>{
+        body.style.minWidth='min(80vw,900px)';
+        body.appendChild(el('h3',{style:{marginBottom:'10px'}},'Pipeline: '+stage+' ('+stageOpps.length+' opps)'));
+        // Clickable opp rows
+        const tbl=el('table',{class:'data-table',style:{marginBottom:'10px'}});
+        const thead=el('thead'); const hr=el('tr');
+        ['Account','Opp Name','Amount','Close Date','Owner',''].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+        thead.appendChild(hr); tbl.appendChild(thead);
+        const tbody=el('tbody');
+        stageOpps.forEach(o=>{
+          const tr=el('tr',{style:{cursor:'pointer'},onclick(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view','_blank');}});
+          tr.appendChild(el('td',{style:{fontWeight:'600',fontSize:'10px'}},o._accountName||'—'));
+          tr.appendChild(el('td',{style:{fontSize:'10px',color:'var(--blue)'}},o.Name||'—'));
+          tr.appendChild(el('td',{style:{fontWeight:'700',fontSize:'10px',color:'var(--green)'}},'$'+Number(o.Amount||0).toLocaleString()));
+          tr.appendChild(el('td',{style:{fontSize:'9px'}},o.CloseDate||'—'));
+          tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},o.Owner?.Name||'—'));
+          tr.appendChild(el('td',{},(USER.sfInstance?el('a',{href:USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view',target:'_blank',style:{fontSize:'8px',color:'var(--blue)'}},'↗ Open'):'') ));
+          tbody.appendChild(tr);
+        });
+        tbl.appendChild(tbody); body.appendChild(tbl);
+        const btns=el('div',{class:'modal-btns'});
       const _stCInst=Chart.getChart(stC); if(_stCInst){ stC._chartInstance=_stCInst; stC._storedConfig={type:_stCInst.config.type,data:JSON.parse(JSON.stringify(_stCInst.config.data)),options:_stCInst.config.options}; }btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns);});}}}});
 
       const caseSec=el('div',{class:'chart-section'});
@@ -15348,7 +15393,24 @@ function renderAnalytics(c) {
       const caC=el('canvas',{style:{maxHeight:'200px'}}); caseSec.appendChild(caC); row1.appendChild(caseSec);
       const casePri={High:0,Medium:0,Low:0};
       cases.forEach(c=>{if(casePri[c.Priority]!==undefined)casePri[c.Priority]++;});
-      new Chart(caC,{type:'doughnut',data:{labels:Object.keys(casePri),datasets:[{data:Object.values(casePri),backgroundColor:['#ef4444','#f59e0b','#6b7280'],borderWidth:2,borderColor:'var(--card)'}]},options:{responsive:true,plugins:{legend:{position:'right',labels:{font:{size:10},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.label+': '+ctx.raw+' cases'}}},onClick(e,els){if(els.length){const pri=Object.keys(casePri)[els[0].index];const priCases=cases.filter(c=>c.Priority===pri);openModal(body=>{body.appendChild(el('h3',{},'Cases: '+pri+' Priority ('+priCases.length+')'));body.appendChild(buildTable(['Subject','Account','Status','Owner'],priCases,c=>[c.Subject||'—',c._accountName||c.Account?.Name||'—',c.Status||'—',c.Owner?.Name||'—']));const btns=el('div',{class:'modal-btns'});
+      new Chart(caC,{type:'doughnut',data:{labels:Object.keys(casePri),datasets:[{data:Object.values(casePri),backgroundColor:['#ef4444','#f59e0b','#6b7280'],borderWidth:2,borderColor:'var(--card)'}]},options:{responsive:true,plugins:{legend:{position:'right',labels:{font:{size:10},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.label+': '+ctx.raw+' cases'}}},onClick(e,els){if(els.length){const pri=Object.keys(casePri)[els[0].index];const priCases=cases.filter(c=>c.Priority===pri);openModal(body=>{body.style.minWidth='min(80vw,900px)';
+        body.appendChild(el('h3',{style:{marginBottom:'10px'}},'Cases: '+pri+' Priority ('+priCases.length+')'));
+        const _ctbl=el('table',{class:'data-table',style:{marginBottom:'10px'}});
+        const _cth=el('thead'); const _chr=el('tr');
+        ['Subject','Account','Status','Owner',''].forEach(h=>_chr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+        _cth.appendChild(_chr); _ctbl.appendChild(_cth);
+        const _ctb=el('tbody');
+        priCases.forEach(cs=>{
+          const _ctr=el('tr',{style:{cursor:'pointer'},onclick(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Case/'+cs.Id+'/view','_blank');}});
+          _ctr.appendChild(el('td',{style:{fontWeight:'600',fontSize:'10px',color:'var(--blue)'}},cs.Subject||'—'));
+          _ctr.appendChild(el('td',{style:{fontSize:'10px'}},cs._accountName||cs.Account?.Name||'—'));
+          _ctr.appendChild(el('td',{style:{fontSize:'9px'}},cs.Status||'—'));
+          _ctr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},cs.Owner?.Name||'—'));
+          _ctr.appendChild(el('td',{},(USER.sfInstance?el('a',{href:USER.sfInstance+'/lightning/r/Case/'+cs.Id+'/view',target:'_blank',style:{fontSize:'8px',color:'var(--blue)'}},'↗ SF'):'') ));
+          _ctb.appendChild(_ctr);
+        });
+        _ctbl.appendChild(_ctb); body.appendChild(_ctbl);
+        const btns=el('div',{class:'modal-btns'});
       const _caCInst=Chart.getChart(caC); if(_caCInst){ caC._chartInstance=_caCInst; caC._storedConfig={type:_caCInst.config.type,data:JSON.parse(JSON.stringify(_caCInst.config.data)),options:_caCInst.config.options}; }btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns);});}}}});
       c.appendChild(row1);
     });
@@ -15356,11 +15418,37 @@ function renderAnalytics(c) {
     // Open opps table
     const oppSec=el('div',{class:'summary-section',style:{marginTop:'12px'}});
     oppSec.appendChild(el('h3',{},'📋 Open Opportunities'));
-    oppSec.appendChild(buildTable(
-      ['Account','Stage','Amount','Close Date','Owner'],
-      opps.slice(0,30),
-      o=>[o._accountName||o.Account?.Name||'—',o.StageName||'—','$'+Number(o.Amount||0).toLocaleString(),o.CloseDate||'—',o.Owner?.Name||'—']
-    ));
+    // Render opps as clickable rows (open in SF)
+    const oppTable=el('table',{class:'data-table',style:{margin:'0'}});
+    const oppThead=el('thead'); const oppHr=el('tr');
+    ['Account','Opportunity','Stage','Amount','Close Date','Owner'].forEach(h=>oppHr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+    oppThead.appendChild(oppHr); oppTable.appendChild(oppThead);
+    const oppTbody=el('tbody');
+    opps.slice(0,50).forEach(o=>{
+      const tr=el('tr',{style:{cursor:'pointer'},onclick(){
+        const url=USER.sfInstance?USER.sfInstance+'/lightning/r/Opportunity/'+(o.Id||'')+'/view':'';
+        if(url) window.open(url,'_blank');
+      }});
+      const isOverdue=o.CloseDate&&new Date(o.CloseDate)<new Date();
+      [o._accountName||o.Account?.Name||'—',
+       o.Name||'—',
+       o.StageName||'—',
+       '$'+Math.round(Number(o.Amount||0)).toLocaleString(),
+       el('span',{style:{color:isOverdue?'var(--red)':'var(--text)',fontWeight:isOverdue?'600':'400'}},o.CloseDate||'—'),
+       o.Owner?.Name||o._ownerName||'—'
+      ].forEach(val=>{
+        const td=el('td',{style:{fontSize:'10px'}});
+        if(val instanceof Node) td.appendChild(val); else td.textContent=String(val);
+        tr.appendChild(td);
+      });
+      // SF link icon
+      const sfTd=el('td',{style:{fontSize:'9px',color:'var(--blue)',cursor:'pointer'}});
+      sfTd.textContent='↗';
+      tr.appendChild(sfTd);
+      oppTbody.appendChild(tr);
+    });
+    oppTable.appendChild(oppTbody);
+    oppSec.appendChild(oppTable);
     c.appendChild(oppSec);
   }
 
@@ -18000,7 +18088,28 @@ async function loadVendorContractFiles(vendorName, container) {
   container.innerHTML = '<span style="color:var(--muted);font-size:9px">⏳ Loading contract files...</span>';
   try {
     const canonical = S.vendorAliases ? (S.vendorAliases[normName(vendorName)] || vendorName) : vendorName;
-    const namesToTry = [...new Set([canonical, vendorName])];
+    // Build progressively simpler name variants to handle folder naming mismatches
+    // e.g. "Nestle Health Science" → try "Nestle Health Science", "Nestle Health", "Nestle"
+    function buildNameVariants(name) {
+      const variants = new Set();
+      variants.add(name);
+      // Strip common suffixes/descriptors
+      const stripped = name
+        .replace(/\s+(Health\s+Science|Healthcare|Health|Medical|Supply|Supplies|Solutions|Services|Group|Corp|Inc|LLC|Ltd|Co\.|Company|International|National|Global)\s*$/i,'')
+        .trim();
+      if(stripped && stripped !== name) variants.add(stripped);
+      // First word only (e.g. "Nestle" from "Nestle Health Science")
+      const firstWord = name.split(/\s+/)[0];
+      if(firstWord && firstWord.length > 2) variants.add(firstWord);
+      // First two words
+      const twoWords = name.split(/\s+/).slice(0,2).join(' ');
+      if(twoWords !== name && twoWords.length > 2) variants.add(twoWords);
+      // Remove accents/special chars (e.g. Nestlé → Nestle)
+      const normalized = name.normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+      if(normalized !== name) variants.add(normalized);
+      return [...variants];
+    }
+    const namesToTry = [...new Set([...buildNameVariants(canonical), ...buildNameVariants(vendorName)])];
     let d = null;
     for (const nameToTry of namesToTry) {
       const resp = await fetch(VCS_PROXY_URL + '?action=listVendorFiles&vendorName=' + encodeURIComponent(nameToTry));
