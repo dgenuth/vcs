@@ -198,6 +198,100 @@ body.ps-light-theme .note-bullet{color:#1a2a40!important}
 body.ps-light-theme .detail-sec-title{background:rgba(0,120,184,.08)!important;color:#071630!important}
 /* User management pill badges */
 body.ps-light-theme [style*="rgba(255,255,255,.05)"]{background:rgba(0,120,184,.08)!important;border-color:rgba(0,120,184,.2)!important}
+
+/* ── PS Light: var(--card) sections now white — ensure text is readable ── */
+body.ps-light-theme .tbl-wrap{background:#fff;border-color:rgba(0,120,184,.18)}
+body.ps-light-theme #today-table{border:1px solid rgba(0,120,184,.18);border-radius:5px}
+
+/* Today table — inner tbl-wrap should scroll with sticky thead */
+#today-table .tbl-wrap{max-height:calc(100vh - 260px);overflow-y:auto;overflow-x:auto}
+#today-table .tbl-wrap table{min-width:100%}
+
+/* Collapsible section headers — light blue strip with brand color accent */
+body.ps-light-theme .section-hdr,
+body.ps-light-theme [style*="cursor:pointer"][style*="userSelect:none"]{
+  background:rgba(0,120,184,.06)!important;
+  border-bottom:1px solid rgba(0,120,184,.15)!important}
+body.ps-light-theme [style*="cursor:pointer"][style*="userSelect:none"] span{color:#071630!important}
+body.ps-light-theme [style*="cursor:pointer"][style*="userSelect:none"] span[style*="color:var(--blue)"]{color:#0078b8!important}
+
+/* KPI tiles — white with blue top border */
+body.ps-light-theme .kpi-card{background:#fff!important;border:1px solid rgba(0,120,184,.2)!important;border-top:3px solid #0078b8!important}
+
+/* SF Board tiles */
+body.ps-light-theme .sf-tile,
+body.ps-light-theme [id*="sf-"][id*="-sec"]{background:#fff!important;border-color:rgba(0,120,184,.18)!important}
+
+/* Contract viewer header */
+body.ps-light-theme #contract-inline-viewer{border-color:rgba(0,120,184,.2)!important}
+
+/* Upload zone */
+body.ps-light-theme .upload-zone,
+body.ps-light-theme #contract-drop-zone{background:rgba(0,120,184,.04)!important;border-color:rgba(0,120,184,.3)!important}
+
+/* Analytics cards — white with subtle left border accent */
+body.ps-light-theme .analytics-card{border-left:3px solid #0078b8!important}
+body.ps-light-theme .analytics-card:hover{background:#f0f7fd!important;border-left-color:#0095d5!important}
+
+/* Chart sections — white card with blue title */
+body.ps-light-theme .chart-section h4{color:#0060a0!important;border-bottom:1px solid rgba(0,120,184,.12);padding-bottom:4px;margin-bottom:8px}
+
+/* Summary section headings — PrimeSource blue */
+body.ps-light-theme .summary-section h3{color:#071630!important;border-bottom:2px solid rgba(0,120,184,.2);padding-bottom:6px;margin-bottom:10px}
+body.ps-light-theme .summary-section h4{color:#0060a0!important}
+
+/* Muted text — ensure readable dark grey, not blue-grey */
+body.ps-light-theme .muted,
+body.ps-light-theme [style*="color:var(--muted)"]{color:#4d6f8f!important}
+
+/* Tables: alternating row subtle blue tint */
+body.ps-light-theme .data-table tr:nth-child(even) td{background:rgba(0,120,184,.03)!important}
+body.ps-light-theme .data-table tr:hover td{background:rgba(0,120,184,.07)!important}
+
+/* Filter tabs active state — solid brand blue */
+body.ps-light-theme .filter-tab.active{background:#0078b8!important;color:#fff!important;border-color:#0060a0!important}
+body.ps-light-theme .filter-tab{color:#3a5a7a!important}
+
+/* Score pills readable in light */
+body.ps-light-theme .score-pill{filter:brightness(0.92) saturate(1.1)}
+
+/* Tier tags */
+body.ps-light-theme .tier-tag-call{background:rgba(196,40,40,.12)!important;color:#8a1010!important;border-color:rgba(196,40,40,.3)!important}
+body.ps-light-theme .tier-tag-email{background:rgba(200,120,0,.1)!important;color:#7a4800!important;border-color:rgba(200,120,0,.25)!important}
+body.ps-light-theme .tier-tag-review{background:rgba(0,120,184,.1)!important;color:#004e80!important;border-color:rgba(0,120,184,.25)!important}
+
+/* AR badge */
+body.ps-light-theme .ar-badge{background:rgba(22,122,94,.1)!important;color:#0a5a40!important;border-color:rgba(22,122,94,.3)!important}
+
+/* Forecast month headers */
+body.ps-light-theme .forecast-hdr{background:rgba(0,120,184,.06)!important;border-left:3px solid #0078b8;color:#071630!important}
+
+/* Detail panel section titles */
+body.ps-light-theme .detail-sec-title{background:rgba(0,120,184,.07)!important;color:#0060a0!important;border-left:3px solid #0078b8}
+
+/* Vendor name in detail panel */
+body.ps-light-theme .detail-vendor-name{color:#071630!important}
+
+/* Links */
+body.ps-light-theme a{color:#0078b8}
+body.ps-light-theme a:hover{color:#004e80}
+
+/* Sidebar bottom stats */
+body.ps-light-theme .quick-stats .stat-val{color:rgba(200,230,255,.9)!important}
+body.ps-light-theme .quick-stats .stat-label{color:rgba(160,200,240,.7)!important}
+
+/* Today page signal/SF rows */
+body.ps-light-theme #sf-signal-sec,
+body.ps-light-theme [id*="sf-signal"]{background:#fff!important;border-color:rgba(0,120,184,.2)!important}
+
+/* Sticky today header */
+body.ps-light-theme #today-sticky-hdr{background:#edf4fb!important;border-bottom:1px solid rgba(0,120,184,.15)!important}
+
+/* Dropdowns and option lists */
+body.ps-light-theme [style*="background:'var(--card)'"]{background:#fff!important}
+
+/* Separator lines */
+body.ps-light-theme hr,body.ps-light-theme .divider{border-color:rgba(0,120,184,.15)!important}
 body.light-theme #sidebar .sb-logo-img,body.ps-light-theme #sidebar .sb-logo-img{filter:none}
 body.compact .data-table td{padding:1px 4px!important}
 body.compact .data-table th{padding:2px 4px!important}
@@ -296,7 +390,7 @@ body.light-theme #login-screen{background:#f0f2f7}
 /* Tables */
 .tbl-wrap{overflow-x:auto;overflow-y:auto;max-height:calc(100vh - 200px);margin-bottom:8px;border:1px solid var(--border);border-radius:4px}
 .data-table{border-collapse:collapse;font-size:10px;width:max-content;min-width:100%}
-.data-table th{position:sticky;top:0;background:var(--sb);color:var(--muted);text-align:left;padding:5px 6px;border-bottom:2px solid var(--border);font-weight:500;white-space:nowrap;z-index:10;user-select:none;cursor:default}
+.data-table th{position:sticky;top:0;background:var(--sb);color:var(--muted);text-align:left;padding:5px 6px;border-bottom:2px solid var(--border);font-weight:500;white-space:nowrap;z-index:20;user-select:none;cursor:default;will-change:transform}
 .data-table th.sortable{cursor:pointer}
 .data-table th.sortable:hover{color:var(--text)}
 .data-table td{padding:3px 5px;border-bottom:1px solid rgba(42,45,62,.5);vertical-align:middle;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}
@@ -3244,7 +3338,7 @@ function openEditNotesModal(vendor) {
     leftCol.appendChild(ta);
     const rightCol = el('div',{style:{flex:'1',minWidth:'0'}});
     rightCol.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'3px'}},'PREVIEW'));
-    const preview = el('div',{style:{minHeight:'280px',background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'4px',padding:'7px 9px',fontSize:'11px',lineHeight:'1.6',overflowY:'auto'}});
+    const preview = el('div',{style:{minHeight:'280px',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',padding:'7px 9px',fontSize:'11px',lineHeight:'1.6',overflowY:'auto'}});
     rightCol.appendChild(preview);
     pane.appendChild(leftCol);
     pane.appendChild(rightCol);
@@ -3769,7 +3863,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   const cfsIsOpen = S._cfsOpen[cfsVendorKey] === true; // default CLOSED
   const contractFilesSection = el('div',{style:{marginTop:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
   const cfsHdr = el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'6px 10px',
-    background:'var(--card)',cursor:'pointer',userSelect:'none'},
+    background:'var(--card)',cursor:'pointer',userSelect:'none',borderBottom:'1px solid var(--border)'},
     onclick(e){
       e.stopPropagation();
       if(!S._cfsOpen) S._cfsOpen={};
@@ -4405,7 +4499,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
           const sfRate=totalSales>0?((totalFees/totalSales)*100):null;
           const contractedRate=parseFee(vendor.adminFee); // parseFee caps at 30%, ignores large numbers
           const rateMismatch=sfRate&&contractedRate&&Math.abs(sfRate-contractedRate)>0.5;
-          const sr=el("div",{style:{display:"flex",gap:"14px",marginBottom:"8px",padding:"8px",background:"var(--sb)",borderRadius:"4px",flexWrap:"wrap"}});
+          const sr=el("div",{style:{display:"flex",gap:"14px",marginBottom:"8px",padding:"8px",background:"var(--card)",borderRadius:"4px",flexWrap:"wrap"}});
           [["Total Sales","$"+totalSales.toLocaleString(),"var(--blue)"],
            ["Admin Fee Received","$"+totalFees.toLocaleString(),"var(--green)"],
            ...(sfRate!==null?[["Actual Rate",sfRate.toFixed(2)+"%",rateMismatch?"var(--red)":"var(--green)"]]:[]),
@@ -6285,7 +6379,7 @@ function openAddRelationshipModal(vendor) {
 
     body.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'2px'}},'Search for related vendor:'));
     const searchIn=el('input',{type:'text',class:'modal-input',placeholder:'Type vendor name...',style:{marginBottom:'6px'}});
-    const resultsList=el('div',{style:{maxHeight:'160px',overflowY:'auto',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--sb)',marginBottom:'8px'}});
+    const resultsList=el('div',{style:{maxHeight:'160px',overflowY:'auto',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--card)',marginBottom:'8px'}});
     let selectedVendor=null;
 
     function updateResults(){
@@ -6369,7 +6463,7 @@ function addContractsDrawerSection(body, vendor) {
   records.forEach(r=>{
     const card = el('div',{style:{
       border:'1px solid var(--border)',borderRadius:'5px',padding:'8px 10px',
-      background:'var(--sb)',cursor:'pointer',
+      background:'var(--card)',cursor:'pointer',
       transition:'border-color .15s',
     }});
     card.addEventListener('mouseenter',()=>card.style.borderColor='var(--blue)');
@@ -6477,7 +6571,7 @@ function addReviewNotesSection(body, reviewRecord, vendor) {
     const text = reviewRecord[key];
 
     const subSec=el('div',{style:{marginTop:'4px',border:'1px solid var(--border)',borderLeft:'3px solid '+color,borderRadius:'4px',overflow:'hidden'}});
-    const subHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'5px 8px',background:'var(--sb)',cursor:'pointer',userSelect:'none'}});
+    const subHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'5px 8px',background:'var(--card)',cursor:'pointer',userSelect:'none'}});
     subHdr.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'600',color,flex:'1'}},label));
 
     const countBadge = text ? el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'has notes') : el('span',{style:{fontSize:'9px',color:'var(--muted)',fontStyle:'italic'}},'empty');
@@ -7114,7 +7208,7 @@ function openVendorAliasModal(vendor) {
     body.appendChild(el('p',{style:{fontSize:'10px',color:'rgba(245,158,11,.9)',background:'rgba(245,158,11,.08)',padding:'5px 8px',borderRadius:'4px',marginBottom:'10px'}},'⚠ This is a manual link you create. It can be removed at any time from the vendor detail panel. The original record names are not changed.'));
 
     const searchIn=el('input',{type:'text',class:'modal-input',placeholder:'Search Vendor Database... (e.g. Performance Food, Ecolab)',style:{marginBottom:'6px'}});
-    const resultsList=el('div',{style:{maxHeight:'200px',overflowY:'auto',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--sb)'}});
+    const resultsList=el('div',{style:{maxHeight:'200px',overflowY:'auto',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--card)'}});
     body.appendChild(searchIn);
     body.appendChild(resultsList);
 
@@ -7605,28 +7699,32 @@ function renderVendorDB(c) {
       }
     tr.appendChild(td); tbody.appendChild(tr);
   } else {
-    // Render all vendors at once — use requestIdleCallback to keep UI responsive
-    // Cache busting: if source/sort/filter/search changed, rebuild
-    const _cacheKey = S.dbSource+'|'+(S.search||'')+'|'+JSON.stringify(S.dbFilters)+'|'+S.dbSort.col+'|'+S.dbSort.dir;
+    // Render all vendors via DocumentFragment — single DOM insertion prevents reflow per row
     S._dbLastCount = vendors.length;
-
+    const frag=document.createDocumentFragment();
     vendors.forEach(v=>{
-      const tr=el('tr',{style:{cursor:'pointer'},title:`Click to open ${v.name}`});
+      const tr=document.createElement('tr');
+      tr.style.cursor='pointer';
+      tr.title='Click to open '+v.name;
       tr.addEventListener('click',()=>openDetail(v));
-      const cbTd=el('td',{style:{padding:'3px',textAlign:'center'},onclick(e){e.stopPropagation();}});
-      const cb=el('input',{type:'checkbox'}); cb.setAttribute('data-name',v.name); cbTd.appendChild(cb); tr.appendChild(cbTd);
+      const cbTd=document.createElement('td');
+      cbTd.style.cssText='padding:3px;text-align:center';
+      cbTd.addEventListener('click',e=>e.stopPropagation());
+      const cb=document.createElement('input'); cb.type='checkbox'; cb.dataset.name=v.name;
+      cbTd.appendChild(cb); tr.appendChild(cbTd);
       VISIBLE_COLS.forEach(col=>{
-        const td=el('td');
+        const td=document.createElement('td');
         try {
           const raw=col.fmt(v);
-          if (raw==null||raw==='') { td.textContent=''; }
-          else if (raw instanceof Node) td.appendChild(raw);
-          else td.textContent=String(raw);
+          if(raw==null||raw===''){td.textContent='';}
+          else if(raw instanceof Node){td.appendChild(raw);}
+          else{td.textContent=String(raw);}
         } catch(e){ td.textContent=''; }
         tr.appendChild(td);
       });
-      tbody.appendChild(tr);
+      frag.appendChild(tr);
     });
+    tbody.appendChild(frag);
   }
   table.appendChild(tbody); tblWrap.appendChild(table); c.appendChild(tblWrap);
 
@@ -8258,7 +8356,7 @@ function renderCustomers(c) {
     wrap.appendChild(el('div',{style:{marginBottom:'8px',fontSize:'10px',color:'var(--muted)'}},'Showing '+filtered2.length+' contacts'));
     const tbl=el('table',{class:'data-table'});
     const thead=el('thead'); const hr=el('tr');
-    ['Contact','Title','Account','Phone','Email','Owner'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px',background:'var(--sb)',position:'sticky',top:'0',zIndex:'2'}},h)));
+    ['Contact','Title','Account','Phone','Email','Owner'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px',background:'var(--card)',position:'sticky',top:'0',zIndex:'2'}},h)));
     thead.appendChild(hr); tbl.appendChild(thead);
     const tbody=el('tbody');
     filtered2.slice(0,500).forEach(ct=>{
@@ -8601,7 +8699,7 @@ function renderSFBoard(c) {
   ];
   const kpiRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'8px',marginBottom:'16px'}});
   kpis.forEach(k=>{
-    const tile=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px 10px',textAlign:'center',cursor:k.click?'pointer':'default'},onclick:k.click||null});
+    const tile=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px 10px',textAlign:'center',cursor:k.click?'pointer':'default'},onclick:k.click||null});
     tile.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'2px'}},k.icon+' '+k.label));
     tile.appendChild(el('div',{style:{fontSize:'20px',fontWeight:'700',color:k.color}},String(k.val)));
     kpiRow.appendChild(tile);
@@ -8612,7 +8710,7 @@ function renderSFBoard(c) {
   const twoCol=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',marginBottom:'12px'}});
 
   // Opportunities panel
-  const oppsPanel=el('div',{id:'sf-opps-sec',style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
+  const oppsPanel=el('div',{id:'sf-opps-sec',style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
   const oppHdr=el('div',{style:{display:'flex',alignItems:'center',padding:'10px 12px',borderBottom:'1px solid var(--border)',background:'var(--card)'}});
   oppHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'💼 Open Opportunities ('+opps.length+')'));
   if(USER.sfInstance) oppHdr.appendChild(el('a',{href:USER.sfInstance+'/lightning/o/Opportunity/list',target:'_blank',style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none'}},'View in SF ↗'));
@@ -8637,7 +8735,7 @@ function renderSFBoard(c) {
   twoCol.appendChild(oppsPanel);
 
   // Cases panel
-  const casesPanel=el('div',{id:'sf-cases-sec',style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
+  const casesPanel=el('div',{id:'sf-cases-sec',style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
   const caseHdr=el('div',{style:{display:'flex',alignItems:'center',padding:'10px 12px',borderBottom:'1px solid var(--border)',background:'var(--card)'}});
   caseHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'🎫 Open Cases ('+cases.length+')'));
   if(USER.sfInstance) caseHdr.appendChild(el('a',{href:USER.sfInstance+'/lightning/o/Case/list',target:'_blank',style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none'}},'View in SF ↗'));
@@ -8666,7 +8764,7 @@ function renderSFBoard(c) {
 
   // ── Tasks panel ──
   if(tasks.length){
-    const taskSec=el('div',{id:'sf-tasks-sec',style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'12px'}});
+    const taskSec=el('div',{id:'sf-tasks-sec',style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'12px'}});
     const tkHdr=el('div',{style:{display:'flex',alignItems:'center',padding:'10px 12px',borderBottom:'1px solid var(--border)',background:'var(--card)'}});
     tkHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'✅ Open Tasks ('+tasks.length+')'));
     if(USER.sfInstance) tkHdr.appendChild(el('a',{href:USER.sfInstance+'/lightning/o/Task/list',target:'_blank',style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none'}},'View in SF ↗'));
@@ -8686,7 +8784,7 @@ function renderSFBoard(c) {
 
   // ── Spend Leaderboard ──
   if(spendLeaderboard.length){
-    const spendSec=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'12px'}});
+    const spendSec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'12px'}});
     spendSec.appendChild(el('div',{style:{padding:'10px 12px',borderBottom:'1px solid var(--border)',background:'var(--card)',fontWeight:'700',fontSize:'11px'}},'📊 YTD Spend Leaderboard'));
     const maxSpend=spendLeaderboard[0]?.spend||1;
     const spList=el('div',{style:{padding:'8px 12px'}});
@@ -8810,7 +8908,7 @@ function renderSFVendorBrief(wrap, opps, cases, tasks, spendLeaderboard) {
   const revGap=feesReceived>0?(feesReceived-expectedRev):null;
 
   // Brief header
-  const briefHdr=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'16px',marginBottom:'12px'}});
+  const briefHdr=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'16px',marginBottom:'12px'}});
   const nameRow=el('div',{style:{display:'flex',gap:'12px',alignItems:'flex-start',marginBottom:'12px'}});
   const nameInfo=el('div',{style:{flex:'1'}});
   nameInfo.appendChild(el('h2',{style:{margin:'0 0 4px',fontSize:'18px',fontWeight:'700'}},vName));
@@ -8860,7 +8958,7 @@ function renderSFVendorBrief(wrap, opps, cases, tasks, spendLeaderboard) {
     ];
     if(feesReceived>0) revTiles.push({label:'Fees Received vs Expected',val:'$'+feesReceived.toLocaleString()+(revGap!==null?(revGap>=0?' ✓':' ⚠ $'+Math.abs(revGap).toLocaleString()+' short'):''),color:revGap!==null?(revGap>=0?'var(--green)':'var(--red)'):'var(--text)'});
     revTiles.forEach(k=>{
-      const t=el('div',{style:{textAlign:'center',padding:'6px',background:'var(--sb)',borderRadius:'4px'}});
+      const t=el('div',{style:{textAlign:'center',padding:'6px',background:'var(--card)',borderRadius:'4px'}});
       t.appendChild(el('div',{style:{fontWeight:'700',fontSize:'15px',color:k.color}},k.val));
       t.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)'}},k.label));
       revGrid.appendChild(t);
@@ -8872,7 +8970,7 @@ function renderSFVendorBrief(wrap, opps, cases, tasks, spendLeaderboard) {
   // Tiers section (if vendor has tier data tracked)
   const tierData=(S.tierData||[]).find(td=>vendorNamesMatch(td.vendorName,vName));
   if(tierData?.tiers?.length&&actualSpend>0){
-    const tierSec=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px',marginBottom:'12px'}});
+    const tierSec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px',marginBottom:'12px'}});
     tierSec.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'8px'}},'📶 Tier Progression'));
     const nextTier=tierData.tiers.find(t=>actualSpend<t.threshold);
     if(nextTier){
@@ -8893,7 +8991,7 @@ function renderSFVendorBrief(wrap, opps, cases, tasks, spendLeaderboard) {
   if(vOpps.length||vCases.length){
     const twoC=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:'12px'}});
     // Opps
-    const oppBox=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
+    const oppBox=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
     oppBox.appendChild(el('div',{style:{padding:'8px 12px',borderBottom:'1px solid var(--border)',background:'var(--card)',fontWeight:'700',fontSize:'10px'}},'💼 Opportunities ('+vOpps.length+')'));
     if(!vOpps.length) oppBox.appendChild(el('div',{style:{padding:'12px',fontSize:'10px',color:'var(--muted)'}},'No open opportunities'));
     else vOpps.forEach(o=>{
@@ -8904,7 +9002,7 @@ function renderSFVendorBrief(wrap, opps, cases, tasks, spendLeaderboard) {
     });
     twoC.appendChild(oppBox);
     // Cases
-    const caseBox=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
+    const caseBox=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
     caseBox.appendChild(el('div',{style:{padding:'8px 12px',borderBottom:'1px solid var(--border)',background:'var(--card)',fontWeight:'700',fontSize:'10px'}},'🎫 Cases ('+vCases.length+')'));
     if(!vCases.length) caseBox.appendChild(el('div',{style:{padding:'12px',fontSize:'10px',color:'var(--muted)'}},'No open cases'));
     else vCases.forEach(cs=>{
@@ -8920,7 +9018,7 @@ function renderSFVendorBrief(wrap, opps, cases, tasks, spendLeaderboard) {
 
   // VCS Notes
   if(vcsV?.notes){
-    const notesSec=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px'}});
+    const notesSec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px'}});
     notesSec.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',marginBottom:'6px'}},'📝 Contract Notes'));
     notesSec.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',lineHeight:'1.6',whiteSpace:'pre-wrap'}},String(vcsV.notes).slice(0,800)));
     wrap.appendChild(notesSec);
@@ -8958,7 +9056,7 @@ function renderSFFinanceView(wrap, spendLeaderboard, trueUpAlerts) {
    {label:'Expected Commission',val:'$'+Math.round(totalExpected).toLocaleString(),color:'var(--green)',sub:'Based on contracted rates'},
    {label:'Vendors with Gaps',val:trueUpAlerts.length,color:trueUpAlerts.length>0?'var(--red)':'var(--green)',sub:'No fee or under-paying'},
   ].forEach(k=>{
-    const t=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px',textAlign:'center'}});
+    const t=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px',textAlign:'center'}});
     t.appendChild(el('div',{style:{fontSize:'22px',fontWeight:'700',color:k.color}},String(k.val)));
     t.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px'}},k.label));
     if(k.sub) t.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',fontStyle:'italic'}},k.sub));
@@ -8968,7 +9066,7 @@ function renderSFFinanceView(wrap, spendLeaderboard, trueUpAlerts) {
 
   // Commission waterfall table
   if(spendLeaderboard.length){
-    const sec=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'12px'}});
+    const sec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'12px'}});
     sec.appendChild(el('div',{style:{padding:'10px 12px',borderBottom:'1px solid var(--border)',background:'var(--card)',fontWeight:'700',fontSize:'11px'}},'📊 Commission Waterfall — Top Vendors'));
     const tbl=el('table',{class:'data-table',style:{margin:'0'}});
     const thead=el('thead'); const hr=el('tr');
@@ -9031,7 +9129,7 @@ function renderSFProcurementView(wrap, opps, cases, expiringWithOpps) {
   ];
   const kRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:'8px',marginBottom:'16px'}});
   tiles.forEach(k=>{
-    const t=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'10px',textAlign:'center',cursor:'pointer'},onclick:k.click});
+    const t=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'10px',textAlign:'center',cursor:'pointer'},onclick:k.click});
     t.appendChild(el('div',{style:{fontSize:'20px',fontWeight:'700',color:k.color}},String(k.val)));
     t.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'2px'}},k.label));
     kRow.appendChild(t);
@@ -9040,7 +9138,7 @@ function renderSFProcurementView(wrap, opps, cases, expiringWithOpps) {
 
   // Expiring contracts table
   if(exp30.length||exp90.length){
-    const exSec=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'12px'}});
+    const exSec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'12px'}});
     exSec.appendChild(el('div',{style:{padding:'10px 12px',borderBottom:'1px solid var(--border)',background:'var(--card)',fontWeight:'700',fontSize:'11px'}},'Contracts Needing Action ('+( exp30.length+exp90.length)+')'));
     const tbl=el('table',{class:'data-table',style:{margin:'0'}});
     const thead=el('thead'); const hr=el('tr');
@@ -9090,7 +9188,7 @@ function renderSFSalesView(wrap, opps, cases, tasks) {
   // Pipeline by stage
   const kRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:'8px',marginBottom:'16px'}});
   Object.entries(byStage).sort((a,b)=>b[1].value-a[1].value).forEach(([stage,data])=>{
-    const t=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'10px',textAlign:'center'}});
+    const t=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'10px',textAlign:'center'}});
     t.appendChild(el('div',{style:{fontSize:'15px',fontWeight:'700',color:'var(--blue)'}},'$'+Math.round(data.value).toLocaleString()));
     t.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px'}},stage));
     t.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)'}},data.count+' opp'+(data.count!==1?'s':'')));
@@ -9099,7 +9197,7 @@ function renderSFSalesView(wrap, opps, cases, tasks) {
   wrap.appendChild(kRow);
 
   // Opps sorted by close date
-  const oppSec=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'12px'}});
+  const oppSec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'12px'}});
   oppSec.appendChild(el('div',{style:{padding:'10px 12px',borderBottom:'1px solid var(--border)',background:'var(--card)',fontWeight:'700',fontSize:'11px'}},'💼 Open Opportunities — Sorted by Close Date'));
   const sortedOpps=[...opps].sort((a,b)=>new Date(a.CloseDate||'2099')-new Date(b.CloseDate||'2099'));
   sortedOpps.slice(0,20).forEach(o=>{
@@ -9621,7 +9719,7 @@ function openApplyContractModal(vendor, extracted, onApplied) {
 
     // Header row
     ['Field','Current Value','Extracted Value'].forEach((h,i)=>{
-      const hd=el('div',{style:{padding:'5px 8px',background:'var(--sb)',borderBottom:'1px solid var(--border)',fontWeight:'700',fontSize:'9px',color:'var(--muted)',borderRight:i<2?'1px solid var(--border)':''}},h);
+      const hd=el('div',{style:{padding:'5px 8px',background:'var(--card)',borderBottom:'1px solid var(--border)',fontWeight:'700',fontSize:'9px',color:'var(--muted)',borderRight:i<2?'1px solid var(--border)':''}},h);
       grid.appendChild(hd);
     });
 
@@ -9864,7 +9962,7 @@ function renderContracts(c) {
   wrap.appendChild(hdr);
 
   // Vendor search + upload
-  const uploadSec=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'14px',marginBottom:'16px'}});
+  const uploadSec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'14px',marginBottom:'16px'}});
   uploadSec.appendChild(el('h3',{style:{margin:'0 0 8px 0',fontSize:'13px'}},'Upload Contract'));
 
   const row1=el('div',{style:{display:'flex',gap:'8px',marginBottom:'8px',alignItems:'flex-start'}});
@@ -9880,7 +9978,7 @@ function renderContracts(c) {
   const comboArrow=el('span',{style:{position:'absolute',right:'6px',top:'7px',fontSize:'10px',color:'var(--muted)',pointerEvents:'none'}},'▾');
   const comboDropdown=el('div',{style:{
     position:'absolute',top:'32px',left:'0',right:'0',
-    background:'var(--sb)',border:'1px solid var(--blue)',borderRadius:'4px',
+    background:'var(--card)',border:'1px solid var(--blue)',borderRadius:'4px',
     maxHeight:'220px',overflowY:'auto',zIndex:'300',
     boxShadow:'0 4px 12px rgba(0,0,0,.3)',display:'none'
   }});
@@ -10012,7 +10110,7 @@ function renderContracts(c) {
 
   // Inline contract viewer (shown after file loaded)
   const viewerWrap=el('div',{id:'contract-inline-viewer',style:{display:'none',marginTop:'8px',border:'1px solid var(--border)',borderRadius:'5px',overflow:'hidden'}});
-  const viewerHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'6px 10px',background:'var(--sb)',borderBottom:'1px solid var(--border)'}});
+  const viewerHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'6px 10px',background:'var(--card)',borderBottom:'1px solid var(--border)'}});
   viewerHdr.appendChild(el('span',{id:'viewer-filename',style:{flex:'1',fontWeight:'600',fontSize:'10px'}},''));
   const viewerToggle=el('button',{class:'btn-xs btn-ghost',onclick(){
     const body=document.getElementById('contract-viewer-body');
@@ -10132,7 +10230,7 @@ function renderContracts(c) {
         /redline|red.line|draft|proposed|review/i.test(record.fileName||'') ? 'REDLINE/DRAFT' : 'UNKNOWN'
       );
       const _cStatusColor = _cStatus==='EXECUTED'?'#34d399':_cStatus==='REDLINE/DRAFT'?'#f59e0b':'#6b7280';
-      const cardHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'8px 12px',background:'var(--sb)',borderBottom:'1px solid var(--border)',flexWrap:'wrap'}});
+      const cardHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'8px 12px',background:'var(--card)',borderBottom:'1px solid var(--border)',flexWrap:'wrap'}});
       cardHdr.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'600',flex:'1',minWidth:'120px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},record.fileName));
       // Contract status badge
       cardHdr.appendChild(el('span',{title:'Contract execution status — only EXECUTED contracts should be applied to VCS',style:{fontSize:'8px',background:_cStatusColor+'18',color:_cStatusColor,border:'1px solid '+_cStatusColor+'44',padding:'1px 5px',borderRadius:'3px',fontWeight:'700',flexShrink:'0'}},_cStatus));
@@ -10306,7 +10404,7 @@ function renderSpendTable(wrap) {
    {label:'Commission Gap',val:'$'+Math.round(Math.abs(totalSpend*0.01-totalFees)).toLocaleString(),color:gapVendors>3?'var(--red)':'var(--amber)',sub:gapVendors+' vendors under-paying'},
    {label:'Vendors with Data',val:vendorSpend.length,color:'var(--muted)',sub:filtered.length+' shown'},
   ].forEach(k=>{
-    const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'10px',textAlign:'center'}});
+    const card=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'10px',textAlign:'center'}});
     card.appendChild(el('div',{style:{fontSize:'18px',fontWeight:'700',color:k.color}},String(k.val)));
     card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px'}},k.label));
     if(k.sub) card.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'1px',fontStyle:'italic'}},k.sub));
@@ -10906,7 +11004,7 @@ function renderContractCompare(c) {
       wrap.appendChild(empty);
     } else {
       saves.forEach((s,i)=>{
-        const row=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',padding:'10px 14px',marginBottom:'8px',display:'flex',gap:'10px',alignItems:'center'}});
+        const row=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'10px 14px',marginBottom:'8px',display:'flex',gap:'10px',alignItems:'center'}});
         const info=el('div',{style:{flex:'1'}});
         info.appendChild(el('div',{style:{fontWeight:'700',fontSize:'12px'}},s.vendor+' Contract Comparison'));
         info.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px'}},s.date+' · Doc A: '+(s.docA||'—')+' · Doc B: '+(s.docB||'—')));
@@ -10931,7 +11029,7 @@ function renderContractCompare(c) {
   ['A','B'].forEach(side => {
     const isA = side==='A';
     const docName = isA ? CMP.docAName : CMP.docBName;
-    const card = el('div',{style:{background:'var(--sb)',border:'2px dashed '+(docName?'var(--green)':'var(--border)'),borderRadius:'6px',padding:'14px 16px',textAlign:'center',cursor:'pointer',transition:'border-color .2s'}});
+    const card = el('div',{style:{background:'var(--card)',border:'2px dashed '+(docName?'var(--green)':'var(--border)'),borderRadius:'6px',padding:'14px 16px',textAlign:'center',cursor:'pointer',transition:'border-color .2s'}});
     const label = el('div',{style:{fontWeight:'600',fontSize:'12px',marginBottom:'4px'}}, 'Document '+side+(isA?' — Baseline / Existing':' — Proposed / New'));
     const sub = el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'PDF or DOCX');
     const statusEl = el('div',{style:{fontSize:'10px',fontWeight:'600',color:docName?'var(--green)':'var(--muted)'}}, docName ? '✓ '+docName : 'Click or drag to upload');
@@ -11032,7 +11130,7 @@ function renderContractCompare(c) {
       const docText=isA?CMP.docAText:CMP.docBText;
       const textStr=typeof docText==='string'?docText:'';
       const isOpen=S._cmpViewerOpen[side];
-      const panel=el('div',{style:{border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden',background:'var(--sb)'}});
+      const panel=el('div',{style:{border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden',background:'var(--card)'}});
       const pHdr=el('div',{style:{padding:'6px 10px',fontSize:'9px',fontWeight:'700',color:'var(--muted)',display:'flex',justifyContent:'space-between',alignItems:'center',background:'var(--card)',cursor:'pointer',userSelect:'none'},
         onclick(){S._cmpViewerOpen[side]=!S._cmpViewerOpen[side];render();}});
       pHdr.appendChild(el('span',{},('Doc '+side+(docName?' — '+docName.slice(0,35)+(docName.length>35?'…':''):'(not loaded)'))));
@@ -11131,7 +11229,7 @@ function renderContractCompare(c) {
         const docText=isA?CMP.docAText:CMP.docBText;
         const textStr=typeof docText==='string'?docText:(docText?'[PDF — text extracted by Claude]':'');
         const isOpen=S._cmpViewerOpen[side];
-        const panel=el('div',{style:{border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden',background:'var(--sb)'}});
+        const panel=el('div',{style:{border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden',background:'var(--card)'}});
         const pHdr=el('div',{style:{padding:'6px 10px',fontSize:'9px',fontWeight:'700',color:'var(--muted)',borderBottom:isOpen?'1px solid var(--border)':'none',display:'flex',justifyContent:'space-between',alignItems:'center',background:'var(--card)',cursor:'pointer',userSelect:'none'},
           onclick(){S._cmpViewerOpen[side]=!S._cmpViewerOpen[side];render();}});
         pHdr.appendChild(el('span',{},('Doc '+side+(docName?' — '+docName.slice(0,35)+(docName.length>35?'…':''):' (not loaded)'))));
@@ -11202,7 +11300,7 @@ function renderContractCompare(c) {
       const rows = grouped[secName];
       if(!rows||!rows.length) return;
       // Section header
-      const secHdr=el('div',{style:{background:'var(--sb)',borderLeft:'3px solid var(--blue)',padding:'4px 8px',fontSize:'10px',fontWeight:'700',color:'var(--blue)',marginTop:'8px',marginBottom:'2px',borderRadius:'0 3px 3px 0'}},secName.toUpperCase());
+      const secHdr=el('div',{style:{background:'var(--card)',borderLeft:'3px solid var(--blue)',padding:'4px 8px',fontSize:'10px',fontWeight:'700',color:'var(--blue)',marginTop:'8px',marginBottom:'2px',borderRadius:'0 3px 3px 0'}},secName.toUpperCase());
       wrap.appendChild(secHdr);
 
       rows.forEach(row => {
@@ -11244,7 +11342,7 @@ function renderContractCompare(c) {
     // Call Priority Summary
     if(res.priority) {
       const pSec=el('div',{style:{marginTop:'16px',borderRadius:'5px',overflow:'hidden',border:'1px solid var(--border)'}});
-      pSec.appendChild(el('div',{style:{padding:'7px 10px',fontWeight:'700',fontSize:'12px',background:'var(--sb)',borderBottom:'1px solid var(--border)'}},'📋 Call / Negotiation Priority Summary'));
+      pSec.appendChild(el('div',{style:{padding:'7px 10px',fontWeight:'700',fontSize:'12px',background:'var(--card)',borderBottom:'1px solid var(--border)'}},'📋 Call / Negotiation Priority Summary'));
       const rows2=[
         {label:'🔴 MUST GET',key:'must_get',bg:'rgba(239,68,68,.1)',border:'rgba(239,68,68,.3)',color:'var(--red)'},
         {label:'🟡 PUSH FOR',key:'push_for',bg:'rgba(245,158,11,.1)',border:'rgba(245,158,11,.3)',color:'var(--amber)'},
@@ -11719,7 +11817,7 @@ function renderContractEconomics(c) {
 
   // ── Auto Fee Gap Analysis (from SF Spend Data) ──
   const autoSec=el('div',{class:'summary-section'});
-  autoSec.appendChild(el('h3',{},'📊 Fee Gap Analysis — Auto-Calculated'));
+  autoSec.appendChild(el('h3',{style:{position:'sticky',top:'-8px',zIndex:'22',background:'var(--card)',padding:'8px 0 4px',marginTop:'-4px',boxShadow:'0 2px 6px rgba(0,0,0,.15)'}},'📊 Fee Gap Analysis — Auto-Calculated'));
   if(!SPEND_STATE.data?.vendors?.length){
     const noDataRow=el('div',{style:{display:'flex',gap:'10px',alignItems:'center',padding:'12px',background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'5px',marginBottom:'8px'}});
     noDataRow.appendChild(el('span',{style:{fontSize:'20px'}},'📡'));
@@ -12589,7 +12687,7 @@ function renderToday(c) {
     kpis.appendChild(card);
   });
   // Sticky header zone — KPIs + filter tabs stay visible while scrolling
-  const stickyHdr=el('div',{style:{position:'sticky',top:'-8px',zIndex:'14',background:'var(--bg)',marginTop:'-8px',paddingTop:'8px',paddingBottom:'4px',marginLeft:'-12px',paddingLeft:'12px',marginRight:'-12px',paddingRight:'12px',borderBottom:'1px solid var(--border)'}});
+  const stickyHdr=el('div',{id:'today-sticky-hdr',style:{position:'sticky',top:'-8px',zIndex:'14',background:'var(--bg)',marginTop:'-8px',paddingTop:'8px',paddingBottom:'4px',marginLeft:'-12px',paddingLeft:'12px',marginRight:'-12px',paddingRight:'12px',borderBottom:'1px solid var(--border)'}});
   if (S.settings.showKPIs !== false) stickyHdr.appendChild(kpis);
 
   const tabs=el('div',{class:'filter-tabs'});
@@ -12625,9 +12723,9 @@ function renderToday(c) {
     if(!S._sfSignalCollapsed) S._sfSignalCollapsed=false;
     if(!S._sfFilters) S._sfFilters={};
     const sigSec=el('div',{style:{marginBottom:'12px',border:'1px solid var(--border)',borderRadius:'5px',overflow:'hidden'}});
-    const sigHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'6px 10px',background:'var(--sb)',cursor:'pointer',userSelect:'none'},
+    const sigHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'6px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none'},
       onclick(e){if(e.target.tagName==='BUTTON'||e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;S._sfSignalCollapsed=!S._sfSignalCollapsed;render();}});
-    sigHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px'}},'☁ Salesforce Signals'));
+    sigHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',color:'var(--blue)'}},'☁ Salesforce Signals'));
     sigHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},S._sfSignalData?'('+S._sfSignalData.length+')':''));
 
     // My records toggle
@@ -12797,14 +12895,15 @@ function renderToday(c) {
     openBulkEmailModal(sel);
   }},'✉ Bulk Email '+(S.filter?'(filtered)':'All')));
   tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){exportCSV(vendors,'today_filtered');}}, '⬇ CSV'));
-  c.appendChild(tableBar);
+  stickyHdr.appendChild(tableBar);
 
   // Build column-aware table using settings.cols visibility
   const ALL_HDRS=['','Score','Vendor','Category','Contact','Phone','Email','Current Expiry','Days','AR','Follow-Up','Tier','Why','Actions'];
   const ALL_KEYS=['_cb','score','vendor','category','contact','phone','email','expiry','days','ar','followup','tier','why','actions'];
   const visIdx=ALL_KEYS.map((k,i)=>(k==='_cb'||S.settings.cols[k]!==false)?i:-1).filter(i=>i>=0);
   const headers=visIdx.map(i=>ALL_HDRS[i]);
-  const tblWrap=el('div',{id:'today-table',class:'tbl-wrap'});
+  // Outer container — buildTable creates its own tbl-wrap inside
+  const tblWrap=el('div',{id:'today-table',style:{flex:'1',minHeight:'0',overflow:'hidden'}});
   tblWrap.appendChild(buildTable(headers, vendors, v=>{
     const exp=getCurrentExpiry(v); const days=exp?dayDiff(exp,today):null;
     const fu=parseDate(v.followUp);
@@ -14306,7 +14405,7 @@ function renderAnalytics(c) {
     {id:'pipeline',label:'🎯 SF Pipeline'},
     {id:'performance',label:'👤 Rep Performance'},
   ];
-  const tabBar=el('div',{style:{display:'flex',gap:'4px',marginBottom:'12px',borderBottom:'2px solid var(--border)',paddingBottom:'0',flexWrap:'wrap',position:'sticky',top:'-8px',zIndex:'15',background:'var(--bg)',marginTop:'-8px',paddingTop:'8px',marginLeft:'-12px',paddingLeft:'12px',marginRight:'-12px',paddingRight:'12px'}});
+  const tabBar=el('div',{style:{display:'flex',gap:'4px',marginBottom:'12px',borderBottom:'2px solid var(--border)',paddingBottom:'0',flexWrap:'wrap',position:'sticky',top:'-8px',zIndex:'25',background:'var(--bg)',marginTop:'-8px',paddingTop:'8px',marginLeft:'-12px',paddingLeft:'12px',marginRight:'-12px',paddingRight:'12px',boxShadow:'0 2px 6px rgba(0,0,0,.12)'}});
   tabs.forEach(t=>{
     const btn=el('button',{style:{padding:'6px 14px',fontSize:'11px',fontWeight:'600',border:'none',cursor:'pointer',borderBottom:S._analyticsTab===t.id?'2px solid var(--blue)':'2px solid transparent',marginBottom:'-2px',background:'transparent',color:S._analyticsTab===t.id?'var(--blue)':'var(--muted)',transition:'all .15s'},
       onclick(){S._analyticsTab=t.id;const c2=$('content');if(c2){c2.innerHTML='';renderAnalytics(c2);}else render();}},t.label);
@@ -14618,13 +14717,59 @@ function renderAnalytics(c) {
       c.appendChild(loadSec);
       return;
     }
-    // Group by owner
+    // Build rep list from VCS approved users (sales/admin roles) as the authoritative base
+    // Then overlay SF data — this ensures all reps appear even if they have no open opps
     const repMap={};
-    const addRep=name=>{if(!repMap[name])repMap[name]={name,opps:[],tasks:[],cases:[],pipelineValue:0,overdueTask:0};};
-    opps.forEach(o=>{const n=o.Owner?.Name||'Unknown';addRep(n);repMap[n].opps.push(o);repMap[n].pipelineValue+=Number(o.Amount||0);});
-    tasks.forEach(t=>{const n=t.Owner?.Name||'Unknown';addRep(n);repMap[n].tasks.push(t);if(t.ActivityDate&&new Date(t.ActivityDate)<today)repMap[n].overdueTask++;});
-    cases.forEach(ca=>{const n=ca.Owner?.Name||'Unknown';addRep(n);repMap[ca.Owner?.Name||'Unknown'].cases.push(ca);});
-    const reps=Object.values(repMap).sort((a,b)=>b.pipelineValue-a.pipelineValue);
+    const addRep=(name,email)=>{
+      if(!repMap[name])repMap[name]={name,email:email||'',opps:[],tasks:[],cases:[],pipelineValue:0,overdueTask:0,_isVCSRep:false};
+    };
+    // Seed from VCS user list — sales and admin roles
+    try{
+      const allUsers=getApprovedUsers()||[];
+      allUsers.filter(u=>u.role==='sales'||u.role==='admin'||u.role==='procurement').forEach(u=>{
+        const displayName=(u.name||u.email||'').split('@')[0].replace(/[._]/g,' ').replace(/\w/g,c=>c.toUpperCase());
+        addRep(displayName,u.email);
+        repMap[displayName]._isVCSRep=true;
+        repMap[displayName]._role=u.role;
+      });
+    }catch(e){}
+    // Match SF data to VCS reps by name — fuzzy match
+    const matchRepName=(sfName)=>{
+      if(!sfName||sfName==='Unknown') return sfName;
+      // Direct match first
+      if(repMap[sfName]) return sfName;
+      // Fuzzy: check if SF name contains VCS rep's first or last name
+      const sfLower=sfName.toLowerCase();
+      const match=Object.keys(repMap).find(r=>{
+        const parts=r.toLowerCase().split(' ');
+        return parts.some(p=>p.length>3&&sfLower.includes(p));
+      });
+      return match||sfName;
+    };
+    opps.forEach(o=>{
+      const sfName=o.Owner?.Name||'Unknown';
+      const n=matchRepName(sfName);
+      addRep(n,''); repMap[n].opps.push(o); repMap[n].pipelineValue+=Number(o.Amount||0);
+    });
+    tasks.forEach(t=>{
+      const sfName=t.Owner?.Name||'Unknown';
+      const n=matchRepName(sfName);
+      addRep(n,''); repMap[n].tasks.push(t);
+      if(t.ActivityDate&&new Date(t.ActivityDate)<today) repMap[n].overdueTask++;
+    });
+    cases.forEach(ca=>{
+      const sfName=ca.Owner?.Name||'Unknown';
+      const n=matchRepName(sfName);
+      addRep(n,''); repMap[n].cases.push(ca);
+    });
+    // Filter out 'Unknown' and sort: VCS reps first by pipeline value
+    const reps=Object.values(repMap)
+      .filter(r=>r.name&&r.name!=='Unknown')
+      .sort((a,b)=>{
+        if(a._isVCSRep&&!b._isVCSRep) return -1;
+        if(!a._isVCSRep&&b._isVCSRep) return 1;
+        return b.pipelineValue-a.pipelineValue;
+      });
 
     // Rep KPI cards
     const repGrid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:'8px',marginBottom:'12px'}});
@@ -15320,7 +15465,7 @@ AG=Added Value, AH=Contact, AJ=Business#, AK=Mobile, AL=Email, BA=Notes (r[52])
       el('span',{style:{fontSize:'10px',fontWeight:'600'}},'Handover document generated — copy all and paste into new chat:'),
       el('button',{class:'btn-xs btn-primary',onclick(){navigator.clipboard.writeText(doc).then(()=>toast('✓ Copied to clipboard'));}}, '📋 Copy All'),
     ]));
-    const ta=el('textarea',{style:{width:'100%',height:'320px',fontSize:'9px',fontFamily:'monospace',background:'var(--sb)',color:'var(--text)',border:'1px solid var(--border)',borderRadius:'4px',padding:'8px',resize:'vertical',lineHeight:'1.4'}});
+    const ta=el('textarea',{style:{width:'100%',height:'320px',fontSize:'9px',fontFamily:'monospace',background:'var(--card)',color:'var(--text)',border:'1px solid var(--border)',borderRadius:'4px',padding:'8px',resize:'vertical',lineHeight:'1.4'}});
     ta.value=doc;
     handoverOut.appendChild(ta);
   } else {
@@ -15331,7 +15476,7 @@ AG=Added Value, AH=Contact, AJ=Business#, AK=Mobile, AL=Email, BA=Notes (r[52])
 
 function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
   // Creates a collapsible settings card
-  const card=el('div',{style:{background:'var(--sb)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
+  const card=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
   const isOpen=S._settingsOpen?.[key] ?? defaultOpen;
   const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'10px 14px',cursor:'pointer',userSelect:'none',background:isOpen?'var(--card)':'var(--sb)',transition:'background .15s'},
     onclick(){
@@ -16262,7 +16407,7 @@ function renderSettings(c) {
 
   // ── Renzo Integration Settings (Admin only) ──
   if(['admin','procurement'].includes(USER.role)){
-    const renzoSec=el('div',{style:{background:'var(--sb)',border:'1px solid rgba(79,124,255,.3)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
+    const renzoSec=el('div',{style:{background:'var(--card)',border:'1px solid rgba(79,124,255,.3)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
     const _rnOpen=!S._settingsOpen||(S._settingsOpen.renzo!==false);
     const _rnHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'10px 14px',cursor:'pointer',background:_rnOpen?'rgba(79,124,255,.06)':'var(--sb)'},onclick(){if(!S._settingsOpen)S._settingsOpen={};S._settingsOpen.renzo=!_rnOpen;render();}});
     _rnHdr.appendChild(el('span',{style:{fontSize:'14px'}},'🔌'));
