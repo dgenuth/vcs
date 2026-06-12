@@ -1911,6 +1911,9 @@ async function loadFile(file) {
     $('app').style.display='flex';
     updateSidebar(); render();
     const gpCount = S.channelVendors.length;
+    // Rebuild vendorAliases from spreadsheet records (survives Drive config loss)
+    if(!S.vendorAliases) S.vendorAliases={};
+    (S.vendors||[]).forEach(v=>{ if(v.vendorAliases&&Array.isArray(v.vendorAliases)){v.vendorAliases.forEach(a=>{S.vendorAliases[normName(a)]=v.name;});}});
     toast(`Loaded ${S.vendors.length} direct + ${gpCount} channel partner vendors, ${S.itw.length} pipeline, ${S.reviews.length} reviews`);
     startAutoSave();
 
@@ -7479,7 +7482,7 @@ function renderVendorDB(c) {
     {key:'changeOfControl',label:'Change of Control (Y/N & Conditions)',sortable:false,get:v=>v.changeOfControl||'',fmt:v=>{const _v=v.changeOfControl||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.changeOfControl||''},
     {key:'attachment',label:'Attachment / Location',sortable:false,get:v=>v.attachment||'',fmt:v=>{const _v=v.attachment||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.attachment||''},
     {key:'notes',   label:'Notes',           sortable:false, get:v=>v.notes?'yes':'',         fmt:v=>v.notes?el('span',{class:'note-preview clickable',title:String(v.notes).slice(0,200),onclick(e){e.stopPropagation();showNotePopup(v.name,v.notes,v);}},String(v.notes).split('|')[0].slice(0,40)+'…'):'', sk:v=>v.notes?0:1},
-    {key:'sf', label:'☁ SF (YTD)', sortable:true, get:v=>{const ctx=getSFContext(v.name);return ctx?(ctx.spend||0):0;}, fmt:v=>{const ctx=getSFContext(v.name);if(!ctx)return el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'—');const d=el('div',{style:{fontSize:'9px',display:'flex',gap:'3px',flexWrap:'wrap',alignItems:'center'}});if(ctx.spend)d.appendChild(el('span',{style:{color:'var(--blue)',fontWeight:'600'}},'$'+Math.round(ctx.spend/1000)+'K'));if(ctx.openOpps)d.appendChild(el('span',{style:{color:'var(--green)'}},'💼'+ctx.openOpps));if(ctx.openCases)d.appendChild(el('span',{style:{color:ctx.highCases?'var(--red)':'var(--amber)'}},'🎫'+ctx.openCases));return d.children.length?d:el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'—');}, sk:v=>{const ctx=getSFContext(v.name);return ctx?.spend||0;}},
+    {key:'sf', label:'☁ SF (YTD)', sortable:true, get:v=>{const ctx=_sfCtxCache?.get(v.name.toLowerCase());return ctx?(ctx.spend||0):0;}, fmt:v=>{const ctx=_sfCtxCache?.get(v.name.toLowerCase());if(!ctx)return el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'—');const d=el('div',{style:{fontSize:'9px',display:'flex',gap:'3px',flexWrap:'wrap',alignItems:'center'}});if(ctx.spend)d.appendChild(el('span',{style:{color:'var(--blue)',fontWeight:'600'}},'$'+Math.round(ctx.spend/1000)+'K'));if(ctx.openOpps)d.appendChild(el('span',{style:{color:'var(--green)'}},'💼'+ctx.openOpps));if(ctx.openCases)d.appendChild(el('span',{style:{color:ctx.highCases?'var(--red)':'var(--amber)'}},'🎫'+ctx.openCases));return d.children.length?d:el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'—');}, sk:v=>{const ctx=_sfCtxCache?.get(v.name.toLowerCase());return ctx?.spend||0;}},
     {key:'_cpSplit',label:'CP Split',sortable:false,get:v=>v._cpSplitPct||0,fmt:v=>{
       if(!v._cpSplitPct) return '';
       const d=el('div',{style:{fontSize:'9px',cursor:'pointer',lineHeight:'1.3'},title:'Click for split detail',onclick(e){
@@ -7701,6 +7704,34 @@ function renderVendorDB(c) {
   c.appendChild(actionBar);
 
   // ── Table ──
+  // Pre-build SF context map for O(1) lookup per vendor row (instead of O(n) per row)
+  const _sfCtxCache=new Map();
+  if(SPEND_STATE.data?.vendors||S._sfBoard?.data){
+    const spendVendors=SPEND_STATE.data?.vendors||[];
+    const sfOpps=S._sfBoard?.data?.opps||[];
+    const sfCases=S._sfBoard?.data?.cases||[];
+    // Build normalized name->data maps
+    const spendMap=new Map(spendVendors.map(v=>[v.name.toLowerCase(),v]));
+    // Group opps/cases by account name
+    const oppsMap=new Map(), casesMap=new Map();
+    sfOpps.forEach(o=>{const k=(o._accountName||'').toLowerCase();if(!oppsMap.has(k))oppsMap.set(k,[]);oppsMap.get(k).push(o);});
+    sfCases.forEach(c=>{const k=(c._accountName||'').toLowerCase();if(!casesMap.has(k))casesMap.set(k,[]);casesMap.get(k).push(c);});
+    // For each unique vendor name in current pool, build context once
+    VENDOR_POOL.forEach(v=>{
+      const key=v.name.toLowerCase();
+      if(_sfCtxCache.has(key)) return;
+      const ctx={};
+      // Find spend by exact match first, then fuzzy
+      const sv=spendMap.get(key)||[...spendMap.entries()].find(([k])=>vendorNamesMatch(k,v.name))?.[1];
+      if(sv){ctx.spend=sv.totalSpend;ctx.fees=sv.totalFees;ctx.actualPct=sv.actualPct;}
+      const opps=oppsMap.get(key)||[...oppsMap.entries()].filter(([k])=>vendorNamesMatch(k,v.name)).flatMap(([,v2])=>v2);
+      const cases=casesMap.get(key)||[...casesMap.entries()].filter(([k])=>vendorNamesMatch(k,v.name)).flatMap(([,v2])=>v2);
+      if(opps.length){ctx.openOpps=opps.length;}
+      if(cases.length){ctx.openCases=cases.length;ctx.highCases=cases.filter(c=>c.Priority==='High').length;}
+      if(Object.keys(ctx).length) _sfCtxCache.set(key,ctx);
+    });
+  }
+
   const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap'});
   const table=el('table',{class:'data-table',style:{borderCollapse:'collapse'}});
   const thead=el('thead'), trh=el('tr');
@@ -9568,7 +9599,7 @@ CRITICAL: Respond ONLY with valid JSON. No preamble, no markdown, no code fences
   },
   "contractTermYears": "number or null",
   "contractTermMonths": "number or null",
-  "perpetuity": "Yes / No / null",
+  "perpetuity": "CRITICAL — Read this definition carefully: Perpetuity means admin fees continue AFTER the agreement expires, for the life of the business relationship between the vendor and the operator/customer. ANY of these phrases means YES: 'fees extend beyond the agreement', 'for the life of the relationship', 'as long as the customer purchases', 'admin fees survive termination', 'fees continue after expiration', 'post-termination fees', 'tail period', 'run-out period'. If admin fee notes say fees extend beyond agreement expiration for the life of the relationship = YES. Return: Yes / No / Conditional / null",
   "adminFee": {
     "percentage": "number or null",
     "basis": "Qualifying Purchases / Net Sales / Gross Sales / Invoice / other",
@@ -9604,7 +9635,20 @@ CRITICAL: Respond ONLY with valid JSON. No preamble, no markdown, no code fences
   ],
   "notes": "other important details",
   "extractionConfidence": "HIGH / MEDIUM / LOW",
-  "missingFields": ["fields not found"]
+  "missingFields": ["fields not found"],
+  "sourceCitations": {
+    "INSTRUCTIONS: For each key field, record where in the document you found it. Use format: page number if visible, or 'Section X', 'Paragraph Y', 'Article Z', or quote the first few words of the containing sentence.",
+    "effectiveDate": "e.g. Page 1, Section 1 / Cover sheet line 3",
+    "expirationDate": "source location",
+    "contractTermMonths": "source location",
+    "autoRenewal": "source location",
+    "terminationNotice": "source location",
+    "adminFee": "source location — e.g. Section 4.1, Article on Compensation",
+    "perpetuity": "REQUIRED: exact quote from contract that determined your perpetuity answer",
+    "exclusivity": "source location",
+    "markets": "source location",
+    "classesOfTrade": "source location"
+  }
 }`;
 
   // Handle PDF (base64 object) vs plain text
@@ -10002,6 +10046,125 @@ function openEditableApplyModal(vendor, extracted) {
   });
 }
 
+// ── Generate Contract Data Sheet (matches Prime Source template) ──────────
+async function generateContractDataSheet(vendor, ex, fileName) {
+  if(!vendor&&!ex){ toast('No contract data to generate sheet from','#f59e0b'); return; }
+  const v=vendor||{}, e=ex||{};
+  const vName=v.name||e.vendorName||'Vendor';
+  const today=new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+
+  // Build the data sheet HTML matching Prime Source template layout
+  const sheetHtml=`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Prime Source Contract Data Sheet — ${vName}</title>
+<style>
+  body{font-family:Calibri,Arial,sans-serif;font-size:10pt;margin:0.75in;color:#1a1a2e}
+  h1{color:#0078b8;font-size:16pt;margin-bottom:4px;text-align:center}
+  .intro{font-size:9pt;color:#555;margin-bottom:16px;text-align:center}
+  table{width:100%;border-collapse:collapse;margin-bottom:16px}
+  td{border:1px solid #ccc;padding:6px 10px;vertical-align:top;font-size:9pt}
+  .hdr{background:#0078b8;color:#fff;font-weight:700;font-size:9pt;width:25%}
+  .val{background:#f9fbfd;color:#1a1a2e}
+  .section-hdr{background:#e8f2fc;color:#0060a0;font-weight:700;font-size:10pt;padding:6px 10px;border:1px solid #0078b8;text-align:center}
+  .footer{font-size:8pt;color:#888;text-align:center;margin-top:16px;border-top:1px solid #ccc;padding-top:8px}
+</style>
+</head>
+<body>
+<h1>Prime Source Contract Data Sheet</h1>
+<div class="intro">Prime Source is pleased to announce a new addition to our vendor portfolio. The details are as follows:</div>
+
+<table>
+  <tr><td class="hdr">VENDOR NAME</td><td class="val" colspan="3"><strong>${vName}</strong></td></tr>
+  <tr><td class="hdr">VENDOR ADDRESS</td><td class="val" colspan="3">${v.address||''}</td></tr>
+  <tr><td class="hdr">VENDOR CONTACT DETAILS</td><td class="val" colspan="3">${v.procContact||''}${v.phone?' | '+v.phone:''}${v.email?' | '+v.email:''}</td></tr>
+  <tr>
+    <td class="hdr">CONTRACT #</td><td class="val">${e.contractNumber||v.contractNo||'PSG-'}</td>
+    <td class="hdr">TYPE OF AGREEMENT</td><td class="val">${e.agreementType||v.agreementType||'GPA'}</td>
+  </tr>
+  <tr>
+    <td class="hdr">START DATE</td><td class="val">${e.effectiveDate||v.contractEffective||''}</td>
+    <td class="hdr">END DATE</td><td class="val">${e.expirationDate||v.expiry||''}</td>
+  </tr>
+  <tr>
+    <td class="hdr">TERM DETAILS</td>
+    <td class="val" colspan="2">${e.contractTermMonths?e.contractTermMonths+'M':''}${e.autoRenewal?' with '+e.autoRenewal+' auto-renewal':''}</td>
+    <td></td>
+  </tr>
+  <tr>
+    <td class="hdr">COLLECTION FREQUENCY</td><td class="val">${e.adminFee?.frequency||e.paymentTerms?.frequency||''}</td>
+    <td class="hdr">PERPETUITY</td><td class="val" style="color:${e.perpetuity==='Yes'?'#22c55e':'inherit'}">${e.perpetuity||''}</td>
+  </tr>
+  <tr>
+    <td class="hdr">SUMMARY OF TERMS</td>
+    <td class="val" colspan="3">
+      Admin Fee: ${e.adminFee?.percentage?e.adminFee.percentage+'%':''} of ${e.adminFee?.basis||'Qualifying Purchases'}<br>
+      ${e.adminFee?.notes||''}<br>
+      ${e.tiers?.length?'Tiers: '+e.tiers.map(t=>t.threshold+' @ '+t.rate).join(' | '):''}
+    </td>
+  </tr>
+  <tr><td class="hdr">CATEGORY</td><td class="val" colspan="3">${v.category||''}</td></tr>
+  <tr><td class="hdr">PRODUCTS/SERVICES</td><td class="val" colspan="3">${e.products||v.product||v.about||''}</td></tr>
+  <tr><td class="hdr">MARKETS SERVICED</td><td class="val" colspan="3">${e.markets||v.markets||'National'}</td></tr>
+  <tr><td class="hdr">CLASSES OF TRADE</td><td class="val" colspan="3">${e.classesOfTrade||v.classOfTrade||''}</td></tr>
+  <tr>
+    <td class="hdr">EXCLUSIVITY</td><td class="val">${e.keyTerms?.exclusivity||v.exclusivity||''}</td>
+    <td class="hdr">AUTO-RENEWAL</td><td class="val">${e.autoRenewal||''}</td>
+  </tr>
+  <tr>
+    <td class="hdr">TERMINATION NOTICE</td>
+    <td class="val" colspan="3">${e.terminationNotice||v.terminationNotice||''}</td>
+  </tr>
+  <tr>
+    <td class="hdr">ASSIGNMENT</td><td class="val">${e.keyTerms?.assignment||v.assignment||''}</td>
+    <td class="hdr">GOVERNING LAW</td><td class="val">${e.keyTerms?.governingLaw||''}</td>
+  </tr>
+  <tr><td class="hdr">IT CAPABILITIES / OTHER</td><td class="val" colspan="3">${e.notes||''}</td></tr>
+</table>
+
+<div class="footer">
+  Generated by Prime Source VCS — ${today} | Contract file: ${fileName||'N/A'} | Confidence: ${e.extractionConfidence||'N/A'}
+  ${e.extractionConfidence!=='HIGH'?'<br><strong>Note: Review all fields before distribution — extraction confidence is '+e.extractionConfidence+'</strong>':''}
+</div>
+</body>
+</html>`;
+
+  // Open in new tab for review/print
+  const newTab=window.open('','_blank');
+  if(newTab){
+    newTab.document.write(sheetHtml);
+    newTab.document.close();
+    toast('✓ Data Sheet opened — print or save as PDF from the new tab','#22c55e');
+  } else {
+    // Fallback: download as HTML
+    const blob=new Blob([sheetHtml],{type:'text/html'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+    a.download=vName.replace(/[^a-zA-Z0-9]/g,'_')+'_DataSheet.html'; a.click();
+    toast('✓ Data Sheet downloaded','#22c55e');
+  }
+
+  // Also offer to save to Drive
+  openModal(body=>{
+    body.appendChild(el('h3',{},'📋 Data Sheet Created'));
+    body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--muted)',marginBottom:'12px'}},'The data sheet opened in a new tab. Print it or save as PDF. Do you also want to save it to the vendor folder in Drive?'));
+    const btns=el('div',{class:'modal-btns'});
+    btns.appendChild(el('button',{class:'btn-primary',onclick:async()=>{
+      closeModal();
+      toast('⏳ Saving data sheet to Drive...','#4f7cff');
+      try{
+        const resp=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
+          body:JSON.stringify({action:'saveComparisonReport',vendorName:vName,reportHtml:sheetHtml,reportName:vName+'_DataSheet_'+new Date().toISOString().slice(0,10)})});
+        const d=await resp.json();
+        if(d.status==='ok') toast('✓ Data sheet saved to Vendor Contracts & Pricing/'+d.vendorFolder,'#22c55e');
+        else toast('Drive save failed: '+(d.message||'unknown'),'#ef4444');
+      }catch(e2){toast('Drive save error: '+e2.message,'#ef4444');}
+    }},'☁ Save to Vendor Contracts & Pricing'));
+    btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'No thanks'));
+    body.appendChild(btns);
+  });
+}
+
 function renderContracts(c) {
   c.innerHTML='';
   // Ensure contract store is initialized
@@ -10099,18 +10262,31 @@ function renderContracts(c) {
       dropLabel.children[1].style.color='var(--green)';
       dropLabel.children[2].textContent=typeof selectedFileText==='string'?Math.round(selectedFileText.length/1000)+'K chars extracted':'PDF (will send to Claude directly)';
       extractBtn.disabled=false; extractBtn.style.opacity='1';
-      // Show inline viewer
+      // Show inline viewer with actual file rendering
       const vw=document.getElementById('contract-inline-viewer');
       const vb=document.getElementById('contract-viewer-body');
       const vf=document.getElementById('viewer-filename');
       if(vw&&vb&&vf){
         vf.textContent=file.name;
-        if(typeof selectedFileText==='string'&&selectedFileText.length>0){
-          vb.textContent=selectedFileText;
-        } else if(file.type==='application/pdf'){
-          vb.innerHTML='<iframe src="'+URL.createObjectURL(file)+'" style="width:100%;height:100%;border:none"></iframe>';
+        const isPdf=file.type==='application/pdf'||file.name.toLowerCase().endsWith('.pdf');
+        const isDocx=file.name.toLowerCase().endsWith('.docx')||file.name.toLowerCase().endsWith('.doc');
+        if(isPdf){
+          // Render actual PDF — iframe shows it exactly as uploaded
+          const pdfUrl=URL.createObjectURL(file);
+          vb.innerHTML='<iframe src="'+pdfUrl+'" style="width:100%;height:100%;border:none;background:#fff"></iframe>';
+        } else if(isDocx){
+          // For DOCX — show formatted HTML via mammoth if available
+          if(typeof mammoth!=='undefined'){
+            const abuf=await file.arrayBuffer();
+            mammoth.convertToHtml({arrayBuffer:abuf}).then(result=>{
+              vb.innerHTML='<div style="padding:20px;background:#fff;color:#1a1a2e;font-family:Calibri,Arial,sans-serif;font-size:11pt;line-height:1.5;height:100%;overflow-y:auto">'+result.value+'</div>';
+            }).catch(()=>{vb.textContent=typeof selectedFileText==='string'?selectedFileText:'Preview unavailable';});
+          } else {
+            // Fallback: show extracted text
+            vb.textContent=typeof selectedFileText==='string'?selectedFileText:'Preview not available';
+          }
         } else {
-          vb.textContent='Preview not available for this file type.';
+          vb.textContent=typeof selectedFileText==='string'?selectedFileText:'Preview not available for this file type.';
         }
         vw.style.display='block';
       }
@@ -10133,12 +10309,14 @@ function renderContracts(c) {
   const driveRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'8px'}});
   const driveBtn=el('button',{class:'btn-xs btn-ghost',style:{display:'flex',gap:'6px',alignItems:'center'},onclick:async()=>{
     const vName=selectedVendorName||comboInput.value.trim();
-    driveBtn.disabled=true; driveBtn.textContent='⏳ Connecting...';
-    try { await getGDriveToken(); } catch(e) { toast('Google Drive auth failed: '+e.message,'#ef4444'); driveBtn.disabled=false; driveBtn.textContent='☁ Load from Drive'; return; }
+    if(!vName){ toast('Select a vendor first to browse their contracts','#f59e0b'); return; }
+    driveBtn.disabled=true; driveBtn.textContent='⏳ Loading from Drive...';
     try {
+      // Use VCS proxy — no user Google auth needed, uses server-side Drive access
+      const vName_use=vName||'';
       // List files in Vendor Contracts and Pricing folder for this vendor
       const nameToSearch = vName || '';
-      const resp = await fetch(VCS_PROXY_URL+'?action=listVendorFiles&vendorName='+encodeURIComponent(nameToSearch));
+      const resp = await fetch(VCS_PROXY_URL+'?action=listVendorFiles&vendorName='+encodeURIComponent(vName_use));
       const d = await resp.json();
       driveBtn.disabled=false; driveBtn.textContent='☁ Load from Drive';
       if(!d.folderFound||!d.files?.length){
@@ -10160,8 +10338,10 @@ function renderContracts(c) {
   driveRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Browse Vendor Contracts & Pricing folder'));
   uploadSec.appendChild(driveRow);
 
-  // Inline contract viewer (shown after file loaded)
-  const viewerWrap=el('div',{id:'contract-inline-viewer',style:{display:'none',marginTop:'8px',border:'1px solid var(--border)',borderRadius:'5px',overflow:'hidden'}});
+  // Side-by-side container: viewer (left) + extraction results (right)
+  const sxsContainer=el('div',{id:'contract-sxs',style:{display:'none',marginTop:'12px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:'12px',minHeight:'500px'}});
+  // Inline contract viewer (shown after file loaded) — left panel
+  const viewerWrap=el('div',{id:'contract-inline-viewer',style:{display:'none',marginTop:'0px',border:'1px solid var(--border)',borderRadius:'5px',overflow:'hidden'}});
   const viewerHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'6px 10px',background:'var(--card)',borderBottom:'1px solid var(--border)'}});
   viewerHdr.appendChild(el('span',{id:'viewer-filename',style:{flex:'1',fontWeight:'600',fontSize:'10px'}},''));
   const viewerToggle=el('button',{class:'btn-xs btn-ghost',onclick(){
@@ -10277,10 +10457,20 @@ function renderContracts(c) {
 
       // Card header
       // Detect contract status from filename and content
-      const _cStatus = record._contractStatus || (
-        /fully.executed|fully executed|executed|signed|amendment|addendum/i.test(record.fileName||'') ? 'EXECUTED' :
-        /redline|red.line|draft|proposed|review/i.test(record.fileName||'') ? 'REDLINE/DRAFT' : 'UNKNOWN'
-      );
+      const _cStatus = record._contractStatus || (() => {
+        const fname=(record.fileName||'').toLowerCase();
+        const ftext=(record.fileText||'').toLowerCase().slice(0,5000); // check first 5000 chars
+        // Executed indicators in filename or content
+        if(/fully.executed|fully executed/.test(fname)) return 'EXECUTED';
+        if(/signed by|signature.*date|executed.*by|by:.*\/s\/|witness:/i.test(ftext)) return 'EXECUTED';
+        if(/signed|executed|amendment|addendum/i.test(fname)) return 'EXECUTED';
+        if(/redline|red.line|draft|proposed|review/i.test(fname)) return 'REDLINE/DRAFT';
+        // Check content for draft indicators
+        if(/\[draft\]|\[redline\]|track changes|comment by/i.test(ftext)) return 'REDLINE/DRAFT';
+        // Default to EXECUTED if it has signature-like content
+        if(/in witness whereof|agreed.*and.*accepted|authorized signatory/i.test(ftext)) return 'EXECUTED';
+        return 'UNKNOWN';
+      })();
       const _cStatusColor = _cStatus==='EXECUTED'?'#34d399':_cStatus==='REDLINE/DRAFT'?'#f59e0b':'#6b7280';
       const cardHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'8px 12px',background:'var(--card)',borderBottom:'1px solid var(--border)',flexWrap:'wrap'}});
       cardHdr.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'600',flex:'1',minWidth:'120px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},record.fileName));
@@ -10304,6 +10494,12 @@ function renderContracts(c) {
             openEditableApplyModal(vendor, ex);
           }
         }, _isExecuted ? 'Apply to VCS' : '⚠ Apply (Unexecuted)');
+        // Data Sheet generation button
+        const dsBtn=el('button',{class:'btn-xs btn-ghost',onclick(e){
+          e.stopPropagation();
+          generateContractDataSheet(vendor, ex, record.fileName);
+        }},'📋 Create Data Sheet');
+        btns.appendChild(dsBtn);
         cardHdr.appendChild(applyBtn);
       }
       // Define contractBody BEFORE expandBtn so the closure can reference it
@@ -10321,15 +10517,24 @@ function renderContracts(c) {
       card.appendChild(cardHdr);
 
       // body2 placeholder - actual definition above
-      const field=(label,val,highlight)=>{
+      // citations object from extraction (keyed by field name)
+      const _cites=ex.sourceCitations||{};
+      const field=(label,val,highlight,citeKey)=>{
         if(!val&&val!==0) return;
-        const row=el('div',{style:{display:'flex',gap:'4px',alignItems:'flex-start',padding:'2px 0',borderBottom:'1px solid var(--border)'}});
-        row.appendChild(el('span',{style:{color:'var(--muted)',minWidth:'130px',flexShrink:'0'}},label));
-        row.appendChild(el('span',{style:{fontWeight:'500',color:highlight||'var(--text)'}},String(val)));
+        const row=el('div',{style:{display:'flex',gap:'4px',alignItems:'flex-start',padding:'3px 0',borderBottom:'1px solid var(--border)'}});
+        row.appendChild(el('span',{style:{color:'var(--muted)',minWidth:'130px',flexShrink:'0',fontSize:'9px'}},label));
+        const valWrap=el('div',{style:{flex:'1'}});
+        valWrap.appendChild(el('span',{style:{fontWeight:'500',color:highlight||'var(--text)',fontSize:'10px'}},String(val)));
+        // Show source citation if available
+        const cite=_cites[citeKey||label.toLowerCase().replace(/[^a-z]/g,'')];
+        if(cite&&!cite.startsWith('INSTRUCTIONS')){
+          valWrap.appendChild(el('div',{style:{fontSize:'8px',color:'var(--blue)',marginTop:'1px',fontStyle:'italic',cursor:'help'},title:cite},'📍 '+cite.slice(0,60)+(cite.length>60?'…':'')));
+        }
+        row.appendChild(valWrap);
         body2.appendChild(row);
       };
-      field('Agreement Type', ex.agreementType);
-      field('Contract #', ex.contractNumber);
+      field('Agreement Type', ex.agreementType,null,'agreementType');
+      field('Contract #', ex.contractNumber,null,'contractNumber');
       field('Effective Date', ex.effectiveDate);
       field('Expiration Date', ex.expirationDate, ex.expirationDate&&new Date(ex.expirationDate)<new Date()?'var(--red)':ex.expirationDate&&new Date(ex.expirationDate)<new Date(Date.now()+90*86400000)?'var(--amber)':'');
       field('Admin Fee', ex.adminFee?.percentage?ex.adminFee.percentage+'% — '+(ex.adminFee.basis||''):'', 'var(--green)');
@@ -11265,63 +11470,13 @@ function renderContractCompare(c) {
         const resp=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
           body:JSON.stringify({action:'saveComparisonReport',vendorName:vendor,reportHtml:reportHtml,reportName:reportName})});
         const d=await resp.json();
-        if(d.status==='ok') toast('✓ Saved to records: '+d.vendorFolder+' → '+d.fileName);
+        if(d.status==='ok') toast('✓ ☁ Saved to Vendor Contracts & Pricing: '+d.vendorFolder+' → '+d.fileName);
         else toast('⚠ Drive save failed: '+d.message,'#ef4444');
       }catch(err){toast('⚠ '+err.message,'#ef4444');}
-    }},'📁 Save to Records'));
+    }},'☁ Save to Vendor Contracts & Pricing'));
     wrap.appendChild(exportRow);
 
-    // ── Document viewers — expandable, white background ──
-    if(CMP.docAText || CMP.docBText) {
-      if(!S._cmpViewerOpen) S._cmpViewerOpen = {A:false, B:false};
-      const viewerRow=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'12px'}});
-      ['A','B'].forEach(side=>{
-        const isA=side==='A';
-        const docName=isA?CMP.docAName:CMP.docBName;
-        const docText=isA?CMP.docAText:CMP.docBText;
-        const textStr=typeof docText==='string'?docText:(docText?'[PDF — text extracted by Claude]':'');
-        const isOpen=S._cmpViewerOpen[side];
-        const panel=el('div',{style:{border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden',background:'var(--card)'}});
-        const pHdr=el('div',{style:{padding:'6px 10px',fontSize:'9px',fontWeight:'700',color:'var(--muted)',borderBottom:isOpen?'1px solid var(--border)':'none',display:'flex',justifyContent:'space-between',alignItems:'center',background:'var(--card)',cursor:'pointer',userSelect:'none'},
-          onclick(){S._cmpViewerOpen[side]=!S._cmpViewerOpen[side];render();}});
-        pHdr.appendChild(el('span',{},('Doc '+side+(docName?' — '+docName.slice(0,35)+(docName.length>35?'…':''):' (not loaded)'))));
-        const toggleBtn=el('span',{style:{fontSize:'9px',color:'var(--blue)',fontWeight:'600'}},isOpen?'▲ Collapse':'▼ Expand to read');
-        pHdr.appendChild(toggleBtn);
-        panel.appendChild(pHdr);
-        if(isOpen){
-          const docFile=isA?CMP.docAFile:CMP.docBFile;
-          const isPdf=docFile?.type==='application/pdf'||(docFile?.name||'').toLowerCase().endsWith('.pdf');
-          const hasPdfB64=docText?.__pdf_base64__;
-          const panelBody=el('div',{style:{height:'380px',borderTop:'1px solid #ddd',position:'relative',overflow:'hidden'}});
-          // Drag-to-resize bar
-          const rszBar=el('div',{style:{position:'absolute',bottom:'0',left:'0',right:'0',height:'6px',cursor:'ns-resize',background:'rgba(0,0,0,.1)',zIndex:'2',display:'flex',alignItems:'center',justifyContent:'center'}});
-          rszBar.innerHTML='<span style="color:#888;font-size:8px">⋯</span>';
-          let rszH=380;
-          rszBar.addEventListener('mousedown',e=>{e.preventDefault();const sy=e.pageY;rszH=panelBody.offsetHeight;
-            const mm=ev=>{panelBody.style.height=Math.max(150,rszH+ev.pageY-sy)+'px';};
-            const mu=()=>{document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);};
-            document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);});
-          panelBody.appendChild(rszBar);
-          if((isPdf||hasPdfB64)&&(docFile||hasPdfB64)){
-            const src=hasPdfB64?('data:application/pdf;base64,'+hasPdfB64):URL.createObjectURL(docFile);
-            const iframe=document.createElement('iframe');
-            iframe.src=src; iframe.style.cssText='width:100%;height:100%;border:none;background:#fff;';
-            panelBody.appendChild(iframe);
-          } else if(textStr){
-            const textDiv=el('div',{style:{height:'100%',overflowY:'auto',padding:'16px 18px',fontSize:'10px',lineHeight:'1.7',color:'#1a1a1a',background:'#ffffff',fontFamily:'Georgia, serif',whiteSpace:'pre-wrap',wordBreak:'break-word'}});
-            textDiv.textContent=textStr+(textStr.length>50000?'\n\n[Showing first 50K of '+Math.round(textStr.length/1000)+'K chars]':'');
-            panelBody.appendChild(textDiv);
-          } else {
-            panelBody.appendChild(el('div',{style:{padding:'20px',fontSize:'9px',color:'var(--muted)',fontStyle:'italic',textAlign:'center'}},'No preview available — upload a file to view it here'));
-          }
-          panel.appendChild(panelBody);
-        } else if(!docName){
-          panel.appendChild(el('div',{style:{padding:'8px',fontSize:'9px',color:'var(--muted)',fontStyle:'italic'}},'No document loaded'));
-        }
-        viewerRow.appendChild(panel);
-      });
-      wrap.appendChild(viewerRow);
-    }
+    // Document viewers shown above (pre-run section)
 
     // Doc A / Doc B labels
     const labRow=el('div',{style:{display:'grid',gridTemplateColumns:'180px 1fr 1fr',gap:'0',marginBottom:'4px',fontSize:'9px',fontWeight:'700',color:'var(--muted)',paddingLeft:'4px'}});
