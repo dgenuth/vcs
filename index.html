@@ -265,6 +265,16 @@ body.ps-light-theme .ar-badge{background:rgba(22,122,94,.1)!important;color:#0a5
 
 /* Forecast month headers */
 body.ps-light-theme .forecast-hdr{background:rgba(0,120,184,.06)!important;border-left:3px solid #0078b8;color:#071630!important}
+/* Forecast tables — fixed layout for uniform column widths */
+.forecast-section .data-table{table-layout:fixed;width:100%}
+.forecast-section .data-table th:nth-child(1),.forecast-section .data-table td:nth-child(1){width:22%}
+.forecast-section .data-table th:nth-child(2),.forecast-section .data-table td:nth-child(2){width:11%}
+.forecast-section .data-table th:nth-child(3),.forecast-section .data-table td:nth-child(3){width:8%}
+.forecast-section .data-table th:nth-child(4),.forecast-section .data-table td:nth-child(4){width:5%}
+.forecast-section .data-table th:nth-child(5),.forecast-section .data-table td:nth-child(5){width:8%}
+.forecast-section .data-table th:nth-child(6),.forecast-section .data-table td:nth-child(6){width:16%}
+.forecast-section .data-table th:nth-child(7),.forecast-section .data-table td:nth-child(7){width:8%}
+.forecast-section .data-table th:nth-child(8),.forecast-section .data-table td:nth-child(8){width:auto}
 
 /* Detail panel section titles */
 body.ps-light-theme .detail-sec-title{background:rgba(0,120,184,.07)!important;color:#0060a0!important;border-left:3px solid #0078b8}
@@ -5790,11 +5800,13 @@ function dialPhone(phone, vendorName) {
   const raw = phone.replace(/\D/g,'');
   const dialerUrl = S.settings?.dialerUrl;
   if (dialerUrl && dialerUrl.trim()) {
+    // E.164: do NOT encode the '+' — Google Voice requires literal +1XXXXXXXXXX
+    const e164 = (raw.length===11 && raw.startsWith('1')) ? '+'+raw : '+1'+raw;
     const url = dialerUrl
       .replace(/\{phone\}/gi, encodeURIComponent(raw))
       .replace(/\{phone_raw\}/gi, raw)
       .replace(/\{name\}/gi, encodeURIComponent(vendorName||''))
-      .replace(/\{e164\}/gi, encodeURIComponent('+1'+raw)); // US default
+      .replace(/\{e164\}/gi, e164); // literal +1XXXXXXXXXX — NOT encoded
     window.open(url, '_blank');
   } else {
     window.open('tel:'+raw);
@@ -6919,23 +6931,35 @@ function buildTable(headers, rows, rowFn, opts) {
   const wrap=el('div',{class:'tbl-wrap'});
   const tbl=el('table',{class:'data-table'});
   if(opts&&opts.fixedLayout) tbl.style.tableLayout='fixed';
+  // Add <colgroup> so column widths apply uniformly to both th and td
+  const colgroup=document.createElement('colgroup');
   const thead=el('thead'); const trh=el('tr');
   for (let hi=0;hi<headers.length;hi++) {
     const h=headers[hi];
+    const col=document.createElement('col');
+    if (S.colWidths[h]) col.style.width=S.colWidths[h]+'px';
+    colgroup.appendChild(col);
     const th=el('th',{},h);
     th.style.position='relative';
-    // Restore persisted width
-    if (S.colWidths[h]) { th.style.minWidth=S.colWidths[h]+'px'; th.style.width=S.colWidths[h]+'px'; }
-    // Resize handle on every column
+    if (S.colWidths[h]) { th.style.minWidth=S.colWidths[h]+'px'; }
     const handle=document.createElement('div');
     handle.style.cssText='position:absolute;right:0;top:0;bottom:0;width:5px;cursor:col-resize;z-index:2;background:transparent;';
+    // Capture col for this closure
+    const _col=col, _h=h;
     handle.addEventListener('mousedown',e=>{
       e.preventDefault(); e.stopPropagation();
       let startX=e.pageX, startW=th.offsetWidth;
       const onMove=ev=>{
         const w=Math.max(40,startW+ev.pageX-startX);
-        th.style.minWidth=w+'px'; th.style.width=w+'px';
-        S.colWidths[h]=w; // persist across renders
+        _col.style.width=w+'px';
+        th.style.minWidth=w+'px';
+        S.colWidths[_h]=w;
+        // Remove max-width/overflow constraints on all tds in this column so text shows
+        const colIdx=Array.from(trh.children).indexOf(th);
+        if(colIdx>=0){
+          const tds=tbl.querySelectorAll('tbody tr td:nth-child('+(colIdx+1)+')');
+          tds.forEach(td=>{td.style.maxWidth='none';td.style.overflow='visible';td.style.whiteSpace='normal';});
+        }
       };
       const onUp=()=>{document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);};
       document.addEventListener('mousemove',onMove); document.addEventListener('mouseup',onUp);
@@ -6943,6 +6967,7 @@ function buildTable(headers, rows, rowFn, opts) {
     th.appendChild(handle);
     trh.appendChild(th);
   }
+  tbl.appendChild(colgroup);
   thead.appendChild(trh); tbl.appendChild(thead);
   const tbody=el('tbody');
   for (const row of rows) {
@@ -7450,6 +7475,25 @@ function renderVendorDB(c) {
     {key:'attachment',label:'Attachment / Location',sortable:false,get:v=>v.attachment||'',fmt:v=>{const _v=v.attachment||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.attachment||''},
     {key:'notes',   label:'Notes',           sortable:false, get:v=>v.notes?'yes':'',         fmt:v=>v.notes?el('span',{class:'note-preview clickable',title:String(v.notes).slice(0,200),onclick(e){e.stopPropagation();showNotePopup(v.name,v.notes,v);}},String(v.notes).split('|')[0].slice(0,40)+'…'):'', sk:v=>v.notes?0:1},
     {key:'sf', label:'☁ SF (YTD)', sortable:true, get:v=>{const ctx=getSFContext(v.name);return ctx?(ctx.spend||0):0;}, fmt:v=>{const ctx=getSFContext(v.name);if(!ctx)return el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'—');const d=el('div',{style:{fontSize:'9px',display:'flex',gap:'3px',flexWrap:'wrap',alignItems:'center'}});if(ctx.spend)d.appendChild(el('span',{style:{color:'var(--blue)',fontWeight:'600'}},'$'+Math.round(ctx.spend/1000)+'K'));if(ctx.openOpps)d.appendChild(el('span',{style:{color:'var(--green)'}},'💼'+ctx.openOpps));if(ctx.openCases)d.appendChild(el('span',{style:{color:ctx.highCases?'var(--red)':'var(--amber)'}},'🎫'+ctx.openCases));return d.children.length?d:el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'—');}, sk:v=>{const ctx=getSFContext(v.name);return ctx?.spend||0;}},
+    {key:'_cpSplit',label:'CP Split',sortable:false,get:v=>v._cpSplitPct||0,fmt:v=>{
+      if(!v._cpSplitPct) return '';
+      const d=el('div',{style:{fontSize:'9px',cursor:'pointer',lineHeight:'1.3'},title:'Click for split detail',onclick(e){
+        e.stopPropagation();
+        openModal(body=>{
+          body.appendChild(el('h3',{},'Channel Partner Split — '+v.name));
+          [['• Channel Partner',v._cpSplitSource||'—'],['• Prime Source Share',v._cpSplitPct+'%'],['• Partner Share',(100-v._cpSplitPct)+'%'],['• Contract Admin Fee',(parseFee(v.adminFee)||'?')+'%'],['• Effective PS Fee',(v._effectiveFee||'?')+'%'],['• Extracted On',v._cpSplitExtracted||'—']].forEach(([l,val])=>{
+            const r=el('div',{style:{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px solid var(--border)',fontSize:'11px'}});
+            r.appendChild(el('span',{style:{color:'var(--muted)'}},l));
+            r.appendChild(el('span',{style:{fontWeight:'600'}},val));
+            body.appendChild(r);
+          });
+          const btns2=el('div',{class:'modal-btns'});btns2.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns2);
+        });
+      }});
+      d.appendChild(el('div',{style:{color:'var(--green)',fontWeight:'700'}},v._cpSplitPct+'%'));
+      if(v._effectiveFee) d.appendChild(el('div',{style:{color:'var(--muted)',fontSize:'8px'}},'Eff: '+v._effectiveFee+'%'));
+      return d;
+    },sk:v=>v._cpSplitPct||0},
   ];
 
   // Default hidden: show the most useful cols, hide the verbose ones
@@ -8922,7 +8966,7 @@ function renderSFVendorBrief(wrap, opps, cases, tasks, spendLeaderboard) {
   nameRow.appendChild(nameInfo);
   const btnRow=el('div',{style:{display:'flex',gap:'6px',flexShrink:'0',flexWrap:'wrap',alignItems:'center'}});
   if(vcsV){
-    if(vcsV.phone) btnRow.appendChild(el('a',{href:'tel:'+vcsV.phone.replace(/\D/g,''),class:'btn-xs btn-ghost',style:{textDecoration:'none'}},'📞 Call'));
+    if(vcsV.phone) btnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){dialPhone(vcsV.phone, vcsV.name);}},'📞 Call'));
     if(vcsV.email) btnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){openEmailModal(vcsV);}},'✉ Email'));
     btnRow.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){openDetail(vcsV);}},'Open Panel →'));
   }
@@ -11812,6 +11856,125 @@ if (!S.channelPartnerAgreements) S.channelPartnerAgreements = [
 ];
 if (!S.feeRecords) S.feeRecords = [];
 
+// ── Analyze channel partner contract with Claude AI ────────────────────────
+async function analyzeCPContractWithAI(cp) {
+  if(!cp._driveFileId) throw new Error('No contract file ID — load contracts from Drive first');
+
+  // 1. Download contract from Drive via proxy
+  toast('⏳ Downloading contract for '+cp.name+'...','#4f7cff');
+  const dlResp = await fetch(VCS_PROXY_URL, {
+    method:'POST',
+    headers:{'Content-Type':'text/plain'},
+    body: JSON.stringify({action:'getFileById', fileId: cp._driveFileId})
+  });
+  const dlData = await dlResp.json();
+  if(!dlData.content) throw new Error('Could not download contract: '+(dlData.message||'unknown error'));
+
+  // 2. Get SF spend for this channel partner to include in context
+  const cpVendors = S.channelVendors.filter(v=>{
+    const gpo=(v.gpoSource||v.gpo||'').toLowerCase();
+    return gpo.includes(cp.name.toLowerCase());
+  });
+  const sfVendors = SPEND_STATE.data?.vendors||[];
+  const cpSpendVendors = cpVendors.map(v=>{
+    const sf = sfVendors.find(sv=>vendorNamesMatch(sv.name,v.name));
+    return {name:v.name, ytdSpend: sf?.totalSpend||0, feesReceived: sf?.totalFees||0, adminFee: v.adminFee||'?'};
+  }).filter(v=>v.ytdSpend>0).slice(0,20);
+
+  const totalCPSpend = cpSpendVendors.reduce((s,v)=>s+v.ytdSpend,0);
+  const totalCPFees = cpSpendVendors.reduce((s,v)=>s+v.feesReceived,0);
+
+  toast('⏳ Analyzing contract with Claude AI...','#4f7cff');
+
+  // 3. Send to Claude API for analysis
+  const prompt = `You are analyzing a channel partner agreement between Prime Source Expense Experts (a healthcare GPO) and ${cp.name} (a channel partner/GPO distributor).
+
+TASK: Extract the revenue split structure from this contract.
+
+CONTEXT:
+- Prime Source is the secondary partner — we provide the operator network
+- ${cp.name} is the primary GPO — they hold the vendor contracts
+- We need to know: what % of admin fees collected flows to Prime Source vs stays with ${cp.name}
+- Current YTD spend through ${cp.name} vendors: $${Math.round(totalCPSpend).toLocaleString()}
+- Current YTD fees received: $${Math.round(totalCPFees).toLocaleString()}
+
+VENDOR SAMPLE (top spenders through ${cp.name}):
+${cpSpendVendors.slice(0,8).map(v=>`  - ${v.name}: $${Math.round(v.ytdSpend).toLocaleString()} spend, $${Math.round(v.feesReceived).toLocaleString()} fees received`).join('\n')||'  (No SF spend data loaded — analyze contract structure only)'}
+
+EXTRACT AND RETURN AS JSON ONLY (no other text):
+{
+  "prime_source_split_pct": <number — % of admin fees that goes to Prime Source>,
+  "partner_split_pct": <number — % that stays with ${cp.name}>,
+  "split_structure": "<brief description of how the split works>",
+  "tier_thresholds": "<if tiered: describe volume thresholds and corresponding splits>",
+  "fee_basis": "<what the split applies to: gross admin fees, net, etc.>",
+  "notes": "<any important conditions, minimums, or exceptions>",
+  "confidence": "HIGH|MEDIUM|LOW",
+  "confidence_reason": "<why you rated confidence this way>"
+}`;
+
+  const apiResp = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1000,
+      messages:[{
+        role:'user',
+        content:[
+          {type:'document', source:{type:'base64', media_type:'application/pdf', data: dlData.content}},
+          {type:'text', text: prompt}
+        ]
+      }]
+    })
+  });
+
+  const apiData = await apiResp.json();
+  const rawText = apiData.content?.find(b=>b.type==='text')?.text||'';
+  if(!rawText) throw new Error('No response from Claude API');
+
+  // 4. Parse JSON response
+  let extracted;
+  try {
+    const clean = rawText.replace(/```json|```/g,'').trim();
+    extracted = JSON.parse(clean);
+  } catch(e) {
+    throw new Error('Could not parse AI response: '+rawText.slice(0,100));
+  }
+
+  // 5. Store results on the channel partner agreement
+  cp._extractedSplit = extracted.prime_source_split_pct||cp.splitPct;
+  cp._extractedTiers = extracted.tier_thresholds||'';
+  cp._extractedNotes = [extracted.split_structure, extracted.fee_basis, extracted.notes].filter(Boolean).join(' | ');
+  cp._extractedConfidence = extracted.confidence||'MEDIUM';
+  cp._extractedAt = new Date().toISOString();
+
+  // 6. Auto-write back to all channel partner vendors in vendor DB
+  let writtenBack = 0;
+  if(extracted.prime_source_split_pct && extracted.confidence !== 'LOW') {
+    const cpVendorList = S.channelVendors.filter(v=>{
+      const gpo=(v.gpoSource||v.gpo||'').toLowerCase();
+      return gpo.includes(cp.name.toLowerCase());
+    });
+    cpVendorList.forEach(v=>{
+      // Store the calculated split as a vendor field
+      v._cpSplitPct = extracted.prime_source_split_pct;
+      v._cpSplitSource = cp.name;
+      v._cpSplitExtracted = new Date().toLocaleDateString();
+      // If vendor has an adminFee, calculate the effective split
+      const fee = parseFee(v.adminFee);
+      if(fee){
+        v._effectiveFee = Math.round(fee * extracted.prime_source_split_pct / 100 * 100) / 100;
+      }
+      markDirty(v);
+      writtenBack++;
+    });
+    saveSessionState();
+  }
+
+  toast(`✓ ${cp.name}: ${extracted.prime_source_split_pct}% Prime Source share (${extracted.confidence} confidence). Applied to ${writtenBack} vendors.`, '#22c55e');
+}
+
 function renderContractEconomics(c) {
   c.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.6'}},'Reverse-engineer the full admin fee paid by vendors to channel partners. Enter what you received and your split %, and this engine calculates the full picture — including whether you were paid correctly.'));
 
@@ -11931,12 +12094,12 @@ function renderContractEconomics(c) {
         const resp=await fetch(VCS_PROXY_URL+'?action=listVendorFiles&vendorName='+encodeURIComponent(cpName));
         const d=await resp.json();
         if(d.folderFound&&d.files?.length){
-          // Found a contract folder — mark it
           const cp=S.channelPartnerAgreements.find(c=>c.name===cpName);
           if(cp){
             cp._driveFolder=d.folderId;
             cp._driveFileCount=d.fileCount;
             cp._driveSuggestedFile=d.files.find(f=>f.suggested)?.name||d.files[0]?.name||'';
+            cp._driveFileId=d.files.find(f=>f.suggested)?.id||d.files[0]?.id||'';
             cp._driveLastUpdated=d.files[0]?.modifiedTime||'';
             found++;
           }
@@ -11945,7 +12108,7 @@ function renderContractEconomics(c) {
     }
     saveSessionState();
     const c2=$('content');if(c2){c2.innerHTML='';renderContractEconomics(c2);}else render();
-    toast('✓ Found '+found+' channel partner contracts in Drive'+(errors?' ('+errors+' errors)':''));
+    toast('✓ Found '+found+' channel partner contracts. Click "Analyze with AI" on each to extract split %.', '#22c55e');
     cpDriveBtn.disabled=false; cpDriveBtn.textContent='☁ Load Contracts';
   }},'☁ Load Contracts from Drive');
   cpHdrRow.appendChild(cpDriveBtn);
@@ -11966,19 +12129,46 @@ function renderContractEconomics(c) {
     card.appendChild(notesIn);
     // Show Drive contract info if loaded
     if(cp._driveSuggestedFile){
-      const driveInfo=el('div',{style:{fontSize:'8px',color:'var(--green)',marginTop:'4px',display:'flex',gap:'4px',alignItems:'center'}});
-      driveInfo.appendChild(el('span',{},'📄 Contract on file:'));
+      const driveInfo=el('div',{style:{fontSize:'8px',color:'var(--green)',marginTop:'4px',display:'flex',gap:'4px',alignItems:'center',flexWrap:'wrap'}});
+      driveInfo.appendChild(el('span',{},'📄 Contract: '));
       const fileLink=el('span',{style:{color:'var(--blue)',cursor:'pointer',fontWeight:'600',textDecoration:'underline'},
-        onclick(){
-          if(cp._driveFolder) window.open('https://drive.google.com/drive/folders/'+cp._driveFolder,'_blank');
-        }},cp._driveSuggestedFile.slice(0,35)+(cp._driveSuggestedFile.length>35?'…':''));
+        onclick(){if(cp._driveFolder)window.open('https://drive.google.com/drive/folders/'+cp._driveFolder,'_blank');}},
+        cp._driveSuggestedFile.slice(0,30)+(cp._driveSuggestedFile.length>30?'…':''));
       driveInfo.appendChild(fileLink);
       card.appendChild(driveInfo);
-      if(cp._driveLastUpdated){
-        card.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)',marginTop:'1px'}},'Updated: '+new Date(cp._driveLastUpdated).toLocaleDateString()));
+      if(cp._driveLastUpdated) card.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)',marginTop:'1px'}},'Updated: '+new Date(cp._driveLastUpdated).toLocaleDateString()));
+      // AI Analysis button
+      if(cp._driveFileId){
+        const aiBtn=el('button',{class:'btn-xs btn-blue',style:{marginTop:'6px',width:'100%'},onclick:async()=>{
+          aiBtn.disabled=true; aiBtn.textContent='⏳ Analyzing...';
+          try{
+            await analyzeCPContractWithAI(cp);
+            const c3=$('content');if(c3){c3.innerHTML='';renderContractEconomics(c3);}else render();
+          }catch(e){
+            aiBtn.disabled=false; aiBtn.textContent='🤖 Analyze with AI';
+            toast('Analysis failed: '+e.message,'#ef4444');
+          }
+        }},'🤖 Analyze with AI');
+        card.appendChild(aiBtn);
+      }
+      // Show extracted data if available
+      if(cp._extractedSplit){
+        const extRow=el('div',{style:{marginTop:'6px',padding:'6px',background:'rgba(34,197,94,.08)',border:'1px solid rgba(34,197,94,.25)',borderRadius:'4px',fontSize:'9px'}});
+        extRow.appendChild(el('div',{style:{fontWeight:'700',color:'var(--green)',marginBottom:'3px'}},'✓ AI Extracted'));
+        extRow.appendChild(el('div',{style:{color:'var(--text)'}},'Split: '+cp._extractedSplit+'% your share'));
+        if(cp._extractedTiers) extRow.appendChild(el('div',{style:{color:'var(--muted)'}},'Tiers: '+cp._extractedTiers));
+        if(cp._extractedNotes) extRow.appendChild(el('div',{style:{color:'var(--muted)',fontStyle:'italic',marginTop:'2px'}},cp._extractedNotes.slice(0,80)));
+        const applyBtn=el('button',{class:'btn-xs btn-green',style:{marginTop:'4px',width:'100%'},onclick(){
+          cp.splitPct=cp._extractedSplit;
+          saveSessionState();
+          toast('✓ Split % updated to '+cp._extractedSplit+'% for '+cp.name);
+          const c3=$('content');if(c3){c3.innerHTML='';renderContractEconomics(c3);}else render();
+        }},'✅ Apply '+cp._extractedSplit+'% to calculations');
+        extRow.appendChild(applyBtn);
+        card.appendChild(extRow);
       }
     } else if(cp.name!=='Prime Source Direct'){
-      card.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px',fontStyle:'italic'}},'No contract found in Drive — click "Load Contracts" above'));
+      card.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px',fontStyle:'italic'}},'No contract found — click "Load Contracts" above'));
     }
     if (cp.name!=='Prime Source Direct') {
       const rm=el('button',{class:'btn-xs btn-danger',style:{marginTop:'6px'},onclick(){S.channelPartnerAgreements.splice(i,1);render();}},'Remove');
