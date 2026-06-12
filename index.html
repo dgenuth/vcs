@@ -396,9 +396,14 @@ body.light-theme #login-screen{background:#f0f2f7}
 #ai-toggle:hover{background:rgba(79,124,255,.25)}
 #ai-toggle.active{background:var(--blue);color:#fff}
 #content{flex:1;overflow-y:auto;overflow-x:auto;padding:8px 12px}
+/* Sticky page headers — KPI tiles, filter bars, tab bars */
+.page-sticky-hdr{position:sticky;top:-8px;z-index:30;background:var(--bg);margin:-8px -12px 8px;padding:8px 12px 6px;border-bottom:1px solid var(--border);box-shadow:0 2px 6px rgba(0,0,0,.1)}
+body.ps-light-theme .page-sticky-hdr{background:#edf4fb;border-bottom-color:rgba(0,120,184,.15)}
 
 /* Tables */
 .tbl-wrap{overflow-x:auto;overflow-y:auto;max-height:calc(100vh - 200px);margin-bottom:8px;border:1px solid var(--border);border-radius:4px}
+.tbl-wrap .data-table thead th{position:sticky;top:0;z-index:20;background:var(--sb)!important;box-shadow:0 2px 4px rgba(0,0,0,.18);will-change:transform}
+body.ps-light-theme .tbl-wrap .data-table thead th{background:#0078b8!important;color:#fff!important;box-shadow:0 2px 4px rgba(0,0,0,.12)}
 .data-table{border-collapse:collapse;font-size:10px;width:max-content;min-width:100%}
 .data-table th{position:sticky;top:0;background:var(--sb);color:var(--muted);text-align:left;padding:5px 6px;border-bottom:2px solid var(--border);font-weight:500;white-space:nowrap;z-index:20;user-select:none;cursor:default;will-change:transform}
 .data-table th.sortable{cursor:pointer}
@@ -8909,12 +8914,15 @@ function renderSFVendorBrief(wrap, opps, cases, tasks, spendLeaderboard) {
   const dl=el('datalist',{id:'sf-brief-vendors'});
   allBriefNames.forEach(n=>dl.appendChild(el('option',{value:n})));
   searchInp.setAttribute('list','sf-brief-vendors');
+  // Don't use render() on keystroke — just update S._sfBriefVendor and redraw the brief section
   let briefTimer=null;
+  const briefContent=el('div',{id:'sf-brief-content'});
   searchInp.addEventListener('input',e=>{
     clearTimeout(briefTimer);
+    S._sfBriefVendor=e.target.value.trim();
     briefTimer=setTimeout(()=>{
       const val=e.target.value.trim();
-      if(!val){S._sfBriefVendor='';render();return;}
+      if(!val){S._sfBriefVendor='';briefContent.innerHTML='<p style="color:var(--muted);padding:20px;text-align:center">Type a vendor name to load their brief</p>';return;}
       // Match exact or first close match
       const exact=allBriefNames.find(n=>n.toLowerCase()===val.toLowerCase());
       const partial=allBriefNames.find(n=>n.toLowerCase().includes(val.toLowerCase()));
@@ -12877,7 +12885,7 @@ function renderToday(c) {
     kpis.appendChild(card);
   });
   // Sticky header zone — KPIs + filter tabs stay visible while scrolling
-  const stickyHdr=el('div',{id:'today-sticky-hdr',style:{position:'sticky',top:'-8px',zIndex:'14',background:'var(--bg)',marginTop:'-8px',paddingTop:'8px',paddingBottom:'4px',marginLeft:'-12px',paddingLeft:'12px',marginRight:'-12px',paddingRight:'12px',borderBottom:'1px solid var(--border)'}});
+  const stickyHdr=el('div',{id:'today-sticky-hdr',class:'page-sticky-hdr'});
   if (S.settings.showKPIs !== false) stickyHdr.appendChild(kpis);
 
   const tabs=el('div',{class:'filter-tabs'});
@@ -14484,6 +14492,9 @@ function openCalendarLogModal(isoDate_, eventIdx) {
 function renderForecast(c) {
   const today=new Date();
 
+  // Summary urgency bar — sticky at top
+  const forecastStickyHdr=el('div',{class:'page-sticky-hdr'});
+  c.appendChild(forecastStickyHdr);
   // Summary urgency bar at top
   const allExpiring=S.vendors.filter(v=>isVisible(v)&&getCurrentExpiry(v));
   const emergency=allExpiring.filter(v=>{const d=dayDiff(getCurrentExpiry(v),today);return d>=0&&d<=30;});
@@ -14595,7 +14606,7 @@ function renderAnalytics(c) {
     {id:'pipeline',label:'🎯 SF Pipeline'},
     {id:'performance',label:'👤 Rep Performance'},
   ];
-  const tabBar=el('div',{style:{display:'flex',gap:'4px',marginBottom:'12px',borderBottom:'2px solid var(--border)',paddingBottom:'0',flexWrap:'wrap',position:'sticky',top:'-8px',zIndex:'25',background:'var(--bg)',marginTop:'-8px',paddingTop:'8px',marginLeft:'-12px',paddingLeft:'12px',marginRight:'-12px',paddingRight:'12px',boxShadow:'0 2px 6px rgba(0,0,0,.12)'}});
+  const tabBar=el('div',{class:'page-sticky-hdr',style:{display:'flex',gap:'4px',marginBottom:'0',borderBottom:'2px solid var(--border)',paddingBottom:'0',flexWrap:'wrap'}});
   tabs.forEach(t=>{
     const btn=el('button',{style:{padding:'6px 14px',fontSize:'11px',fontWeight:'600',border:'none',cursor:'pointer',borderBottom:S._analyticsTab===t.id?'2px solid var(--blue)':'2px solid transparent',marginBottom:'-2px',background:'transparent',color:S._analyticsTab===t.id?'var(--blue)':'var(--muted)',transition:'all .15s'},
       onclick(){S._analyticsTab=t.id;const c2=$('content');if(c2){c2.innerHTML='';renderAnalytics(c2);}else render();}},t.label);
@@ -16118,7 +16129,12 @@ function renderSettings(c) {
       const row=el('div',{style:{marginBottom:'6px'}});
       row.appendChild(el('label',{style:{fontSize:'9px',color:'var(--muted)',display:'block',marginBottom:'2px'}},labels[key]||key));
       const inp=el('input',{type:'text',class:'modal-input',style:{fontSize:'10px',height:'24px'},placeholder:key==='sfLoginUrl'?'https://login.salesforce.com':'',value:S.settings[key]||''});
-      inp.addEventListener('change',()=>{S.settings[key]=inp.value.trim();debouncedSaveSettings();});
+      inp.addEventListener('change',()=>{
+      S.settings[key]=inp.value.trim();
+      debouncedSaveSettings();
+      // Immediately save to localStorage so it persists on reload
+      try{localStorage.setItem('vcs_settings_v2',JSON.stringify(S.settings));}catch(e){}
+    });
       row.appendChild(inp);
       secSF.appendChild(row);
     });
@@ -16159,7 +16175,30 @@ function renderSettings(c) {
   syncRow.appendChild(el('label',{style:{fontSize:'10px',cursor:'pointer'}},'Auto-sync to Drive when you click Save'));
   secDrive.appendChild(syncRow);
 
-  secDrive.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.5',marginTop:'4px'}},'VCS connects directly to Google Drive using your Google account. When you click "Load from Google Drive", a Google sign-in popup will appear once per session. Make sure the Google account you sign in with has access to the Vendor Catalogue file.'));
+  // Save & Connect button
+  const driveSaveBtnRow=el('div',{style:{display:'flex',gap:'8px',marginTop:'10px',marginBottom:'4px'}});
+  const driveSaveBtn=el('button',{class:'btn-primary',style:{flex:'1'},onclick:async()=>{
+    try{localStorage.setItem('vcs_settings_v2',JSON.stringify(S.settings));}catch(e){}
+    debouncedSaveSettings();
+    if(!S.settings.driveFileId||!S.settings.googleClientId){
+      toast('⚠ Enter Google Drive File ID and Client ID first','#f59e0b'); return;
+    }
+    driveSaveBtn.disabled=true; driveSaveBtn.textContent='⏳ Connecting...';
+    try{
+      await getGDriveToken();
+      await saveConfigToDrive();
+      driveStatus.textContent='✅ Drive configured — "Load from Google Drive" is active';
+      driveStatus.style.background='rgba(34,197,94,.08)'; driveStatus.style.borderColor='rgba(34,197,94,.3)';
+      toast('✅ Drive settings saved','#22c55e');
+      driveSaveBtn.disabled=false; driveSaveBtn.textContent='💾 Save & Connect Drive';
+    }catch(e){
+      toast('Drive connection failed: '+e.message,'#ef4444');
+      driveSaveBtn.disabled=false; driveSaveBtn.textContent='💾 Save & Connect Drive';
+    }
+  }},'💾 Save & Connect Drive');
+  driveSaveBtnRow.appendChild(driveSaveBtn);
+  secDrive.appendChild(driveSaveBtnRow);
+  secDrive.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.5',marginTop:'4px'}},'Your settings are saved to your browser and to Drive config — they persist across sessions and devices. Other users share the same Drive file and sign in with their own Google accounts (which you grant access).'));
   makeCollapsibleSection(secDrive,'📁 Google Drive','vcs_s_drive',true);
   c.appendChild(secDrive);
   } // end configDrive admin block
@@ -16356,7 +16395,15 @@ function renderSettings(c) {
   // ── Phone Connection Wizard ──
   const phoneGuide = el('div',{style:{marginTop:'12px',background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'6px',padding:'10px 12px'}});
   phoneGuide.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'8px',color:'var(--blue)'}},'📱 Connect Your Phone'));
-  phoneGuide.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'10px'}},'Set up your preferred dialer above. For Google Voice: select it, then go to voice.google.com → Settings → Linked numbers → add your cell. Click ☎️ on any vendor number to dial.'));
+  const phoneGuideText=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.6'}});
+  phoneGuideText.innerHTML='<strong>For Google Voice (recommended):</strong><br>'+
+    '1. Select "Google Voice" in the dialer preset above — this sets the URL template automatically.<br>'+
+    '2. In the "My Phone Number" field below, enter your <strong>Google Voice number</strong> (not your cell). '+
+    'This is the number that appears as your caller ID when you dial out through Google Voice.<br>'+
+    '3. To find your Google Voice number: go to <a href="https://voice.google.com" target="_blank" style="color:var(--blue)">voice.google.com</a> and check the top-left.<br>'+
+    '4. When you click ☎️ on any vendor, VCS opens Google Voice and pre-dials that vendor number.<br>'+
+    '<strong>Note:</strong> Google Voice must be registered and linked in your Google account for this to work.';
+  phoneGuide.appendChild(phoneGuideText);
 
   // My phone number field with save button
   const myPhoneSec = el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',padding:'8px 10px',marginBottom:'10px'}});
@@ -16600,10 +16647,10 @@ function renderSettings(c) {
     const renzoSec=el('div',{style:{background:'var(--card)',border:'1px solid rgba(79,124,255,.3)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
     const _rnOpen=!S._settingsOpen||(S._settingsOpen.renzo!==false);
     const _rnHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'10px 14px',cursor:'pointer',background:_rnOpen?'rgba(79,124,255,.06)':'var(--sb)'},onclick(){if(!S._settingsOpen)S._settingsOpen={};S._settingsOpen.renzo=!_rnOpen;render();}});
+    _rnHdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'2px'}},_rnOpen?'▼':'▶'));
     _rnHdr.appendChild(el('span',{style:{fontSize:'14px'}},'🔌'));
     _rnHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1',color:'var(--blue)'}},'Renzo Integration'));
-    _rnHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'8px'}},'AI Relationship Outreach'));
-    _rnHdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},_rnOpen?'▲':'▼'));
+    _rnHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'AI Relationship Outreach'));
     renzoSec.appendChild(_rnHdr);
     if(_rnOpen){
       const _rnBody=el('div',{style:{padding:'14px'}});
@@ -16792,8 +16839,8 @@ function out(o){return ContentService.createTextOutput(JSON.stringify(o)).setMim
   if(['admin','procurement'].includes(USER.role)){
     const apiSec=el('div',{class:'summary-section'});
     const apiHdrRow=el('div',{style:{display:'flex',alignItems:'center',cursor:'pointer',marginBottom:'4px'},onclick(){S._apiSecOpen=!S._apiSecOpen;render();}});
+    apiHdrRow.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'6px'}},S._apiSecOpen!==false?'▼':'▶'));
     apiHdrRow.appendChild(el('h3',{style:{margin:'0',flex:'1'}},'📊 API Usage Monitor'));
-    apiHdrRow.appendChild(el('span',{style:{fontSize:'11px',color:'var(--muted)'}},S._apiSecOpen!==false?'▲':'▼'));
     apiSec.appendChild(apiHdrRow);
 
     if(S._apiSecOpen!==false){
@@ -17850,10 +17897,28 @@ function render() {
     case 'vendordb':renderVendorDB(content);break;
     case 'network':renderNetworkIntel(content);break;
     case 'economics':renderContractEconomics(content);break;
-    case 'tiers':renderTierTracker(content);break;
+    case 'tiers':
+      renderTierTracker(content);
+      // Auto-sync SF spend if not loaded and SF is connected
+      if(!SPEND_STATE.data?.vendors?.length&&S._sfToken&&!SPEND_STATE.loading){
+        setTimeout(()=>{loadSpendData().then(()=>{const c2=$('content');if(c2&&S.view==='tiers'){c2.innerHTML='';renderTierTracker(c2);}}).catch(()=>{});},500);
+      }
+      break;
     case 'itw':renderITW(content);break;case 'reviews':renderReviews(content);break;case 'calendar':renderCalendar(content);break;
-    case 'sfboard':renderSFBoard(content);break;
-    case 'customers':renderCustomers(content);break;
+    case 'sfboard':
+      renderSFBoard(content);
+      // Auto-load SF Board if not loaded and SF is connected
+      if(!S._sfBoard?.data&&S._sfToken&&!S._sfBoard?.loading){
+        setTimeout(()=>{if(typeof loadSFBoard==='function')loadSFBoard().catch(()=>{});},300);
+      }
+      break;
+    case 'customers':
+      renderCustomers(content);
+      // Auto-load customer data if not loaded
+      if(!S._custData&&S._sfToken&&!S._custLoading){
+        setTimeout(()=>{if(typeof loadCustomerData==='function')loadCustomerData().catch(()=>{});},300);
+      }
+      break;
     case 'compare':renderContractCompare(content);break;
     case 'contracts':renderContracts(content);break;
     case 'spend':renderSpend(content);break;
