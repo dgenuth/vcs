@@ -10705,8 +10705,8 @@ function renderContracts(c) {
           e.stopPropagation();
           generateContractDataSheet(vendor, ex, record.fileName);
         }},'📋 Create Data Sheet');
-        btns.appendChild(dsBtn);
         cardHdr.appendChild(applyBtn);
+        cardHdr.appendChild(dsBtn);
       }
       // Define contractBody BEFORE expandBtn so the closure can reference it
       const contractBody=el('div',{style:{padding:'0'}});
