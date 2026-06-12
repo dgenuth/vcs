@@ -3059,6 +3059,7 @@ const NAV_DEFS=[
   ['tiers','📶','Tier Tracker'],
   ['contracts','📄','Contracts'],
   ['compare','⚖️','Compare'],
+  ['checklist','✅','Checklist'],
   // ── Intelligence ──
   ['_div2',null,'Intelligence'],
   ['sfboard','☁','SF Board'],
@@ -10146,6 +10147,115 @@ function openEditableApplyModal(vendor, extracted) {
 }
 
 // ── Generate Contract Data Sheet (matches Prime Source template) ──────────
+// ── PSX Procurement Checklist — Category Coverage Tool ─────────────────────
+const PSX_CHECKLIST = [{"label":"REHAB","items":[{"label":"Therapy – In-House or Outsourced?","q":"Who manages your therapy program? What's your cost per RUG/PDPM case mix?","r":"Outsourced with no visibility into billing; high agency dependency","t":"In-house vs outsourced analysis; PDPM optimization opportunity"},{"label":"Rehab Supplies","q":"Who is your current supplier? Are you on a GPO contract?","r":"No contract in place; paying retail; not tracking utilization","t":"GPO pricing can cut costs 15–25%; ensure supplies align with therapy census"}]},{"label":"PHARMACY","items":[{"label":"Drugs & Prescriptions","q":"Who is your pharmacy provider? Are you getting monthly rebate reports?","r":"No rebate transparency; high specialty drug spend; no formulary management","t":"Rebates should offset costs significantly; ask for a spend analysis"},{"label":"OTCs","q":"Are OTCs bundled with your pharmacy or separate?","r":"OTCs purchased retail or through med surg at inflated cost","t":"OTCs through pharmacy provider often reduce cost and simplify ordering"},{"label":"Pharmacy Monthly Auditing","q":"Do you have someone auditing your pharmacy invoices monthly?","r":"No auditing in place; overpayments going undetected","t":"Pharmacy auditing typically finds 3–8% in billing errors or overcharges"},{"label":"Flu Vaccines","q":"Who provides your flu vaccines? What did you pay per dose last year?","r":"Paying above market; no bulk pricing; ordering too late in season","t":"GPO flu vaccine programs offer significant per-dose savings"}]},{"label":"DIETARY","items":[{"label":"Raw Food","q":"Who is your primary food distributor? Are you on a GPO?","r":"No GPO affiliation; multiple distributors with no consolidated spend","t":"Consolidating to one GPO-affiliated distributor drives rebates and simplifies ordering"},{"label":"Bakery","q":"Is bakery bundled with your primary food order or separate?","r":"Separate bakery vendor with no volume leverage","t":"Bundling bakery into primary food order can improve pricing and reduce deliveries"},{"label":"Dairy","q":"Is dairy on contract? Who delivers?","r":"Spot pricing with no contract; dairy is a high-volatility category","t":"Dairy contracts with price caps protect against market swings"},{"label":"Produce","q":"Are you on a produce program or buying spot?","r":"Spot buying with no price protection; quality inconsistency","t":"Produce programs offer grade guarantees and price stability"},{"label":"Juice Machines","q":"Do you own or lease your juice machines? Who services them?","r":"Old equipment with high service costs; no service agreement","t":"Leasing with service included often cheaper than owning aging equipment"},{"label":"Coffee / Tea Machines","q":"Who provides your coffee program? Are machines leased?","r":"Paying retail for coffee; no machine service agreement","t":"Full-service coffee programs include equipment, supplies, and service"},{"label":"Ice Machine","q":"Do you own your ice machine? When was it last serviced?","r":"No PM schedule; old machine with high repair costs","t":"Ice machine leasing with preventive maintenance eliminates surprise repair costs"},{"label":"Freezer","q":"Age and condition of freezer units? Own or leased?","r":"Equipment past useful life; no maintenance contract","t":"Capital equipment analysis — lease vs buy; energy efficiency savings"},{"label":"Smallwares","q":"Where do you source smallwares? Any standardization?","r":"Ad hoc purchasing with no standards; high replacement rate","t":"Standardized smallwares program reduces loss and simplifies reordering"},{"label":"Disposables","q":"Who supplies your dietary disposables? On contract?","r":"Multiple vendors; no consolidated pricing","t":"Consolidating disposables to one vendor drives volume pricing"},{"label":"Nutritionals and Thickeners","q":"Who provides your nutritional supplements and thickeners? Are they on formulary?","r":"Brand loyalty driving cost; no therapeutic substitution review; thickeners not on contract","t":"Formulary management and therapeutic substitution can cut nutritional spend 20–30%"}]},{"label":"MEDICAL DISPOSABLE SUPPLIES","items":[{"label":"General Nursing Supplies","q":"Who is your primary med surg distributor? Are you on a GPO?","r":"Not on GPO; multiple vendors; no contract compliance tracking","t":"GPO med surg contracts typically save 10–20% vs. street pricing"},{"label":"Gloves","q":"Who supplies gloves? What types and what are you paying per box?","r":"Multiple glove vendors; not on contract; wrong glove types being ordered","t":"Gloves are a high-volume category — GPO contracts and right-sizing by department drive significant savings"},{"label":"Advanced Wound Care","q":"Who supplies your advanced wound care products? Are you on a formulary?","r":"No wound care formulary; clinicians ordering brand-name products at high cost","t":"A wound care formulary with therapeutic equivalents can reduce cost 20–35%"},{"label":"Incontinence","q":"Who supplies incontinence products? Are you tracking usage by resident?","r":"No utilization tracking; over-ordering; not on contract","t":"Per-resident utilization programs reduce waste and cost significantly"}]},{"label":"EVS (ENVIRONMENTAL SERVICES)","items":[{"label":"Primary Housekeeping","q":"Is housekeeping in-house or outsourced? What's your cost per occupied bed?","r":"No cost-per-bed benchmarking; outsourced with no performance metrics","t":"Benchmarking cost per occupied bed is the key metric to drive this conversation"},{"label":"Hand Hygiene – Soap & Sanitizer","q":"Are dispensers standardized? Who supplies the product?","r":"Multiple product types; no dispenser program; buying retail","t":"Dispenser programs with locked-in product pricing reduce cost and ensure compliance"},{"label":"Paper Supply – Multifold & Tissue","q":"Who supplies paper products? Are multifold and tissue bundled?","r":"Separate sourcing with no volume leverage; buying through office supply channels","t":"Bundling multifold and tissue through EVS/jan-san distributor on GPO pricing drives savings"},{"label":"Can Liners","q":"What size and gauge? Who supplies?","r":"Wrong gauge causing double-bagging; no contract","t":"Right-sizing liners eliminates waste; GPO pricing available"},{"label":"Linens & Textiles","q":"Own or rental program? What's your replacement rate?","r":"High replacement rate with no tracking; laundry damaging linens","t":"Linen rental programs eliminate capital cost and laundry damage liability"},{"label":"Janitorial Supplies & Disinfectants","q":"Who is your jan-san distributor? Are products EPA-registered?","r":"Non-compliant disinfectants; too many SKUs; no training program","t":"Consolidating to one jan-san distributor with compliance-grade products reduces SKUs and liability"},{"label":"Dispensers","q":"Are dispensers owned or provided by your supplier?","r":"Mix of dispenser types; product doesn't fit dispensers correctly","t":"Locked dispenser programs ensure product compliance and reduce theft/waste"}]},{"label":"CHEMICALS","items":[{"label":"Dietary Chemicals","q":"Who supplies your dish chemicals? Are you on a service agreement?","r":"No service agreement; chemical overuse; no titration testing","t":"Chemical service agreements include titration testing and equipment maintenance"},{"label":"Laundry Chemicals","q":"Who supplies laundry chemicals? What's your cost per pound processed?","r":"No cost-per-pound tracking; chemical overuse","t":"Cost per pound processed is the benchmark; programs should include dispenser service"},{"label":"Housekeeping Chemicals","q":"Consolidated with laundry/dietary or separate vendor?","r":"Three separate chemical vendors with no leverage","t":"Consolidating all chemicals to one vendor drives rebates and simplifies service"},{"label":"Dish Machine – Manual or Automatic?","q":"Is your dish machine manual or automatic? Own or leased? Who services?","r":"Old machine with high repair costs; no PM schedule; manual process increasing labor cost","t":"Automatic dish machines reduce labor cost; lease with chemical program bundled is often best total cost"},{"label":"High Temp Machine","q":"Do you have a high temp sanitizing machine? Compliant with health code?","r":"Low temp machine requiring chemical sanitizer adding cost","t":"High temp machines eliminate chemical sanitizer cost and ensure compliance"}]},{"label":"RENTALS","items":[{"label":"DME (Durable Medical Equipment)","q":"Who manages DME rentals? Are you auditing monthly invoices?","r":"No invoice auditing; paying for equipment no longer in use","t":"DME audits routinely find 10–20% in charges for equipment already returned"},{"label":"Respiratory – Oxygen","q":"Who is your O2 provider? Are you on a per-diem or per-use model?","r":"Per-use model with high census driving runaway costs","t":"Per-diem oxygen contracts cap cost regardless of utilization"},{"label":"Respiratory – CPAP / BiPAP","q":"How many residents on CPAP/BiPAP? Managed in-house or outsourced?","r":"No tracking of active equipment; paying for inactive units","t":"Census-based auditing ensures you only pay for active residents"},{"label":"Ventilators – Facility Owned or Rental?","q":"Are ventilators facility-owned or rented? Who manages equipment and supplies?","r":"No dedicated vent program; using acute care vendors at high cost; owned equipment with no service contract","t":"Specialized LTC vent programs offer better rates and clinical support; owned vs rental analysis is key"},{"label":"Wound VACs","q":"Who provides wound VACs? Are you auditing active units monthly?","r":"Paying for VACs on discharged residents; no audit process","t":"Monthly VAC audits are essential — this is one of the highest-waste rental categories"}]},{"label":"PART B BILLING","items":[{"label":"OUTS – Ostomy & Urology","q":"Who bills Part B for ostomy and urology supplies? Are you capturing all eligible residents?","r":"Leaving Part B revenue on the table; no eligibility screening for either category","t":"Ostomy and urology are high-value Part B categories — combined eligibility screening maximizes capture"},{"label":"OUTS – Tracheostomy","q":"Are trach supplies being billed through Part B?","r":"No Part B billing process for trach supplies","t":"Tracheostomy supplies are billable — ensure your billing company captures these"},{"label":"OUTS – Supplements","q":"Are nutritional supplements being billed through Part B where eligible?","r":"Supplements billed to facility instead of Part B","t":"Part B supplement billing requires proper documentation — ensure MDS accuracy"},{"label":"Wound Care","q":"Who manages your wound care billing? Are you capturing all Part B eligible wounds?","r":"No wound care billing company; leaving significant revenue uncaptured","t":"Wound care is the largest Part B opportunity for most SNFs — audit current capture rate"},{"label":"Part B Audit","q":"When did you last have a full Part B billing audit?","r":"No audit in place; systematic underbilling going undetected","t":"A Part B audit typically recovers significant revenue and identifies process gaps — should be done annually"}]},{"label":"DIALYSIS","items":[{"label":"Dialysis Supplies","q":"Who supplies dialysis consumables? On contract?","r":"Spot purchasing with no contract; high per-treatment cost","t":"Dialysis supply contracts through specialty distributors reduce per-treatment cost"},{"label":"Dialysis Program – In-House or Managed?","q":"Do you run dialysis in-house or use a managed program?","r":"Managed program with no visibility into economics; no performance review","t":"In-house vs managed analysis — staffing, revenue, and census implications"}]},{"label":"CLINICAL 3RD PARTY","items":[{"label":"Dietician","q":"Is your dietician in-house or contracted? How many hours per week?","r":"Under-contracted hours; MDS inaccuracies due to insufficient dietician coverage","t":"Dietician hours should align with census and acuity — gaps create compliance risk"},{"label":"Specialty Doctors – Podiatry, Dermatology & Dental","q":"Do you have podiatry, dermatology, and dental providers rounding regularly?","r":"No regular specialty rounds; residents going without care; no consolidated specialty program","t":"Regular specialty rounds improve outcomes and satisfaction scores; mobile programs serve residents in-house"}]},{"label":"WCON","items":[{"label":"PICC Nurses","q":"Who manages PICC line insertions? Agency or contracted?","r":"Using ED for PICC insertions at high cost and disruption to residents","t":"In-house PICC nurse agency contracts reduce cost and keep residents in place"},{"label":"Other","q":"Are there any other clinical or facility needs not covered above?","r":"Gaps in coverage that could affect care quality or compliance","t":"Document any unique needs for follow-up"}]},{"label":"FACILITY MANAGEMENT – INTERIOR","items":[{"label":"Maintenance Supplies & Equipment","q":"Who supplies your maintenance department? On contract?","r":"Ad hoc purchasing at retail; no spend visibility","t":"Consolidating maintenance supplies to one distributor on GPO pricing saves time and money"},{"label":"Building Supplies & Lighting","q":"Are you on an energy-efficient lighting program?","r":"Old fluorescent lighting with high energy cost; no LED conversion","t":"LED conversion programs are often self-funding through energy savings"},{"label":"Paint","q":"Who does your painting? In-house or contracted?","r":"Using general contractors at high rates for routine touch-up work","t":"On-call painting contractors with LTC experience are more cost-effective"},{"label":"Elevator Maintenance","q":"Who has your elevator maintenance contract? When does it expire?","r":"Month-to-month contract; no competitive bid in years","t":"Elevator contracts should be bid every 3 years — significant savings opportunity"},{"label":"Fire Safety","q":"Who manages your fire safety inspections and suppression system?","r":"Multiple vendors for inspections, suppression, and extinguishers","t":"Consolidating fire safety to one vendor simplifies compliance and reduces cost"},{"label":"Vending Machines","q":"Who manages your vending? Are you getting a commission?","r":"Vending provider keeping all revenue; no commission agreement","t":"Vending commissions back to the facility are standard — negotiate if not in place"},{"label":"Other","q":"Are there any other clinical or facility needs not covered above?","r":"Gaps in coverage that could affect care quality or compliance","t":"Document any unique needs for follow-up"}]},{"label":"FACILITY MANAGEMENT – EXTERIOR","items":[{"label":"Landscaping","q":"Seasonal contract or month-to-month? When last bid?","r":"Month-to-month with no competitive bid; price creep over time","t":"Annual landscaping contracts with defined scope prevent scope creep and price increases"},{"label":"Snow Removal","q":"Is snow removal included in landscaping or separate?","r":"Separate snow vendor with per-event pricing and no cap","t":"Per-season snow contracts with caps protect budget in heavy winters"},{"label":"Waste Removal","q":"Who handles waste removal? How many pickups per week?","r":"Over-serviced with too many pickups; no right-sizing analysis","t":"Right-sizing pickup frequency to actual volume can cut waste costs 20–30%"}]},{"label":"SERVICES","items":[{"label":"Shredding & Bio-Waste","q":"Who handles shredding and bio-waste? Bundled or separate?","r":"Separate vendors for shredding and bio-waste; no consolidated contract","t":"Bundling shredding and bio-waste to one vendor simplifies compliance and reduces cost"},{"label":"Promotional Items","q":"Where do you source promo items for marketing and events?","r":"Buying retail or through multiple sources with no volume pricing","t":"GPO promotional item programs offer catalog pricing with no minimums"},{"label":"Digital Marketing","q":"Do you have a digital marketing strategy? Who manages it?","r":"No digital presence; relying on referral sources only; no reputation management","t":"Digital marketing and reputation management directly impact census — key ROI conversation"},{"label":"Uniforms","q":"Do you provide uniforms? Who supplies them?","r":"Staff buying own uniforms inconsistently; no program in place","t":"Uniform programs improve brand consistency and can be a staff benefit"},{"label":"Recruitment Agency","q":"Which agencies do you use for staffing? What are your bill rates?","r":"Multiple agencies with no rate caps; no preferred vendor agreement","t":"Preferred vendor agreements with rate caps reduce agency spend significantly"},{"label":"IT","q":"Who manages your IT infrastructure? In-house or managed service?","r":"Reactive IT with no managed service; security vulnerabilities","t":"Managed IT services for LTC provide HIPAA compliance support and predictable cost"}]},{"label":"BACK OFFICE","items":[{"label":"HR & Payroll","q":"Who is your payroll provider? Are you auditing for errors?","r":"Payroll errors going uncorrected; no regular auditing process","t":"Payroll auditing typically finds 2–5% in processing errors or tax discrepancies"},{"label":"Time Clock","q":"What time clock system do you use? Does it integrate with payroll?","r":"Manual time entry or non-integrated system causing payroll errors","t":"Integrated time and attendance systems reduce payroll errors and overtime abuse"},{"label":"Health Insurance & Workers Comp","q":"When did you last go to market on health insurance?","r":"No competitive bid in 3+ years; leaving significant savings on the table","t":"Annual benefits review and competitive bidding should be standard practice"},{"label":"Benefit Enrollments","q":"How do employees enroll in benefits? Paper or digital?","r":"Paper enrollment with high error rate and low participation","t":"Digital enrollment platforms improve participation rates and reduce HR administrative burden"},{"label":"Background Checks","q":"Who runs your background checks? How fast is turnaround?","r":"Slow turnaround delaying hires; using multiple providers inconsistently","t":"Integrated background check platforms with ATS reduce time-to-hire significantly"},{"label":"Credit Card Processing","q":"Who processes your credit cards? What are your effective rates?","r":"High effective rate with no rate review; surcharging not implemented","t":"Credit card rate audits routinely find savings; surcharging programs offset cost"},{"label":"Employee Perks","q":"Do you offer any employee perks or discount programs?","r":"No perks program; losing staff to competitors with better benefits","t":"Employee perk platforms are low-cost and high-impact for retention"},{"label":"Pest Control","q":"Who is your pest control provider? Monthly service?","r":"Reactive rather than preventive pest control; multiple call-back visits","t":"Preventive monthly programs reduce call-backs and protect survey outcomes"}]},{"label":"COMMUNICATIONS","items":[{"label":"Internet","q":"Who is your ISP? What speed and what are you paying?","r":"Overpaying for speed; no redundancy; single point of failure","t":"Redundant internet with failover is essential for clinical operations and telehealth"},{"label":"Phone / VOIP","q":"Still on legacy phone system or VOIP?","r":"Legacy PBX with high maintenance cost; no unified communications","t":"VOIP migration reduces cost and adds features — many LTC-specific platforms available"},{"label":"TV / Cable","q":"Who provides resident TV service? Bulk agreement or individual?","r":"Individual resident billing creating collections issues; no bulk rate","t":"Bulk TV agreements simplify billing and reduce per-room cost"},{"label":"Resident Security / Call Systems","q":"What call system are you using? How old is the infrastructure?","r":"Outdated call system with high maintenance cost; no analytics","t":"Modern call systems provide response time analytics that support survey readiness"},{"label":"Cell Phone Carrier","q":"How many lines? Who is the carrier? Are you on a business plan?","r":"Consumer plans being used for business; no MDM in place","t":"Business wireless plans with MDM reduce cost and protect HIPAA compliance"}]},{"label":"SOFTWARE SOLUTIONS","items":[]},{"label":"EMR / EHR","items":[{"label":"Procurement Platform","q":"Do you have a procurement/purchasing platform?","r":"No platform; ad hoc purchasing with no spend visibility or compliance","t":"Procurement platforms drive GPO compliance and give spend visibility across the organization"},{"label":"Payroll Auditing","q":"Do you audit your payroll regularly?","r":"No auditing; errors compounding over time","t":"Third-party payroll auditing is ROI-positive — typically finds more than it costs"},{"label":"MDS Optimization","q":"Are you using an MDS optimization tool?","r":"Leaving RUG/PDPM revenue on the table due to coding gaps","t":"MDS optimization tools identify undercoding — significant revenue recovery opportunity"},{"label":"Admissions","q":"What system manages your admissions workflow?","r":"Manual admissions process; slow response to referrals hurting census","t":"Admissions platforms with referral tracking improve speed-to-admit and census"},{"label":"Check-In Kiosk","q":"Do you have a visitor check-in system?","r":"Paper sign-in logs; no health screening; infection control gap","t":"Digital kiosks improve infection control compliance and create audit trail for surveys"},{"label":"Dietary Menu System","q":"How do you manage resident menu selections?","r":"Paper menus with high error rate; dietary preferences not tracked digitally","t":"Digital menu systems reduce diet errors and improve resident satisfaction scores"}]},{"label":"OTHER CATEGORIES","items":[]}];
+
+function renderChecklist(c) {
+  c.innerHTML='';
+  const wrap=el('div',{style:{maxWidth:'1000px',margin:'0 auto',padding:'12px 0'}});
+  const hdr=el('div',{style:{marginBottom:'12px'}});
+  hdr.appendChild(el('h2',{style:{margin:'0 0 4px',fontSize:'16px',fontWeight:'700'}},'📋 Vendor Coverage Checklist'));
+  hdr.appendChild(el('p',{style:{margin:'0',fontSize:'10px',color:'var(--muted)',lineHeight:'1.6'}},'Ensure every spend category at each facility has an aligned vendor. VCS matches each line item against your vendor database automatically.'));
+  wrap.appendChild(hdr);
+
+  const custRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'12px',padding:'10px',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'5px'}});
+  custRow.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',flexShrink:'0'}},'Facility:'));
+  const custIn=el('input',{type:'text',class:'detail-edit-field',style:{flex:'1',height:'28px'},placeholder:'Enter facility name...'});
+  custRow.appendChild(custIn);
+  const viewToggle=el('div',{style:{display:'flex',gap:'4px'}});
+  if(!S._checklistView) S._checklistView=0;
+  ['📋 Customer View','🔍 Consultant View'].forEach((lbl,i)=>{
+    const btn=el('button',{class:'btn-xs col-toggle-btn'+(S._checklistView===i?' on':''),onclick(){S._checklistView=i;const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}}},lbl);
+    viewToggle.appendChild(btn);
+  });
+  custRow.appendChild(viewToggle);
+  custRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){exportChecklistToCsv(custIn.value);}}, '⬇ Export'));
+  wrap.appendChild(custRow);
+  const isConsultant=S._checklistView===1;
+
+  // Vendor lookup map by keyword
+  const catVendorMap={};
+  [...S.vendors,...(S.channelVendors||[])].forEach(v=>{
+    const terms=[v.category,v.subCategory,v.product,v.about].filter(Boolean);
+    terms.forEach(t=>{
+      const k=t.toLowerCase();
+      if(!catVendorMap[k]) catVendorMap[k]=[];
+      if(!catVendorMap[k].includes(v)) catVendorMap[k].push(v);
+    });
+  });
+  function findVendors(label) {
+    const q=label.toLowerCase();
+    const words=q.split(/[\s\-\/,]+/).filter(w=>w.length>3);
+    const found=new Set();
+    Object.entries(catVendorMap).forEach(([key,vList])=>{
+      if(words.some(w=>key.includes(w)||w.includes(key.slice(0,8)))){
+        vList.forEach(v=>found.add(v));
+      }
+    });
+    return [...found].slice(0,4);
+  }
+
+  PSX_CHECKLIST.forEach(section=>{
+    const secDiv=el('div',{style:{marginBottom:'6px',border:'1px solid var(--border)',borderRadius:'5px',overflow:'hidden'}});
+    const isOpen=S['_clOpen_'+section.label]!==false;
+    const secHdr=el('div',{style:{background:'var(--card)',padding:'7px 12px',display:'flex',alignItems:'center',gap:'8px',cursor:'pointer',borderBottom:isOpen?'1px solid var(--border)':'none'},onclick(){S['_clOpen_'+section.label]=!isOpen;const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}}});
+    secHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'2px'}},isOpen?'▼':'▶'));
+    secHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1',color:'var(--blue)'}},section.label));
+    // Coverage indicator: how many items have matching vendors
+    const matchCount=section.items.filter(it=>findVendors(it.label).length>0).length;
+    const covPct=section.items.length?Math.round(matchCount/section.items.length*100):0;
+    const covColor=covPct>=80?'var(--green)':covPct>=50?'var(--amber)':'var(--red)';
+    secHdr.appendChild(el('span',{style:{fontSize:'8px',color:covColor,fontWeight:'600'}},covPct+'% covered ('+matchCount+'/'+section.items.length+')'));
+    secDiv.appendChild(secHdr);
+    if(isOpen){
+      const body=el('div',{style:{background:'var(--card)'}});
+      section.items.forEach(item=>{
+        const matchV=findVendors(item.label);
+        const hasMatch=matchV.length>0;
+        const row=el('div',{style:{padding:'5px 12px',borderBottom:'1px solid rgba(128,128,128,.07)',display:'grid',gap:'8px',alignItems:'flex-start',fontSize:'9px',
+          gridTemplateColumns:isConsultant?'190px 1fr':'190px 1fr 120px'}});
+        row.appendChild(el('div',{style:{fontWeight:'600',color:'var(--text)',paddingTop:'2px',lineHeight:'1.3'}},item.label));
+        if(isConsultant){
+          const guideCol=el('div',{style:{lineHeight:'1.5'}});
+          if(item.q) guideCol.appendChild(el('div',{style:{color:'var(--text)',marginBottom:'2px'}},'❓ '+item.q.slice(0,150)+(item.q.length>150?'…':'')));
+          if(item.r) guideCol.appendChild(el('div',{style:{color:'var(--red)',marginBottom:'2px'}},'🚩 '+item.r.slice(0,150)+(item.r.length>150?'…':'')));
+          if(item.t) guideCol.appendChild(el('div',{style:{color:'var(--green)'}},          '💬 '+item.t.slice(0,150)+(item.t.length>150?'…':'')));
+          row.appendChild(guideCol);
+        } else {
+          const vendorCol=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',alignItems:'flex-start'}});
+          if(hasMatch){
+            matchV.forEach(v=>{
+              const chip=el('div',{style:{display:'inline-block',background:'rgba(34,197,94,.1)',border:'1px solid rgba(34,197,94,.3)',borderRadius:'3px',padding:'1px 6px',color:'var(--green)',cursor:'pointer',fontWeight:'500',fontSize:'8px'},onclick(){openDetail(v);}},v.name.slice(0,22)+(v.name.length>22?'…':''));
+              vendorCol.appendChild(chip);
+            });
+          } else {
+            vendorCol.appendChild(el('span',{style:{color:'var(--amber)',fontStyle:'italic'}},'No vendor mapped'));
+          }
+          row.appendChild(vendorCol);
+          const sel=el('select',{class:'detail-edit-field',style:{height:'22px',fontSize:'8px',padding:'0 3px',width:'100%'}});
+          ['','Not Started','In Progress','Done','N/A'].forEach(opt=>sel.appendChild(el('option',{value:opt},opt||'Status…')));
+          row.appendChild(sel);
+        }
+        body.appendChild(row);
+      });
+      secDiv.appendChild(body);
+    }
+    wrap.appendChild(secDiv);
+  });
+  c.appendChild(wrap);
+}
+
+function exportChecklistToCsv(customerName) {
+  let csv='Customer: '+customerName+'\r\nSection,Category / Line Item,Current Vendor,Status,Notes\r\n';
+  PSX_CHECKLIST.forEach(s=>s.items.forEach(item=>{
+    csv+='"'+s.label+'","'+item.label+'",,,"\r\n';
+  }));
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download=(customerName||'Checklist').replace(/[^a-zA-Z0-9]/g,'_')+'_Vendor_Review.csv'; a.click();
+  toast('✓ Exported');
+}
+
+
 async function generateContractDataSheet(vendor, ex, fileName) {
   if(!vendor&&!ex){ toast('No contract data to generate sheet from','#f59e0b'); return; }
   const v=vendor||{}, e=ex||{};
@@ -10335,7 +10445,7 @@ function renderContracts(c) {
   vendorWrap.appendChild(comboArrow);
   vendorWrap.appendChild(comboDropdown);
   row1.appendChild(vendorWrap);
-  uploadSe// (already in uploadSec)
+  uploadSec.appendChild(row1);
 
   const dropZone=el('div',{style:{border:'2px dashed var(--border)',borderRadius:'5px',padding:'20px',textAlign:'center',cursor:'pointer',transition:'border-color .2s',marginBottom:'8px'}});
   const dropLabel=el('div',{style:{fontSize:'11px',color:'var(--muted)'}});
@@ -10402,7 +10512,7 @@ function renderContracts(c) {
   dropZone.ondragleave=()=>{dropZone.style.borderColor='var(--border)';};
   dropZone.ondrop=(e)=>{e.preventDefault();dropZone.style.borderColor='var(--border)';if(e.dataTransfer.files[0])handleFile(e.dataTransfer.files[0]);};
   dropZone.appendChild(fileInp);
-  uploadSe// (already in uploadSec)
+  uploadSec.appendChild(dropZone);
 
   // Load from Drive button
   const driveRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'8px'}});
@@ -10435,7 +10545,7 @@ function renderContracts(c) {
   driveBtn.innerHTML='<span style="font-size:14px">☁</span> Load from Drive';
   driveRow.appendChild(driveBtn);
   driveRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Browse Vendor Contracts & Pricing folder'));
-  uploadSe// (already in uploadSec)
+  uploadSec.appendChild(driveRow);
 
   // Inline contract viewer (shown after file loaded)
   const viewerWrap=el('div',{id:'contract-inline-viewer',style:{display:'none',marginTop:'8px',border:'1px solid var(--border)',borderRadius:'5px',overflow:'hidden'}});
@@ -10456,9 +10566,8 @@ function renderContracts(c) {
   viewerWrap.appendChild(viewerHdr);
   const viewerBody=el('div',{id:'contract-viewer-body',style:{height:'400px',overflow:'auto',background:'var(--bg)',padding:'12px',fontSize:'10px',lineHeight:'1.7',whiteSpace:'pre-wrap',fontFamily:'Georgia,serif'}});
   viewerWrap.appendChild(viewerBody);
-  uploadSe// (already in uploadSec)
-
-  uploadSe// (already in uploadSec)
+  uploadSec.appendChild(viewerWrap);
+  uploadSec.appendChild(statusEl);
 
   const btnRow=el('div',{style:{display:'flex',gap:'8px'}});
   const extractBtn=el('button',{class:'btn-primary',disabled:true,style:{opacity:'0.5'},onclick:async()=>{
@@ -10511,7 +10620,7 @@ function renderContracts(c) {
     }
   }},'📄 Extract Contract Data');
   btnRow.appendChild(extractBtn);
-  uploadSe// (already in uploadSec)
+  uploadSec.appendChild(btnRow);
   wrap.appendChild(uploadSec);
 
   // All uploaded contracts
@@ -16181,7 +16290,7 @@ function renderSettings(c) {
                 all[i].hiddenFields=newHf;all[i]._customHiddenFields=true;
                 localStorage.setItem(AUTH_KEY,JSON.stringify(all));
                 setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
-                buildFieldAccess(container,userEmail);
+                requestAnimationFrame(()=>buildFieldAccess(container,userEmail));
               }
             },f.label+' '+(hidden?'🚫':'✅'));
             fieldGrid.appendChild(btn);
@@ -16237,7 +16346,7 @@ function renderSettings(c) {
                 all[i].tabOverrides[t.id]=!currentAccess;
                 localStorage.setItem(AUTH_KEY,JSON.stringify(all));
                 setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
-                buildFieldAccess(container,userEmail);
+                requestAnimationFrame(()=>buildFieldAccess(container,userEmail));
               }
             },t.label+' '+(hasAccess?'✅':'🚫')+(isOverridden?' ⚡':''));
             tabGrid.appendChild(btn);
@@ -18196,6 +18305,7 @@ function render() {
       break;
     case 'compare':renderContractCompare(content);break;
     case 'contracts':renderContracts(content);break;
+    case 'checklist':renderChecklist(content);break;
     case 'spend':renderSpend(content);break;
     case 'forecast':renderForecast(content);break;case 'analytics':renderAnalytics(content);break;case 'summary':renderSummary(content);break;
     case 'reports':renderReports(content);break;
