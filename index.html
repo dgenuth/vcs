@@ -8845,6 +8845,10 @@ function renderSFBoard(c) {
 
   // ── Finance view ──
   if(S._sfBoardView==='finance'){
+    // Auto-trigger spend data load if not already loaded
+    if(!SPEND_STATE.data && !SPEND_STATE.loading && USER.sfToken){
+      setTimeout(()=>loadSpendData(), 300);
+    }
     renderSFFinanceView(wrap, spendLeaderboard, trueUpAlerts);
     c.appendChild(wrap); return;
   }
@@ -8857,6 +8861,9 @@ function renderSFBoard(c) {
 
   // ── Sales view ──
   if(S._sfBoardView==='sales'){
+    if(!opps.length && !sb.loading && USER.sfToken && !sb.data){
+      setTimeout(()=>loadSFBoard(), 300);
+    }
     renderSFSalesView(wrap, opps, cases, tasks);
     c.appendChild(wrap); return;
   }
@@ -10262,115 +10269,188 @@ async function generateContractDataSheet(vendor, ex, fileName) {
   const vName=v.name||e.vendorName||'Vendor';
   const today=new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
 
-  // Build the data sheet HTML matching Prime Source template layout
+  // Build data sheet HTML matching Prime Source template exactly
   const sheetHtml=`<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
 <title>Prime Source Contract Data Sheet — ${vName}</title>
 <style>
-  body{font-family:Calibri,Arial,sans-serif;font-size:10pt;margin:0.75in;color:#1a1a2e}
-  h1{color:#0078b8;font-size:16pt;margin-bottom:4px;text-align:center}
-  .intro{font-size:9pt;color:#555;margin-bottom:16px;text-align:center}
-  table{width:100%;border-collapse:collapse;margin-bottom:16px}
-  td{border:1px solid #ccc;padding:6px 10px;vertical-align:top;font-size:9pt}
-  .hdr{background:#0078b8;color:#fff;font-weight:700;font-size:9pt;width:25%}
-  .val{background:#f9fbfd;color:#1a1a2e}
-  .section-hdr{background:#e8f2fc;color:#0060a0;font-weight:700;font-size:10pt;padding:6px 10px;border:1px solid #0078b8;text-align:center}
-  .footer{font-size:8pt;color:#888;text-align:center;margin-top:16px;border-top:1px solid #ccc;padding-top:8px}
+  @page { margin: 0.6in; size: letter; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Calibri, Arial, sans-serif; font-size: 9.5pt; color: #1a1a1a; background: #fff; }
+  h1 { font-size: 15pt; font-weight: 700; color: #1f3864; text-align: center; margin-bottom: 6px; letter-spacing: .5px; }
+  .subtitle { font-size: 9pt; color: #555; text-align: center; margin-bottom: 14px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 0; }
+  td { border: 1px solid #a0a0a0; padding: 5px 8px; vertical-align: top; font-size: 9pt; }
+  .lbl { background: #1f3864; color: #fff; font-weight: 700; font-size: 8.5pt; width: 18%; white-space: nowrap; }
+  .val { background: #fff; }
+  .val-gray { background: #f2f2f2; }
+  .col-hdr { background: #2e75b6; color: #fff; font-weight: 700; text-align: center; font-size: 9pt; }
+  .section-spacer { height: 4px; background: #1f3864; }
+  .footer { font-size: 7.5pt; color: #888; text-align: center; margin-top: 10px; border-top: 1px solid #ccc; padding-top: 6px; }
+  .warn { color: #c00; font-weight: 600; }
+  @media print {
+    .no-print { display: none; }
+    body { margin: 0; }
+  }
 </style>
 </head>
 <body>
-<h1>Prime Source Contract Data Sheet</h1>
-<div class="intro">Prime Source is pleased to announce a new addition to our vendor portfolio. The details are as follows:</div>
+<div style="text-align:center;margin-bottom:6px">
+  <h1>Prime Source Contract Data Sheet</h1>
+  <div class="subtitle">Prime Source is pleased to announce a new addition to our vendor portfolio. The details are as follows:</div>
+</div>
 
 <table>
-  <tr><td class="hdr">VENDOR NAME</td><td class="val" colspan="3"><strong>${vName}</strong></td></tr>
-  <tr><td class="hdr">VENDOR ADDRESS</td><td class="val" colspan="3">${v.address||''}</td></tr>
-  <tr><td class="hdr">VENDOR CONTACT DETAILS</td><td class="val" colspan="3">${v.procContact||''}${v.phone?' | '+v.phone:''}${v.email?' | '+v.email:''}</td></tr>
+  <!-- Row 1: Vendor Name + GPO columns -->
   <tr>
-    <td class="hdr">CONTRACT #</td><td class="val">${e.contractNumber||v.contractNo||'PSG-'}</td>
-    <td class="hdr">TYPE OF AGREEMENT</td><td class="val">${e.agreementType||v.agreementType||'GPA'}</td>
+    <td class="lbl" rowspan="1">VENDOR NAME</td>
+    <td class="val" colspan="2"><strong>${vName}</strong></td>
+    <td class="col-hdr">GPO</td>
+    <td class="col-hdr">Prime Source</td>
+    <td class="col-hdr">Prime Source</td>
   </tr>
+  <!-- Row 2: Vendor Address -->
   <tr>
-    <td class="hdr">START DATE</td><td class="val">${e.effectiveDate||v.contractEffective||''}</td>
-    <td class="hdr">END DATE</td><td class="val">${e.expirationDate||v.expiry||''}</td>
+    <td class="lbl">VENDOR ADDRESS</td>
+    <td class="val" colspan="2">${v.address||''}</td>
+    <td class="val-gray"></td>
+    <td class="val-gray">${e.markets||v.markets||'National'}</td>
+    <td class="val-gray">${e.markets||v.markets||'National'}</td>
   </tr>
+  <!-- Row 3: Contact Details -->
   <tr>
-    <td class="hdr">TERM DETAILS</td>
-    <td class="val" colspan="2">${e.contractTermMonths?e.contractTermMonths+'M':''}${e.autoRenewal?' with '+e.autoRenewal+' auto-renewal':''}</td>
-    <td></td>
+    <td class="lbl">VENDOR CONTACT DETAILS</td>
+    <td class="val" colspan="5">${[v.procContact,v.title,v.bizPhone,v.mobile,v.email].filter(Boolean).join(' | ')||'See VCS vendor record for contact details'}</td>
   </tr>
+  <!-- Row 4: Contract # + Type -->
   <tr>
-    <td class="hdr">COLLECTION FREQUENCY</td><td class="val">${e.adminFee?.frequency||e.paymentTerms?.frequency||''}</td>
-    <td class="hdr">PERPETUITY</td><td class="val" style="color:${e.perpetuity==='Yes'?'#22c55e':'inherit'}">${e.perpetuity||''}</td>
+    <td class="lbl">CONTRACT #</td>
+    <td class="val">${e.contractNumber||v.contractNo||'PSG-'}</td>
+    <td class="lbl" style="width:18%">TYPE OF AGREEMENT</td>
+    <td class="val" colspan="3">${e.agreementType||v.agreementType||'GPA, unless otherwise stated'}</td>
   </tr>
+  <!-- Row 5: Start + End Date -->
   <tr>
-    <td class="hdr">SUMMARY OF TERMS</td>
-    <td class="val" colspan="3">
-      Admin Fee: ${e.adminFee?.percentage?e.adminFee.percentage+'%':''} of ${e.adminFee?.basis||'Qualifying Purchases'}<br>
-      ${e.adminFee?.notes||''}<br>
-      ${e.tiers?.length?'Tiers: '+e.tiers.map(t=>t.threshold+' @ '+t.rate).join(' | '):''}
+    <td class="lbl">START DATE</td>
+    <td class="val">${e.effectiveDate||v.contractEffective||''}</td>
+    <td class="lbl" style="width:18%">END DATE</td>
+    <td class="val" colspan="3">${e.expirationDate||v.expiry||''}</td>
+  </tr>
+  <!-- Row 6: Term Details -->
+  <tr>
+    <td class="lbl">TERM DETAILS</td>
+    <td class="val" colspan="5">${e.contractTermMonths?e.contractTermMonths+'M':v.contractTerm||''}${e.autoRenewal?' with '+e.autoRenewal+' auto-renewal':(v.autoRenewal?' with '+v.autoRenewal+' auto-renewal':'')}</td>
+  </tr>
+  <!-- Row 7: Collection Frequency + Perpetuity -->
+  <tr>
+    <td class="lbl">COLLECTION FREQUENCY</td>
+    <td class="val">${e.adminFee?.frequency||e.paymentTerms?.frequency||v.reportFrequency||'Quarterly'}</td>
+    <td class="lbl" style="width:18%">PERPETUITY</td>
+    <td class="val" colspan="3" style="color:${(e.perpetuity||v.perpetuity)==='Yes'?'#c00':'inherit'};font-weight:${(e.perpetuity||v.perpetuity)==='Yes'?'700':'400'}">${e.perpetuity||v.perpetuity||''}</td>
+  </tr>
+  <!-- Row 8: Summary of Terms -->
+  <tr>
+    <td class="lbl">SUMMARY OF TERMS</td>
+    <td class="val" colspan="5">
+      ${e.adminFee?.percentage?'<strong>Admin Fee: '+e.adminFee.percentage+'%</strong> of '+(e.adminFee.basis||'Qualifying Purchases'):''}
+      ${e.adminFee?.notes?'<br>'+e.adminFee.notes:''}
+      ${v.adminFee&&!e.adminFee?.percentage?'<strong>Admin Fee: '+v.adminFee+'%</strong>':''}
+      ${v.adminFeeNotes&&!e.adminFee?.notes?'<br>'+v.adminFeeNotes:''}
+      ${e.tiers?.length?'<br><em>Tiers: '+e.tiers.map(t=>(t.threshold||'')+' @ '+(t.rate||'')).join(' | ')+'</em>':''}
+      ${v.tiers&&!e.tiers?.length?'<br><em>'+v.tiers+'</em>':''}
     </td>
   </tr>
-  <tr><td class="hdr">CATEGORY</td><td class="val" colspan="3">${v.category||''}</td></tr>
-  <tr><td class="hdr">PRODUCTS/SERVICES</td><td class="val" colspan="3">${e.products||v.product||v.about||''}</td></tr>
-  <tr><td class="hdr">MARKETS SERVICED</td><td class="val" colspan="3">${e.markets||v.markets||'National'}</td></tr>
-  <tr><td class="hdr">CLASSES OF TRADE</td><td class="val" colspan="3">${e.classesOfTrade||v.classOfTrade||''}</td></tr>
+  <!-- Row 9: Category -->
   <tr>
-    <td class="hdr">EXCLUSIVITY</td><td class="val">${e.keyTerms?.exclusivity||v.exclusivity||''}</td>
-    <td class="hdr">AUTO-RENEWAL</td><td class="val">${e.autoRenewal||''}</td>
+    <td class="lbl">CATEGORY</td>
+    <td class="val" colspan="5">${v.category||''}${v.subCategory?' — '+v.subCategory:''}</td>
   </tr>
+  <!-- Row 10: Products/Services -->
   <tr>
-    <td class="hdr">TERMINATION NOTICE</td>
-    <td class="val" colspan="3">${e.terminationNotice||v.terminationNotice||''}</td>
+    <td class="lbl">PRODUCTS / SERVICES</td>
+    <td class="val" colspan="5">${e.products||v.product||v.about||''}</td>
   </tr>
+  <!-- Row 11: Markets Serviced -->
   <tr>
-    <td class="hdr">ASSIGNMENT</td><td class="val">${e.keyTerms?.assignment||v.assignment||''}</td>
-    <td class="hdr">GOVERNING LAW</td><td class="val">${e.keyTerms?.governingLaw||''}</td>
+    <td class="lbl">MARKETS SERVICED</td>
+    <td class="val" colspan="5">${e.markets||v.markets||'National'}</td>
   </tr>
-  <tr><td class="hdr">IT CAPABILITIES / OTHER</td><td class="val" colspan="3">${e.notes||''}</td></tr>
+  <!-- Row 12: Process for Pricing & Quotes -->
+  <tr>
+    <td class="lbl">PROCESS FOR PRICING &amp; QUOTES</td>
+    <td class="val" colspan="5">${v.pricingLocation||v.havePricing||''}</td>
+  </tr>
+  <!-- Row 13: Lead Times -->
+  <tr>
+    <td class="lbl">LEAD TIMES</td>
+    <td class="val" colspan="5"></td>
+  </tr>
+  <!-- Row 14: Payment Terms -->
+  <tr>
+    <td class="lbl">PAYMENT TERMS</td>
+    <td class="val" colspan="5">${e.paymentTerms?.memberPaymentTerms||'Negotiated between vendor and member [standard]'}</td>
+  </tr>
+  <!-- Row 15: Account Setup Requirements -->
+  <tr>
+    <td class="lbl">ACCOUNT SETUP REQUIREMENTS</td>
+    <td class="val" colspan="5">Credit App, Vendor Intro, affiliation document${v.needsLOP?' LOP required':''}</td>
+  </tr>
+  <!-- Row 16: Delivery Terms -->
+  <tr>
+    <td class="lbl">DELIVERY TERMS</td>
+    <td class="val" colspan="5"></td>
+  </tr>
+  <!-- Row 17: IT Capabilities -->
+  <tr>
+    <td class="lbl">IT CAPABILITIES</td>
+    <td class="val" colspan="5">${e.notes||v.comments||''}</td>
+  </tr>
 </table>
 
 <div class="footer">
-  Generated by Prime Source VCS — ${today} | Contract file: ${fileName||'N/A'} | Confidence: ${e.extractionConfidence||'N/A'}
-  ${e.extractionConfidence!=='HIGH'?'<br><strong>Note: Review all fields before distribution — extraction confidence is '+e.extractionConfidence+'</strong>':''}
+  Generated by Prime Source VCS &nbsp;|&nbsp; ${today} &nbsp;|&nbsp; Contract file: ${fileName||'N/A'} &nbsp;|&nbsp; Confidence: ${e.extractionConfidence||'N/A'}
+  ${e.extractionConfidence&&e.extractionConfidence!=='HIGH'?'<br><span class="warn">⚠ Review all fields — extraction confidence is '+e.extractionConfidence+'</span>':''}
+</div>
+
+<div class="no-print" style="text-align:center;margin-top:16px;padding:10px;background:#f8f9fa;border-radius:4px;font-size:9pt">
+  <button onclick="window.print()" style="padding:6px 18px;background:#1f3864;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:9pt;margin-right:8px">🖨 Print / Save as PDF</button>
+  <button onclick="window.close()" style="padding:6px 14px;background:#eee;border:1px solid #ccc;border-radius:4px;cursor:pointer;font-size:9pt">Close</button>
 </div>
 </body>
 </html>`;
 
-  // Open in new tab for review/print
   const newTab=window.open('','_blank');
   if(newTab){
     newTab.document.write(sheetHtml);
     newTab.document.close();
-    toast('✓ Data Sheet opened — print or save as PDF from the new tab','#22c55e');
+    toast('✓ Data Sheet opened — Print or Save as PDF from the new tab','#22c55e');
   } else {
-    // Fallback: download as HTML
     const blob=new Blob([sheetHtml],{type:'text/html'});
     const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
     a.download=vName.replace(/[^a-zA-Z0-9]/g,'_')+'_DataSheet.html'; a.click();
     toast('✓ Data Sheet downloaded','#22c55e');
   }
 
-  // Also offer to save to Drive
+  // Offer Drive save
   openModal(body=>{
     body.appendChild(el('h3',{},'📋 Data Sheet Created'));
-    body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--muted)',marginBottom:'12px'}},'The data sheet opened in a new tab. Print it or save as PDF. Do you also want to save it to the vendor folder in Drive?'));
-    const btns=el('div',{class:'modal-btns'});
-    btns.appendChild(el('button',{class:'btn-primary',onclick:async()=>{
+    body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--muted)',marginBottom:'12px'}},'Data Sheet opened in new tab. Print or Save as PDF. Also save to vendor folder in Drive?'));
+    const btns2=el('div',{class:'modal-btns'});
+    btns2.appendChild(el('button',{class:'btn-primary',onclick:async()=>{
       closeModal();
       toast('⏳ Saving data sheet to Drive...','#4f7cff');
       try{
         const resp=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
           body:JSON.stringify({action:'saveComparisonReport',vendorName:vName,reportHtml:sheetHtml,reportName:vName+'_DataSheet_'+new Date().toISOString().slice(0,10)})});
         const d=await resp.json();
-        if(d.status==='ok') toast('✓ Data sheet saved to Vendor Contracts & Pricing/'+d.vendorFolder,'#22c55e');
+        if(d.status==='ok') toast('✓ Data sheet saved to Vendor Contract and Pricing/'+d.vendorFolder,'#22c55e');
         else toast('Drive save failed: '+(d.message||'unknown'),'#ef4444');
       }catch(e2){toast('Drive save error: '+e2.message,'#ef4444');}
-    }},'☁ Save to Vendor Contracts & Pricing'));
-    btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'No thanks'));
-    body.appendChild(btns);
+    }},'☁ Save to Drive'));
+    btns2.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'No thanks'));
+    body.appendChild(btns2);
   });
 }
 
@@ -18579,22 +18659,34 @@ function showKeywordSuggestions(q) {
   const qWords=q.split(/\s+/).filter(w=>w.length>1);
   const pool=[...S.vendors,...(S.channelVendors||[]),...(S.itw||[]),...(S.reviews||[])];
 
+  // Build a set of individual meaningful words from all vendor data
+  const wordFreq={};
+  const stopWords=new Set(['and','the','for','with','from','that','this','are','has','have',
+    'not','but','our','your','all','its','can','will','per','via','inc','llc','ltd','corp']);
   pool.forEach(v=>{
-    const terms=[v.category,v.subCategory,v.product,v.about,v.classOfTrade,v.markets,v.name].filter(Boolean);
-    const fullText=terms.join(' ').toLowerCase();
-    qWords.forEach(qw=>{
-      if(fullText.includes(qw)){
-        terms.forEach(t=>{
-          if(!t||t.length<3) return;
-          const tl=t.toLowerCase().trim();
-          // Suggest terms that contain the query OR are categories of matching vendors
-          if(!seen.has(tl)&&tl!==q){
-            seen.add(tl);
-            const isCategory=['category','subCategory'].includes(Object.keys(v).find(k=>String(v[k]).toLowerCase()===tl)||'');
-            const matchScore=tl.includes(qw)?2:1;
-            suggestions.push({text:t,score:matchScore,type:isCategory?'category':'keyword'});
-          }
-        });
+    const terms=[v.category,v.subCategory,v.product,v.about,v.classOfTrade,v.name].filter(Boolean);
+    terms.forEach(t=>{
+      // Extract individual words from each term
+      String(t).toLowerCase().split(/[\s\-\/,&()]+/).forEach(word=>{
+        word=word.replace(/[^a-z0-9]/g,'');
+        if(word.length<3||stopWords.has(word)) return;
+        wordFreq[word]=(wordFreq[word]||0)+1;
+      });
+    });
+  });
+
+  // Find words that partially match the query and appear in multiple vendors
+  qWords.forEach(qw=>{
+    Object.entries(wordFreq).forEach(([word,freq])=>{
+      if(!seen.has(word)&&word!==qw&&word.length>=3){
+        // Match: word contains query OR query contains word OR they share a root
+        const isMatch=word.includes(qw)||qw.includes(word.slice(0,4));
+        if(isMatch&&freq>=1){
+          seen.add(word);
+          // Higher score for exact prefix match and frequency
+          const score=(word.startsWith(qw)?3:word.includes(qw)?2:1)*Math.min(freq,5);
+          suggestions.push({text:word,score,type:freq>3?'category':'keyword'});
+        }
       }
     });
   });
