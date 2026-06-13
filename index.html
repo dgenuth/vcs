@@ -5459,13 +5459,13 @@ const ROLE_PERMS = {
     editAll:true,manageUsers:true,deleteHistory:true,configAI:true,configDrive:true,configSF:true,
     exportData:true,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,
     viewFees:true,viewContacts:true,viewFinancials:true,canCopy:true,
-    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'compare', 'sfboard', 'contracts', 'spend', 'customers', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings'],
+    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'compare', 'sfboard', 'contracts', 'checklist', 'spend', 'customers', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings', 'health'],
   },
   procurement: {
     editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,
     exportData:false,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,
     viewFees:true,viewContacts:true,viewFinancials:true,canCopy:false,
-    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'compare', 'sfboard', 'contracts', 'spend', 'customers', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings'],settingsPersonalOnly:true,
+    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'compare', 'sfboard', 'contracts', 'checklist', 'spend', 'customers', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings', 'health'],settingsPersonalOnly:true,
   },
   cro: {
     editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,
@@ -5510,7 +5510,7 @@ const ROLE_PERMS = {
     tabs:['vendordb', 'settings'],settingsPersonalOnly:true,
   },
   // Legacy aliases — map to nearest equivalent
-  manager:    {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,viewFees:true,viewContacts:true,viewFinancials:true,canCopy:false,tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings'],settingsPersonalOnly:true},
+  manager:    {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,viewFees:true,viewContacts:true,viewFinancials:true,canCopy:false,tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'checklist', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings', 'health'],settingsPersonalOnly:true},
   viewer:     {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,viewFees:true,viewContacts:false,viewFinancials:true,canCopy:false,tabs:['today', 'expiring', 'vendordb', 'network', 'economics', 'analytics', 'reports', 'summary', 'history', 'settings'],settingsPersonalOnly:true},
   restricted: {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,viewFees:false,viewContacts:false,viewFinancials:false,canCopy:false,tabs:['vendordb', 'settings'],settingsPersonalOnly:true},
 };
@@ -9067,18 +9067,56 @@ function renderSFVendorBrief(wrap, opps, cases, tasks, spendLeaderboard) {
 
   const pickerRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'16px',padding:'10px 14px',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',flexWrap:'wrap'}});
   pickerRow.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',flexShrink:'0',color:'var(--blue)'}},'🏢 Vendor Brief'));
-  const searchInp=el('input',{type:'text',class:'modal-input',placeholder:'Type to search vendors...',style:{flex:'1',marginBottom:'0',minWidth:'200px'},value:S._sfBriefVendor||''});
-  const dl=el('datalist',{id:'sf-brief-vendors'});
-  allBriefNames.forEach(n=>dl.appendChild(el('option',{value:n})));
-  searchInp.setAttribute('list','sf-brief-vendors');
+
+  // Proper search box with dropdown
+  const searchWrap=el('div',{style:{flex:'1',position:'relative',minWidth:'200px'}});
+  const searchInp=el('input',{type:'text',class:'modal-input',placeholder:'🔍 Search vendor name...',
+    style:{width:'100%',marginBottom:'0'},value:S._sfBriefVendor||''});
+  const srchDrop=el('div',{style:{position:'absolute',top:'34px',left:'0',right:'0',background:'var(--card)',
+    border:'1px solid var(--blue)',borderRadius:'4px',maxHeight:'220px',overflowY:'auto',
+    zIndex:'500',boxShadow:'0 4px 12px rgba(0,0,0,.2)',display:'none'}});
+
+  function updateBriefDrop(q){
+    srchDrop.innerHTML='';
+    if(!q){srchDrop.style.display='none';return;}
+    const matches=allBriefNames.filter(n=>n.toLowerCase().includes(q.toLowerCase())).slice(0,20);
+    if(!matches.length){srchDrop.style.display='none';return;}
+    matches.forEach(n=>{
+      const item=el('div',{style:{padding:'7px 12px',cursor:'pointer',fontSize:'11px',borderBottom:'1px solid rgba(128,128,128,.07)'},
+        onmousedown(e){e.preventDefault();searchInp.value=n;S._sfBriefVendor=n;srchDrop.style.display='none';
+          const c2=$('content');if(c2){c2.innerHTML='';renderSFBoard(c2);}}},n);
+      item.addEventListener('mouseenter',()=>item.style.background='var(--bg)');
+      item.addEventListener('mouseleave',()=>item.style.background='');
+      srchDrop.appendChild(item);
+    });
+    srchDrop.style.display='block';
+  }
+
   let briefTimer=null;
   searchInp.addEventListener('input',e=>{
     clearTimeout(briefTimer);
-    briefTimer=setTimeout(()=>{S._sfBriefVendor=e.target.value;const c2=$('content');if(c2){c2.innerHTML='';renderSFBoard(c2);}},400);
+    briefTimer=setTimeout(()=>{
+      S._sfBriefVendor=e.target.value;
+      updateBriefDrop(e.target.value);
+      if(!e.target.value){const c2=$('content');if(c2){c2.innerHTML='';renderSFBoard(c2);}}
+    },200);
   });
-  pickerRow.appendChild(searchInp);
-  pickerRow.appendChild(dl);
-  if(S._sfBriefVendor) pickerRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._sfBriefVendor='';const c2=$('content');if(c2){c2.innerHTML='';renderSFBoard(c2);}}},'✕ Clear'));
+  searchInp.addEventListener('blur',()=>setTimeout(()=>srchDrop.style.display='none',200));
+  searchInp.addEventListener('focus',()=>{if(searchInp.value)updateBriefDrop(searchInp.value);});
+  searchInp.addEventListener('keydown',e=>{
+    if(e.key==='Enter'){
+      srchDrop.style.display='none';
+      S._sfBriefVendor=searchInp.value;
+      const c2=$('content');if(c2){c2.innerHTML='';renderSFBoard(c2);}
+    }
+    if(e.key==='Escape'){srchDrop.style.display='none';}
+  });
+  searchWrap.appendChild(searchInp);
+  searchWrap.appendChild(srchDrop);
+  pickerRow.appendChild(searchWrap);
+  if(S._sfBriefVendor) pickerRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){
+    S._sfBriefVendor='';searchInp.value='';const c2=$('content');if(c2){c2.innerHTML='';renderSFBoard(c2);}
+  }},'✕ Clear'));
   wrap.appendChild(pickerRow);
 
   const vName=S._sfBriefVendor||'';
@@ -15048,33 +15086,69 @@ function makeExpandable(section) {
     title:'Expand to full view',
     onclick(){
       openModal(body=>{
-        body.style.cssText='min-width:min(92vw,1200px);max-width:96vw;padding:16px';
-        body.appendChild(el('h3',{style:{marginBottom:'12px'}},titleText));
-        // Create a new canvas and re-render chart using stored config
+        // Large modal — ~80% of browser window
+        body.style.cssText='width:min(82vw,1400px);max-width:88vw;min-height:70vh;padding:16px;display:flex;flex-direction:column';
+        // Header row with title + zoom controls + close
+        const modalHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'12px',flexShrink:'0'}});
+        modalHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'14px',flex:'1'}},titleText));
+        // Zoom controls
+        let _zoom=100;
+        const zoomLbl=el('span',{style:{fontSize:'10px',color:'var(--muted)',minWidth:'38px',textAlign:'center'}},_zoom+'%');
+        const zoomOut=el('button',{class:'btn-xs btn-ghost',style:{padding:'2px 8px'},onclick(){
+          _zoom=Math.max(50,_zoom-10);
+          zoomLbl.textContent=_zoom+'%';
+          if(bigWrap) bigWrap.style.transform='scale('+(_zoom/100)+')';
+          bigWrap.style.transformOrigin='top left';
+          bigWrap.style.width=(100*100/_zoom)+'%';
+        }},'−');
+        const zoomIn=el('button',{class:'btn-xs btn-ghost',style:{padding:'2px 8px'},onclick(){
+          _zoom=Math.min(200,_zoom+10);
+          zoomLbl.textContent=_zoom+'%';
+          if(bigWrap) bigWrap.style.transform='scale('+(_zoom/100)+')';
+          bigWrap.style.transformOrigin='top left';
+          bigWrap.style.width=(100*100/_zoom)+'%';
+        }},'+');
+        const zoomReset=el('button',{class:'btn-xs btn-ghost',onclick(){
+          _zoom=100;zoomLbl.textContent='100%';
+          if(bigWrap){bigWrap.style.transform='';bigWrap.style.width='100%';}
+        }},'100%');
+        [zoomOut,zoomLbl,zoomIn,zoomReset].forEach(e=>modalHdr.appendChild(e));
+        modalHdr.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:closeModal,style:{marginLeft:'8px'}},'✕ Close'));
+        body.appendChild(modalHdr);
+
         const origCanvas=section.querySelector('canvas');
         const storedCfg=origCanvas?origCanvas._storedConfig:null;
+        // Scrollable chart area
+        const scrollArea=el('div',{style:{flex:'1',overflow:'auto',minHeight:'0'}});
+        const bigWrap=el('div',{style:{height:'calc(70vh - 80px)',minHeight:'400px',position:'relative',transition:'transform .15s'}});
+        const bigCanvas=document.createElement('canvas');
+        bigCanvas.style.cssText='width:100%;height:100%';
+        bigWrap.appendChild(bigCanvas);
+        scrollArea.appendChild(bigWrap);
+        body.appendChild(scrollArea);
+
         if(storedCfg){
-          const bigWrap=el('div',{style:{height:'480px',position:'relative'}});
-          const bigCanvas=document.createElement('canvas');
-          bigCanvas.style.cssText='width:100%;height:100%';
-          bigWrap.appendChild(bigCanvas);
-          body.appendChild(bigWrap);
           setTimeout(()=>{
             try{
               const cfg=JSON.parse(JSON.stringify(storedCfg));
               if(!cfg.options) cfg.options={};
               cfg.options.responsive=true;
               cfg.options.maintainAspectRatio=false;
-              if(cfg.options.plugins?.legend) cfg.options.plugins.legend.labels={...cfg.options.plugins.legend.labels,font:{size:11}};
+              if(cfg.options.plugins?.legend) cfg.options.plugins.legend.labels={...(cfg.options.plugins.legend.labels||{}),font:{size:12},color:'var(--text)'};
+              if(cfg.options.scales){
+                Object.values(cfg.options.scales).forEach(ax=>{
+                  if(ax.ticks) ax.ticks.font={size:11};
+                  if(ax.ticks) ax.ticks.color='var(--muted)';
+                });
+              }
               new Chart(bigCanvas,cfg);
-            }catch(e){ bigWrap.innerHTML='<p style="color:var(--muted);padding:20px;text-align:center">Could not render: '+e.message+'</p>'; }
+            }catch(e){
+              bigWrap.innerHTML='<p style="color:var(--muted);padding:40px;text-align:center;font-size:12px">Could not render chart: '+e.message+'<br><br>Try loading data first.</p>';
+            }
           },50);
         } else {
-          body.appendChild(el('p',{style:{color:'var(--muted)',padding:'24px',textAlign:'center'}},'Load data first, then expand — chart needs to be rendered before it can be enlarged.'));
+          bigWrap.innerHTML='<p style="color:var(--muted);padding:40px;text-align:center;font-size:12px">Load data first, then expand — the chart needs to be rendered before it can be enlarged.</p>';
         }
-        const btns=el('div',{class:'modal-btns',style:{marginTop:'12px'}});
-        btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));
-        body.appendChild(btns);
       });
     }
   },'⛶');
@@ -15101,14 +15175,41 @@ function renderAnalytics(c) {
     tabBar.appendChild(btn);
   });
   // Date range selector
-  const drSel=el('select',{class:'col-toggle-btn',style:{padding:'4px 8px',fontSize:'10px',marginLeft:'auto'},
-    onchange(e){S._analyticsDateRange=e.target.value;const c2=$('content');if(c2){c2.innerHTML='';renderAnalytics(c2);}}});
-  [{v:'ytd',l:'Year to Date'},{v:'last12',l:'Last 12 Months'},{v:'lastyear',l:'Last Year'},{v:'last30',l:'Last 30 Days'},{v:'all',l:'All Time'}].forEach(o=>{
+  const drWrap=el('div',{style:{display:'flex',gap:'4px',alignItems:'center',marginLeft:'auto',flexShrink:'0'}});
+  const drSel=el('select',{class:'col-toggle-btn',style:{padding:'4px 8px',fontSize:'10px'},
+    onchange(e){
+      S._analyticsDateRange=e.target.value;
+      // Show/hide custom date inputs
+      const customRow=$('analytics-custom-dates');
+      if(customRow) customRow.style.display=e.target.value==='custom'?'flex':'none';
+      if(e.target.value!=='custom'){const c2=$('content');if(c2){c2.innerHTML='';renderAnalytics(c2);}}
+    }});
+  [{v:'ytd',l:'Year to Date'},{v:'last30',l:'Last 30 Days'},{v:'last90',l:'Last 90 Days'},{v:'last12',l:'Last 12 Months'},{v:'lastyear',l:'Last Year'},{v:'all',l:'All Time'},{v:'custom',l:'Custom Range...'}].forEach(o=>{
     const opt=el('option',{value:o.v},o.l);
     if(S._analyticsDateRange===o.v) opt.selected=true;
     drSel.appendChild(opt);
   });
-  tabBar.appendChild(drSel);
+  drWrap.appendChild(drSel);
+  tabBar.appendChild(drWrap);
+  // Custom date range row (hidden unless custom selected)
+  const customRow=el('div',{id:'analytics-custom-dates',style:{
+    display:S._analyticsDateRange==='custom'?'flex':'none',
+    gap:'6px',alignItems:'center',padding:'6px 0',flexWrap:'wrap',borderTop:'1px solid var(--border)',marginTop:'4px'
+  }});
+  customRow.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'From:'));
+  const dtFrom=el('input',{type:'date',class:'detail-edit-field',style:{height:'26px',fontSize:'10px'},
+    value:S._analyticsDtFrom||''});
+  customRow.appendChild(dtFrom);
+  customRow.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'To:'));
+  const dtTo=el('input',{type:'date',class:'detail-edit-field',style:{height:'26px',fontSize:'10px'},
+    value:S._analyticsDtTo||new Date().toISOString().slice(0,10)});
+  customRow.appendChild(dtTo);
+  customRow.appendChild(el('button',{class:'btn-xs btn-primary',onclick(){
+    S._analyticsDtFrom=dtFrom.value;
+    S._analyticsDtTo=dtTo.value;
+    const c2=$('content');if(c2){c2.innerHTML='';renderAnalytics(c2);}
+  }},'Apply'));
+  c.appendChild(customRow);
   c.appendChild(tabBar);
 
   // ── CONTRACT HEALTH TAB ──
