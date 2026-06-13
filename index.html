@@ -9435,8 +9435,9 @@ function renderSFProcurementView(wrap, opps, cases, expiringWithOpps) {
 function renderSFSalesView(wrap, opps, cases, tasks) {
   wrap.appendChild(el('h3',{style:{margin:'0 0 12px',fontSize:'13px',fontWeight:'700'}},'🎯 Sales Pipeline Dashboard'));
   const totalPipe=opps.reduce((s,o)=>s+Number(o.Amount||0),0);
+  const weightedPipe=opps.reduce((s,o)=>s+Number(o.Amount||0)*Number(o.Probability||50)/100,0);
   const byStage={};
-  opps.forEach(o=>{const s=o.StageName||'Unknown';if(!byStage[s])byStage[s]={count:0,value:0};byStage[s].count++;byStage[s].value+=Number(o.Amount||0);});
+  opps.forEach(o=>{const s=o.StageName||'Unknown';if(!byStage[s])byStage[s]={count:0,value:0,weighted:0};byStage[s].count++;byStage[s].value+=Number(o.Amount||0);byStage[s].weighted+=Number(o.Amount||0)*Number(o.Probability||50)/100;});
 
   // Pipeline by stage
   const kRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:'8px',marginBottom:'16px'}});
@@ -9505,8 +9506,8 @@ async function loadSFBoard(){
 
     // No IN clause — fetch recent records, match client-side to VCS vendors
     const [openOpps,openCases,openTasks,spendResult]=await Promise.all([
-      sfQuery('SELECT Id,Name,StageName,Amount,CloseDate,Vendor__r.Name,Account.Name FROM Opportunity WHERE IsClosed=false ORDER BY CloseDate ASC NULLS LAST LIMIT 100').catch(()=>({records:[]})),
-      sfQuery("SELECT Id,Subject,Status,Priority,CreatedDate,CaseNumber,Vendor__r.Name,Account.Name FROM Case WHERE Status!='Closed' ORDER BY CreatedDate DESC LIMIT 100").catch(()=>({records:[]})),
+      sfQuery('SELECT Id,Name,StageName,Amount,CloseDate,Probability,Vendor__r.Name,Account.Name,Owner.Name,OwnerId FROM Opportunity WHERE IsClosed=false ORDER BY CloseDate ASC NULLS LAST LIMIT 200').catch(()=>({records:[]})),
+      sfQuery("SELECT Id,Subject,Status,Priority,CreatedDate,CaseNumber,Vendor__r.Name,Account.Name,Owner.Name,OwnerId FROM Case WHERE Status!='Closed' ORDER BY CreatedDate DESC LIMIT 100").catch(()=>({records:[]})),
       sfQuery('SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM Task WHERE IsClosed=false ORDER BY ActivityDate ASC LIMIT 100').catch(()=>({records:[]})),
       sfQuery('SELECT Vendor__c,Vendor__r.Name,SUM(Sales__c) spendTotal FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= '+yearStart+(yearEnd?' AND Reported_Date__c <= '+yearEnd:'')+' GROUP BY Vendor__c,Vendor__r.Name ORDER BY SUM(Sales__c) DESC LIMIT 100').catch(()=>({records:[]})),
     ]);
@@ -9524,11 +9525,13 @@ async function loadSFBoard(){
     // Keep ALL opps/cases for Sales view — tag VCS-matched ones with _isVCS for Procurement/Brief
     const opps=(openOpps?.records||[]).map(o=>{
       const n=o.Vendor__r?.Name||o.Account?.Name||'';
-      return {...o,_accountName:n,_isVCS:sfNameMatchesVCS(n)};
+      return {...o,_accountName:n,_isVCS:sfNameMatchesVCS(n),
+        _ownerName:o.Owner?.Name||o['Owner.Name']||'Unknown'};
     });
     const cases=(openCases?.records||[]).map(c2=>{
       const n=c2.Vendor__r?.Name||c2.Account?.Name||'';
-      return {...c2,_accountName:n,_isVCS:sfNameMatchesVCS(n)};
+      return {...c2,_accountName:n,_isVCS:sfNameMatchesVCS(n),
+        _ownerName:c2.Owner?.Name||c2['Owner.Name']||'Unknown'};
     });
     const tasks=(openTasks?.records||[]).map(t=>({...t,_accountName:''}));
 
@@ -10337,185 +10340,142 @@ async function generateContractDataSheet(vendor, ex, fileName) {
   if(!vendor&&!ex){ toast('No contract data to generate sheet from','#f59e0b'); return; }
   const v=vendor||{}, e=ex||{};
   const vName=v.name||e.vendorName||'Vendor';
-  const today=new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+  const today=new Date().toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'numeric'});
 
-  // Build data sheet HTML matching Prime Source template exactly
-  const sheetHtml=`<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<title>Prime Source Contract Data Sheet — ${vName}</title>
-<style>
-  @page { margin: 0.6in; size: letter; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: Calibri, Arial, sans-serif; font-size: 9.5pt; color: #1a1a1a; background: #fff; }
-  h1 { font-size: 15pt; font-weight: 700; color: #1f3864; text-align: center; margin-bottom: 6px; letter-spacing: .5px; }
-  .subtitle { font-size: 9pt; color: #555; text-align: center; margin-bottom: 14px; }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 0; }
-  td { border: 1px solid #a0a0a0; padding: 5px 8px; vertical-align: top; font-size: 9pt; }
-  .lbl { background: #1f3864; color: #fff; font-weight: 700; font-size: 8.5pt; width: 18%; white-space: nowrap; }
-  .val { background: #fff; }
-  .val-gray { background: #f2f2f2; }
-  .col-hdr { background: #2e75b6; color: #fff; font-weight: 700; text-align: center; font-size: 9pt; }
-  .section-spacer { height: 4px; background: #1f3864; }
-  .footer { font-size: 7.5pt; color: #888; text-align: center; margin-top: 10px; border-top: 1px solid #ccc; padding-top: 6px; }
-  .warn { color: #c00; font-weight: 600; }
-  @media print {
-    .no-print { display: none; }
-    body { margin: 0; }
+  // Build data values matching template fields
+  const data={
+    vendorName: vName,
+    vendorAddress: v.address||'',
+    contactDetails: [v.procContact,v.title,v.bizPhone||v.mobile,v.email].filter(Boolean).join(' | ')||'',
+    contractNo: e.contractNumber||v.contractNo||'PSG-',
+    agreementType: e.agreementType||v.agreementType||'GPA, unless otherwise stated',
+    startDate: e.effectiveDate||v.contractEffective||'',
+    endDate: e.expirationDate||v.expiry||'',
+    termDetails: (e.contractTermMonths?e.contractTermMonths+'M':v.contractTerm||'')+(e.autoRenewal?' with '+e.autoRenewal+' auto-renewal':(v.autoRenewal?' with '+v.autoRenewal+' auto-renewal':'')),
+    collectionFreq: e.adminFee?.frequency||e.paymentTerms?.frequency||v.reportFrequency||'Quarterly',
+    perpetuity: e.perpetuity||v.perpetuity||'',
+    summaryOfTerms: (()=>{
+      const parts=[];
+      const fee=e.adminFee?.percentage||v.adminFee;
+      if(fee) parts.push((typeof fee==='number'?fee:parseFee(String(fee))||fee)+'% admin fee on '+(e.adminFee?.basis||'qualifying purchases'));
+      if(e.adminFee?.notes||v.adminFeeNotes) parts.push(e.adminFee?.notes||v.adminFeeNotes||'');
+      if(e.tiers?.length) parts.push('Tiers: '+e.tiers.map(t=>(t.threshold||'')+' @ '+(t.rate||'')).join(' | '));
+      else if(v.tiers) parts.push(v.tiers);
+      return parts.join('\n');
+    })(),
+    category: (v.category||'')+(v.subCategory?' — '+v.subCategory:''),
+    products: e.products||v.product||v.about||'',
+    markets: e.markets||v.markets||'National',
+    pricingProcess: v.pricingLocation||v.havePricing||'',
+    leadTimes: '',
+    paymentTerms: e.paymentTerms?.memberPaymentTerms||'Negotiated between vendor and member [standard]',
+    accountSetup: 'Credit App, Vendor Intro, affiliation document'+(v.needsLOP?' | LOP required':''),
+    deliveryTerms: '',
+    itCapabilities: e.notes||v.comments||'',
+  };
+
+  // Check if docx library is available (loaded via CDN)
+  if(typeof docx==='undefined'){
+    // Load docx library dynamically
+    await new Promise((res,rej)=>{
+      const s=document.createElement('script');
+      s.src='https://cdnjs.cloudflare.com/ajax/libs/docx/8.5.0/docx.umd.min.js';
+      s.onload=res; s.onerror=rej;
+      document.head.appendChild(s);
+    });
   }
-</style>
-</head>
-<body>
-<div style="text-align:center;margin-bottom:6px">
-  <h1>Prime Source Contract Data Sheet</h1>
-  <div class="subtitle">Prime Source is pleased to announce a new addition to our vendor portfolio. The details are as follows:</div>
-</div>
 
-<table>
-  <!-- Row 1: Vendor Name + GPO columns -->
-  <tr>
-    <td class="lbl" rowspan="1">VENDOR NAME</td>
-    <td class="val" colspan="2"><strong>${vName}</strong></td>
-    <td class="col-hdr">GPO</td>
-    <td class="col-hdr">Prime Source</td>
-    <td class="col-hdr">Prime Source</td>
-  </tr>
-  <!-- Row 2: Vendor Address -->
-  <tr>
-    <td class="lbl">VENDOR ADDRESS</td>
-    <td class="val" colspan="2">${v.address||''}</td>
-    <td class="val-gray"></td>
-    <td class="val-gray">${e.markets||v.markets||'National'}</td>
-    <td class="val-gray">${e.markets||v.markets||'National'}</td>
-  </tr>
-  <!-- Row 3: Contact Details -->
-  <tr>
-    <td class="lbl">VENDOR CONTACT DETAILS</td>
-    <td class="val" colspan="5">${[v.procContact,v.title,v.bizPhone,v.mobile,v.email].filter(Boolean).join(' | ')||'See VCS vendor record for contact details'}</td>
-  </tr>
-  <!-- Row 4: Contract # + Type -->
-  <tr>
-    <td class="lbl">CONTRACT #</td>
-    <td class="val">${e.contractNumber||v.contractNo||'PSG-'}</td>
-    <td class="lbl" style="width:18%">TYPE OF AGREEMENT</td>
-    <td class="val" colspan="3">${e.agreementType||v.agreementType||'GPA, unless otherwise stated'}</td>
-  </tr>
-  <!-- Row 5: Start + End Date -->
-  <tr>
-    <td class="lbl">START DATE</td>
-    <td class="val">${e.effectiveDate||v.contractEffective||''}</td>
-    <td class="lbl" style="width:18%">END DATE</td>
-    <td class="val" colspan="3">${e.expirationDate||v.expiry||''}</td>
-  </tr>
-  <!-- Row 6: Term Details -->
-  <tr>
-    <td class="lbl">TERM DETAILS</td>
-    <td class="val" colspan="5">${e.contractTermMonths?e.contractTermMonths+'M':v.contractTerm||''}${e.autoRenewal?' with '+e.autoRenewal+' auto-renewal':(v.autoRenewal?' with '+v.autoRenewal+' auto-renewal':'')}</td>
-  </tr>
-  <!-- Row 7: Collection Frequency + Perpetuity -->
-  <tr>
-    <td class="lbl">COLLECTION FREQUENCY</td>
-    <td class="val">${e.adminFee?.frequency||e.paymentTerms?.frequency||v.reportFrequency||'Quarterly'}</td>
-    <td class="lbl" style="width:18%">PERPETUITY</td>
-    <td class="val" colspan="3" style="color:${(e.perpetuity||v.perpetuity)==='Yes'?'#c00':'inherit'};font-weight:${(e.perpetuity||v.perpetuity)==='Yes'?'700':'400'}">${e.perpetuity||v.perpetuity||''}</td>
-  </tr>
-  <!-- Row 8: Summary of Terms -->
-  <tr>
-    <td class="lbl">SUMMARY OF TERMS</td>
-    <td class="val" colspan="5">
-      ${e.adminFee?.percentage?'<strong>Admin Fee: '+e.adminFee.percentage+'%</strong> of '+(e.adminFee.basis||'Qualifying Purchases'):''}
-      ${e.adminFee?.notes?'<br>'+e.adminFee.notes:''}
-      ${v.adminFee&&!e.adminFee?.percentage?'<strong>Admin Fee: '+v.adminFee+'%</strong>':''}
-      ${v.adminFeeNotes&&!e.adminFee?.notes?'<br>'+v.adminFeeNotes:''}
-      ${e.tiers?.length?'<br><em>Tiers: '+e.tiers.map(t=>(t.threshold||'')+' @ '+(t.rate||'')).join(' | ')+'</em>':''}
-      ${v.tiers&&!e.tiers?.length?'<br><em>'+v.tiers+'</em>':''}
-    </td>
-  </tr>
-  <!-- Row 9: Category -->
-  <tr>
-    <td class="lbl">CATEGORY</td>
-    <td class="val" colspan="5">${v.category||''}${v.subCategory?' — '+v.subCategory:''}</td>
-  </tr>
-  <!-- Row 10: Products/Services -->
-  <tr>
-    <td class="lbl">PRODUCTS / SERVICES</td>
-    <td class="val" colspan="5">${e.products||v.product||v.about||''}</td>
-  </tr>
-  <!-- Row 11: Markets Serviced -->
-  <tr>
-    <td class="lbl">MARKETS SERVICED</td>
-    <td class="val" colspan="5">${e.markets||v.markets||'National'}</td>
-  </tr>
-  <!-- Row 12: Process for Pricing & Quotes -->
-  <tr>
-    <td class="lbl">PROCESS FOR PRICING &amp; QUOTES</td>
-    <td class="val" colspan="5">${v.pricingLocation||v.havePricing||''}</td>
-  </tr>
-  <!-- Row 13: Lead Times -->
-  <tr>
-    <td class="lbl">LEAD TIMES</td>
-    <td class="val" colspan="5"></td>
-  </tr>
-  <!-- Row 14: Payment Terms -->
-  <tr>
-    <td class="lbl">PAYMENT TERMS</td>
-    <td class="val" colspan="5">${e.paymentTerms?.memberPaymentTerms||'Negotiated between vendor and member [standard]'}</td>
-  </tr>
-  <!-- Row 15: Account Setup Requirements -->
-  <tr>
-    <td class="lbl">ACCOUNT SETUP REQUIREMENTS</td>
-    <td class="val" colspan="5">Credit App, Vendor Intro, affiliation document${v.needsLOP?' LOP required':''}</td>
-  </tr>
-  <!-- Row 16: Delivery Terms -->
-  <tr>
-    <td class="lbl">DELIVERY TERMS</td>
-    <td class="val" colspan="5"></td>
-  </tr>
-  <!-- Row 17: IT Capabilities -->
-  <tr>
-    <td class="lbl">IT CAPABILITIES</td>
-    <td class="val" colspan="5">${e.notes||v.comments||''}</td>
-  </tr>
-</table>
+  const {Document,Packer,Paragraph,TextRun,Table,TableRow,TableCell,
+         BorderStyle,WidthType,AlignmentType,ShadingType,VerticalAlign}=docx;
 
-<div class="footer">
-  Generated by Prime Source VCS &nbsp;|&nbsp; ${today} &nbsp;|&nbsp; Contract file: ${fileName||'N/A'} &nbsp;|&nbsp; Confidence: ${e.extractionConfidence||'N/A'}
-  ${e.extractionConfidence&&e.extractionConfidence!=='HIGH'?'<br><span class="warn">⚠ Review all fields — extraction confidence is '+e.extractionConfidence+'</span>':''}
-</div>
+  const TEAL='4A9A82', BLUE_TITLE='2683C6', BLACK='000000', BORDER_COLOR='A0A0A0';
+  const COL_WIDTHS=[2555,3380,894,852,144,2970];
+  const TABLE_W=COL_WIDTHS.reduce((a,b)=>a+b,0);
+  const bd={style:BorderStyle.SINGLE,size:6,color:BORDER_COLOR};
+  const borders={top:bd,bottom:bd,left:bd,right:bd};
 
-<div class="no-print" style="text-align:center;margin-top:16px;padding:10px;background:#f8f9fa;border-radius:4px;font-size:9pt">
-  <button onclick="window.print()" style="padding:6px 18px;background:#1f3864;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:9pt;margin-right:8px">🖨 Print / Save as PDF</button>
-  <button onclick="window.close()" style="padding:6px 14px;background:#eee;border:1px solid #ccc;border-radius:4px;cursor:pointer;font-size:9pt">Close</button>
-</div>
-</body>
-</html>`;
-
-  const newTab=window.open('','_blank');
-  if(newTab){
-    newTab.document.write(sheetHtml);
-    newTab.document.close();
-    toast('✓ Data Sheet opened — Print or Save as PDF from the new tab','#22c55e');
-  } else {
-    const blob=new Blob([sheetHtml],{type:'text/html'});
-    const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
-    a.download=vName.replace(/[^a-zA-Z0-9]/g,'_')+'_DataSheet.html'; a.click();
-    toast('✓ Data Sheet downloaded','#22c55e');
+  function cell(text,opts={}){
+    const {span=1,bold=false,color=BLACK,size=18}=opts;
+    return new TableCell({
+      children:[new Paragraph({children:[new TextRun({text:text||'',bold,color,size})]})],
+      borders,columnSpan:span,
+      margins:{top:60,bottom:60,left:80,right:80},
+      verticalAlign:VerticalAlign.CENTER,
+    });
   }
+  function lbl(text){ return cell(text,{color:TEAL,size:16}); }
+  function val(text,span=1){ return cell(text||'',{span,size:17}); }
+
+  const table=new Table({
+    width:{size:TABLE_W,type:WidthType.DXA},
+    columnWidths:COL_WIDTHS,
+    rows:[
+      new TableRow({children:[lbl('VENDOR NAME'),val(data.vendorName,2),cell('GPO',{color:TEAL,size:16}),cell('Prime Source',{size:16}),cell('Prime Source',{size:16})]}),
+      new TableRow({children:[lbl('VENDOR ADDRESS'),val(data.vendorAddress,5)]}),
+      new TableRow({children:[lbl('VENDOR CONTACT DETAILS'),val(data.contactDetails,5)]}),
+      new TableRow({children:[lbl('CONTRACT #'),val(data.contractNo),cell('TYPE OF AGREEMENT',{color:TEAL,span:3,size:16}),val(data.agreementType)]}),
+      new TableRow({children:[lbl('START DATE'),val(data.startDate),cell('END DATE',{color:TEAL,span:3,size:16}),val(data.endDate)]}),
+      new TableRow({children:[lbl('TERM DETAILS'),val(data.termDetails,5)]}),
+      new TableRow({children:[lbl('COLLECTION FREQUENCY'),val(data.collectionFreq),cell('PERPETUITY',{color:TEAL,span:3,size:16}),val(data.perpetuity)]}),
+      new TableRow({children:[lbl('SUMMARY OF TERMS'),val(data.summaryOfTerms,5)]}),
+      new TableRow({children:[lbl('CATEGORY'),val(data.category,5)]}),
+      new TableRow({children:[lbl('PRODUCTS/SERVICES'),val(data.products,5)]}),
+      new TableRow({children:[lbl('MARKETS SERVICED'),val(data.markets,5)]}),
+      new TableRow({children:[lbl('PROCESS FOR PRICING & QUOTES'),val(data.pricingProcess,5)]}),
+      new TableRow({children:[lbl('LEAD TIMES'),val(data.leadTimes,5)]}),
+      new TableRow({children:[lbl('PAYMENT TERMS'),val(data.paymentTerms,5)]}),
+      new TableRow({children:[lbl('ACCOUNT SETUP REQUIREMENTS'),val(data.accountSetup,5)]}),
+      new TableRow({children:[lbl('DELIVERY TERMS'),val(data.deliveryTerms,5)]}),
+      new TableRow({children:[lbl('IT CAPABILITIES'),val(data.itCapabilities,5)]}),
+    ]
+  });
+
+  const doc2=new Document({
+    sections:[{
+      properties:{page:{size:{width:12240,height:15840},margin:{top:720,right:720,bottom:720,left:720}}},
+      children:[
+        new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:120},
+          children:[new TextRun({text:'Prime Source Contract Data Sheet',bold:true,size:28,color:BLUE_TITLE})]}),
+        new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:180},
+          children:[new TextRun({text:'Prime Source is pleased to announce a new addition to our vendor portfolio. The details are as follows:',size:18})]}),
+        table,
+        new Paragraph({alignment:AlignmentType.CENTER,spacing:{before:180},
+          children:[new TextRun({text:'Generated by VCS | '+today+(fileName?' | '+fileName:'')+(e.extractionConfidence?' | Confidence: '+e.extractionConfidence:''),size:14,color:'808080'})]}),
+      ]
+    }]
+  });
+
+  const buffer=await Packer.toBuffer(doc2);
+  const blob=new Blob([buffer],{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=vName.replace(/[^a-zA-Z0-9\s]/g,'').trim().replace(/\s+/g,'_')+'_Contract_Data_Sheet.docx';
+  a.click();
+  toast('✓ Data Sheet downloaded as Word document','#22c55e');
 
   // Offer Drive save
   openModal(body=>{
-    body.appendChild(el('h3',{},'📋 Data Sheet Created'));
-    body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--muted)',marginBottom:'12px'}},'Data Sheet opened in new tab. Print or Save as PDF. Also save to vendor folder in Drive?'));
+    body.appendChild(el('h3',{},'📋 Data Sheet Downloaded'));
+    body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--muted)',marginBottom:'12px'}},'Word doc saved to your Downloads folder. Also save to the vendor folder in Drive?'));
     const btns2=el('div',{class:'modal-btns'});
     btns2.appendChild(el('button',{class:'btn-primary',onclick:async()=>{
       closeModal();
-      toast('⏳ Saving data sheet to Drive...','#4f7cff');
+      toast('⏳ Saving to Drive...','#4f7cff');
       try{
+        // Convert buffer to base64
+        const arr=new Uint8Array(buffer);
+        let b64='';
+        const chunk=8192;
+        for(let i=0;i<arr.length;i+=chunk){
+          b64+=String.fromCharCode(...arr.subarray(i,Math.min(i+chunk,arr.length)));
+        }
+        b64=btoa(b64);
         const resp=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
-          body:JSON.stringify({action:'saveComparisonReport',vendorName:vName,reportHtml:sheetHtml,reportName:vName+'_DataSheet_'+new Date().toISOString().slice(0,10)})});
+          body:JSON.stringify({action:'uploadVendorFile',vendorName:vName,
+            fileName:vName.replace(/[^a-zA-Z0-9\s]/g,'').trim()+'_Contract_Data_Sheet.docx',
+            fileContent:b64,mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'})});
         const d=await resp.json();
-        if(d.status==='ok') toast('✓ Data sheet saved to Vendor Contract and Pricing/'+d.vendorFolder,'#22c55e');
+        if(d.status==='ok') toast('✓ Data sheet saved to Drive: '+d.vendorFolder,'#22c55e');
         else toast('Drive save failed: '+(d.message||'unknown'),'#ef4444');
       }catch(e2){toast('Drive save error: '+e2.message,'#ef4444');}
     }},'☁ Save to Drive'));
@@ -15555,24 +15515,29 @@ function renderAnalytics(c) {
       return match||sfName;
     };
     opps.forEach(o=>{
-      const sfName=o.Owner?.Name||'Unknown';
+      const sfName=o._ownerName||o.Owner?.Name||'Unknown';
       const n=matchRepName(sfName);
       addRep(n,''); repMap[n].opps.push(o); repMap[n].pipelineValue+=Number(o.Amount||0);
     });
     tasks.forEach(t=>{
-      const sfName=t.Owner?.Name||'Unknown';
+      const sfName=t.Owner?.Name||t._ownerName||'Unknown';
       const n=matchRepName(sfName);
       addRep(n,''); repMap[n].tasks.push(t);
       if(t.ActivityDate&&new Date(t.ActivityDate)<today) repMap[n].overdueTask++;
     });
     cases.forEach(ca=>{
-      const sfName=ca.Owner?.Name||'Unknown';
+      const sfName=ca._ownerName||ca.Owner?.Name||'Unknown';
       const n=matchRepName(sfName);
       addRep(n,''); repMap[n].cases.push(ca);
     });
-    // Filter out 'Unknown' and sort: VCS reps first by pipeline value
+    // Filter: keep SF active users + anyone with real activity; remove 'Unknown' and empty inactive
     const reps=Object.values(repMap)
-      .filter(r=>r.name&&r.name!=='Unknown')
+      .filter(r=>{
+        if(!r.name||r.name==='Unknown') return false;
+        // Keep if they're a known SF active user OR if they have actual data
+        if(r._isVCSRep) return true;
+        return r.opps.length>0||r.tasks.length>0||r.cases.length>0;
+      })
       .sort((a,b)=>{
         if(a._isVCSRep&&!b._isVCSRep) return -1;
         if(!a._isVCSRep&&b._isVCSRep) return 1;
@@ -18924,53 +18889,98 @@ function showKeywordSuggestions(q) {
   kw.style.left=rect.left+'px';
   kw.style.minWidth=rect.width+'px';
 
-  // Build suggestions from vendor data
-  const seen=new Set();
-  const suggestions=[];
-  const qWords=q.split(/\s+/).filter(w=>w.length>1);
-  const pool=[...S.vendors,...(S.channelVendors||[]),...(S.itw||[]),...(S.reviews||[])];
+  const ql=q.toLowerCase().trim();
 
-  // Build a set of individual meaningful words from all vendor data
-  const wordFreq={};
+  // Build keyword map from actual vendor data: word → {categories, count, vendors}
+  const wordMap={};
   const stopWords=new Set(['and','the','for','with','from','that','this','are','has','have',
-    'not','but','our','your','all','its','can','will','per','via','inc','llc','ltd','corp']);
+    'not','but','our','your','all','its','can','will','per','via','inc','llc','ltd','corp','div']);
+
+  const pool=[...S.vendors,...(S.channelVendors||[]),...(S.itw||[])];
   pool.forEach(v=>{
-    const terms=[v.category,v.subCategory,v.product,v.about,v.classOfTrade,v.name].filter(Boolean);
-    terms.forEach(t=>{
-      // Extract individual words from each term
-      String(t).toLowerCase().split(/[\s\-\/,&()]+/).forEach(word=>{
+    // Extract words from category, subCategory, product, about
+    const fields=[
+      {text:v.category||'',weight:3,type:'category'},
+      {text:v.subCategory||'',weight:3,type:'category'},
+      {text:v.product||'',weight:2,type:'product'},
+      {text:v.about||'',weight:1,type:'description'},
+      {text:v.name||'',weight:1,type:'vendor'},
+    ];
+    fields.forEach(({text,weight,type})=>{
+      if(!text) return;
+      // Split on common delimiters, extract words 3+ chars
+      text.toLowerCase().split(/[\s,\/\-&()]+/).forEach(word=>{
         word=word.replace(/[^a-z0-9]/g,'');
         if(word.length<3||stopWords.has(word)) return;
-        wordFreq[word]=(wordFreq[word]||0)+1;
+        if(!wordMap[word]) wordMap[word]={count:0,weight:0,types:new Set(),vendors:new Set()};
+        wordMap[word].count++;
+        wordMap[word].weight+=weight;
+        wordMap[word].types.add(type);
+        wordMap[word].vendors.add(v.name);
       });
-    });
-  });
-
-  // Find words that partially match the query and appear in multiple vendors
-  qWords.forEach(qw=>{
-    Object.entries(wordFreq).forEach(([word,freq])=>{
-      if(!seen.has(word)&&word!==qw&&word.length>=3){
-        // Match: word contains query OR query contains word OR they share a root
-        const isMatch=word.includes(qw)||qw.includes(word.slice(0,4));
-        if(isMatch&&freq>=1){
-          seen.add(word);
-          // Higher score for exact prefix match and frequency
-          const score=(word.startsWith(qw)?3:word.includes(qw)?2:1)*Math.min(freq,5);
-          suggestions.push({text:word,score,type:freq>3?'category':'keyword'});
+      // Also keep multi-word phrases for categories (e.g. "durable medical")
+      if(type==='category'||type==='product'){
+        const words=text.toLowerCase().split(/[\s,\/]+/).filter(w=>w.length>2&&!stopWords.has(w));
+        if(words.length>=2){
+          // Add bigrams
+          for(let i=0;i<words.length-1;i++){
+            const bigram=words[i]+' '+words[i+1];
+            if(!wordMap[bigram]) wordMap[bigram]={count:0,weight:0,types:new Set(),vendors:new Set()};
+            wordMap[bigram].count++;
+            wordMap[bigram].weight+=weight*2; // boost phrases
+            wordMap[bigram].types.add(type);
+            wordMap[bigram].vendors.add(v.name);
+          }
         }
       }
     });
   });
 
-  suggestions.sort((a,b)=>b.score-a.score);
-  const top=suggestions.slice(0,10);
+  // Score candidates against query
+  const candidates=[];
+  const seen=new Set([ql]);
+
+  Object.entries(wordMap).forEach(([word,data])=>{
+    if(seen.has(word)) return;
+    const wl=word.toLowerCase();
+    let score=0;
+
+    // Direct substring match (word contains query or query contains word)
+    if(wl.includes(ql)) score+=wl===ql?0:3; // contains query but isn't identical
+    if(ql.includes(wl)&&wl!==ql&&wl.length>=3) score+=2; // query contains word
+
+    // Prefix match
+    if(wl.startsWith(ql)) score+=4;
+    if(ql.startsWith(wl.slice(0,4))&&wl.length>4) score+=1;
+
+    // Phonetic / abbreviation matching (e.g. DME → durable medical)
+    // If query is short (≤4 chars), check if it's initials of a phrase
+    if(ql.length<=4&&word.includes(' ')){
+      const initials=word.split(' ').map(w=>w[0]).join('');
+      if(initials===ql) score+=5; // exact initials match (DME → durable medical equipment)
+    }
+
+    if(score<=0) return; // no match at all
+
+    // Weight by data quality
+    score += Math.log(data.weight+1)*0.5;
+    // Boost category/product types
+    if(data.types.has('category')) score+=1.5;
+    if(data.types.has('product')) score+=0.5;
+
+    seen.add(word);
+    candidates.push({text:word,score,count:data.vendors.size,type:data.types.has('category')?'category':'keyword'});
+  });
+
+  candidates.sort((a,b)=>b.score-a.score);
+  const top=candidates.slice(0,10);
 
   if(!top.length){ hideKeywordSuggestions(); return; }
 
   kw.innerHTML='';
   const hdr=document.createElement('div');
   hdr.style.cssText='font-size:8px;color:var(--muted);padding:5px 12px;border-bottom:1px solid var(--border);font-weight:600;letter-spacing:.04em;text-transform:uppercase';
-  hdr.textContent='💡 Keyword Suggestions — click to search';
+  hdr.textContent='💡 Try searching for:';
   kw.appendChild(hdr);
 
   top.forEach(s=>{
@@ -18980,7 +18990,7 @@ function showKeywordSuggestions(q) {
     badge.style.cssText='font-size:7px;padding:1px 5px;border-radius:3px;background:'+(s.type==='category'?'rgba(79,124,255,.12)':'rgba(34,197,94,.1)')+';color:'+(s.type==='category'?'var(--blue)':'var(--green)')+';flex-shrink:0';
     badge.textContent=s.type==='category'?'Category':'Keyword';
     const label=document.createElement('span');
-    label.textContent=s.text;
+    label.textContent=s.text+(s.count>1?' ('+s.count+')':'');
     item.appendChild(badge); item.appendChild(label);
     item.addEventListener('mouseenter',()=>item.style.background='var(--bg)');
     item.addEventListener('mouseleave',()=>item.style.background='');
