@@ -17267,30 +17267,33 @@ function renderSettings(c) {
             const hidden=hf.includes(f.key);
             const btn=document.createElement('button');
             btn.dataset.fkey=f.key;
-            btn.textContent=f.label+' '+(hidden?'🚫':'✅');
-            btn.style.cssText='font-size:8px;padding:2px 8px;border-radius:4px;cursor:pointer;font-weight:500;'
-              +'border:1px solid '+(hidden?'rgba(239,68,68,.4)':'rgba(34,197,94,.4)')+';'
-              +'background:'+(hidden?'rgba(239,68,68,.1)':'rgba(34,197,94,.1)')+';'
-              +'color:'+(hidden?'#f87171':'#4ade80')+';';
+            // Track hidden state on the button itself so we can toggle without rebuilding
+            btn._hidden = hidden;
+            function updateBtnStyle(isHidden){
+              btn.textContent=f.label+' '+(isHidden?'🚫':'✅');
+              btn.style.cssText='font-size:8px;padding:2px 8px;border-radius:4px;cursor:pointer;font-weight:500;'
+                +'border:1px solid '+(isHidden?'rgba(239,68,68,.4)':'rgba(34,197,94,.4)')+';'
+                +'background:'+(isHidden?'rgba(239,68,68,.1)':'rgba(34,197,94,.1)')+';'
+                +'color:'+(isHidden?'#f87171':'#4ade80')+';';
+            }
+            updateBtnStyle(hidden);
             btn.addEventListener('click', function(e){
               e.stopPropagation();
               e.preventDefault();
+              const nowHidden = btn._hidden;
               const all=getApprovedUsers();
               const i=all.findIndex(x=>x.email===userEmail);
               if(i<0){ console.warn('[FieldToggle] user not found:', userEmail); return; }
               let newHf=[...(all[i].hiddenFields||[])];
-              if(hidden){ newHf=newHf.filter(k=>k!==f.key); }
+              if(nowHidden){ newHf=newHf.filter(k=>k!==f.key); }
               else { if(!newHf.includes(f.key)) newHf.push(f.key); }
               all[i].hiddenFields=newHf;
               all[i]._customHiddenFields=true;
               localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-              console.log('[FieldToggle] toggled', f.key, 'for', userEmail, '→ hidden:', !hidden, 'newHf:', newHf);
+              // Update visual immediately — no rebuild needed
+              btn._hidden = !nowHidden;
+              updateBtnStyle(!nowHidden);
               setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
-              // Rebuild ONLY the field access section, not the whole settings page
-              requestAnimationFrame(()=>{
-                container.innerHTML='';
-                buildFieldAccess(container,userEmail);
-              });
             });
             fieldGrid.appendChild(btn);
           });
