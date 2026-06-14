@@ -2883,12 +2883,19 @@ function insertCellSorted(rowContent, newRef, newCell, colLetter) {
 }
 
 // ─── Actions ──────────────────────────────────────────────────────────────────
-function markDirty(vendor) {
+function markDirty(vendor, fieldChanged, oldVal, newVal) {
   S.dirty.add(vendor.name);
   vendor._dirty = true;
-  // Track by row number too — used by dirty-cells merge
   if (!S.dirtyRows) S.dirtyRows = new Map();
   if (vendor._row) S.dirtyRows.set(vendor._row, vendor.name);
+  // History log
+  if(!S.changeHistory) S.changeHistory=[];
+  S.changeHistory.push({
+    ts:new Date().toISOString(),user:USER.email||'',
+    vendor:vendor.name,field:fieldChanged||'',
+    from:oldVal!==undefined?String(oldVal):'',
+    to:newVal!==undefined?String(newVal):'edit'
+  });
 }
 
 // ─── Structured Notes System ──────────────────────────────────────────────────
@@ -9342,15 +9349,39 @@ function renderSFFinanceView(wrap, spendLeaderboard, trueUpAlerts) {
       ? SPEND_STATE.data.vendors.map(v=>({name:v.name,spend:v.totalSpend||0,totalFees:v.totalFees||0,contractedPct:v.contractedPct||0}))
       : (spendLeaderboard||[]).map(v=>({name:v.name,spend:v.spend||0,totalFees:0,contractedPct:0}))
   ).slice(0,25);
-  const kRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'8px',marginBottom:'16px'}});
-  [{label:'YTD Total Spend',val:'$'+Math.round(totalSpend).toLocaleString(),color:'var(--blue)',sub:'Across all SF vendors'},
-   {label:'Expected Commission',val:'$'+Math.round(totalExpected).toLocaleString(),color:'var(--green)',sub:'Based on contracted rates'},
-   {label:'Vendors with Gaps',val:trueUpAlerts.length,color:trueUpAlerts.length>0?'var(--red)':'var(--green)',sub:'No fee or under-paying'},
+  // Show no-data CTA if spend hasn't been loaded
+  if(!hasSpendData){
+    const cta=el('div',{style:{background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'6px',padding:'20px',textAlign:'center',marginBottom:'16px'}});
+    cta.appendChild(el('p',{style:{fontSize:'12px',color:'var(--muted)',marginBottom:'10px'}},'No spend data loaded. Go to the Spend page to load SF financial data, or load the SF Board first.'));
+    const btnRow=el('div',{style:{display:'flex',gap:'8px',justifyContent:'center'}});
+    btnRow.appendChild(el('button',{class:'btn-primary',onclick(){S.view='spend';render();setTimeout(()=>loadSpendData(),400);}},'→ Load Spend Data'));
+    btnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){loadSFBoard();}},'Reload SF Board'));
+    cta.appendChild(btnRow);
+    wrap.appendChild(cta);
+  }
+
+  // Contract metrics from VCS data (always available)
+  const totalVendors=S.vendors.length;
+  const withFee=S.vendors.filter(v=>parseFee(v.adminFee)>0).length;
+  const perpVendors=S.vendors.filter(v=>v.perpetuity==='Yes').length;
+  const totalContractedFee=S.vendors.reduce((s,v)=>{const f=parseFee(v.adminFee)||0;return s+f;},0);
+  const avgFee=withFee>0?Math.round(totalContractedFee/withFee*10)/10:0;
+
+  const kRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'8px',marginBottom:'12px'}});
+  [
+    {label:'YTD Total Spend',val:totalSpend>0?'$'+Math.round(totalSpend).toLocaleString():'Load Spend →',color:totalSpend>0?'var(--blue)':'var(--muted)',sub:'From Salesforce AP_Spend data',click:totalSpend===0?()=>{S.view='spend';render();setTimeout(()=>loadSpendData(),400);}:null},
+    {label:'Expected Commission',val:totalExpected>0?'$'+Math.round(totalExpected).toLocaleString():'—',color:totalExpected>0?'var(--green)':'var(--muted)',sub:'Based on contracted admin fee %'},
+    {label:'Vendors with Revenue Gaps',val:trueUpAlerts.length,color:trueUpAlerts.length>0?'var(--red)':'var(--green)',sub:'Under-paying or no fee set'},
+    {label:'Vendors with Fee Set',val:withFee+' / '+totalVendors,color:'var(--blue)',sub:'Avg fee: '+avgFee+'%'},
+    {label:'Perpetuity Contracts',val:perpVendors,color:perpVendors>0?'var(--green)':'var(--muted)',sub:'Fees survive contract end'},
+    {label:'Revenue at Risk',val:S.vendors.filter(v=>{const e=getCurrentExpiry(v);return e&&dayDiff(e,new Date())<=90&&!isAutoRenew(v);}).length+' contracts',color:'var(--amber)',sub:'Expiring in 90d, no auto-renew'},
   ].forEach(k=>{
-    const t=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px',textAlign:'center'}});
-    t.appendChild(el('div',{style:{fontSize:'22px',fontWeight:'700',color:k.color}},String(k.val)));
-    t.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px'}},k.label));
-    if(k.sub) t.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',fontStyle:'italic'}},k.sub));
+    const t=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px',textAlign:'center',cursor:k.click?'pointer':'default'},onclick:k.click||null});
+    t.appendChild(el('div',{style:{fontSize:'20px',fontWeight:'700',color:k.color,lineHeight:'1.2'}},String(k.val)));
+    t.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'3px',fontWeight:'600'}},k.label));
+    if(k.sub) t.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',fontStyle:'italic',marginTop:'1px'}},k.sub));
+    if(k.click) t.addEventListener('mouseenter',()=>t.style.background='var(--bg)');
+    if(k.click) t.addEventListener('mouseleave',()=>t.style.background='var(--card)');
     kRow.appendChild(t);
   });
   wrap.appendChild(kRow);
@@ -9477,13 +9508,62 @@ function renderSFSalesView(wrap, opps, cases, tasks) {
   const byStage={};
   opps.forEach(o=>{const s=o.StageName||'Unknown';if(!byStage[s])byStage[s]={count:0,value:0,weighted:0};byStage[s].count++;byStage[s].value+=Number(o.Amount||0);byStage[s].weighted+=Number(o.Amount||0)*Number(o.Probability||50)/100;});
 
+  // Summary tiles
+  const overdueOpps=opps.filter(o=>o.CloseDate&&new Date(o.CloseDate)<new Date());
+  const closingThisMonth=opps.filter(o=>{if(!o.CloseDate)return false;const d=new Date(o.CloseDate);const now=new Date();return d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth();});
+  const summaryRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:'8px',marginBottom:'12px'}});
+  [
+    {label:'Total Pipeline',val:'$'+Math.round(totalPipe).toLocaleString(),sub:opps.length+' open opportunities',color:'var(--blue)'},
+    {label:'Weighted Pipeline',val:'$'+Math.round(weightedPipe).toLocaleString(),sub:'By probability %',color:'var(--green)'},
+    {label:'Open Opportunities',val:opps.length,sub:'All stages',color:'var(--blue)'},
+    {label:'Closing This Month',val:closingThisMonth.length,sub:'$'+Math.round(closingThisMonth.reduce((s,o)=>s+Number(o.Amount||0),0)).toLocaleString(),color:closingThisMonth.length>0?'var(--green)':'var(--muted)'},
+    {label:'Overdue Close Date',val:overdueOpps.length,sub:'Past close date',color:overdueOpps.length>0?'var(--red)':'var(--green)'},
+    {label:'Open Cases',val:cases.length,sub:cases.filter(c=>c.Priority==='High').length+' High priority',color:cases.filter(c=>c.Priority==='High').length>0?'var(--red)':'var(--muted)'},
+  ].forEach(k=>{
+    const t=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px',textAlign:'center'}});
+    t.appendChild(el('div',{style:{fontSize:'20px',fontWeight:'700',color:k.color,lineHeight:'1.2'}},String(k.val)));
+    t.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'3px',fontWeight:'600'}},k.label));
+    if(k.sub) t.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',fontStyle:'italic',marginTop:'1px'}},k.sub));
+    summaryRow.appendChild(t);
+  });
+  wrap.appendChild(summaryRow);
+
   // Pipeline by stage
-  const kRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:'8px',marginBottom:'16px'}});
-  Object.entries(byStage).sort((a,b)=>b[1].value-a[1].value).forEach(([stage,data])=>{
-    const t=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'10px',textAlign:'center'}});
-    t.appendChild(el('div',{style:{fontSize:'15px',fontWeight:'700',color:'var(--blue)'}},'$'+Math.round(data.value).toLocaleString()));
-    t.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px'}},stage));
-    t.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)'}},data.count+' opp'+(data.count!==1?'s':'')));
+  if(Object.keys(byStage).length){
+    const stageHdr=el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'6px',color:'var(--muted)'}},opps.some(o=>Number(o.Amount||0)>0)?'Pipeline by Stage:':'Opportunities by Stage (no amount data in SF):');
+    wrap.appendChild(stageHdr);
+  }
+  const kRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:'6px',marginBottom:'16px'}});
+  Object.entries(byStage).sort((a,b)=>b[1].count-a[1].count).forEach(([stage,data])=>{
+    const t=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'8px',textAlign:'center',cursor:'pointer'},
+      onclick(){
+        openModal(body=>{
+          body.style.minWidth='min(80vw,900px)';
+          body.appendChild(el('h3',{style:{marginBottom:'10px'}},stage+' ('+data.count+' opps)'));
+          const tbl=el('table',{class:'data-table'});
+          const th=el('thead');const hr=el('tr');
+          ['Opportunity','Account','Amount','Close Date','Owner'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+          th.appendChild(hr);tbl.appendChild(th);
+          const tb=el('tbody');
+          opps.filter(o=>(o.StageName||'Unknown')===stage).forEach(o=>{
+            const tr=el('tr',{style:{cursor:'pointer'},onclick(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view','_blank');}});
+            tr.appendChild(el('td',{style:{fontWeight:'600',fontSize:'10px',color:'var(--blue)'}},o.Name||'—'));
+            tr.appendChild(el('td',{style:{fontSize:'9px'}},o._accountName||'—'));
+            tr.appendChild(el('td',{style:{fontWeight:'700',color:'var(--green)'}},'$'+Math.round(Number(o.Amount||0)).toLocaleString()));
+            tr.appendChild(el('td',{style:{fontSize:'9px'}},o.CloseDate||'—'));
+            tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},o._ownerName||'—'));
+            tb.appendChild(tr);
+          });
+          tbl.appendChild(tb);body.appendChild(tbl);
+          body.appendChild(el('p',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'6px'}},'↗ Click row to open in Salesforce'));
+          const b=el('div',{class:'modal-btns'});b.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(b);
+        });
+      }});
+    t.appendChild(el('div',{style:{fontSize:'14px',fontWeight:'700',color:'var(--blue)'}},data.value>0?'$'+Math.round(data.value/1000)+'K':data.count+' opps'));
+    t.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'2px'}},stage));
+    t.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)'}},data.count+' opp'+(data.count!==1?'s':'')));
+    t.addEventListener('mouseenter',()=>t.style.background='var(--bg)');
+    t.addEventListener('mouseleave',()=>t.style.background='var(--card)');
     kRow.appendChild(t);
   });
   wrap.appendChild(kRow);
@@ -15679,8 +15759,36 @@ function renderAnalytics(c) {
       sd.forEach(v=>{const k=v.category||'Other';catSpend[k]=(catSpend[k]||0)+v.totalSpend;});
       const topCatSpend=Object.entries(catSpend).sort((a,b)=>b[1]-a[1]).slice(0,10);
       const PALETTE=['#4f7cff','#22c55e','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316','#ec4899','#10b981','#6366f1'];
-      new Chart(catC,{type:'doughnut',data:{labels:topCatSpend.map(c=>c[0]),datasets:[{data:topCatSpend.map(c=>c[1]),backgroundColor:PALETTE,borderWidth:2,borderColor:'var(--card)'}]},options:{responsive:true,plugins:{legend:{position:'right',labels:{font:{size:9},color:'var(--text)',boxWidth:10}},tooltip:{callbacks:{label:ctx=>ctx.label+': $'+Math.round(ctx.raw).toLocaleString()}}},onClick(e,els){if(els.length){const cat=topCatSpend[els[0].index][0];const catVendors=sd.filter(v=>v.category===cat);openModal(body=>{body.appendChild(el('h3',{},'Spend: '+cat));body.appendChild(buildTable(['Vendor','YTD Spend','Fees','Fee Rate'],catVendors,v=>[v.name,'$'+Math.round(v.totalSpend).toLocaleString(),'$'+Math.round(v.totalFees).toLocaleString(),v.contractedPct?v.contractedPct.toFixed(2)+'%':'—']));const btns=el('div',{class:'modal-btns'});
-      const _catCInst=Chart.getChart(catC); if(_catCInst){ catC._chartInstance=_catCInst; catC._storedConfig={type:_catCInst.config.type,data:JSON.parse(JSON.stringify(_catCInst.config.data)),options:_catCInst.config.options}; }btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(btns);});}}}});
+      new Chart(catC,{type:'doughnut',data:{labels:topCatSpend.map(c=>c[0]),datasets:[{data:topCatSpend.map(c=>c[1]),backgroundColor:PALETTE,borderWidth:2,borderColor:'var(--card)'}]},options:{responsive:true,plugins:{legend:{position:'right',labels:{font:{size:9},color:'var(--text)',boxWidth:10}},tooltip:{callbacks:{label:ctx=>ctx.label+': $'+Math.round(ctx.raw).toLocaleString()}}},onClick(e,els){if(els.length){const cat=topCatSpend[els[0].index][0];
+            // 'Other' catches vendors with no category
+            const catVendors=cat==='Other'?sd.filter(v=>!v.category):sd.filter(v=>v.category===cat);
+            openModal(body=>{
+              body.style.minWidth='min(70vw,800px)';
+              body.appendChild(el('h3',{style:{marginBottom:'10px'}},'Spend: '+cat+' ('+catVendors.length+' vendors)'));
+              // Clickable vendor rows
+              const tbl=el('table',{class:'data-table'});
+              const th=el('thead');const hr=el('tr');
+              ['Vendor','YTD Spend','Fees','Fee Rate'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+              th.appendChild(hr);tbl.appendChild(th);
+              const tb=el('tbody');
+              catVendors.sort((a,b)=>b.totalSpend-a.totalSpend).forEach(v=>{
+                const vcsV=S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));
+                const feeRate=v.totalSpend>0&&v.totalFees>0?Math.round(v.totalFees/v.totalSpend*1000)/10+'%':'—';
+                const tr=el('tr',{style:{cursor:vcsV?'pointer':'default'},onclick(){if(vcsV)openDetail(vcsV);}});
+                tr.appendChild(el('td',{style:{fontWeight:'600',fontSize:'10px',color:vcsV?'var(--blue)':'var(--text)'}},v.name+(vcsV?'':' ⚠')));
+                tr.appendChild(el('td',{style:{fontWeight:'700',color:'var(--blue)'}},'$'+Math.round(v.totalSpend).toLocaleString()));
+                tr.appendChild(el('td',{style:{color:'var(--green)'}},'$'+Math.round(v.totalFees||0).toLocaleString()));
+                tr.appendChild(el('td',{style:{color:'var(--muted)',fontSize:'9px'}},feeRate));
+                tb.appendChild(tr);
+              });
+              tbl.appendChild(tb);body.appendChild(tbl);
+              body.appendChild(el('p',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'6px'}},'↗ Click vendor to open in VCS'));
+              const b=el('div',{class:'modal-btns'});b.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(b);
+            });
+          }
+        }
+      }});
+      const _catCInst=Chart.getChart(catC); if(_catCInst){ catC._chartInstance=_catCInst; catC._storedConfig={type:_catCInst.config.type,data:JSON.parse(JSON.stringify(_catCInst.config.data)),options:_catCInst.config.options}; }
 
       // Fee rate vs actual rate scatter
       const rateSec=el('div',{class:'chart-section'});
