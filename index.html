@@ -9624,8 +9624,8 @@ async function loadSFBoard(){
 
     // No IN clause — fetch recent records, match client-side to VCS vendors
     const [openOpps,openCases,openTasks,spendResult]=await Promise.all([
-      sfQuery('SELECT Id,Name,StageName,Amount,CloseDate,Probability,Vendor__r.Name,Account.Name,Owner.Name,OwnerId FROM Opportunity WHERE IsClosed=false ORDER BY CloseDate ASC NULLS LAST LIMIT 200').catch(()=>({records:[]})),
-      sfQuery("SELECT Id,Subject,Status,Priority,CreatedDate,CaseNumber,Vendor__r.Name,Account.Name,Owner.Name,OwnerId FROM Case WHERE Status!='Closed' ORDER BY CreatedDate DESC LIMIT 100").catch(()=>({records:[]})),
+      sfQuery('SELECT Id,Name,StageName,Amount,CloseDate,Probability,AccountId,Account.Name,OwnerId,Owner.Name FROM Opportunity WHERE IsClosed=false ORDER BY CloseDate ASC NULLS LAST LIMIT 200').catch(e=>{console.error('[SF Board] Opp query failed:',e);return {records:[]}}),
+      sfQuery("SELECT Id,Subject,Status,Priority,CreatedDate,CaseNumber,AccountId,Account.Name,OwnerId,Owner.Name FROM Case WHERE Status!='Closed' ORDER BY Priority,CreatedDate DESC LIMIT 200").catch(()=>({records:[]})),
       sfQuery('SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM Task WHERE IsClosed=false ORDER BY ActivityDate ASC LIMIT 100').catch(()=>({records:[]})),
       sfQuery('SELECT Vendor__c,Vendor__r.Name,SUM(Sales__c) spendTotal FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= '+yearStart+(yearEnd?' AND Reported_Date__c <= '+yearEnd:'')+' GROUP BY Vendor__c,Vendor__r.Name ORDER BY SUM(Sales__c) DESC LIMIT 100').catch(()=>({records:[]})),
     ]);
@@ -9850,11 +9850,15 @@ CRITICAL RULES — read every one before extracting:
    - Calculate expiry independently: effectiveDate + contractTermMonths = calculated expiry. If this differs from stated expiry, flag as discrepancy.
    - Note: effective 6/1/2021 + 36 months = 5/31/2024 (not 6/1/2024). Count carefully.
 
-3. AUTO-RENEWAL — normalize to standard values:
-   - "12 months" = "1 year" = "annual" → use "Yes — 1 year"
-   - "24 months" = "2 years" → use "Yes — 2 years"
-   - "same term" or "by term" → use "Yes — Same Term"
-   - Always use the shortest natural-language form.
+3. AUTO-RENEWAL — normalize to VCS picklist values exactly:
+   - No auto-renewal → "No"
+   - Annual / 1 year / 12 months → "Yes — 1 year"
+   - 2 years / 24 months → "Yes — 2 years"
+   - 3 years / 36 months → "Yes — 3 years"
+   - Renews for same term as original → "Yes — Same Term"
+   - Year-to-year → "Year to Year"
+   - If yes but period unclear → "Yes"
+   - ALSO extract autoRenewalNoticeDays: number of days required to prevent renewal (e.g. 90, 120)
 
 4. TERMINATION — extract ALL clauses:
    - There are typically 3: (a) mutual without cause, (b) non-renewal notice, (c) material breach/cure.
@@ -10018,8 +10022,30 @@ const CONTRACT_FIELD_MAP = [
   {field:'adminFeeNotes',  label:'Admin Fee Notes',        extract:ex=>ex.adminFee?.notes||null},
   {field:'agreementType',  label:'Agreement Type',         extract:ex=>ex.agreementType||null},
   {field:'contractNo',     label:'Contract #',             extract:ex=>ex.contractNumber||null},
-  {field:'autoRenew',      label:'Auto-Renewal',           extract:ex=>ex.autoRenewal||null},
-  {field:'autoRenewType',  label:'Auto-Renewal Period',    extract:ex=>ex.autoRenewal&&ex.autoRenewal!=='No'?ex.autoRenewal.replace(/^Yes\s*[\u2014-]\s*/i,'').trim():null},
+  {field:'autoRenew',      label:'Auto-Renewal',           extract:ex=>{
+    const ar=ex.autoRenewal||null;
+    if(!ar) return null;
+    if(ar.toLowerCase()==='no') return 'No';
+    if(/same.term|by.term/i.test(ar)) return 'Yes - By Term';
+    if(/1.year|annual|12.month/i.test(ar)) return 'Yes - By Year';
+    if(/2.year|24.month/i.test(ar)) return 'Yes - By Year';
+    if(/3.year|36.month/i.test(ar)) return 'Yes - By Year';
+    if(/year.to.year|ytoy/i.test(ar)) return 'Year to Year';
+    if(/yes/i.test(ar)) return 'Yes';
+    return ar;
+  }},
+  {field:'autoRenewType',  label:'Auto-Renewal Type',      extract:ex=>{
+    const ar=ex.autoRenewal||null;
+    if(!ar||ar.toLowerCase()==='no') return null;
+    if(/same.term|by.term/i.test(ar)) return 'By Term';
+    if(/year.to.year/i.test(ar)) return 'Year to Year';
+    // Extract period: "Yes — 2 years" → "2 Years"
+    const mYr=ar.match(/(\d+)\s*year/i);
+    if(mYr) return mYr[1]==='1'?'Annual':mYr[1]==='2'?'2 Years':'3 Years';
+    const mMo=ar.match(/(\d+)\s*month/i);
+    if(mMo){ const m=parseInt(mMo[1]); return m===12?'Annual':m===24?'2 Years':m===36?'3 Years':'Annual'; }
+    return 'By Year';
+  }},
   {field:'terminationNotice',label:'Termination Notice',   extract:ex=>ex.terminationNotice||
     (ex.terminationClauses?[
       ex.terminationClauses.withoutCause?'Without cause: '+ex.terminationClauses.withoutCause:'',
@@ -11593,7 +11619,12 @@ async function loadSpendData(){
       const actualPct=v.totalSpend>0?((v.totalFees/v.totalSpend)*100):0;
       const expectedRevenue=contractedPct>0?Math.round(v.totalSpend*contractedPct/100):0;
       const gap=v.totalFees-expectedRevenue; // positive = over, negative = under
-      return {...v,contractedPct:contractedPct||null,actualPct,expectedRevenue,gap,category:vcsVendor?.category||v.category};
+      // Fallback chain: VCS direct vendor → channel vendor → SF Category__c → subcat from SF name match
+      const chV=S.channelVendors?.find(sv=>vendorNamesMatch(sv.name,v.name));
+      const bestCat=vcsVendor?.category||chV?.category||v.category||'';
+      return {...v,contractedPct:contractedPct||null,actualPct,expectedRevenue,gap,
+        category:bestCat,
+        _vcsMatch:!!vcsVendor||!!chV};
     }).sort((a,b)=>b.totalSpend-a.totalSpend);
 
     const totalSpend=vendorSpend.reduce((s,v)=>s+v.totalSpend,0);
@@ -17197,26 +17228,33 @@ function renderSettings(c) {
           const fieldGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'8px'}});
           allFields.forEach(f=>{
             const hidden=hf.includes(f.key);
-            const btn=el('button',{
-              'data-fkey':f.key,
-              style:{
-                fontSize:'8px',padding:'2px 8px',borderRadius:'4px',cursor:'pointer',
-                border:'1px solid '+(hidden?'rgba(239,68,68,.4)':'rgba(34,197,94,.4)'),
-                background:hidden?'rgba(239,68,68,.1)':'rgba(34,197,94,.1)',
-                color:hidden?'#f87171':'#4ade80',
-                fontWeight:'500'
-              },
-              onclick(e){
-                e.stopPropagation();
-                const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
-                let newHf=[...(all[i].hiddenFields||[])];
-                if(hidden){newHf=newHf.filter(k=>k!==f.key);}else{newHf.push(f.key);}
-                all[i].hiddenFields=newHf;all[i]._customHiddenFields=true;
-                localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-                setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
-                requestAnimationFrame(()=>buildFieldAccess(container,userEmail));
-              }
-            },f.label+' '+(hidden?'🚫':'✅'));
+            const btn=document.createElement('button');
+            btn.dataset.fkey=f.key;
+            btn.textContent=f.label+' '+(hidden?'🚫':'✅');
+            btn.style.cssText='font-size:8px;padding:2px 8px;border-radius:4px;cursor:pointer;font-weight:500;'
+              +'border:1px solid '+(hidden?'rgba(239,68,68,.4)':'rgba(34,197,94,.4)')+';'
+              +'background:'+(hidden?'rgba(239,68,68,.1)':'rgba(34,197,94,.1)')+';'
+              +'color:'+(hidden?'#f87171':'#4ade80')+';';
+            btn.addEventListener('click', function(e){
+              e.stopPropagation();
+              e.preventDefault();
+              const all=getApprovedUsers();
+              const i=all.findIndex(x=>x.email===userEmail);
+              if(i<0){ console.warn('[FieldToggle] user not found:', userEmail); return; }
+              let newHf=[...(all[i].hiddenFields||[])];
+              if(hidden){ newHf=newHf.filter(k=>k!==f.key); }
+              else { if(!newHf.includes(f.key)) newHf.push(f.key); }
+              all[i].hiddenFields=newHf;
+              all[i]._customHiddenFields=true;
+              localStorage.setItem(AUTH_KEY,JSON.stringify(all));
+              console.log('[FieldToggle] toggled', f.key, 'for', userEmail, '→ hidden:', !hidden, 'newHf:', newHf);
+              setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+              // Rebuild ONLY the field access section, not the whole settings page
+              requestAnimationFrame(()=>{
+                container.innerHTML='';
+                buildFieldAccess(container,userEmail);
+              });
+            });
             fieldGrid.appendChild(btn);
           });
           container.appendChild(fieldGrid);
