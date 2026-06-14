@@ -2956,10 +2956,21 @@ function prependStructuredNote(vendor, content, tag) {
 }
 
 // ─── Original note functions (updated to use structured format) ───────────────
-function prependNote(vendor, text) {
-  const entry = `${isoDate(new Date())}: ${text}`;
+function prependNote(vendor, text, noteType) {
+  const ts = isoDate(new Date());
+  const entry = `${ts}: ${text}`;
   const sep = vendor.notes && vendor.notes.trim() ? '\n---\n' : '';
   vendor.notes = entry + sep + (vendor.notes || '');
+  // Structured log — timestamped entries with type and user
+  if(!vendor._notesLog) vendor._notesLog = [];
+  vendor._notesLog.unshift({
+    ts: new Date().toISOString(),
+    date: ts,
+    user: USER.email||USER.name||'',
+    type: noteType||'general',
+    text: text.trim()
+  });
+  if(vendor._notesLog.length > 500) vendor._notesLog.length = 500;
   if (vendor.source !== 'itw') markDirty(vendor);
 }
 
@@ -8396,11 +8407,37 @@ function renderCustomers(c) {
           ctSec.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'4px',textTransform:'uppercase',letterSpacing:'.05em'}},'Contacts'));
           const ctGrid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:'4px'}});
           pContacts.forEach(ct=>{
-            const card=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',padding:'6px',fontSize:'9px'}});
-            card.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'2px'}},ct.Name||'—'));
-            if(ct.Title) card.appendChild(el('div',{style:{color:'var(--muted)'}},ct.Title));
-            if(ct.Phone) card.appendChild(el('div',{},'📞 '+ct.Phone));
-            if(ct.Email) card.appendChild(el('div',{style:{color:'var(--blue)'}},ct.Email));
+            const card=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',padding:'8px',fontSize:'9px'}});
+            card.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',marginBottom:'3px'}},ct.Name||'—'));
+            if(ct.Title) card.appendChild(el('div',{style:{color:'var(--muted)',marginBottom:'4px'}},ct.Title));
+            // Clickable phone
+            if(ct.Phone){
+              const ph=el('div',{style:{display:'flex',alignItems:'center',gap:'4px',marginBottom:'2px',cursor:'pointer'},
+                onclick(){dialPhone(ct.Phone,ct.Name);}});
+              ph.appendChild(el('span',{},'📞'));
+              ph.appendChild(el('span',{style:{color:'var(--blue)',textDecoration:'underline dotted'}},ct.Phone));
+              card.appendChild(ph);
+            }
+            // Clickable email
+            if(ct.Email){
+              const em=el('div',{style:{display:'flex',alignItems:'center',gap:'4px',marginBottom:'4px',cursor:'pointer'},
+                onclick(){
+                  // Open email draft modal with this contact
+                  const fakeVendor={name:parent.Name,email:ct.Email,procContact:ct.Name,title:ct.Title||''};
+                  openEmailModal(fakeVendor);
+                }});
+              em.appendChild(el('span',{},'✉'));
+              em.appendChild(el('span',{style:{color:'var(--blue)',textDecoration:'underline dotted',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'150px'}},ct.Email));
+              card.appendChild(em);
+            }
+            // Open in SF link
+            if(ct.Id&&USER.sfInstance){
+              card.appendChild(el('a',{
+                href:USER.sfInstance+'/lightning/r/Contact/'+ct.Id+'/view',
+                target:'_blank',
+                style:{fontSize:'8px',color:'var(--muted)',display:'block'}
+              },'↗ Open in Salesforce'));
+            }
             ctGrid.appendChild(card);
           });
           ctSec.appendChild(ctGrid);
