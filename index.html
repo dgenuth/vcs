@@ -15504,25 +15504,57 @@ function renderForecast(c) {
     hdr.appendChild(el('span',{class:'toggle-arrow'},'▼'));
     sec.appendChild(hdr);
     if (vendors.length) {
-      sec.appendChild(buildTable(
-        ['Vendor','Expires','Days Left','AR','Fee','Notice','Tier','Act'],
-        vendors.sort((a,b)=>getCurrentExpiry(a)-getCurrentExpiry(b)),
-        v=>{
-          const exp=getCurrentExpiry(v), d=dayDiff(exp,today);
-          const dColor=d<0?'var(--red)':d<=30?'var(--red)':d<=90?'var(--amber)':'var(--text)';
-          const dLabel=d<0?fmtDuration(Math.abs(d))+' OVERDUE':fmtDuration(d);
-          return [
-            vLink(v),
-            fmtDate(exp),
-            el('span',{style:{color:dColor,fontWeight:d<=90?'700':'400'}},dLabel),
-            arBadge(v),
-            v.adminFee||'—',
-            v.terminationNotice||'—',
-            tierTag(v.tier),
-            el('button',{class:'btn-xs btn-ghost',onclick(){openDetail(v);}}, '→'),
-          ];
-        }
-      ));
+      // Build forecast table with fixed column widths for consistent alignment
+      const ftbl=el('table',{class:'data-table',style:{tableLayout:'fixed',width:'100%'}});
+      const fcg=el('colgroup');
+      // Vendor, Expires, Days Left, AR, Fee, Notice, Tier, Act
+      [null,'110px','80px','60px','60px','80px','70px','80px'].forEach(w=>{
+        const col=el('col');
+        if(w) col.style.width=w; else col.style.width='auto';
+        fcg.appendChild(col);
+      });
+      ftbl.appendChild(fcg);
+      const fth=el('thead'); const fhr=el('tr');
+      ['Vendor','Expires','Days Left','AR','Fee','Notice','Tier','Act'].forEach(h=>{
+        fhr.appendChild(el('th',{style:{fontSize:'8px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},h));
+      });
+      fth.appendChild(fhr); ftbl.appendChild(fth);
+      const ftbody=el('tbody');
+      vendors.sort((a,b)=>getCurrentExpiry(a)-getCurrentExpiry(b)).forEach(v=>{
+        const exp=getCurrentExpiry(v), d=dayDiff(exp,today);
+        const dColor=d<0?'var(--red)':d<=30?'var(--red)':d<=90?'var(--amber)':'var(--text)';
+        const ftr=el('tr',{style:{cursor:'pointer'},onclick(){openDetail(v);}});
+        // Vendor
+        const vtd=el('td',{style:{fontWeight:'600',fontSize:'10px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'0'}});
+        vtd.textContent=v.name; vtd.title=v.name;
+        ftr.appendChild(vtd);
+        // Expires
+        ftr.appendChild(el('td',{style:{fontSize:'9px',whiteSpace:'nowrap'}},exp?fmtDate(exp):'—'));
+        // Days Left
+        const dtd=el('td',{style:{color:dColor,fontWeight:'600',fontSize:'10px',whiteSpace:'nowrap'}},
+          d<0?Math.abs(d)+'d ago':d+'d');
+        ftr.appendChild(dtd);
+        // AR
+        ftr.appendChild(el('td',{style:{fontSize:'9px'}},isAutoRenew(v)?'✓ AR':'—'));
+        // Fee
+        const fee=parseFee(v.adminFee);
+        ftr.appendChild(el('td',{style:{fontSize:'9px',color:fee>0?'var(--green)':'var(--red)'}},fee>0?fee+'%':'—'));
+        // Notice
+        ftr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},v.terminationNotice||'—'));
+        // Tier
+        ftr.appendChild(el('td',{},v.tier?tierTag(v.tier):''));
+        // Act
+        const actTd=el('td',{});
+        actTd.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){e.stopPropagation();openDoneModal(v);}},'✓'));
+        actTd.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){e.stopPropagation();openEmailModal(v);}},'✉'));
+        ftr.appendChild(actTd);
+        ftbody.appendChild(ftr);
+      });
+      ftbl.appendChild(ftbody);
+      const fWrap=el('div',{class:'tbl-wrap'});
+      fWrap.appendChild(ftbl);
+      sec.appendChild(fWrap);
+
     }
     c.appendChild(sec);
   }
@@ -15609,6 +15641,56 @@ function makeExpandable(section) {
   hdr.appendChild(expandBtn);
 }
 
+// ── Analytics date range utilities ──────────────────────────────────────────
+function getAnalyticsDateRange() {
+  const range = S._analyticsDateRange || 'ytd';
+  const now = new Date();
+  const year = now.getFullYear();
+  let start, end = now;
+
+  if(range === 'custom') {
+    start = S._analyticsDtFrom ? new Date(S._analyticsDtFrom) : new Date(year, 0, 1);
+    end   = S._analyticsDtTo   ? new Date(S._analyticsDtTo)   : now;
+  } else if(range === 'ytd') {
+    start = new Date(year, 0, 1);
+  } else if(range === 'last30') {
+    start = new Date(now.getTime() - 30*24*60*60*1000);
+  } else if(range === 'last90') {
+    start = new Date(now.getTime() - 90*24*60*60*1000);
+  } else if(range === 'last12') {
+    start = new Date(now.getTime() - 365*24*60*60*1000);
+  } else if(range === 'lastyear') {
+    start = new Date(year-1, 0, 1);
+    end   = new Date(year-1, 11, 31, 23, 59, 59);
+  } else { // 'all'
+    start = new Date(2000, 0, 1);
+  }
+  return {start, end};
+}
+
+function filterByDateRange(items, dateField) {
+  const {start, end} = getAnalyticsDateRange();
+  if(S._analyticsDateRange === 'all') return items;
+  return items.filter(item => {
+    const d = new Date(item[dateField]||item.date||item.CloseDate||item.CreatedDate||'');
+    if(isNaN(d)) return true; // keep items with no date
+    return d >= start && d <= end;
+  });
+}
+
+function getDateRangeLabel() {
+  const range = S._analyticsDateRange || 'ytd';
+  if(range === 'ytd')      return 'Year to Date '+new Date().getFullYear();
+  if(range === 'last30')   return 'Last 30 Days';
+  if(range === 'last90')   return 'Last 90 Days';
+  if(range === 'last12')   return 'Last 12 Months';
+  if(range === 'lastyear') return String(new Date().getFullYear()-1);
+  if(range === 'all')      return 'All Time';
+  if(range === 'custom')   return (S._analyticsDtFrom||'')+'→'+(S._analyticsDtTo||'');
+  return range;
+}
+
+
 function renderAnalytics(c) {
   const today=new Date(), vs=S.vendors;
   const sd=SPEND_STATE.data?.vendors||S._analyticsSpendData||[];
@@ -15664,6 +15746,10 @@ function renderAnalytics(c) {
     const c2=$('content');if(c2){c2.innerHTML='';renderAnalytics(c2);}
   }},'Apply'));
   c.appendChild(customRow);
+  // Date range active indicator
+  const drLabel=el('div',{style:{fontSize:'9px',color:'var(--muted)',padding:'3px 4px',textAlign:'right',fontStyle:'italic',borderBottom:'1px solid var(--border)',marginBottom:'4px'}},
+    '📅 Showing: '+getDateRangeLabel());
+  c.appendChild(drLabel);
   c.appendChild(tabBar);
 
   // ── CONTRACT HEALTH TAB ──
@@ -15937,7 +16023,10 @@ function renderAnalytics(c) {
       c.appendChild(loadSec);
       return;
     }
-    const opps=sb.opps||[], cases=sb.cases||[];
+    // Apply date range filter
+    const _allOpps=sb.opps||[], _allCases=sb.cases||[];
+    const opps=filterByDateRange(_allOpps,'CloseDate');
+    const cases=filterByDateRange(_allCases,'CreatedDate');
     const totalPipeline=opps.reduce((s,o)=>s+Number(o.Amount||0),0);
     const byStage={};
     opps.forEach(o=>{const st=o.StageName||'Unknown';if(!byStage[st])byStage[st]={count:0,value:0};byStage[st].count++;byStage[st].value+=Number(o.Amount||0);});
