@@ -8412,17 +8412,17 @@ function renderCustomers(c) {
             if(ct.Title) card.appendChild(el('div',{style:{color:'var(--muted)',marginBottom:'4px'}},ct.Title));
             // Phone — click dials only
             if(ct.Phone){
-              const ph=el('div',{style:{display:'flex',alignItems:'center',gap:'4px',marginBottom:'2px',cursor:'pointer'},
-                onclick(e){e.stopPropagation();dialPhone(ct.Phone,ct.Name);}});
+              const ph=el('div',{style:{display:'flex',alignItems:'center',gap:'4px',marginBottom:'2px',cursor:'pointer',userSelect:'none'},
+                onclick(e){e.stopPropagation();e.preventDefault();dialPhone(ct.Phone,ct.Name);}});
               ph.appendChild(el('span',{},'📞'));
               ph.appendChild(el('span',{style:{color:'var(--blue)',textDecoration:'underline dotted'}},ct.Phone));
               card.appendChild(ph);
             }
             // Email — click emails only
             if(ct.Email){
-              const em=el('div',{style:{display:'flex',alignItems:'center',gap:'4px',marginBottom:'4px',cursor:'pointer'},
+              const em=el('div',{style:{display:'flex',alignItems:'center',gap:'4px',marginBottom:'4px',cursor:'pointer',userSelect:'none'},
                 onclick(e){
-                  e.stopPropagation();
+                  e.stopPropagation();e.preventDefault();
                   const fakeVendor={name:parent.Name,email:ct.Email,procContact:ct.Name,title:ct.Title||''};
                   openEmailModal(fakeVendor);
                 }});
@@ -8430,13 +8430,15 @@ function renderCustomers(c) {
               em.appendChild(el('span',{style:{color:'var(--blue)',textDecoration:'underline dotted',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'150px'}},ct.Email));
               card.appendChild(em);
             }
-            // Clicking the card itself (not phone/email) opens SF contact
+            // SF link — small text at card bottom, own click only
             if(ct.Id&&USER.sfInstance){
-              card.style.cursor='pointer';
-              card.addEventListener('click',()=>{
-                window.open(USER.sfInstance+'/lightning/r/Contact/'+ct.Id+'/view','_blank');
-              });
-              card.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)',marginTop:'3px'}},'↗ Click card to open in Salesforce'));
+              const sfLink=document.createElement('a');
+              sfLink.href=USER.sfInstance+'/lightning/r/Contact/'+ct.Id+'/view';
+              sfLink.target='_blank';
+              sfLink.style.cssText='font-size:7px;color:var(--muted);display:block;margin-top:5px;text-decoration:none';
+              sfLink.textContent='↗ Open in Salesforce';
+              sfLink.addEventListener('click',e=>e.stopPropagation());
+              card.appendChild(sfLink);
             }
             ctGrid.appendChild(card);
           });
@@ -9916,6 +9918,19 @@ CRITICAL RULES — read every one before extracting:
 
 8. PRICE PROTECTION: Extract exact language if present.
 
+9. SECTION CONTEXT — NEVER extract based on section title alone:
+   - PERPETUITY: Only set to "Yes" if the contract explicitly states that admin fees, obligations, or payments SURVIVE contract termination and CONTINUE after the contract ends. A "Confidentiality" section (even Section 12) that says information obligations survive termination does NOT make a contract perpetual. Survival of confidentiality ≠ perpetuity of fees.
+   - EXCLUSIVITY: Only "Yes" if the contract explicitly prohibits the GPO from working with competing vendors in the same category, or prohibits the vendor from working with competing GPOs. Non-circumvention clauses about specific deals are NOT exclusivity clauses.
+   - NON-CIRCUMVENTION: If there is a non-circumvention clause, note it in comments/notes but do NOT let it trigger exclusivity = Yes unless it explicitly creates a category-wide exclusivity obligation.
+   - CONFIDENTIALITY sections: Extract nothing from confidentiality sections except the survival period (if stated). Do not derive perpetuity, exclusivity, or fee-related terms from confidentiality language.
+   - Always cite the SECTION NUMBER and TITLE when you set perpetuity="Yes" or exclusivity="Yes" so users can verify.
+
+10. AUTO-RENEWAL FIELDS map to specific VCS picklist values:
+    - autoRenew field values: "No" | "Yes - By Year" | "Yes - By Term" | "Year to Year"
+    - autoRenewType field values: "Annual" | "2 Years" | "3 Years" | "By Term" | "Year to Year"
+    - Do NOT write free text like "Yes - 5 years" — pick the closest picklist value
+    - Return autoRenewTimesAllowed: number of allowed renewals (1, 2, 3, or "Unlimited") or null
+
 CRITICAL: Respond ONLY with valid JSON. No preamble, no markdown, no code fences. Pure JSON only.
 
 {
@@ -9938,6 +9953,9 @@ CRITICAL: Respond ONLY with valid JSON. No preamble, no markdown, no code fences
   },
   "contractTermYears": "number or null",
   "contractTermMonths": "number or null",
+  "perpetuitySourceSection": "REQUIRED if perpetuity=Yes — cite exact section number and title e.g. 'Section 8.3 Survival of Obligations'. If perpetuity=No, return null. A confidentiality survival clause is NOT perpetuity.",
+  "exclusivitySourceSection": "REQUIRED if exclusivity=Yes — cite exact section number and title. Non-circumvention of specific deals is NOT category exclusivity.",
+  "autoRenewTimesAllowed": "number of allowed renewal cycles if specified (e.g. 1, 2, 3), or 'Unlimited', or null if not stated",
   "perpetuity": "CRITICAL — Read this definition carefully: Perpetuity means admin fees continue AFTER the agreement expires, for the life of the business relationship between the vendor and the operator/customer. ANY of these phrases means YES: 'fees extend beyond the agreement', 'for the life of the relationship', 'as long as the customer purchases', 'admin fees survive termination', 'fees continue after expiration', 'post-termination fees', 'tail period', 'run-out period'. If admin fee notes say fees extend beyond agreement expiration for the life of the relationship = YES. Return: Yes / No / Conditional / null",
   "adminFee": {
     "percentage": "number or null",
@@ -10461,6 +10479,15 @@ function renderChecklist(c) {
     viewToggle.appendChild(btn);
   });
   custRow.appendChild(viewToggle);
+  // Expand/Collapse All
+  custRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){
+    PSX_CHECKLIST.forEach(s=>{S['_clOpen_'+s.label]=true;});
+    const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}
+  }},'▼ Expand All'));
+  custRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){
+    PSX_CHECKLIST.forEach(s=>{S['_clOpen_'+s.label]=false;});
+    const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}
+  }},'▶ Collapse All'));
   custRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){exportChecklistToCsv(custIn.value);}}, '⬇ Export'));
   wrap.appendChild(custRow);
   const isConsultant=S._checklistView===1;
@@ -11223,8 +11250,24 @@ function renderContracts(c) {
           e.stopPropagation();
           generateContractDataSheet(vendor, ex, record.fileName);
         }},'📋 Create Data Sheet');
+        // Remove contract record button
+        const removeBtn=el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',borderColor:'rgba(239,68,68,.3)'},
+          title:'Remove this contract analysis from view',
+          onclick(e){
+            e.stopPropagation();
+            if(!confirm('Remove this contract analysis for "'+record.fileName+'"?\nThis removes it from VCS view only — the file in Drive is not deleted.')) return;
+            // Remove from S_contractStore for this vendor
+            const key=selectedVendorName||comboInput.value.trim();
+            if(S_contractStore[key]){
+              S_contractStore[key]=S_contractStore[key].filter(r=>r!==record);
+            }
+            // Re-render
+            const c2=$('content');if(c2){c2.innerHTML='';renderContracts(c2);}
+            toast('Contract removed from view');
+          }},'🗑 Remove');
         cardHdr.appendChild(applyBtn);
         cardHdr.appendChild(dsBtn);
+        cardHdr.appendChild(removeBtn);
       }
       // Define contractBody BEFORE expandBtn so the closure can reference it
       const contractBody=el('div',{style:{padding:'0'}});
@@ -11356,7 +11399,11 @@ function renderContracts(c) {
         field('Termination Notice', ex.terminationNoticeDays?ex.terminationNoticeDays+' days':null);
       }
       field('Contract Term', ex.contractTermMonths?ex.contractTermMonths+' months':(ex.contractTermYears?ex.contractTermYears+' years':null));
-      field('Perpetuity', ex.perpetuity);
+      field('Perpetuity', ex.perpetuity, ex.perpetuity==='Yes'?'var(--green)':null);
+      if(ex.perpetuity==='Yes'&&ex.perpetuitySourceSection)
+        field('  ↳ Perpetuity Source', ex.perpetuitySourceSection, 'var(--amber)');
+      if(ex.keyTerms?.exclusivity==='Yes'&&ex.exclusivitySourceSection)
+        field('  ↳ Exclusivity Source', ex.exclusivitySourceSection, 'var(--amber)');
       field('Payment Frequency', ex.paymentTerms?.frequency);
       field('Payment Method', ex.paymentTerms?.method);
       field('Exclusivity', ex.keyTerms?.exclusivity);
@@ -17216,7 +17263,92 @@ function renderSettings(c) {
   secHandover.appendChild(handoverOut);
   c.appendChild(secHandover);
 
-  // ── User Management (Admin only) ──
+  // ── Role Tab Defaults (Admin only) ──────────────────────────────────────
+  if (hasPermission('manageUsers')) {
+    const secRoles=el('div',{class:'settings-section'});
+    const _rdCollapsed=localStorage.getItem('vcs_rd_collapsed')==='1';
+    const _rdHdr=el('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',cursor:'pointer',userSelect:'none'},
+      onclick(){
+        const _c=!(_rdBody.style.display==='none');
+        _rdBody.style.display=_c?'none':'';
+        _rdChev.textContent=_c?'▶':'▼';
+        localStorage.setItem('vcs_rd_collapsed',_c?'1':'0');
+      }});
+    _rdHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'12px'}},'🎭 Role Tab Defaults'));
+    const _rdChev=el('span',{style:{fontSize:'12px',color:'var(--muted)'}},_rdCollapsed?'▶':'▼');
+    _rdHdr.appendChild(_rdChev);
+    secRoles.appendChild(_rdHdr);
+    const _rdBody=el('div',{style:{display:_rdCollapsed?'none':'',marginTop:'8px'}});
+
+    _rdBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.5'}},
+      'Toggle which tabs are ON by default for each role. Users can still have individual overrides (shown with ⚡ in user management). Changes take effect on next login.'));
+
+    const ROLE_LIST=['admin','procurement','manager','sales','cro'];
+    const ALL_TABS=[
+      {id:'today',label:'Today'},{id:'callsheet',label:'Call Sheet'},{id:'expiring',label:'Expiring'},
+      {id:'vendordb',label:'Vendor DB'},{id:'network',label:'Network Intel'},{id:'economics',label:'Contract Economics'},
+      {id:'tiers',label:'Tier Tracker'},{id:'itw',label:'In The Works'},{id:'reviews',label:'Reviews'},
+      {id:'compare',label:'Compare'},{id:'sfboard',label:'SF Board'},{id:'contracts',label:'Contracts'},
+      {id:'checklist',label:'Checklist'},{id:'health',label:'VCS Health'},{id:'spend',label:'Spend'},
+      {id:'customers',label:'Customers'},{id:'calendar',label:'Calendar'},{id:'forecast',label:'Forecast'},
+      {id:'analytics',label:'Analytics'},{id:'reports',label:'Reports'},{id:'summary',label:'Summary'},
+      {id:'history',label:'History'},{id:'datacheck',label:'Data Check'},{id:'settings',label:'Settings'},
+    ];
+
+    ROLE_LIST.forEach(role=>{
+      const roleSection=el('div',{style:{marginBottom:'12px',padding:'10px',background:'var(--bg)',borderRadius:'6px',border:'1px solid var(--border)'}});
+      roleSection.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'8px',color:'var(--blue)',textTransform:'capitalize'}},role));
+      const roleGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px'}});
+
+      // Get current role tabs
+      const rolePerms=ROLE_PERMS[role]||{};
+      const currentTabs=new Set(rolePerms.tabs||[]);
+
+      ALL_TABS.forEach(t=>{
+        const on=currentTabs.has(t.id);
+        const rbtn=document.createElement('button');
+        rbtn._on=on;
+        rbtn.textContent=t.label+(on?' ✅':' 🚫');
+        rbtn.style.cssText='font-size:7px;padding:2px 6px;border-radius:3px;cursor:pointer;'
+          +'border:1px solid '+(on?'rgba(34,197,94,.4)':'rgba(239,68,68,.3)')+';'
+          +'background:'+(on?'rgba(34,197,94,.08)':'rgba(239,68,68,.05)')+';'
+          +'color:'+(on?'#4ade80':'#f87171')+';';
+        rbtn.addEventListener('click',function(e){
+          e.stopPropagation(); e.preventDefault();
+          const nowOn=rbtn._on;
+          // Toggle tab in ROLE_PERMS
+          if(!ROLE_PERMS[role]) ROLE_PERMS[role]={tabs:[]};
+          if(!ROLE_PERMS[role].tabs) ROLE_PERMS[role].tabs=[];
+          if(nowOn){
+            ROLE_PERMS[role].tabs=ROLE_PERMS[role].tabs.filter(x=>x!==t.id);
+          } else {
+            if(!ROLE_PERMS[role].tabs.includes(t.id)) ROLE_PERMS[role].tabs.push(t.id);
+          }
+          // Save to localStorage as role override
+          try{
+            const roleOverrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
+            roleOverrides[role]=ROLE_PERMS[role].tabs;
+            localStorage.setItem('vcs_role_tab_overrides',JSON.stringify(roleOverrides));
+            saveConfigToDrive().catch(()=>{});
+          }catch(e2){}
+          rbtn._on=!nowOn;
+          rbtn.textContent=t.label+(!nowOn?' ✅':' 🚫');
+          rbtn.style.borderColor=!nowOn?'rgba(34,197,94,.4)':'rgba(239,68,68,.3)';
+          rbtn.style.background=!nowOn?'rgba(34,197,94,.08)':'rgba(239,68,68,.05)';
+          rbtn.style.color=!nowOn?'#4ade80':'#f87171';
+          toast('Role tab updated — users will see change on next load','#4f7cff');
+        });
+        roleGrid.appendChild(rbtn);
+      });
+      roleSection.appendChild(roleGrid);
+      _rdBody.appendChild(roleSection);
+    });
+
+    secRoles.appendChild(_rdBody);
+    c.appendChild(secRoles);
+  }
+
+// ── User Management (Admin only) ──
   if (hasPermission('manageUsers')) {
     const secUsers=el('div',{class:'settings-section'});
     // Collapsible header
@@ -17380,10 +17512,29 @@ function renderSettings(c) {
           const hf=cu.hiddenFields||[];
 
           // All restrictable fields
-          container.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginBottom:'4px'}},'🔒 Field Access — click to toggle:'));
+          container.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginBottom:'6px'}},'🔒 Field Access — click to toggle (amber = restricted, green = visible):'));
+          // Field groups for visual organization
+          const FIELD_GROUPS={
+            'Vendor Info':['gpo','name','category','subCategory','product','classOfTrade','markets','addedValue','website','status'],
+            'Contacts':['procContact','contactType','title','bizPhone','mobile','email','sharedContact','contactType2','title2','mobile2','email2'],
+            'Contract':['contractName','inContractSince','contractEffective','contractExpiry','autoRenewal','autoRenewalType','contractTerm','currentTerm','termEffective','termExpiry','terminationNotice','terminationWoCause','terminationReceived','assignment','assignmentConditions','exclusivity','signatory'],
+            'Financials':['adminFee','adminFeeNotes','tiers','perpetuity','tail','minYears','contractNo','reportFrequency','agreementType','pricingCommitment'],
+            'Docs & Pricing':['coverSheet','dataSheet','havePricing','pricingLocation','pricingDate','pricingFrequency','whitePapers','serviceSummary','videoRecording'],
+            'Activity':['comments','notes','lastComm','followUp','engagementReminder','needsLOP'],
+          };
+          const GROUP_COLORS={'Vendor Info':'#4f7cff','Contacts':'#22c55e','Contract':'#f59e0b','Financials':'#8b5cf6','Docs & Pricing':'#06b6d4','Activity':'#ec4899'};
           const allFields=ALL_RESTRICTABLE_FIELDS;
-          const fieldGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'8px'}});
-          allFields.forEach(f=>{
+          // Render fields in groups with colored section headers
+          Object.entries(FIELD_GROUPS).forEach(([groupName,groupKeys])=>{
+            const groupFields=allFields.filter(f=>groupKeys.includes(f.key));
+            if(!groupFields.length) return;
+            const groupColor=GROUP_COLORS[groupName]||'var(--muted)';
+            const groupHdr=el('div',{style:{fontSize:'8px',fontWeight:'700',color:groupColor,
+              marginTop:'8px',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.05em',
+              borderBottom:'1px solid '+groupColor+'44',paddingBottom:'2px'}},groupName);
+            container.appendChild(groupHdr);
+            const fieldGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'4px'}});
+          groupFields.forEach(f=>{
             const hidden=hf.includes(f.key);
             const btn=document.createElement('button');
             btn.dataset.fkey=f.key;
@@ -17418,6 +17569,7 @@ function renderSettings(c) {
             fieldGrid.appendChild(btn);
           });
           container.appendChild(fieldGrid);
+          }); // end Object.entries(FIELD_GROUPS).forEach
           container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginBottom:'8px'}},'✅ = visible to user · 🚫 = hidden from user'));
 
           // Tab access — toggleable per user (overrides role default)
@@ -17430,7 +17582,13 @@ function renderSettings(c) {
             {id:'expiring',label:'Expiring'},{id:'vendordb',label:'Vendor DB'},
             {id:'network',label:'Network Intel'},{id:'economics',label:'Contract Economics'},
             {id:'tiers',label:'Tier Tracker'},{id:'itw',label:'In The Works'},
-            {id:'reviews',label:'Reviews'},{id:'calendar',label:'Calendar'},
+            {id:'reviews',label:'Reviews'},{id:'compare',label:'Compare'},
+            {id:'sfboard',label:'SF Board'},{id:'contracts',label:'Contracts'},
+            {id:'checklist',label:'Checklist'},{id:'health',label:'VCS Health'},
+            {id:'spend',label:'Spend'},{id:'customers',label:'Customers'},
+            {id:'calendar',label:'Calendar'},{id:'forecast',label:'Forecast'},
+            {id:'analytics',label:'Analytics'},{id:'reports',label:'Reports'},
+            {id:'summary',label:'Summary'},{id:'history',label:'History'},
             {id:'forecast',label:'Forecast'},{id:'analytics',label:'Analytics'},
             {id:'reports',label:'Reports'},{id:'summary',label:'Summary'},
             {id:'history',label:'History'},{id:'datacheck',label:'Data Check'},
@@ -17461,7 +17619,7 @@ function renderSettings(c) {
               },
               title:(isOverridden?'⚠ Overriding role default. ':'')+(hasAccess?'Click to hide tab':'Click to show tab'),
               onclick(e){
-                e.stopPropagation();
+                e.stopPropagation(); e.preventDefault();
                 const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
                 if(!all[i].tabOverrides) all[i].tabOverrides={};
                 const currentAccess=hasOverride?tabOverrides[t.id]:roleDefaultTabs.has(t.id);
