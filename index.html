@@ -9563,13 +9563,13 @@ async function loadSFBoard(){
     // Keep ALL opps/cases for Sales view — tag VCS-matched ones with _isVCS for Procurement/Brief
     const opps=(openOpps?.records||[]).map(o=>{
       const n=o.Vendor__r?.Name||o.Account?.Name||'';
-      return {...o,_accountName:n,_isVCS:sfNameMatchesVCS(n),
-        _ownerName:o.Owner?.Name||o['Owner.Name']||'Unknown'};
+      const _oOwnName = (o.Owner&&o.Owner.Name) ? o.Owner.Name : (o.Owner_Name||o['Owner.Name']||o.OwnerName||'');
+      return {...o,_accountName:n,_isVCS:sfNameMatchesVCS(n), _ownerName:_oOwnName||'Unknown'};
     });
     const cases=(openCases?.records||[]).map(c2=>{
       const n=c2.Vendor__r?.Name||c2.Account?.Name||'';
-      return {...c2,_accountName:n,_isVCS:sfNameMatchesVCS(n),
-        _ownerName:c2.Owner?.Name||c2['Owner.Name']||'Unknown'};
+      const _cOwnName = (c2.Owner&&c2.Owner.Name) ? c2.Owner.Name : (c2.Owner_Name||c2['Owner.Name']||c2.OwnerName||'');
+      return {...c2,_accountName:n,_isVCS:sfNameMatchesVCS(n), _ownerName:_cOwnName||'Unknown'};
     });
     const tasks=(openTasks?.records||[]).map(t=>({...t,_accountName:''}));
 
@@ -10374,152 +10374,348 @@ function exportChecklistToCsv(customerName) {
 }
 
 
+
+// ── Minimal DOCX builder — no CDN, no library ─────────────────────────────
+// Generates a valid Word .docx file as a Blob using raw XML + ZIP encoding
+// ZIP encoding is done with a custom minimal implementation
+
+function buildDocxBlob(data) {
+  // ── XML helpers ──────────────────────────────────────────────────────────
+  const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  const TEAL = '4A9A82';
+  const BLUE  = '2683C6';
+
+  // Build a table cell XML
+  function wTc(text, opts={}) {
+    const {span=1, color=null, bold=false, sz=18, fill=null} = opts;
+    const gridSpan = span>1 ? `<w:gridSpan w:val="${span}"/>` : '';
+    const shading  = fill ? `<w:shd w:val="clear" w:color="auto" w:fill="${fill}"/>` : '';
+    const tcPr = (gridSpan||shading) ? `<w:tcPr>${gridSpan}${shading}<w:tcMar><w:top w:w="60" w:type="dxa"/><w:left w:w="80" w:type="dxa"/><w:bottom w:w="60" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tcMar></w:tcPr>` : `<w:tcPr><w:tcMar><w:top w:w="60" w:type="dxa"/><w:left w:w="80" w:type="dxa"/><w:bottom w:w="60" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tcMar></w:tcPr>`;
+    const colorXml = color ? `<w:color w:val="${color}"/>` : '';
+    const boldXml  = bold  ? '<w:b/>'  : '';
+    const szXml    = `<w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/>`;
+    const rPr = (colorXml||boldXml||szXml) ? `<w:rPr>${boldXml}${colorXml}${szXml}</w:rPr>` : '';
+    // Handle multiline text
+    const lines = String(text||'').split('\n');
+    const paragraphs = lines.map((line,i) => {
+      const runXml = `<w:r>${rPr}<w:t xml:space="preserve">${esc(line)}</w:t></w:r>`;
+      return `<w:p>${i>0?'<w:r><w:br/></w:r>':''}${runXml}</w:p>`;
+    }).join('');
+    return `<w:tc>${tcPr}${paragraphs}</w:tc>`;
+  }
+
+  function wTr(...cells) {
+    return `<w:tr>${cells.join('')}</w:tr>`;
+  }
+
+  function lbl(text) { return wTc(text, {color:TEAL, sz:16}); }
+  function val(text, span=1) { return wTc(text, {span, sz:17}); }
+
+  // Column widths from template
+  const colW = [2555,3380,894,852,144,2970];
+  const tblW = colW.reduce((a,b)=>a+b,0);
+  const gridCols = colW.map(w=>`<w:gridCol w:w="${w}"/>`).join('');
+
+  const tableXml = `
+<w:tbl>
+  <w:tblPr>
+    <w:tblStyle w:val="TableGrid"/>
+    <w:tblW w:w="${tblW}" w:type="dxa"/>
+    <w:tblBorders>
+      <w:top w:val="single" w:sz="6" w:color="A0A0A0"/>
+      <w:left w:val="single" w:sz="6" w:color="A0A0A0"/>
+      <w:bottom w:val="single" w:sz="6" w:color="A0A0A0"/>
+      <w:right w:val="single" w:sz="6" w:color="A0A0A0"/>
+      <w:insideH w:val="single" w:sz="6" w:color="A0A0A0"/>
+      <w:insideV w:val="single" w:sz="6" w:color="A0A0A0"/>
+    </w:tblBorders>
+    <w:tblCellMar>
+      <w:top w:w="60" w:type="dxa"/>
+      <w:left w:w="80" w:type="dxa"/>
+      <w:bottom w:w="60" w:type="dxa"/>
+      <w:right w:w="80" w:type="dxa"/>
+    </w:tblCellMar>
+  </w:tblPr>
+  <w:tblGrid>${gridCols}</w:tblGrid>
+  ${wTr(lbl('VENDOR NAME'), val(data.vendorName,2), wTc('GPO',{color:TEAL,sz:16}), wTc('Prime Source',{sz:16}), wTc('Prime Source',{sz:16}))}
+  ${wTr(lbl('VENDOR ADDRESS'), val(data.vendorAddress,5))}
+  ${wTr(lbl('VENDOR CONTACT DETAILS'), val(data.contactDetails,5))}
+  ${wTr(lbl('CONTRACT #'), val(data.contractNo), wTc('TYPE OF AGREEMENT',{color:TEAL,span:3,sz:16}), val(data.agreementType))}
+  ${wTr(lbl('START DATE'), val(data.startDate), wTc('END DATE',{color:TEAL,span:3,sz:16}), val(data.endDate))}
+  ${wTr(lbl('TERM DETAILS'), val(data.termDetails,5))}
+  ${wTr(lbl('COLLECTION FREQUENCY'), val(data.collectionFreq), wTc('PERPETUITY',{color:TEAL,span:3,sz:16}), val(data.perpetuity))}
+  ${wTr(lbl('SUMMARY OF TERMS'), val(data.summaryOfTerms,5))}
+  ${wTr(lbl('CATEGORY'), val(data.category,5))}
+  ${wTr(lbl('PRODUCTS/SERVICES'), val(data.products,5))}
+  ${wTr(lbl('MARKETS SERVICED'), val(data.markets,5))}
+  ${wTr(lbl('PROCESS FOR PRICING & QUOTES'), val(data.pricingProcess,5))}
+  ${wTr(lbl('LEAD TIMES'), val(data.leadTimes||'',5))}
+  ${wTr(lbl('PAYMENT TERMS'), val(data.paymentTerms,5))}
+  ${wTr(lbl('ACCOUNT SETUP REQUIREMENTS'), val(data.accountSetup,5))}
+  ${wTr(lbl('DELIVERY TERMS'), val(data.deliveryTerms||'',5))}
+  ${wTr(lbl('IT CAPABILITIES'), val(data.itCapabilities,5))}
+</w:tbl>`;
+
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
+  xmlns:mo="http://schemas.microsoft.com/office/mac/office/2008/main"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:mv="urn:schemas-microsoft-com:mac:vml"
+  xmlns:o="urn:schemas-microsoft-com:office:office"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+  xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"
+  xmlns:v="urn:schemas-microsoft-com:vml"
+  xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing"
+  xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+  xmlns:w10="urn:schemas-microsoft-com:office:word"
+  xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+  xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"
+  xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
+  xmlns:wpi="http://schemas.microsoft.com/office/word/2010/wordprocessingInk"
+  xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml"
+  xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+  mc:Ignorable="w14 wp14">
+<w:body>
+<w:p>
+  <w:pPr><w:jc w:val="center"/><w:spacing w:after="120"/></w:pPr>
+  <w:r><w:rPr><w:b/><w:color w:val="${BLUE}"/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr>
+    <w:t>Prime Source Contract Data Sheet</w:t></w:r>
+</w:p>
+<w:p>
+  <w:pPr><w:jc w:val="center"/><w:spacing w:after="160"/></w:pPr>
+  <w:r><w:rPr><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>
+    <w:t>Prime Source is pleased to announce a new addition to our vendor portfolio. The details are as follows:</w:t></w:r>
+</w:p>
+${tableXml}
+<w:p>
+  <w:pPr><w:jc w:val="center"/><w:spacing w:before="160"/></w:pPr>
+  <w:r><w:rPr><w:color w:val="808080"/><w:sz w:val="14"/><w:szCs w:val="14"/></w:rPr>
+    <w:t>Generated by VCS | ${esc(data.generatedDate)}${data.fileName?' | '+esc(data.fileName):''}</w:t></w:r>
+</w:p>
+<w:sectPr>
+  <w:pgSz w:w="12240" w:h="15840"/>
+  <w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="708" w:footer="708" w:gutter="0"/>
+</w:sectPr>
+</w:body>
+</w:document>`;
+
+  // ── Build DOCX ZIP structure ──────────────────────────────────────────────
+  // We need a minimal ZIP. Use a pure-JS ZIP builder.
+  
+  const files = {
+    '[Content_Types].xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+</Types>`,
+    '_rels/.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`,
+    'word/_rels/document.xml.rels': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`,
+    'word/document.xml': documentXml,
+    'word/styles.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <w:docDefaults>
+    <w:rPrDefault><w:rPr>
+      <w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/>
+      <w:sz w:val="20"/><w:szCs w:val="20"/>
+    </w:rPr></w:rPrDefault>
+  </w:docDefaults>
+  <w:style w:type="table" w:styleId="TableGrid">
+    <w:name w:val="Table Grid"/>
+    <w:tblPr><w:tblBorders>
+      <w:top w:val="single" w:sz="4" w:color="auto"/>
+      <w:left w:val="single" w:sz="4" w:color="auto"/>
+      <w:bottom w:val="single" w:sz="4" w:color="auto"/>
+      <w:right w:val="single" w:sz="4" w:color="auto"/>
+      <w:insideH w:val="single" w:sz="4" w:color="auto"/>
+      <w:insideV w:val="single" w:sz="4" w:color="auto"/>
+    </w:tblBorders></w:tblPr>
+  </w:style>
+</w:styles>`,
+  };
+
+  // Pure-JS minimal ZIP writer (store-only, no compression needed for XML)
+  return buildZipBlob(files);
+}
+
+// ── Minimal ZIP builder (store/no-compression) ───────────────────────────────
+function buildZipBlob(files) {
+  const enc = new TextEncoder();
+  const entries = [];
+  let offset = 0;
+
+  function crc32(data) {
+    let c = 0xFFFFFFFF;
+    const table = buildZipBlob._crc32table || (()=>{
+      const t = new Uint32Array(256);
+      for(let i=0;i<256;i++){let v=i;for(let j=0;j<8;j++)v=v&1?(0xEDB88320^(v>>>1)):(v>>>1);t[i]=v;}
+      buildZipBlob._crc32table = t;
+      return t;
+    })();
+    for(const byte of data) c=table[(c^byte)&0xFF]^(c>>>8);
+    return (c^0xFFFFFFFF)>>>0;
+  }
+
+  function uint16(n){return [n&0xFF,(n>>8)&0xFF];}
+  function uint32(n){return [n&0xFF,(n>>8)&0xFF,(n>>16)&0xFF,(n>>24)&0xFF];}
+
+  for(const [name,content] of Object.entries(files)){
+    const nameBytes = enc.encode(name);
+    const dataBytes = enc.encode(content);
+    const crc = crc32(dataBytes);
+    const header = [
+      0x50,0x4B,0x03,0x04, // signature
+      0x14,0x00,           // version
+      0x00,0x00,           // flags
+      0x00,0x00,           // compression (store)
+      0x00,0x00,0x00,0x00, // mod time/date
+      ...uint32(crc),
+      ...uint32(dataBytes.length),
+      ...uint32(dataBytes.length),
+      ...uint16(nameBytes.length),
+      0x00,0x00,           // extra length
+    ];
+    entries.push({name:nameBytes,data:dataBytes,crc,offset,headerSize:header.length+nameBytes.length});
+    const combined = new Uint8Array(header.length+nameBytes.length+dataBytes.length);
+    combined.set(header);
+    combined.set(nameBytes,header.length);
+    combined.set(dataBytes,header.length+nameBytes.length);
+    entries[entries.length-1].localBytes = combined;
+    offset += combined.length;
+  }
+
+  // Central directory
+  const cdEntries = [];
+  for(const e of entries){
+    const cd = [
+      0x50,0x4B,0x01,0x02, // signature
+      0x14,0x00,0x14,0x00, // versions
+      0x00,0x00,0x00,0x00, // flags, compression
+      0x00,0x00,0x00,0x00, // mod time/date
+      ...uint32(e.crc),
+      ...uint32(e.data.length),
+      ...uint32(e.data.length),
+      ...uint16(e.name.length),
+      0x00,0x00,0x00,0x00, // extra,comment len
+      0x00,0x00,0x00,0x00, // disk start, attr
+      ...uint32(0),        // external attr
+      ...uint32(e.offset), // local header offset
+    ];
+    const cdFull = new Uint8Array(cd.length+e.name.length);
+    cdFull.set(cd); cdFull.set(e.name,cd.length);
+    cdEntries.push(cdFull);
+  }
+  const cdSize = cdEntries.reduce((s,e)=>s+e.length,0);
+  const eocd = [
+    0x50,0x4B,0x05,0x06, // signature
+    0x00,0x00,0x00,0x00, // disk numbers
+    ...uint16(entries.length), ...uint16(entries.length),
+    ...uint32(cdSize),
+    ...uint32(offset),
+    0x00,0x00,           // comment length
+  ];
+
+  const total = offset+cdSize+eocd.length;
+  const out = new Uint8Array(total);
+  let pos=0;
+  for(const e of entries){out.set(e.localBytes,pos);pos+=e.localBytes.length;}
+  for(const cd of cdEntries){out.set(cd,pos);pos+=cd.length;}
+  out.set(eocd,pos);
+
+  return new Blob([out],{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+}
+
 async function generateContractDataSheet(vendor, ex, fileName) {
   if(!vendor&&!ex){ toast('No contract data to generate sheet from','#f59e0b'); return; }
   const v=vendor||{}, e=ex||{};
   const vName=v.name||e.vendorName||'Vendor';
   const today=new Date().toLocaleDateString('en-US',{month:'2-digit',day:'2-digit',year:'numeric'});
 
-  // Build data values matching template fields
-  const data={
-    vendorName: vName,
-    vendorAddress: v.address||'',
-    contactDetails: [v.procContact,v.title,v.bizPhone||v.mobile,v.email].filter(Boolean).join(' | ')||'',
-    contractNo: e.contractNumber||v.contractNo||'PSG-',
-    agreementType: e.agreementType||v.agreementType||'GPA, unless otherwise stated',
-    startDate: e.effectiveDate||v.contractEffective||'',
-    endDate: e.expirationDate||v.expiry||'',
-    termDetails: (e.contractTermMonths?e.contractTermMonths+'M':v.contractTerm||'')+(e.autoRenewal?' with '+e.autoRenewal+' auto-renewal':(v.autoRenewal?' with '+v.autoRenewal+' auto-renewal':'')),
-    collectionFreq: e.adminFee?.frequency||e.paymentTerms?.frequency||v.reportFrequency||'Quarterly',
-    perpetuity: e.perpetuity||v.perpetuity||'',
-    summaryOfTerms: (()=>{
-      const parts=[];
-      const fee=e.adminFee?.percentage||v.adminFee;
-      if(fee) parts.push((typeof fee==='number'?fee:parseFee(String(fee))||fee)+'% admin fee on '+(e.adminFee?.basis||'qualifying purchases'));
-      if(e.adminFee?.notes||v.adminFeeNotes) parts.push(e.adminFee?.notes||v.adminFeeNotes||'');
-      if(e.tiers?.length) parts.push('Tiers: '+e.tiers.map(t=>(t.threshold||'')+' @ '+(t.rate||'')).join(' | '));
-      else if(v.tiers) parts.push(v.tiers);
-      return parts.join('\n');
-    })(),
-    category: (v.category||'')+(v.subCategory?' — '+v.subCategory:''),
-    products: e.products||v.product||v.about||'',
-    markets: e.markets||v.markets||'National',
-    pricingProcess: v.pricingLocation||v.havePricing||'',
-    leadTimes: '',
-    paymentTerms: e.paymentTerms?.memberPaymentTerms||'Negotiated between vendor and member [standard]',
-    accountSetup: 'Credit App, Vendor Intro, affiliation document'+(v.needsLOP?' | LOP required':''),
-    deliveryTerms: '',
-    itCapabilities: e.notes||v.comments||'',
-  };
+  toast('⏳ Generating data sheet...','#4f7cff');
 
-  // Check if docx library is available (loaded via CDN)
-  if(typeof docx==='undefined'){
-    // Load docx library dynamically
-    await new Promise((res,rej)=>{
-      const s=document.createElement('script');
-      s.src='https://cdnjs.cloudflare.com/ajax/libs/docx/8.5.0/docx.umd.min.js';
-      s.onload=res; s.onerror=rej;
-      document.head.appendChild(s);
-    });
+  try {
+    const data={
+      vendorName: vName,
+      vendorAddress: v.address||'',
+      contactDetails: [v.procContact,v.title,v.bizPhone||v.mobile,v.email].filter(Boolean).join(' | ')||'',
+      contractNo: e.contractNumber||v.contractNo||'PSG-',
+      agreementType: e.agreementType||v.agreementType||'GPA, unless otherwise stated',
+      startDate: e.effectiveDate||v.contractEffective||'',
+      endDate: e.expirationDate||v.expiry||'',
+      termDetails: (e.contractTermMonths?e.contractTermMonths+'M':v.contractTerm||'')+(e.autoRenewal?' with '+e.autoRenewal+' auto-renewal':(v.autoRenewal?' with '+v.autoRenewal+' auto-renewal':'')),
+      collectionFreq: e.adminFee?.frequency||e.paymentTerms?.frequency||v.reportFrequency||'Quarterly',
+      perpetuity: e.perpetuity||v.perpetuity||'',
+      summaryOfTerms: (()=>{
+        const parts=[];
+        const fee=e.adminFee?.percentage||v.adminFee;
+        if(fee) parts.push((typeof fee==='number'?fee:parseFee(String(fee))||fee)+'% admin fee on '+(e.adminFee?.basis||'qualifying purchases'));
+        if(e.adminFee?.notes||v.adminFeeNotes) parts.push(e.adminFee?.notes||v.adminFeeNotes||'');
+        if(e.tiers?.length) parts.push('Tiers: '+e.tiers.map(t=>(t.threshold||'')+' @ '+(t.rate||'')).join(' | '));
+        else if(v.tiers) parts.push(v.tiers);
+        return parts.join('\n');
+      })(),
+      category: (v.category||'')+(v.subCategory?' — '+v.subCategory:''),
+      products: e.products||v.product||v.about||'',
+      markets: e.markets||v.markets||'National',
+      pricingProcess: v.pricingLocation||v.havePricing||'',
+      leadTimes: '',
+      paymentTerms: e.paymentTerms?.memberPaymentTerms||'Negotiated between vendor and member [standard]',
+      accountSetup: 'Credit App, Vendor Intro, affiliation document'+(v.needsLOP?' | LOP required':''),
+      deliveryTerms: '',
+      itCapabilities: e.notes||v.comments||'',
+      generatedDate: today,
+      fileName: fileName||'',
+    };
+
+    // Generate using inline builder — no CDN required
+    const blob = buildDocxBlob(data);
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=vName.replace(/[^a-zA-Z0-9\s]/g,'').trim().replace(/\s+/g,'_')+'_Contract_Data_Sheet.docx';
+    a.click();
+    toast('✓ Data Sheet downloaded — open in Word','#22c55e');
+
+    // Offer Drive save
+    setTimeout(()=>{
+      openModal(body=>{
+        body.appendChild(el('h3',{},'📋 Data Sheet Downloaded'));
+        body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--muted)',marginBottom:'12px'}},'Word doc saved to Downloads. Also save to vendor folder in Drive?'));
+        const btns2=el('div',{class:'modal-btns'});
+        btns2.appendChild(el('button',{class:'btn-primary',onclick:async()=>{
+          closeModal();
+          toast('⏳ Saving to Drive...','#4f7cff');
+          try{
+            const arr=new Uint8Array(await blob.arrayBuffer());
+            let b64=''; const chunk=8192;
+            for(let i=0;i<arr.length;i+=chunk){
+              b64+=String.fromCharCode(...arr.subarray(i,Math.min(i+chunk,arr.length)));
+            }
+            const resp=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
+              body:JSON.stringify({action:'uploadVendorFile',vendorName:vName,
+                fileName:vName.replace(/[^a-zA-Z0-9\s]/g,'').trim()+'_Contract_Data_Sheet.docx',
+                fileContent:btoa(b64),mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'})});
+            const d=await resp.json();
+            if(d.status==='ok') toast('✓ Saved to Drive: '+d.vendorFolder,'#22c55e');
+            else toast('Drive save failed: '+(d.message||'unknown'),'#ef4444');
+          }catch(e2){toast('Error: '+e2.message,'#ef4444');}
+        }},'☁ Save to Drive'));
+        btns2.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'No thanks'));
+        body.appendChild(btns2);
+      });
+    },500);
+  } catch(err) {
+    console.error('[DataSheet]',err);
+    toast('⚠ Data sheet error: '+err.message,'#ef4444');
   }
-
-  const {Document,Packer,Paragraph,TextRun,Table,TableRow,TableCell,
-         BorderStyle,WidthType,AlignmentType,ShadingType,VerticalAlign}=docx;
-
-  const TEAL='4A9A82', BLUE_TITLE='2683C6', BLACK='000000', BORDER_COLOR='A0A0A0';
-  const COL_WIDTHS=[2555,3380,894,852,144,2970];
-  const TABLE_W=COL_WIDTHS.reduce((a,b)=>a+b,0);
-  const bd={style:BorderStyle.SINGLE,size:6,color:BORDER_COLOR};
-  const borders={top:bd,bottom:bd,left:bd,right:bd};
-
-  function cell(text,opts={}){
-    const {span=1,bold=false,color=BLACK,size=18}=opts;
-    return new TableCell({
-      children:[new Paragraph({children:[new TextRun({text:text||'',bold,color,size})]})],
-      borders,columnSpan:span,
-      margins:{top:60,bottom:60,left:80,right:80},
-      verticalAlign:VerticalAlign.CENTER,
-    });
-  }
-  function lbl(text){ return cell(text,{color:TEAL,size:16}); }
-  function val(text,span=1){ return cell(text||'',{span,size:17}); }
-
-  const table=new Table({
-    width:{size:TABLE_W,type:WidthType.DXA},
-    columnWidths:COL_WIDTHS,
-    rows:[
-      new TableRow({children:[lbl('VENDOR NAME'),val(data.vendorName,2),cell('GPO',{color:TEAL,size:16}),cell('Prime Source',{size:16}),cell('Prime Source',{size:16})]}),
-      new TableRow({children:[lbl('VENDOR ADDRESS'),val(data.vendorAddress,5)]}),
-      new TableRow({children:[lbl('VENDOR CONTACT DETAILS'),val(data.contactDetails,5)]}),
-      new TableRow({children:[lbl('CONTRACT #'),val(data.contractNo),cell('TYPE OF AGREEMENT',{color:TEAL,span:3,size:16}),val(data.agreementType)]}),
-      new TableRow({children:[lbl('START DATE'),val(data.startDate),cell('END DATE',{color:TEAL,span:3,size:16}),val(data.endDate)]}),
-      new TableRow({children:[lbl('TERM DETAILS'),val(data.termDetails,5)]}),
-      new TableRow({children:[lbl('COLLECTION FREQUENCY'),val(data.collectionFreq),cell('PERPETUITY',{color:TEAL,span:3,size:16}),val(data.perpetuity)]}),
-      new TableRow({children:[lbl('SUMMARY OF TERMS'),val(data.summaryOfTerms,5)]}),
-      new TableRow({children:[lbl('CATEGORY'),val(data.category,5)]}),
-      new TableRow({children:[lbl('PRODUCTS/SERVICES'),val(data.products,5)]}),
-      new TableRow({children:[lbl('MARKETS SERVICED'),val(data.markets,5)]}),
-      new TableRow({children:[lbl('PROCESS FOR PRICING & QUOTES'),val(data.pricingProcess,5)]}),
-      new TableRow({children:[lbl('LEAD TIMES'),val(data.leadTimes,5)]}),
-      new TableRow({children:[lbl('PAYMENT TERMS'),val(data.paymentTerms,5)]}),
-      new TableRow({children:[lbl('ACCOUNT SETUP REQUIREMENTS'),val(data.accountSetup,5)]}),
-      new TableRow({children:[lbl('DELIVERY TERMS'),val(data.deliveryTerms,5)]}),
-      new TableRow({children:[lbl('IT CAPABILITIES'),val(data.itCapabilities,5)]}),
-    ]
-  });
-
-  const doc2=new Document({
-    sections:[{
-      properties:{page:{size:{width:12240,height:15840},margin:{top:720,right:720,bottom:720,left:720}}},
-      children:[
-        new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:120},
-          children:[new TextRun({text:'Prime Source Contract Data Sheet',bold:true,size:28,color:BLUE_TITLE})]}),
-        new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:180},
-          children:[new TextRun({text:'Prime Source is pleased to announce a new addition to our vendor portfolio. The details are as follows:',size:18})]}),
-        table,
-        new Paragraph({alignment:AlignmentType.CENTER,spacing:{before:180},
-          children:[new TextRun({text:'Generated by VCS | '+today+(fileName?' | '+fileName:'')+(e.extractionConfidence?' | Confidence: '+e.extractionConfidence:''),size:14,color:'808080'})]}),
-      ]
-    }]
-  });
-
-  const buffer=await Packer.toBuffer(doc2);
-  const blob=new Blob([buffer],{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download=vName.replace(/[^a-zA-Z0-9\s]/g,'').trim().replace(/\s+/g,'_')+'_Contract_Data_Sheet.docx';
-  a.click();
-  toast('✓ Data Sheet downloaded as Word document','#22c55e');
-
-  // Offer Drive save
-  openModal(body=>{
-    body.appendChild(el('h3',{},'📋 Data Sheet Downloaded'));
-    body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--muted)',marginBottom:'12px'}},'Word doc saved to your Downloads folder. Also save to the vendor folder in Drive?'));
-    const btns2=el('div',{class:'modal-btns'});
-    btns2.appendChild(el('button',{class:'btn-primary',onclick:async()=>{
-      closeModal();
-      toast('⏳ Saving to Drive...','#4f7cff');
-      try{
-        // Convert buffer to base64
-        const arr=new Uint8Array(buffer);
-        let b64='';
-        const chunk=8192;
-        for(let i=0;i<arr.length;i+=chunk){
-          b64+=String.fromCharCode(...arr.subarray(i,Math.min(i+chunk,arr.length)));
-        }
-        b64=btoa(b64);
-        const resp=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
-          body:JSON.stringify({action:'uploadVendorFile',vendorName:vName,
-            fileName:vName.replace(/[^a-zA-Z0-9\s]/g,'').trim()+'_Contract_Data_Sheet.docx',
-            fileContent:b64,mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'})});
-        const d=await resp.json();
-        if(d.status==='ok') toast('✓ Data sheet saved to Drive: '+d.vendorFolder,'#22c55e');
-        else toast('Drive save failed: '+(d.message||'unknown'),'#ef4444');
-      }catch(e2){toast('Drive save error: '+e2.message,'#ef4444');}
-    }},'☁ Save to Drive'));
-    btns2.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'No thanks'));
-    body.appendChild(btns2);
-  });
 }
 
 function renderContracts(c) {
@@ -15570,6 +15766,13 @@ function renderAnalytics(c) {
 
   // ── REP PERFORMANCE TAB ──
   else if(S._analyticsTab==='performance'){
+    // Auto-query SF active users if not loaded
+    if(!S._sfActiveUsers&&USER.sfToken){
+      sfQuery("SELECT Id,Name,Email,IsActive,UserType FROM User WHERE IsActive=true AND UserType='Standard' ORDER BY Name LIMIT 100").then(r=>{
+        if(r?.records) S._sfActiveUsers=r.records;
+        const c2=$('content');if(c2&&S.view==='analytics'){c2.innerHTML='';renderAnalytics(c2);}
+      }).catch(()=>{});
+    }
     const sb=S._sfBoardData;
     const opps=sb?.opps||[], tasks=sb?.tasks||[], cases=sb?.cases||[];
     if(!opps.length&&!tasks.length){
@@ -15621,7 +15824,7 @@ function renderAnalytics(c) {
       addRep(n,''); repMap[n].opps.push(o); repMap[n].pipelineValue+=Number(o.Amount||0);
     });
     tasks.forEach(t=>{
-      const sfName=t.Owner?.Name||t._ownerName||'Unknown';
+      const sfName=(t.Owner&&t.Owner.Name)||t._ownerName||t.Owner_Name||t['Owner.Name']||'Unknown';
       const n=matchRepName(sfName);
       addRep(n,''); repMap[n].tasks.push(t);
       if(t.ActivityDate&&new Date(t.ActivityDate)<today) repMap[n].overdueTask++;
@@ -15635,9 +15838,13 @@ function renderAnalytics(c) {
     const reps=Object.values(repMap)
       .filter(r=>{
         if(!r.name||r.name==='Unknown') return false;
-        // Keep if they're a known SF active user OR if they have actual data
-        if(r._isVCSRep) return true;
-        return r.opps.length>0||r.tasks.length>0||r.cases.length>0;
+        // Must have actual opportunities OR cases to show — tasks alone don't qualify
+        // (avoids showing admins/finance who only have tasks assigned to them)
+        const hasRealWork = r.opps.length>0||r.cases.length>0;
+        if(!hasRealWork&&!r._isVCSRep) return false;
+        // If seeded from SF active users, also require they're in VCS approved users OR have opps
+        if(r._isVCSRep&&r.opps.length===0&&r.cases.length===0) return false;
+        return hasRealWork||r.opps.length>0;
       })
       .sort((a,b)=>{
         if(a._isVCSRep&&!b._isVCSRep) return -1;
@@ -15648,20 +15855,103 @@ function renderAnalytics(c) {
     // Rep KPI cards
     const repGrid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:'8px',marginBottom:'12px'}});
     reps.forEach(rep=>{
-      const card=el('div',{class:'analytics-card',style:{textAlign:'left',padding:'12px'}});
-      card.appendChild(el('div',{style:{fontWeight:'700',fontSize:'12px',marginBottom:'6px',color:'var(--text)'}},rep.name));
-      [
-        ['Pipeline','$'+Math.round(rep.pipelineValue).toLocaleString(),'var(--blue)'],
-        ['Open Opps',rep.opps.length,'var(--text)'],
-        ['Open Tasks',rep.tasks.length,rep.overdueTask>0?'var(--red)':'var(--text)'],
-        ['Overdue Tasks',rep.overdueTask,rep.overdueTask>0?'var(--red)':'var(--green)'],
-        ['Cases',rep.cases.length,'var(--muted)'],
-      ].forEach(([lbl,val,col])=>{
-        const row=el('div',{style:{display:'flex',justifyContent:'space-between',fontSize:'10px',padding:'1px 0'}});
-        row.appendChild(el('span',{style:{color:'var(--muted)'}},lbl));
-        row.appendChild(el('span',{style:{color:col,fontWeight:'600'}},String(val)));
-        card.appendChild(row);
-      });
+      const card=el('div',{class:'analytics-card',style:{textAlign:'left',padding:'12px',cursor:'default'}});
+      // Rep name + email
+      const nameRow=el('div',{style:{marginBottom:'8px'}});
+      nameRow.appendChild(el('div',{style:{fontWeight:'700',fontSize:'12px',color:'var(--text)'}},rep.name));
+      if(rep.email) nameRow.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)'}},rep.email));
+      card.appendChild(nameRow);
+
+      // Clickable stat tiles
+      function statTile(lbl,val,col,clickFn){
+        const tile=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',
+          fontSize:'10px',padding:'3px 0',borderBottom:'1px solid rgba(128,128,128,.07)',
+          cursor:clickFn?'pointer':'default'},
+          onclick:clickFn||null});
+        tile.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px'}},lbl));
+        const valEl=el('span',{style:{color:col,fontWeight:'700',fontSize:'11px'}},String(val));
+        if(clickFn) valEl.style.textDecoration='underline dotted';
+        tile.appendChild(valEl);
+        if(clickFn) tile.addEventListener('mouseenter',()=>tile.style.background='var(--bg)');
+        if(clickFn) tile.addEventListener('mouseleave',()=>tile.style.background='');
+        card.appendChild(tile);
+      }
+
+      // Pipeline — clickable to show opps
+      statTile('Pipeline','$'+Math.round(rep.pipelineValue).toLocaleString(),'var(--blue)',
+        rep.opps.length?()=>openModal(body=>{
+          body.style.minWidth='min(80vw,900px)';
+          body.appendChild(el('h3',{style:{marginBottom:'10px'}},rep.name+' — Open Opportunities ('+rep.opps.length+')'));
+          const tbl=el('table',{class:'data-table',style:{marginBottom:'10px'}});
+          const th=el('thead');const hr=el('tr');
+          ['Opportunity','Account / Vendor','Stage','Amount','Close Date'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+          th.appendChild(hr);tbl.appendChild(th);
+          const tb=el('tbody');
+          rep.opps.forEach(o=>{
+            const tr=el('tr',{style:{cursor:'pointer'},onclick(){
+              if(USER.sfInstance) window.open(USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view','_blank');
+            }});
+            const oppName=el('td',{style:{fontWeight:'600',fontSize:'10px',color:'var(--blue)'}},o.Name||'—');
+            tr.appendChild(oppName);
+            tr.appendChild(el('td',{style:{fontSize:'9px'}},o._accountName||'—'));
+            tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},o.StageName||'—'));
+            tr.appendChild(el('td',{style:{fontWeight:'700',fontSize:'10px',color:'var(--green)'}},'$'+Math.round(Number(o.Amount||0)).toLocaleString()));
+            tr.appendChild(el('td',{style:{fontSize:'9px'}},o.CloseDate||'—'));
+            tb.appendChild(tr);
+          });
+          tbl.appendChild(tb);body.appendChild(tbl);
+          body.appendChild(el('p',{style:{fontSize:'8px',color:'var(--muted)'}},'Click any row to open in Salesforce'));
+          const b=el('div',{class:'modal-btns'});b.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(b);
+        }):null);
+
+      // Open Opps count — same modal
+      statTile('Open Opps',rep.opps.length,rep.opps.length>0?'var(--blue)':'var(--muted)',
+        rep.opps.length?()=>openModal(body=>{
+          body.style.minWidth='min(80vw,900px)';
+          body.appendChild(el('h3',{style:{marginBottom:'10px'}},rep.name+' — Open Opportunities'));
+          const tbl=el('table',{class:'data-table'});
+          const th=el('thead');const hr=el('tr');
+          ['Opportunity','Account','Stage','Amount'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+          th.appendChild(hr);tbl.appendChild(th);
+          const tb=el('tbody');
+          rep.opps.forEach(o=>{
+            const tr=el('tr',{style:{cursor:'pointer'},onclick(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view','_blank');}});
+            tr.appendChild(el('td',{style:{fontWeight:'600',fontSize:'10px',color:'var(--blue)'}},o.Name||'—'));
+            tr.appendChild(el('td',{style:{fontSize:'9px'}},o._accountName||'—'));
+            tr.appendChild(el('td',{style:{fontSize:'9px'}},o.StageName||'—'));
+            tr.appendChild(el('td',{style:{fontWeight:'700',color:'var(--green)'}},'$'+Math.round(Number(o.Amount||0)).toLocaleString()));
+            tb.appendChild(tr);
+          });
+          tbl.appendChild(tb);body.appendChild(tbl);
+          const b=el('div',{class:'modal-btns'});b.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(b);
+        }):null);
+
+      // Cases — clickable
+      statTile('Open Cases',rep.cases.length,rep.cases.length>0?'var(--amber)':'var(--muted)',
+        rep.cases.length?()=>openModal(body=>{
+          body.style.minWidth='min(70vw,800px)';
+          body.appendChild(el('h3',{style:{marginBottom:'10px'}},rep.name+' — Open Cases ('+rep.cases.length+')'));
+          const tbl=el('table',{class:'data-table'});
+          const th=el('thead');const hr=el('tr');
+          ['Subject','Account','Status','Priority'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+          th.appendChild(hr);tbl.appendChild(th);
+          const tb=el('tbody');
+          rep.cases.forEach(cs=>{
+            const tr=el('tr',{style:{cursor:'pointer'},onclick(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Case/'+cs.Id+'/view','_blank');}});
+            tr.appendChild(el('td',{style:{fontWeight:'600',fontSize:'10px',color:'var(--blue)'}},cs.Subject||'—'));
+            tr.appendChild(el('td',{style:{fontSize:'9px'}},cs._accountName||'—'));
+            tr.appendChild(el('td',{style:{fontSize:'9px'}},cs.Status||'—'));
+            const priColor=cs.Priority==='High'?'var(--red)':cs.Priority==='Medium'?'var(--amber)':'var(--muted)';
+            tr.appendChild(el('td',{style:{fontSize:'9px',color:priColor,fontWeight:'600'}},cs.Priority||'—'));
+            tb.appendChild(tr);
+          });
+          tbl.appendChild(tb);body.appendChild(tbl);
+          const b=el('div',{class:'modal-btns'});b.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(b);
+        }):null);
+
+      statTile('Open Tasks',rep.tasks.length,rep.overdueTask>0?'var(--red)':'var(--muted)',null);
+      statTile('Overdue Tasks',rep.overdueTask,rep.overdueTask>0?'var(--red)':'var(--green)',null);
+
       repGrid.appendChild(card);
     });
     c.appendChild(repGrid);
@@ -18975,6 +19265,41 @@ function init() {
   $('save-btn').addEventListener('click',saveFile);
   var _searchTimer = null;
 // ── Keyword Calculator ─────────────────────────────────────────────────────
+// Industry synonym/abbreviation map — bidirectional
+// When user types the key, suggest the values; when typing any value word, suggest the key
+const VCS_KEYWORD_MAP = {
+  'dme':     ['durable medical equipment','durable','medical equipment','equipment rental'],
+  'ppe':     ['personal protective equipment','gloves','gowns','masks','protective'],
+  'evs':     ['environmental services','housekeeping','janitorial','cleaning'],
+  'ltc':     ['long term care','skilled nursing','nursing home','assisted living'],
+  'snf':     ['skilled nursing facility','nursing home','rehab','rehabilitation'],
+  'alf':     ['assisted living','senior living','memory care'],
+  'adc':     ['adult day care','day program'],
+  'gpo':     ['group purchasing','purchasing organization','buying group'],
+  'ehr':     ['electronic health records','emr','medical records','clinical software'],
+  'emr':     ['electronic medical records','ehr','clinical documentation'],
+  'voip':    ['voice over ip','phone','telephone','communications'],
+  'hvac':    ['heating ventilation','air conditioning','climate control'],
+  'mro':     ['maintenance repair','maintenance supplies','building supplies'],
+  'fte':     ['full time employee','staffing','labor'],
+  'rpm':     ['remote patient monitoring','telehealth','telemedicine'],
+  'otc':     ['over the counter','otc medications','pharmacy'],
+  'pipe':    ['building materials','plumbing','construction','facility management'],
+  'pipes':   ['building materials','plumbing','construction'],
+  'brick':   ['building materials','construction','masonry','facility management'],
+  'lumber':  ['building materials','construction','wood'],
+  'food':    ['dietary','raw food','food service','nutrition'],
+  'linen':   ['laundry','textiles','linens','housekeeping'],
+  'wound':   ['wound care','advanced wound','dressings','bandages'],
+  'rx':      ['pharmacy','drugs','prescriptions','medications'],
+  'pharma':  ['pharmacy','drugs','prescriptions','pharmaceutical'],
+  'office':  ['back office','administrative','supplies','it'],
+  'trash':   ['waste removal','waste management','refuse'],
+  'waste':   ['waste removal','shredding','bio-waste','disposal'],
+  'grounds': ['landscaping','exterior','lawn','snow removal'],
+  'lawn':    ['landscaping','exterior','grounds','maintenance'],
+};
+
 function showKeywordSuggestions(q) {
   let kw=document.getElementById('vcs-kw-drop');
   if(!kw){
@@ -18992,86 +19317,81 @@ function showKeywordSuggestions(q) {
 
   const ql=q.toLowerCase().trim();
 
-  // Build keyword map from actual vendor data: word → {categories, count, vendors}
-  const wordMap={};
-  const stopWords=new Set(['and','the','for','with','from','that','this','are','has','have',
-    'not','but','our','your','all','its','can','will','per','via','inc','llc','ltd','corp','div']);
-
+  // APPROACH: Find vendors matching the query, then suggest their CATEGORIES
+  // This tells the user "search THIS term instead" rather than completing their typing
+  
   const pool=[...S.vendors,...(S.channelVendors||[]),...(S.itw||[])];
-  pool.forEach(v=>{
-    // Extract words from category, subCategory, product, about
-    const fields=[
-      {text:v.category||'',weight:3,type:'category'},
-      {text:v.subCategory||'',weight:3,type:'category'},
-      {text:v.product||'',weight:2,type:'product'},
-      {text:v.about||'',weight:1,type:'description'},
-      {text:v.name||'',weight:1,type:'vendor'},
-    ];
-    fields.forEach(({text,weight,type})=>{
-      if(!text) return;
-      // Split on common delimiters, extract words 3+ chars
-      text.toLowerCase().split(/[\s,\/\-&()]+/).forEach(word=>{
-        word=word.replace(/[^a-z0-9]/g,'');
-        if(word.length<3||stopWords.has(word)) return;
-        if(!wordMap[word]) wordMap[word]={count:0,weight:0,types:new Set(),vendors:new Set()};
-        wordMap[word].count++;
-        wordMap[word].weight+=weight;
-        wordMap[word].types.add(type);
-        wordMap[word].vendors.add(v.name);
-      });
-      // Also keep multi-word phrases for categories (e.g. "durable medical")
-      if(type==='category'||type==='product'){
-        const words=text.toLowerCase().split(/[\s,\/]+/).filter(w=>w.length>2&&!stopWords.has(w));
-        if(words.length>=2){
-          // Add bigrams
-          for(let i=0;i<words.length-1;i++){
-            const bigram=words[i]+' '+words[i+1];
-            if(!wordMap[bigram]) wordMap[bigram]={count:0,weight:0,types:new Set(),vendors:new Set()};
-            wordMap[bigram].count++;
-            wordMap[bigram].weight+=weight*2; // boost phrases
-            wordMap[bigram].types.add(type);
-            wordMap[bigram].vendors.add(v.name);
-          }
-        }
+  const suggestions=[];
+  const seen=new Set([ql]);
+
+  // Step 1: Check curated abbreviation map first (DME, EVS, PPE, etc.)
+  // This gives instant correct results for known abbreviations
+  const mapKey=ql.toLowerCase();
+  if(VCS_KEYWORD_MAP[mapKey]){
+    VCS_KEYWORD_MAP[mapKey].forEach(s=>{
+      if(!seen.has(s)){seen.add(s);suggestions.push({text:s,score:10,type:'category',hint:'Industry term'});}
+    });
+  }
+  // Reverse: if typing a full word, show its abbreviation too
+  Object.entries(VCS_KEYWORD_MAP).forEach(([abbr,syns])=>{
+    if(abbr.startsWith(mapKey)||mapKey.startsWith(abbr)){
+      syns.forEach(s=>{if(!seen.has(s)){seen.add(s);suggestions.push({text:s,score:9,type:'category',hint:'Related term'});}});
+    }
+    // If query appears in a synonym, show that synonym's category peers
+    syns.forEach(s=>{
+      if(s.includes(mapKey)&&mapKey.length>=3){
+        syns.filter(s2=>s2!==s&&!seen.has(s2)).forEach(s2=>{seen.add(s2);suggestions.push({text:s2,score:7,type:'keyword',hint:'See also'});});
+        if(!seen.has(abbr.toUpperCase())){seen.add(abbr.toUpperCase());suggestions.push({text:abbr.toUpperCase(),score:8,type:'keyword',hint:'Abbreviation'});}
       }
     });
   });
 
-  // Score candidates against query
-  const candidates=[];
-  const seen=new Set([ql]);
-
-  Object.entries(wordMap).forEach(([word,data])=>{
-    if(seen.has(word)) return;
-    const wl=word.toLowerCase();
-    let score=0;
-
-    // Direct substring match (word contains query or query contains word)
-    if(wl.includes(ql)) score+=wl===ql?0:3; // contains query but isn't identical
-    if(ql.includes(wl)&&wl!==ql&&wl.length>=3) score+=2; // query contains word
-
-    // Prefix match
-    if(wl.startsWith(ql)) score+=4;
-    if(ql.startsWith(wl.slice(0,4))&&wl.length>4) score+=1;
-
-    // Phonetic / abbreviation matching (e.g. DME → durable medical)
-    // If query is short (≤4 chars), check if it's initials of a phrase
-    if(ql.length<=4&&word.includes(' ')){
-      const initials=word.split(' ').map(w=>w[0]).join('');
-      if(initials===ql) score+=5; // exact initials match (DME → durable medical equipment)
+  // Step 2: Find which CATEGORIES in our actual vendor data relate to this query
+  // Search vendor name, product, about for the query terms
+  const catHits={};
+  pool.forEach(v=>{
+    const searchText=[v.name,v.product,v.about,v.subCategory].filter(Boolean).join(' ').toLowerCase();
+    const matches=ql.split(/\s+/).filter(w=>w.length>=3).every(w=>searchText.includes(w))||searchText.includes(ql);
+    if(matches&&v.category){
+      const cat=v.category.trim();
+      if(!catHits[cat]) catHits[cat]={count:0,score:0};
+      catHits[cat].count++;
+      catHits[cat].score+=v.name.toLowerCase().includes(ql)?2:1;
     }
-
-    if(score<=0) return; // no match at all
-
-    // Weight by data quality
-    score += Math.log(data.weight+1)*0.5;
-    // Boost category/product types
-    if(data.types.has('category')) score+=1.5;
-    if(data.types.has('product')) score+=0.5;
-
-    seen.add(word);
-    candidates.push({text:word,score,count:data.vendors.size,type:data.types.has('category')?'category':'keyword'});
+    // Also check subcategory
+    if(matches&&v.subCategory){
+      const sub=v.subCategory.trim();
+      if(!catHits[sub]) catHits[sub]={count:0,score:0};
+      catHits[sub].count++;
+    }
   });
+
+  // Add category hits — these are the "try this instead" suggestions
+  Object.entries(catHits)
+    .sort((a,b)=>b[1].score-a[1].score)
+    .forEach(([cat,data])=>{
+      const cl=cat.toLowerCase();
+      if(!seen.has(cl)&&cl!==ql){
+        seen.add(cl);
+        suggestions.push({text:cat,score:5+Math.log(data.count+1),type:'category',hint:data.count+' vendor'+(data.count!==1?'s':'')});
+      }
+    });
+
+  // Step 3: Also suggest parent categories if the query is very specific
+  if(suggestions.length<4){
+    pool.forEach(v=>{
+      const allText=[v.name,v.product,v.about].filter(Boolean).join(' ').toLowerCase();
+      if(allText.includes(ql)&&v.category){
+        const parent=v.category.split(/[\-\/]/)[0].trim();
+        if(!seen.has(parent.toLowerCase())&&parent.toLowerCase()!==ql){
+          seen.add(parent.toLowerCase());
+          suggestions.push({text:parent,score:3,type:'category',hint:'Parent category'});
+        }
+      }
+    });
+  }
+
+  const candidates=suggestions;
 
   candidates.sort((a,b)=>b.score-a.score);
   const top=candidates.slice(0,10);
@@ -19086,13 +19406,23 @@ function showKeywordSuggestions(q) {
 
   top.forEach(s=>{
     const item=document.createElement('div');
-    item.style.cssText='padding:6px 12px;font-size:10px;cursor:pointer;display:flex;gap:8px;align-items:center;color:var(--text)';
+    item.style.cssText='padding:6px 12px;cursor:pointer;display:flex;gap:8px;align-items:center;border-bottom:1px solid rgba(128,128,128,.07)';
     const badge=document.createElement('span');
-    badge.style.cssText='font-size:7px;padding:1px 5px;border-radius:3px;background:'+(s.type==='category'?'rgba(79,124,255,.12)':'rgba(34,197,94,.1)')+';color:'+(s.type==='category'?'var(--blue)':'var(--green)')+';flex-shrink:0';
-    badge.textContent=s.type==='category'?'Category':'Keyword';
-    const label=document.createElement('span');
-    label.textContent=s.text+(s.count>1?' ('+s.count+')':'');
-    item.appendChild(badge); item.appendChild(label);
+    badge.style.cssText='font-size:7px;padding:1px 5px;border-radius:3px;flex-shrink:0;white-space:nowrap;background:'+(s.type==='category'?'rgba(79,124,255,.12)':'rgba(34,197,94,.1)')+';color:'+(s.type==='category'?'var(--blue)':'var(--green)')+'';
+    badge.textContent=s.type==='category'?'Category':'Term';
+    const textWrap=document.createElement('div');
+    textWrap.style.cssText='flex:1;min-width:0';
+    const label=document.createElement('div');
+    label.style.cssText='font-size:10px;color:var(--text);font-weight:500';
+    label.textContent=s.text;
+    textWrap.appendChild(label);
+    if(s.hint){
+      const hint=document.createElement('div');
+      hint.style.cssText='font-size:8px;color:var(--muted)';
+      hint.textContent=s.hint;
+      textWrap.appendChild(hint);
+    }
+    item.appendChild(badge); item.appendChild(textWrap);
     item.addEventListener('mouseenter',()=>item.style.background='var(--bg)');
     item.addEventListener('mouseleave',()=>item.style.background='');
     item.addEventListener('mousedown',e=>{
