@@ -8410,19 +8410,19 @@ function renderCustomers(c) {
             const card=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',padding:'8px',fontSize:'9px'}});
             card.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',marginBottom:'3px'}},ct.Name||'—'));
             if(ct.Title) card.appendChild(el('div',{style:{color:'var(--muted)',marginBottom:'4px'}},ct.Title));
-            // Clickable phone
+            // Phone — click dials only
             if(ct.Phone){
               const ph=el('div',{style:{display:'flex',alignItems:'center',gap:'4px',marginBottom:'2px',cursor:'pointer'},
-                onclick(){dialPhone(ct.Phone,ct.Name);}});
+                onclick(e){e.stopPropagation();dialPhone(ct.Phone,ct.Name);}});
               ph.appendChild(el('span',{},'📞'));
               ph.appendChild(el('span',{style:{color:'var(--blue)',textDecoration:'underline dotted'}},ct.Phone));
               card.appendChild(ph);
             }
-            // Clickable email
+            // Email — click emails only
             if(ct.Email){
               const em=el('div',{style:{display:'flex',alignItems:'center',gap:'4px',marginBottom:'4px',cursor:'pointer'},
-                onclick(){
-                  // Open email draft modal with this contact
+                onclick(e){
+                  e.stopPropagation();
                   const fakeVendor={name:parent.Name,email:ct.Email,procContact:ct.Name,title:ct.Title||''};
                   openEmailModal(fakeVendor);
                 }});
@@ -8430,13 +8430,13 @@ function renderCustomers(c) {
               em.appendChild(el('span',{style:{color:'var(--blue)',textDecoration:'underline dotted',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'150px'}},ct.Email));
               card.appendChild(em);
             }
-            // Open in SF link
+            // Clicking the card itself (not phone/email) opens SF contact
             if(ct.Id&&USER.sfInstance){
-              card.appendChild(el('a',{
-                href:USER.sfInstance+'/lightning/r/Contact/'+ct.Id+'/view',
-                target:'_blank',
-                style:{fontSize:'8px',color:'var(--muted)',display:'block'}
-              },'↗ Open in Salesforce'));
+              card.style.cursor='pointer';
+              card.addEventListener('click',()=>{
+                window.open(USER.sfInstance+'/lightning/r/Contact/'+ct.Id+'/view','_blank');
+              });
+              card.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)',marginTop:'3px'}},'↗ Click card to open in Salesforce'));
             }
             ctGrid.appendChild(card);
           });
@@ -10100,6 +10100,22 @@ const CONTRACT_FIELD_MAP = [
   {field:'paymentFreq',    label:'Payment Frequency',      extract:ex=>ex.paymentTerms?.frequency||null},
   {field:'product',        label:'Products/Services',      extract:ex=>ex.products||null},
   {field:'priceProtection',label:'Price Protection',       extract:ex=>ex.keyTerms?.priceProtection||null},
+  // Additional VCS fields
+  {field:'contractEffective',label:'Effective Date (Contract)',extract:ex=>ex.effectiveDate||ex.effectiveDateCoverSheet||null},
+  {field:'contractExpiry', label:'Expiration Date (Contract)',extract:ex=>ex.expirationDate||ex.expirationDateCalculated||null},
+  {field:'terminationNoticeDays',label:'Termination Notice Days',extract:ex=>ex.terminationNoticeDays?String(ex.terminationNoticeDays):null},
+  {field:'assignment',     label:'Assignment',             extract:ex=>ex.keyTerms?.assignment||null},
+  {field:'tail',           label:'Tail (years)',           extract:ex=>{
+    // Tail = perpetuity period in years if applicable
+    if(ex.perpetuity!=='Yes') return null;
+    const m=(ex.adminFee?.notes||ex.notes||'').match(/(\d+)\s*year/i);
+    return m?m[1]:null;
+  }},
+  {field:'tiers',          label:'Tiers',                 extract:ex=>ex.tiers?.length?ex.tiers.map(t=>[t.threshold,t.rate].filter(Boolean).join(' @ ')).join(' | '):null},
+  {field:'gpo',            label:'GPO',                   extract:ex=>ex.gpoName||null},
+  {field:'reportFrequency',label:'Report Frequency',      extract:ex=>ex.adminFee?.frequency||ex.paymentTerms?.frequency||null},
+  {field:'paymentTerms',   label:'Payment Terms (Member)',extract:ex=>ex.paymentTerms?.memberPaymentTerms||null},
+  {field:'comments',       label:'Notes / Comments',      extract:ex=>ex.notes||null},
 ];
 
 
@@ -10372,8 +10388,23 @@ function openEditableApplyModal(vendor, extracted) {
       const info=el('div',{style:{flex:'1'}});
       info.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',marginBottom:'2px'}},(label||field)));
       if(current) info.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'3px'}},'Current: '+String(current).slice(0,60)));
-      const inp=el('input',{type:'text',class:'detail-edit-field',style:{width:'100%',fontSize:'10px'},value:String(extracted_val)});
-      inp.addEventListener('input',()=>{edits[field]=inp.value;});
+      // Use picklist dropdown for fields that have defined options
+      const fieldPicklist=STATIC_PICKLISTS[field]||STATIC_PICKLISTS[field+'s']||null;
+      let inp;
+      if(fieldPicklist&&fieldPicklist.length>0){
+        inp=el('select',{class:'detail-edit-field',style:{width:'100%',fontSize:'10px',height:'26px'}});
+        // Add current extracted value as first option if not in picklist
+        const opts=[extracted_val,...fieldPicklist.filter(o=>o!==extracted_val)];
+        opts.forEach(opt=>{
+          const o=el('option',{value:opt},opt);
+          if(opt===extracted_val) o.selected=true;
+          inp.appendChild(o);
+        });
+        inp.addEventListener('change',()=>{edits[field]=inp.value;});
+      } else {
+        inp=el('input',{type:'text',class:'detail-edit-field',style:{width:'100%',fontSize:'10px'},value:String(extracted_val)});
+        inp.addEventListener('input',()=>{edits[field]=inp.value;});
+      }
       info.appendChild(inp);
       row.appendChild(info);
       fieldList.appendChild(row);
@@ -19812,6 +19843,16 @@ function showKeywordSuggestions(q) {
     kw.appendChild(item);
   });
   kw.style.display='block';
+
+  // Dismiss when user clicks anywhere outside the dropdown or search box
+  const outsideClick=(e)=>{
+    const srch=$('search');
+    if(!kw.contains(e.target)&&e.target!==srch){
+      kw.style.display='none';
+      document.removeEventListener('mousedown',outsideClick,true);
+    }
+  };
+  document.addEventListener('mousedown',outsideClick,true);
 }
 
 function hideKeywordSuggestions() {
@@ -19841,6 +19882,10 @@ function hideKeywordSuggestions() {
   $('search').addEventListener('blur', () => {
     // Small delay so mousedown on dropdown item fires first
     setTimeout(hideSearchDropdown, 150);
+    setTimeout(()=>{
+      const kw=document.getElementById('vcs-kw-drop');
+      if(kw&&!kw.matches(':hover')) hideKeywordSuggestions();
+    }, 200);
   });
   $('search').addEventListener('keydown', e => {
     if (e.key === 'Enter' && $('search').value.length >= 3) {
