@@ -17385,6 +17385,12 @@ function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
     card.appendChild(body);
   }
   
+}
+
+function renderVCSHealth(c) {
+  c.innerHTML='';
+  const wrap=el('div',{style:{maxWidth:'900px',margin:'0 auto',padding:'12px 0'}});
+  wrap.appendChild(el('h2',{style:{margin:'0 0 12px',fontSize:'16px',fontWeight:'700'}},'🔍 VCS Health Check'));
 
   const checks=[
     {label:'Google Drive Connection',icon:'☁',test:()=>!!S.settings?.driveFileId,pass:'Drive File ID configured',fail:'No Drive File ID in Settings'},
@@ -17508,13 +17514,11 @@ function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
   sessSec.appendChild(infoGrid);
   wrap.appendChild(sessSec);
 
-  
-  if(USER.role==='admin'||USER.role==='procurement') {
-    settingsHdr.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){if(!S._settingsOpen)S._settingsOpen={};['handover','users','sf','drive','ms365','dialer','ai','apiusage'].forEach(k=>S._settingsOpen[k]=true);render();}},'▼ Expand All'));
-    settingsHdr.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){if(!S._settingsOpen)S._settingsOpen={};['handover','users','sf','drive','ms365','dialer','ai','apiusage'].forEach(k=>S._settingsOpen[k]=false);render();}},'▶ Collapse All'));
-  }
-  c.appendChild(settingsHdr);
+  c.appendChild(wrap);
+}
 
+function renderSettings(c) {
+  c.innerHTML = ''; // CRITICAL: clear before re-rendering
   // ── Global Sync Status Banner ──────────────────────────────────────────
   const syncSec=el('div',{style:{
     background:'rgba(79,124,255,.05)',border:'1px solid rgba(79,124,255,.15)',
@@ -18931,6 +18935,7 @@ function out(o){return ContentService.createTextOutput(JSON.stringify(o)).setMim
     c.appendChild(apiSec);
   }
 }
+
 
 // ─── AI Assistant ─────────────────────────────────────────────────────────────
 let aiHistory = [];
