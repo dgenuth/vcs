@@ -3100,6 +3100,24 @@ const NAV_DEFS=[
   ['health','🔍','VCS Health'],
 ];
 
+// Derive tab groups from NAV_DEFS — SINGLE SOURCE OF TRUTH
+// Any new tab added to NAV_DEFS automatically appears in Settings tab access
+function getNavTabGroups() {
+  const SECTION_COLORS={'Operations':'#4f7cff','Vendors':'#22c55e','Intelligence':'#8b5cf6','Admin':'#06b6d4'};
+  const groups=[];
+  let currentGroup={label:'Operations',color:'#4f7cff',tabs:[]};
+  NAV_DEFS.forEach(([id,icon,label])=>{
+    if(id.startsWith('_div')){
+      if(currentGroup.tabs.length) groups.push(currentGroup);
+      currentGroup={label,color:SECTION_COLORS[label]||'var(--muted)',tabs:[]};
+    } else {
+      currentGroup.tabs.push({id,label,icon:icon||''});
+    }
+  });
+  if(currentGroup.tabs.length) groups.push(currentGroup);
+  return groups;
+}
+
 
 function updateSidebar() {
   // Hide save/reload for non-edit roles
@@ -5161,7 +5179,7 @@ const PERSONAL_SETTING_KEYS = ['theme','fontSize','compactRows','defaultView','s
   'emailSignature','cols','dbHiddenCols','sidebarWidth','closedDays','oooDays','dialerUrl',
   'myPhone','sfClientId']; // sfClientId is per-user (each user has own SF credentials)
 // Global settings — org-wide, admin-controlled, apply to all sessions
-const GLOBAL_SETTING_KEYS = ['sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey'];
+const GLOBAL_SETTING_KEYS = ['sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey','apiKey','grokKey'];
 const PERSIST_KEYS = [...PERSONAL_SETTING_KEYS, ...GLOBAL_SETTING_KEYS];
 
 function saveSettings() {
@@ -17366,6 +17384,29 @@ function renderVCSHealth(c) {
       const r=await sfQuery('SELECT Id FROM User WHERE Id=\''+USER.userId+'\' LIMIT 1');
       return r.totalSize+' user record found';
     });
+    await runPing('Claude AI API',async()=>{
+      const key=S.settings?.apiKey||localStorage.getItem('vcs_api_key')||'';
+      if(!key) throw new Error('No API key configured — go to Settings → AI');
+      const r=await fetch('https://api.anthropic.com/v1/messages',{
+        method:'POST',
+        headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json'},
+        body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:10,messages:[{role:'user',content:'ping'}]})
+      });
+      if(r.status===401) throw new Error('Invalid API key (401)');
+      if(r.status===429) return 'Rate limited but key is valid';
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return 'Connected — key valid';
+    });
+    await runPing('Renzo Outreach API',async()=>{
+      const key=S.settings?.renzoApiKey||'';
+      if(!key) throw new Error('No Renzo API key — set in Settings → Renzo');
+      const r=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
+        body:JSON.stringify({action:'renzoTest'})});
+      const d=await r.json();
+      if(d.status==='ok') return 'Connected';
+      if(d.status==='error'&&d.message?.includes('401')) throw new Error('Invalid Renzo key (401)');
+      return d.message||'Connected';
+    });
     await runPing('Watcher Status',async()=>{
       const r=await fetch(VCS_PROXY_URL+'?action=getWatcherStatus',{method:'GET'});
       const d=await r.json();
@@ -17448,20 +17489,29 @@ function renderSettings(c) {
       'Toggle which tabs are ON by default for each role. Users can still have individual overrides (shown with ⚡ in user management). Changes take effect on next login.'));
 
     const ROLE_LIST=['admin','procurement','manager','sales','cro'];
-    const ALL_TABS=[
-      {id:'today',label:'Today'},{id:'callsheet',label:'Call Sheet'},{id:'expiring',label:'Expiring'},
-      {id:'vendordb',label:'Vendor DB'},{id:'network',label:'Network Intel'},{id:'economics',label:'Contract Economics'},
-      {id:'tiers',label:'Tier Tracker'},{id:'itw',label:'In The Works'},{id:'reviews',label:'Reviews'},
-      {id:'compare',label:'Compare'},{id:'sfboard',label:'SF Board'},{id:'contracts',label:'Contracts'},
-      {id:'checklist',label:'Checklist'},{id:'health',label:'VCS Health'},{id:'spend',label:'Spend'},
-      {id:'customers',label:'Customers'},{id:'calendar',label:'Calendar'},{id:'forecast',label:'Forecast'},
-      {id:'analytics',label:'Analytics'},{id:'reports',label:'Reports'},{id:'summary',label:'Summary'},
-      {id:'history',label:'History'},{id:'datacheck',label:'Data Check'},{id:'settings',label:'Settings'},
-    ];
+    const ALL_TABS=getNavTabGroups().flatMap(g=>g.tabs);
 
     ROLE_LIST.forEach(role=>{
-      const roleSection=el('div',{style:{marginBottom:'12px',padding:'10px',background:'var(--bg)',borderRadius:'6px',border:'1px solid var(--border)'}});
-      roleSection.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'8px',color:'var(--blue)',textTransform:'capitalize'}},role));
+      const _rKey='vcs_rtd_'+role;
+      const _rColl=localStorage.getItem(_rKey)==='1';
+      const roleSection=el('div',{style:{marginBottom:'8px',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
+      const roleSectionHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'6px 10px',
+        background:'var(--bg)',cursor:'pointer',userSelect:'none',fontWeight:'700',fontSize:'11px'},
+        onclick(){
+          const c2=!(_roleBody.style.display==='none');
+          _roleBody.style.display=c2?'none':'';
+          _roleChev.textContent=c2?'▶':'▼';
+          localStorage.setItem(_rKey,c2?'1':'0');
+        }});
+      const _roleChev=el('span',{style:{fontSize:'10px',color:'var(--muted)'}},_rColl?'▶':'▼');
+      roleSectionHdr.appendChild(_roleChev);
+      roleSectionHdr.appendChild(el('span',{style:{textTransform:'capitalize',color:'var(--blue)'}},role));
+      // Show tab count enabled
+      const _savedRT=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
+      const _rtabs=_savedRT[role]||(ROLE_PERMS[role]||{}).tabs||[];
+      roleSectionHdr.appendChild(el('span',{style:{marginLeft:'auto',fontSize:'9px',color:'var(--muted)',fontWeight:'400'}},_rtabs.length+' tabs on'));
+      roleSection.appendChild(roleSectionHdr);
+      const _roleBody=el('div',{style:{display:_rColl?'none':'',padding:'8px 10px'}});
       const roleGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px'}});
 
       // Get current role tabs
@@ -17519,7 +17569,8 @@ function renderSettings(c) {
         });
         roleGrid.appendChild(rbtn);
       });
-      roleSection.appendChild(roleGrid);
+      _roleBody.appendChild(roleGrid);
+      roleSection.appendChild(_roleBody);
       _rdBody.appendChild(roleSection);
     });
 
@@ -17756,32 +17807,8 @@ function renderSettings(c) {
           const rolePerms=ROLE_PERMS[cu.role]||ROLE_PERMS.restricted;
           const roleDefaultTabs=new Set(rolePerms.tabs||[]);
           const tabOverrides=cu.tabOverrides||{}; // {tabId: true/false} overrides role default
-          // Tab groups matching sidebar — Core/Vendors/Contracts/Intelligence/Admin
-          const TAB_GROUPS_DISPLAY=[
-            {label:'Core',color:'#4f7cff',tabs:[
-              {id:'today',label:'Today'},{id:'callsheet',label:'Call Sheet'},
-              {id:'expiring',label:'Expiring'},{id:'calendar',label:'Calendar'},
-            ]},
-            {label:'Vendors',color:'#22c55e',tabs:[
-              {id:'vendordb',label:'Vendor DB'},{id:'itw',label:'In The Works'},
-              {id:'reviews',label:'Reviews'},{id:'tiers',label:'Tier Tracker'},
-              {id:'compare',label:'Compare'},{id:'network',label:'Network Intel'},
-            ]},
-            {label:'Contracts',color:'#f59e0b',tabs:[
-              {id:'contracts',label:'Contracts'},{id:'economics',label:'Contract Economics'},
-              {id:'forecast',label:'Forecast'},{id:'checklist',label:'Checklist'},
-            ]},
-            {label:'Intelligence',color:'#8b5cf6',tabs:[
-              {id:'sfboard',label:'SF Board'},{id:'spend',label:'Spend'},
-              {id:'customers',label:'Customers'},{id:'analytics',label:'Analytics'},
-              {id:'reports',label:'Reports'},
-            ]},
-            {label:'Admin',color:'#06b6d4',tabs:[
-              {id:'summary',label:'Summary'},{id:'history',label:'History'},
-              {id:'datacheck',label:'Data Check'},{id:'settings',label:'Settings'},
-              {id:'health',label:'VCS Health'},
-            ]},
-          ];
+          // Derive groups from NAV_DEFS — stays in sync automatically
+          const TAB_GROUPS_DISPLAY=getNavTabGroups();
           TAB_GROUPS_DISPLAY.forEach(grp=>{
             container.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:grp.color,
               marginTop:'6px',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.04em',
@@ -18148,7 +18175,21 @@ function renderSettings(c) {
   if (hasPermission('configAI')) {
   const secAI=el('div',{class:'settings-section'});
   secAI.appendChild(el('h3',{},'🤖 AI Configuration'));
-  secAI.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Configure your AI provider. Keys stored in browser localStorage only — never sent to any server except the AI provider directly.'));
+  secAI.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Configure your AI provider. Keys are saved to your VCS Drive config so they sync across all your devices automatically.'));
+  // Show sync status
+  const keyInDrive = !!(S.settings.apiKey||S.settings.grokKey);
+  const syncBanner=el('div',{style:{fontSize:'9px',padding:'6px 10px',borderRadius:'4px',marginBottom:'8px',
+    background:keyInDrive?'rgba(34,197,94,.07)':'rgba(245,158,11,.07)',
+    border:'1px solid '+(keyInDrive?'rgba(34,197,94,.2)':'rgba(245,158,11,.2)'),
+    display:'flex',gap:'8px',alignItems:'center'}});
+  syncBanner.appendChild(el('span',{style:{flex:'1',color:keyInDrive?'var(--green)':'var(--amber)'}},
+    keyInDrive?'✓ API key loaded from Drive — synced across all your devices':'⚠ No API key in Drive. Enter key below and save to sync across devices.'));
+  if(keyInDrive){
+    syncBanner.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:()=>{
+      saveConfigToDrive().then(()=>toast('✓ Settings synced to Drive','#22c55e')).catch(()=>toast('Drive sync failed','#ef4444'));
+    }},'↑ Push to Drive'));
+  }
+  secAI.appendChild(syncBanner);
 
   // API key sharing controls (admin only)
   if(USER.role==='admin'){
@@ -18187,9 +18228,12 @@ function renderSettings(c) {
     apiRow.appendChild(el('button',{class:'btn-xs btn-green',onclick(){
       S.settings[settingsKey]=apiInp.value.trim();
       localStorage.setItem(storageKey,apiInp.value.trim());
-      toast('✓ API key saved','#22c55e');
+      // Sync to Drive immediately so it's available on all devices
+      saveConfigToDrive()
+        .then(()=>toast('✓ API key saved & synced to Drive','#22c55e'))
+        .catch(()=>toast('✓ API key saved locally (Drive sync failed)','#f59e0b'));
       renderSettings(c);
-    }},'Save'));
+    }},'Save & Sync'));
     secAI.appendChild(apiRow);
     if (provider==='grok') {
       secAI.appendChild(el('p',{style:{fontSize:'9px',color:'var(--green)',marginTop:'5px',lineHeight:'1.5'}},'✓ Grok offers free/generous API access via console.x.ai — ideal for heavy AI usage without per-token costs.'));
