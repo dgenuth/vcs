@@ -836,6 +836,9 @@ var VCS_VERSION = 'v1778431112';
   <div id="ai-session-label" style="padding:2px 10px 4px;font-size:9px;color:var(--muted);border-bottom:1px solid var(--border)">New conversation</div>
   <div id="ai-messages" class="ai-messages"></div>
   <div id="ai-suggestions" class="ai-suggestions"></div>
+  <!-- Role-based preset questions -->
+  <div id="ai-presets" style="padding:4px 8px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:3px;max-height:80px;overflow-y:auto">
+  </div>
   <div class="ai-input-row">
     <button id="ai-voice-btn" class="ai-voice-btn" title="Click to start voice (stays on until clicked again)" style="display:none">🎤</button>
     <textarea id="ai-input" class="ai-input" placeholder="Ask anything about your vendors..."></textarea>
@@ -16746,8 +16749,67 @@ function exportSummaryEmail(since, notesVendors, vs, recentHistory) {
 }
 
 function renderHistory(c) {
+  // ── Session change log ──────────────────────────────────────────────────
+  const changes=S.changeHistory||[];
+  if(changes.length>0){
+    const changeSec=el('div',{class:'summary-section',style:{marginBottom:'12px'}});
+    changeSec.appendChild(el('h3',{style:{marginBottom:'8px'}},'✏ Changes This Session ('+changes.length+')'));
+    const tbl=el('table',{class:'data-table'});
+    const th=el('thead');const hr2=el('tr');
+    ['Time','Vendor','Field','From','To'].forEach(h=>hr2.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+    th.appendChild(hr2);tbl.appendChild(th);
+    const tb=el('tbody');
+    [...changes].reverse().forEach(ch=>{
+      const tr=el('tr');
+      const t=new Date(ch.ts||Date.now());
+      tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)',whiteSpace:'nowrap'}},
+        t.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})));
+      tr.appendChild(el('td',{style:{fontWeight:'600',fontSize:'10px'}},ch.vendor||'—'));
+      tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--blue)'}},ch.field||'edit'));
+      tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)',maxWidth:'100px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},String(ch.from||'—').slice(0,35)));
+      tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--green)',maxWidth:'100px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},String(ch.to||'—').slice(0,35)));
+      tb.appendChild(tr);
+    });
+    tbl.appendChild(tb);
+    changeSec.appendChild(el('div',{class:'tbl-wrap'},tbl));
+    c.appendChild(changeSec);
+  }
+
+  // ── Extraction correction learning log ──────────────────────────────────
+  try{
+    const corrLog=JSON.parse(localStorage.getItem('vcs_extraction_log')||'[]');
+    if(corrLog.length>0){
+      const corrSec=el('div',{class:'summary-section',style:{marginBottom:'12px'}});
+      corrSec.appendChild(el('h3',{style:{marginBottom:'6px'}},'🧠 AI Extraction Corrections ('+corrLog.length+')'));
+      corrSec.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'8px'}},'Corrections you\u2019ve made to AI extractions \u2014 helps identify patterns to improve the prompt.'));
+      const tbl2=el('table',{class:'data-table'});
+      const th2=el('thead');const hr3=el('tr');
+      ['Date','Contract','Field','AI Said','Corrected To','Reason'].forEach(h=>hr3.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+      th2.appendChild(hr3);tbl2.appendChild(th2);
+      const tb2=el('tbody');
+      [...corrLog].reverse().slice(0,30).forEach(corr=>{
+        const tr=el('tr');
+        tr.appendChild(el('td',{style:{fontSize:'9px',whiteSpace:'nowrap'}},new Date(corr.timestamp||0).toLocaleDateString()));
+        tr.appendChild(el('td',{style:{fontSize:'9px',fontWeight:'600',maxWidth:'100px',overflow:'hidden',textOverflow:'ellipsis'}},corr.vendorName||'—'));
+        tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--blue)'}},corr.field||'—'));
+        tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--red)'}},String(corr.original||'').slice(0,25)));
+        tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--green)'}},String(corr.corrected||'').slice(0,25)));
+        tr.appendChild(el('td',{style:{fontSize:'8px',color:'var(--muted)',fontStyle:'italic'}},corr.reason||'—'));
+        tb2.appendChild(tr);
+      });
+      tbl2.appendChild(tb2);
+      corrSec.appendChild(el('div',{class:'tbl-wrap'},tbl2));
+      corrSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginTop:'4px',color:'var(--muted)'},onclick(){
+        if(!confirm('Clear all '+corrLog.length+' correction logs?'))return;
+        localStorage.removeItem('vcs_extraction_log');
+        const c2=$('content');if(c2){c2.innerHTML='';renderHistory(c2);}
+      }},'🗑 Clear Log'));
+      c.appendChild(corrSec);
+    }
+  }catch(_){}
+
   if (!S.history.length) {
-    c.appendChild(el('p',{class:'muted',style:{marginBottom:'10px'}},'No activity this session.'));
+    if(!changes.length) c.appendChild(el('p',{class:'muted',style:{marginBottom:'10px'}},'No changes or activity this session.'));
     const recent=S.vendors.filter(v=>v.notes&&v.lastComm).sort((a,b)=>(parseDate(b.lastComm)||0)-(parseDate(a.lastComm)||0)).slice(0,20);
     if (recent.length) { c.appendChild(el('h3',{class:'section-title'},'Recent Activity (from spreadsheet)')); c.appendChild(buildTable(['Vendor','Last Comm','Note Preview'],recent,v=>[vLink(v),fmtDate(parseDate(v.lastComm)),el('span',{class:'note-preview'},String(v.notes||'').split('|')[0]?.slice(0,100)||'')])); }
     return;
@@ -19169,6 +19231,75 @@ async function sendAIMessage(userMsg) {
   }
 }
 
+// Role-based AI preset questions
+const AI_PRESETS_BY_ROLE = {
+  sales: [
+    "Which vendors haven't I contacted in 30+ days?",
+    "Draft a follow-up email for my most urgent vendor",
+    "Who's on my call sheet this week?",
+    "Which of my vendors expire in 90 days?",
+    "Draft an intro email for a vendor I just signed",
+    "Give me talking points for my next vendor call",
+  ],
+  procurement: [
+    "Which contracts expire in 60 days with no auto-renewal?",
+    "Which vendors have no admin fee set?",
+    "Show all vendors with perpetuity fees",
+    "Which vendors are under-paying their contracted fee?",
+    "Draft a data sheet summary for the current vendor",
+    "Which channel partners have fee gaps?",
+  ],
+  admin: [
+    "How many vendors do we have by category?",
+    "Which vendors are missing key fields?",
+    "Draft a vendor portfolio summary",
+    "Which vendors were added in the last 30 days?",
+    "Show contracts by auto-renewal type",
+    "Which vendors have LOP requirements?",
+  ],
+  manager: [
+    "What is our total contracted admin fee revenue?",
+    "Which reps have the most overdue follow-ups?",
+    "Summarize pipeline health across all reps",
+    "Which categories have the highest average admin fee?",
+    "Which vendors are at risk this quarter?",
+    "Draft a monthly vendor update for leadership",
+  ],
+  cro: [
+    "What is our total contracted revenue?",
+    "Which vendors represent the most revenue risk?",
+    "Which categories should we expand into?",
+    "Draft an executive portfolio summary",
+    "Which channel partners need renegotiation?",
+    "What is our revenue gap vs contracted rates?",
+  ],
+};
+
+function populateAIPresets() {
+  const presetDiv=$('ai-presets');
+  if(!presetDiv) return;
+  presetDiv.innerHTML='';
+  const role=USER.role||'admin';
+  const presets=AI_PRESETS_BY_ROLE[role]||AI_PRESETS_BY_ROLE.admin;
+  const lbl=document.createElement('span');
+  lbl.style.cssText='font-size:8px;color:var(--muted);align-self:center;flex-shrink:0;margin-right:2px;padding:2px 0';
+  lbl.textContent='Try:';
+  presetDiv.appendChild(lbl);
+  presets.forEach(q=>{
+    const btn=document.createElement('button');
+    btn.style.cssText='font-size:8px;padding:2px 7px;border-radius:10px;cursor:pointer;border:1px solid var(--border);background:var(--bg);color:var(--text);white-space:nowrap;flex-shrink:0;transition:background .15s';
+    btn.textContent=q.length>30?q.slice(0,27)+'…':q;
+    btn.title=q;
+    btn.addEventListener('click',()=>{
+      const inp=$('ai-input');
+      if(inp){inp.value=q;inp.focus();inp.style.height='auto';inp.style.height=inp.scrollHeight+'px';}
+    });
+    btn.addEventListener('mouseenter',()=>btn.style.background='var(--card)');
+    btn.addEventListener('mouseleave',()=>btn.style.background='var(--bg)');
+    presetDiv.appendChild(btn);
+  });
+}
+
 function renderAISuggestions() {
   const sugg=$('ai-suggestions'); sugg.innerHTML='';
   for (const s of getAISuggestions()) {
@@ -20217,6 +20348,7 @@ function hideKeywordSuggestions() {
     if (S.aiOpen){
       renderAISuggestions();
       renderAISessionTabs();
+      populateAIPresets();
       if(!aiHistory.length){
         // Try to restore from localStorage
         loadAIHistory();
