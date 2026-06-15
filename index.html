@@ -5535,6 +5535,16 @@ const ROLE_PERMS = {
   viewer:     {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,viewFees:true,viewContacts:false,viewFinancials:true,canCopy:false,tabs:['today', 'expiring', 'vendordb', 'network', 'economics', 'analytics', 'reports', 'summary', 'history', 'settings'],settingsPersonalOnly:true},
   restricted: {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,viewFees:false,viewContacts:false,viewFinancials:false,canCopy:false,tabs:['vendordb', 'settings'],settingsPersonalOnly:true},
 };
+
+// Apply any saved role tab overrides from Settings → Role Tab Defaults
+(function(){
+  try{
+    const overrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
+    Object.entries(overrides).forEach(([role,tabs])=>{
+      if(ROLE_PERMS[role]) ROLE_PERMS[role].tabs=tabs;
+    });
+  }catch(e){}
+})();
 // Fields that restricted/viewer roles may have explicitly hidden by admin
 // hiddenFields is stored per-user in the approved users list
 // All 69 vendor fields — complete list from SearchTable in Vendor_Catalogue.xlsm
@@ -5896,12 +5906,37 @@ function dialPhone(phone, vendorName) {
   const e164 = (raw.length===11 && raw.startsWith('1')) ? '+'+raw : '+1'+raw;
 
   if (dialerUrl && dialerUrl.trim()) {
-    // Custom dialer URL configured in settings
     const url = dialerUrl
       .replace(/\{phone\}/gi, encodeURIComponent(raw))
       .replace(/\{phone_raw\}/gi, raw)
       .replace(/\{name\}/gi, encodeURIComponent(vendorName||''))
       .replace(/\{e164\}/gi, e164);
+
+    // Google Voice special handling: copy + open (deep link from window.open is blocked by Google)
+    if(dialerUrl.includes('voice.google.com')){
+      navigator.clipboard.writeText(phone).catch(()=>{});
+      // Show a quick action bar instead of blindly opening
+      openModal(body=>{
+        body.appendChild(el('h3',{style:{marginBottom:'8px'}},'📞 '+phone+(vendorName?' — '+vendorName:'')));
+        body.appendChild(el('div',{style:{background:'rgba(245,158,11,.08)',border:'1px solid rgba(245,158,11,.2)',borderRadius:'6px',padding:'10px',marginBottom:'12px',fontSize:'10px',color:'var(--text)',lineHeight:'1.6'}},'Number copied to clipboard. Google Voice deep links require you to be <strong>already on voice.google.com</strong>. Click below to open Google Voice, then paste '+phone+' into the dial pad.'));
+        const btns=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'8px'}});
+        btns.appendChild(el('button',{class:'btn-primary',onclick(){
+          window.open('https://voice.google.com','_blank');
+          closeModal();
+        }},'🔊 Open Google Voice'));
+        btns.appendChild(el('button',{class:'btn-secondary',onclick(){
+          navigator.clipboard.writeText(phone);
+          closeModal();
+        }},'📋 Copy Again'));
+        body.appendChild(btns);
+        body.appendChild(el('p',{style:{fontSize:'8px',color:'var(--muted)',textAlign:'center'}},'Or change your dialer in Settings → Dialer'));
+        const cb=el('div',{class:'modal-btns'});cb.appendChild(el('button',{class:'btn-ghost',onclick:closeModal},'Cancel'));body.appendChild(cb);
+      });
+      logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendorName||'',action:'📞 Dialed: '+phone});
+      return;
+    }
+
+    // All other custom dialer URLs — open directly
     window.open(url, '_blank');
     logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendorName||'',action:'📞 Dialed: '+phone});
     return;
@@ -9994,7 +10029,8 @@ CRITICAL: Respond ONLY with valid JSON. No preamble, no markdown, no code fences
   "effectiveDateCoverSheet": "YYYY-MM-DD from cover sheet if different, else null",
   "expirationDate": "YYYY-MM-DD stated in document",
   "expirationDateCalculated": "YYYY-MM-DD calculated from effectiveDate + contractTermMonths",
-  "autoRenewal": "Yes — 1 year / Yes — 2 years / Yes — Same Term / No / null",
+  "autoRenewal": "Use EXACTLY one of: 'No' / 'Yes - By Year' / 'Yes - By Term' / 'Year to Year'. 'Yes - By Year' = renews for same number of years. 'Yes - By Term' = renews for same original term. 'Year to Year' = month-to-month style annual renewal. If more than 3 renewals allowed or unlimited, still use the correct type.",
+  "autoRenewType": "Use EXACTLY one of: 'Annual' / '2 Years' / '3 Years' / 'By Term' / 'Year to Year' — the duration of each renewal period",
   "autoRenewalNoticeDays": "number of days notice to prevent auto-renewal or null",
   "terminationNoticeDays": "primary termination notice day count as number",
   "terminationNotice": "all clauses combined: e.g. '120d mutual without cause | 90d non-renewal | 30d cure'",
@@ -10131,28 +10167,37 @@ const CONTRACT_FIELD_MAP = [
   {field:'agreementType',  label:'Agreement Type',         extract:ex=>ex.agreementType||null},
   {field:'contractNo',     label:'Contract #',             extract:ex=>ex.contractNumber||null},
   {field:'autoRenew',      label:'Auto-Renewal',           extract:ex=>{
+    // Model now returns exact VCS values — just pass through, but normalize legacy formats
     const ar=ex.autoRenewal||null;
     if(!ar) return null;
-    if(ar.toLowerCase()==='no') return 'No';
+    const arl=ar.toLowerCase().trim();
+    if(arl==='no') return 'No';
+    if(arl==='yes - by year'||arl==='yes-by-year') return 'Yes - By Year';
+    if(arl==='yes - by term'||arl==='yes-by-term') return 'Yes - By Term';
+    if(arl==='year to year'||arl==='year-to-year') return 'Year to Year';
+    // Legacy format fallbacks
     if(/same.term|by.term/i.test(ar)) return 'Yes - By Term';
-    if(/1.year|annual|12.month/i.test(ar)) return 'Yes - By Year';
-    if(/2.year|24.month/i.test(ar)) return 'Yes - By Year';
-    if(/3.year|36.month/i.test(ar)) return 'Yes - By Year';
-    if(/year.to.year|ytoy/i.test(ar)) return 'Year to Year';
-    if(/yes/i.test(ar)) return 'Yes';
-    return ar;
+    if(/year.to.year/i.test(ar)) return 'Year to Year';
+    if(/\d+.year|annual|monthly|\d+.month/i.test(ar)) return 'Yes - By Year';
+    if(/yes/i.test(ar)) return 'Yes - By Year'; // Default yes = by year
+    return 'No';
   }},
   {field:'autoRenewType',  label:'Auto-Renewal Type',      extract:ex=>{
+    // Use autoRenewType if provided directly
+    if(ex.autoRenewType){
+      const t=ex.autoRenewType.trim();
+      if(['Annual','2 Years','3 Years','By Term','Year to Year'].includes(t)) return t;
+    }
+    // Fall back to parsing autoRenewal
     const ar=ex.autoRenewal||null;
     if(!ar||ar.toLowerCase()==='no') return null;
     if(/same.term|by.term/i.test(ar)) return 'By Term';
     if(/year.to.year/i.test(ar)) return 'Year to Year';
-    // Extract period: "Yes — 2 years" → "2 Years"
     const mYr=ar.match(/(\d+)\s*year/i);
-    if(mYr) return mYr[1]==='1'?'Annual':mYr[1]==='2'?'2 Years':'3 Years';
+    if(mYr){const y=parseInt(mYr[1]);return y<=1?'Annual':y===2?'2 Years':'3 Years';}
     const mMo=ar.match(/(\d+)\s*month/i);
-    if(mMo){ const m=parseInt(mMo[1]); return m===12?'Annual':m===24?'2 Years':m===36?'3 Years':'Annual'; }
-    return 'By Year';
+    if(mMo){const m=parseInt(mMo[1]);return m<=12?'Annual':m<=24?'2 Years':'3 Years';}
+    return 'Annual';
   }},
   {field:'terminationNotice',label:'Termination Notice',   extract:ex=>ex.terminationNotice||
     (ex.terminationClauses?[
@@ -17423,8 +17468,11 @@ function renderSettings(c) {
       const rolePerms=ROLE_PERMS[role]||{};
       const currentTabs=new Set(rolePerms.tabs||[]);
 
+      // Reload from localStorage on every render so buttons reflect saved state
+      const _savedRoleOverrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
+      const _effectiveTabs=new Set(_savedRoleOverrides[role]||rolePerms.tabs||[]);
       ALL_TABS.forEach(t=>{
-        const on=currentTabs.has(t.id);
+        const on=_effectiveTabs.has(t.id);
         const rbtn=document.createElement('button');
         rbtn._on=on;
         rbtn.textContent=t.label+(on?' ✅':' 🚫');
