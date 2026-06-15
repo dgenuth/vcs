@@ -16169,6 +16169,118 @@ function getDateRangeLabel() {
 }
 
 
+// ── Chart rendering helpers ───────────────────────────────────────────────────
+function renderSparklineChart(labels, values, seriesLabel, color, cumulative) {
+  const wrap=el('div',{style:{position:'relative',height:'160px',marginBottom:'4px'}});
+  const canvas=document.createElement('canvas');
+  canvas.style.cssText='width:100%;height:160px;display:block';
+  wrap.appendChild(canvas);
+
+  requestAnimationFrame(()=>{
+    canvas.width=canvas.offsetWidth||600;
+    canvas.height=160;
+    const ctx=canvas.getContext('2d');
+    const data=cumulative?values.map((v,i)=>values.slice(0,i+1).reduce((a,b)=>a+b,0)):values;
+    const max=Math.max(...data,1);
+    const pad={t:20,r:20,b:40,l:50};
+    const W=canvas.width-pad.l-pad.r, H=canvas.height-pad.t-pad.b;
+
+    // Grid lines
+    ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--border')||'#333';
+    ctx.lineWidth=0.5;
+    for(let i=0;i<=4;i++){
+      const y=pad.t+H-(i/4)*H;
+      ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+W,y);ctx.stroke();
+      ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--muted')||'#888';
+      ctx.font='9px sans-serif';ctx.textAlign='right';
+      ctx.fillText(Math.round(max*i/4),pad.l-4,y+3);
+    }
+
+    // Line + fill
+    const xStep=data.length>1?W/(data.length-1):W;
+    ctx.beginPath();
+    data.forEach((v,i)=>{
+      const x=pad.l+i*xStep, y=pad.t+H-(v/max)*H;
+      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    });
+    ctx.strokeStyle=color||'#4f7cff';ctx.lineWidth=2;ctx.stroke();
+
+    // Fill under line
+    ctx.lineTo(pad.l+(data.length-1)*xStep,pad.t+H);
+    ctx.lineTo(pad.l,pad.t+H);ctx.closePath();
+    ctx.fillStyle=(color||'#4f7cff')+'22';ctx.fill();
+
+    // Dots
+    data.forEach((v,i)=>{
+      const x=pad.l+i*xStep, y=pad.t+H-(v/max)*H;
+      ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);
+      ctx.fillStyle=color||'#4f7cff';ctx.fill();
+    });
+
+    // X labels (every N to avoid crowding)
+    const step=Math.max(1,Math.ceil(labels.length/8));
+    ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--muted')||'#888';
+    ctx.font='8px sans-serif';ctx.textAlign='center';
+    labels.forEach((l,i)=>{
+      if(i%step!==0&&i!==labels.length-1) return;
+      ctx.fillText(l.slice(-7),pad.l+i*xStep,pad.t+H+14);
+    });
+  });
+  return wrap;
+}
+
+function renderBarChart(labels, values, seriesLabel, defaultColor, colors) {
+  const wrap=el('div',{style:{position:'relative',height:'180px',marginBottom:'4px'}});
+  const canvas=document.createElement('canvas');
+  canvas.style.cssText='width:100%;height:180px;display:block';
+  wrap.appendChild(canvas);
+
+  requestAnimationFrame(()=>{
+    canvas.width=canvas.offsetWidth||600;
+    canvas.height=180;
+    const ctx=canvas.getContext('2d');
+    const max=Math.max(...values,1);
+    const pad={t:20,r:20,b:48,l:60};
+    const W=canvas.width-pad.l-pad.r, H=canvas.height-pad.t-pad.b;
+    const barW=Math.max(8,W/labels.length-4);
+
+    // Grid
+    ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--border')||'#333';
+    ctx.lineWidth=0.5;
+    for(let i=0;i<=4;i++){
+      const y=pad.t+H-(i/4)*H;
+      ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+W,y);ctx.stroke();
+      ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--muted')||'#888';
+      ctx.font='9px sans-serif';ctx.textAlign='right';
+      const val=Math.round(max*i/4);
+      ctx.fillText(val>=1000?Math.round(val/1000)+'k':val,pad.l-4,y+3);
+    }
+
+    // Bars
+    labels.forEach((l,i)=>{
+      const x=pad.l+i*(W/labels.length)+(W/labels.length-barW)/2;
+      const h=(values[i]/max)*H;
+      const y=pad.t+H-h;
+      ctx.fillStyle=(colors&&colors[i])||(defaultColor||'#4f7cff');
+      ctx.fillRect(x,y,barW,h);
+      // Value on top of bar
+      if(h>15){
+        ctx.fillStyle='#fff';ctx.font='bold 8px sans-serif';ctx.textAlign='center';
+        ctx.fillText(values[i]>=1000?Math.round(values[i]/1000)+'k':values[i],x+barW/2,y+10);
+      }
+      // Label below
+      ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--muted')||'#888';
+      ctx.font='8px sans-serif';ctx.textAlign='center';
+      ctx.save();
+      ctx.translate(x+barW/2,pad.t+H+6);
+      if(labels.length>8){ctx.rotate(-Math.PI/4);}
+      ctx.fillText(l.slice(0,14),0,0);
+      ctx.restore();
+    });
+  });
+  return wrap;
+}
+
 function renderAnalytics(c) {
   const today=new Date(), vs=S.vendors;
   const sd=SPEND_STATE.data?.vendors||S._analyticsSpendData||[];
@@ -16181,6 +16293,7 @@ function renderAnalytics(c) {
     {id:'revenue',label:'💰 Revenue & Spend'},
     {id:'pipeline',label:'🎯 SF Pipeline'},
     {id:'performance',label:'👤 Rep Performance'},
+    {id:'trends',label:'📈 Trends'},
   ];
   const tabBar=el('div',{class:'page-sticky-hdr',style:{display:'flex',gap:'4px',marginBottom:'0',borderBottom:'2px solid var(--border)',paddingBottom:'0',flexWrap:'wrap'}});
   tabs.forEach(t=>{
@@ -16231,6 +16344,96 @@ function renderAnalytics(c) {
   c.appendChild(tabBar);
 
   // ── CONTRACT HEALTH TAB ──
+  // ── Trends Tab ────────────────────────────────────────────────────────────
+  if(S._analyticsTab==='trends'){
+    const trendWrap=el('div',{style:{padding:'12px 0'}});
+
+    // ── Vendor Additions Over Time ──────────────────────────────────────────
+    const addSec=el('div',{class:'summary-section',style:{marginBottom:'16px'}});
+    addSec.appendChild(el('h3',{style:{marginBottom:'4px'}},'📈 Vendor Additions Over Time'));
+    addSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px'}},'New vendors added by month — shows growth trajectory.'));
+
+    // Build monthly vendor count from lastComm or contractStart dates
+    const monthCounts={};
+    S.vendors.forEach(v=>{
+      const d=v.effectiveDate||v.contractStart||v.lastComm;
+      if(!d) return;
+      const parsed=parseDate(d);
+      if(!parsed||parsed.getFullYear()<2020) return;
+      const key=parsed.getFullYear()+'-'+(String(parsed.getMonth()+1).padStart(2,'0'));
+      monthCounts[key]=(monthCounts[key]||0)+1;
+    });
+    const months=Object.keys(monthCounts).sort();
+
+    if(months.length>=2){
+      addSec.appendChild(renderSparklineChart(months,months.map(m=>monthCounts[m]),'Vendors Added','#4f7cff',true));
+    } else {
+      addSec.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'10px',textAlign:'center',padding:'20px'}},'Not enough dated vendor records to show trend. Add contract effective dates to vendors.'));
+    }
+    trendWrap.appendChild(addSec);
+
+    // ── Admin Fee Revenue by Category ──────────────────────────────────────
+    const catSec=el('div',{class:'summary-section',style:{marginBottom:'16px'}});
+    catSec.appendChild(el('h3',{style:{marginBottom:'4px'}},'💰 Admin Fee by Category'));
+    catSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px'}},'Estimated annual admin fee revenue per category (direct vendors only, based on contracted fees).'));
+
+    const catFees={};
+    S.vendors.filter(isVisible).forEach(v=>{
+      const cat=v.category||'Uncategorized';
+      const fee=parseFee(v.adminFee||'0');
+      const spend=v.currentSpend||v.lastYearSpend||v.benchmarkSpend||0;
+      if(fee>0&&spend>0) catFees[cat]=(catFees[cat]||0)+(spend*fee/100);
+    });
+    const catEntries=Object.entries(catFees).sort((a,b)=>b[1]-a[1]).slice(0,15);
+
+    if(catEntries.length>=2){
+      catSec.appendChild(renderBarChart(catEntries.map(e=>e[0].slice(0,18)),catEntries.map(e=>Math.round(e[1])),'Est. Annual Fee $','#22c55e'));
+    } else {
+      catSec.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'10px',textAlign:'center',padding:'20px'}},'Need vendors with both admin fee % and spend data to calculate. Connect Salesforce for spend data.'));
+    }
+    trendWrap.appendChild(catSec);
+
+    // ── Contract Expiry Timeline ─────────────────────────────────────────────
+    const expSec=el('div',{class:'summary-section',style:{marginBottom:'16px'}});
+    expSec.appendChild(el('h3',{style:{marginBottom:'4px'}},'⏰ Contract Expiry Timeline'));
+    expSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px'}},'How many contracts expire each quarter — plan renewals ahead of time.'));
+
+    const now=new Date();
+    const quarters={};
+    S.vendors.filter(isVisible).forEach(v=>{
+      const e=getCurrentExpiry(v);
+      if(!e) return;
+      const d=parseDate(e);
+      if(!d||d<now) return;
+      const yr=d.getFullYear(), q=Math.floor(d.getMonth()/3)+1;
+      if(yr>now.getFullYear()+3) return;
+      const key=yr+' Q'+q;
+      quarters[key]=(quarters[key]||0)+1;
+    });
+    const qKeys=Object.keys(quarters).sort();
+
+    if(qKeys.length>=2){
+      expSec.appendChild(renderBarChart(qKeys,qKeys.map(k=>quarters[k]),'Contracts Expiring','#f59e0b'));
+    } else {
+      expSec.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'10px',textAlign:'center',padding:'20px'}},'Not enough future expiry dates to build timeline.'));
+    }
+    trendWrap.appendChild(expSec);
+
+    // ── Tier Distribution ────────────────────────────────────────────────────
+    const tierSec=el('div',{class:'summary-section',style:{marginBottom:'16px'}});
+    tierSec.appendChild(el('h3',{style:{marginBottom:'4px'}},'📶 Vendor Tier Distribution'));
+    const tierCounts={CALL:0,EMAIL:0,REVIEW:0,MONITOR:0};
+    S.vendors.filter(isVisible).forEach(v=>{if(v.tier&&tierCounts[v.tier]!==undefined)tierCounts[v.tier]++;});
+    tierSec.appendChild(renderBarChart(
+      Object.keys(tierCounts),Object.values(tierCounts),'Vendors','',
+      ['#ef4444','#f59e0b','#4f7cff','#6b7280']
+    ));
+    trendWrap.appendChild(tierSec);
+
+    c.appendChild(trendWrap);
+    return;
+  }
+
   if(S._analyticsTab==='contract'){
     const statDefs=[
       {label:'Total Active',color:'var(--green)',fn:()=>vs.filter(isVisible)},
