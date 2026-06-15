@@ -5893,18 +5893,68 @@ function updateUserBadge(){
 function dialPhone(phone, vendorName) {
   const raw = phone.replace(/\D/g,'');
   const dialerUrl = S.settings?.dialerUrl;
+  const e164 = (raw.length===11 && raw.startsWith('1')) ? '+'+raw : '+1'+raw;
+
   if (dialerUrl && dialerUrl.trim()) {
-    // E.164: do NOT encode the '+' — Google Voice requires literal +1XXXXXXXXXX
-    const e164 = (raw.length===11 && raw.startsWith('1')) ? '+'+raw : '+1'+raw;
+    // Custom dialer URL configured in settings
     const url = dialerUrl
       .replace(/\{phone\}/gi, encodeURIComponent(raw))
       .replace(/\{phone_raw\}/gi, raw)
       .replace(/\{name\}/gi, encodeURIComponent(vendorName||''))
-      .replace(/\{e164\}/gi, e164); // literal +1XXXXXXXXXX — NOT encoded
+      .replace(/\{e164\}/gi, e164);
     window.open(url, '_blank');
-  } else {
-    window.open('tel:'+raw);
+    logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendorName||'',action:'📞 Dialed: '+phone});
+    return;
   }
+
+  // No custom dialer — show options modal
+  // Google Voice deep link only works if user is already on voice.google.com
+  const gvUrl = 'https://voice.google.com/calls?a=nc&num=' + e164;
+  const telUrl = 'tel:' + raw;
+
+  openModal(body=>{
+    body.appendChild(el('h3',{style:{marginBottom:'8px'}},'📞 Call '+phone+(vendorName?' — '+vendorName:'')));
+    body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'12px',lineHeight:'1.5'}},'Choose how to dial. For Google Voice, you must be signed in to voice.google.com first.'));
+
+    // Copy number button
+    const copyRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'12px',padding:'10px',background:'var(--bg)',borderRadius:'6px',border:'1px solid var(--border)'}});
+    copyRow.appendChild(el('code',{style:{flex:'1',fontSize:'14px',fontWeight:'700',letterSpacing:'.05em'}},phone));
+    const copyBtn=el('button',{class:'btn-primary',onclick(){
+      navigator.clipboard.writeText(phone).then(()=>{copyBtn.textContent='✓ Copied!';setTimeout(()=>copyBtn.textContent='Copy',2000);});
+    }},'Copy');
+    copyRow.appendChild(copyBtn);
+    body.appendChild(copyRow);
+
+    const btnGrid=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'12px'}});
+    // Tel link (OS default)
+    const telBtn=el('button',{class:'btn-secondary',style:{padding:'10px',textAlign:'center'},onclick(){
+      window.location.href=telUrl;
+      closeModal();
+      logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendorName||'',action:'📞 Dialed: '+phone});
+    }});
+    telBtn.appendChild(el('div',{style:{fontSize:'18px'}},'📱'));
+    telBtn.appendChild(el('div',{style:{fontSize:'10px',fontWeight:'600',marginTop:'4px'}},'System Dialer'));
+    telBtn.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)'}},'Opens default phone app'));
+    btnGrid.appendChild(telBtn);
+
+    // Google Voice link
+    const gvBtn=el('button',{class:'btn-secondary',style:{padding:'10px',textAlign:'center'},onclick(){
+      window.open(gvUrl,'_blank');
+      closeModal();
+      logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendorName||'',action:'📞 Dialed: '+phone});
+    }});
+    gvBtn.appendChild(el('div',{style:{fontSize:'18px'}},'🔊'));
+    gvBtn.appendChild(el('div',{style:{fontSize:'10px',fontWeight:'600',marginTop:'4px'}},'Google Voice'));
+    gvBtn.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)'}},'Must be signed in first'));
+    btnGrid.appendChild(gvBtn);
+    body.appendChild(btnGrid);
+
+    // Settings shortcut
+    body.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',textAlign:'center'}},'Set a custom dialer in Settings → Dialer to skip this dialog'));
+    const closeBtns=el('div',{class:'modal-btns'});
+    closeBtns.appendChild(el('button',{class:'btn-ghost',onclick:closeModal},'Cancel'));
+    body.appendChild(closeBtns);
+  });
   logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendorName||'',action:'📞 Dialed: '+phone});
 }
 function showSFSetupGuide(){
@@ -11259,14 +11309,21 @@ function renderContracts(c) {
           onclick(e){
             e.stopPropagation();
             if(!confirm('Remove this contract analysis for "'+record.fileName+'"?\nThis removes it from VCS view only — the file in Drive is not deleted.')) return;
-            // Remove from S_contractStore for this vendor
-            const key=selectedVendorName||comboInput.value.trim();
-            if(S_contractStore[key]){
-              S_contractStore[key]=S_contractStore[key].filter(r=>r!==record);
+            // Remove from window.S_contractStore for this vendor
+            if(window.S_contractStore&&window.S_contractStore[vName]){
+              window.S_contractStore[vName]=window.S_contractStore[vName].filter(r=>r.fileName!==record.fileName);
             }
+            // Persist the removal so it survives page refresh
+            try{
+              const saved=JSON.parse(localStorage.getItem('vcs_session')||'{}');
+              if(saved.contractRecords&&saved.contractRecords[vName]){
+                saved.contractRecords[vName]=saved.contractRecords[vName].filter(r=>r.fileName!==record.fileName);
+                localStorage.setItem('vcs_session',JSON.stringify(saved));
+              }
+            }catch(se){}
             // Re-render
             const c2=$('content');if(c2){c2.innerHTML='';renderContracts(c2);}
-            toast('Contract removed from view');
+            toast('✓ Contract removed','#22c55e');
           }},'🗑 Remove');
         cardHdr.appendChild(applyBtn);
         cardHdr.appendChild(dsBtn);
@@ -17329,16 +17386,16 @@ function renderSettings(c) {
   if (hasPermission('manageUsers')) {
     const secRoles=el('div',{class:'settings-section'});
     const _rdCollapsed=localStorage.getItem('vcs_rd_collapsed')==='1';
-    const _rdHdr=el('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',cursor:'pointer',userSelect:'none'},
+    const _rdHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',cursor:'pointer',userSelect:'none'},
       onclick(){
         const _c=!(_rdBody.style.display==='none');
         _rdBody.style.display=_c?'none':'';
         _rdChev.textContent=_c?'▶':'▼';
         localStorage.setItem('vcs_rd_collapsed',_c?'1':'0');
       }});
-    _rdHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'12px'}},'🎭 Role Tab Defaults'));
     const _rdChev=el('span',{style:{fontSize:'12px',color:'var(--muted)'}},_rdCollapsed?'▶':'▼');
     _rdHdr.appendChild(_rdChev);
+    _rdHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'12px'}},'🎭 Role Tab Defaults'));
     secRoles.appendChild(_rdHdr);
     const _rdBody=el('div',{style:{display:_rdCollapsed?'none':'',marginTop:'8px'}});
 
@@ -17393,12 +17450,24 @@ function renderSettings(c) {
             localStorage.setItem('vcs_role_tab_overrides',JSON.stringify(roleOverrides));
             saveConfigToDrive().catch(()=>{});
           }catch(e2){}
-          rbtn._on=!nowOn;
-          rbtn.textContent=t.label+(!nowOn?' ✅':' 🚫');
-          rbtn.style.borderColor=!nowOn?'rgba(34,197,94,.4)':'rgba(239,68,68,.3)';
-          rbtn.style.background=!nowOn?'rgba(34,197,94,.08)':'rgba(239,68,68,.05)';
-          rbtn.style.color=!nowOn?'#4ade80':'#f87171';
-          toast('Role tab updated — users will see change on next load','#4f7cff');
+          const newOn=!nowOn;
+          // Update ALL users of this role immediately — no "next load" needed
+          try{
+            const allUsers=getApprovedUsers();
+            allUsers.forEach(u=>{
+              if((u.role||'admin')!==role) return;
+              if(!u.tabOverrides) u.tabOverrides={};
+              u.tabOverrides[t.id]=newOn;
+            });
+            localStorage.setItem(AUTH_KEY,JSON.stringify(allUsers));
+            setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+          }catch(ue){ console.error('[RoleTab]',ue); }
+          rbtn._on=newOn;
+          rbtn.textContent=t.label+(newOn?' ✅':' 🚫');
+          rbtn.style.borderColor=newOn?'rgba(34,197,94,.4)':'rgba(239,68,68,.3)';
+          rbtn.style.background=newOn?'rgba(34,197,94,.08)':'rgba(239,68,68,.05)';
+          rbtn.style.color=newOn?'#4ade80':'#f87171';
+          toast('✓ '+t.label+' '+(newOn?'ON':'OFF')+' for all '+role+' users — saved','#22c55e');
         });
         roleGrid.appendChild(rbtn);
       });
@@ -17639,28 +17708,38 @@ function renderSettings(c) {
           const rolePerms=ROLE_PERMS[cu.role]||ROLE_PERMS.restricted;
           const roleDefaultTabs=new Set(rolePerms.tabs||[]);
           const tabOverrides=cu.tabOverrides||{}; // {tabId: true/false} overrides role default
-          const allTabs=[
-            {id:'today',label:'Today'},{id:'callsheet',label:'Call Sheet'},
-            {id:'expiring',label:'Expiring'},{id:'vendordb',label:'Vendor DB'},
-            {id:'network',label:'Network Intel'},{id:'economics',label:'Contract Economics'},
-            {id:'tiers',label:'Tier Tracker'},{id:'itw',label:'In The Works'},
-            {id:'reviews',label:'Reviews'},{id:'compare',label:'Compare'},
-            {id:'sfboard',label:'SF Board'},{id:'contracts',label:'Contracts'},
-            {id:'checklist',label:'Checklist'},{id:'health',label:'VCS Health'},
-            {id:'spend',label:'Spend'},{id:'customers',label:'Customers'},
-            {id:'calendar',label:'Calendar'},{id:'forecast',label:'Forecast'},
-            {id:'analytics',label:'Analytics'},{id:'reports',label:'Reports'},
-            {id:'summary',label:'Summary'},{id:'history',label:'History'},
-            {id:'forecast',label:'Forecast'},{id:'analytics',label:'Analytics'},
-            {id:'reports',label:'Reports'},{id:'summary',label:'Summary'},
-            {id:'history',label:'History'},{id:'datacheck',label:'Data Check'},
-            {id:'settings',label:'Settings'},
-            {id:'compare',label:'Contract Compare'},{id:'sfboard',label:'SF Board'},
-            {id:'contracts',label:'Contracts'},{id:'spend',label:'Spend'},
-            {id:'customers',label:'Customers & Clients'},
-            {id:'_statsbar',label:'Stats Panel'},{id:'_savebtn',label:'Save Button'},
+          // Tab groups matching sidebar — Core/Vendors/Contracts/Intelligence/Admin
+          const TAB_GROUPS_DISPLAY=[
+            {label:'Core',color:'#4f7cff',tabs:[
+              {id:'today',label:'Today'},{id:'callsheet',label:'Call Sheet'},
+              {id:'expiring',label:'Expiring'},{id:'calendar',label:'Calendar'},
+            ]},
+            {label:'Vendors',color:'#22c55e',tabs:[
+              {id:'vendordb',label:'Vendor DB'},{id:'itw',label:'In The Works'},
+              {id:'reviews',label:'Reviews'},{id:'tiers',label:'Tier Tracker'},
+              {id:'compare',label:'Compare'},{id:'network',label:'Network Intel'},
+            ]},
+            {label:'Contracts',color:'#f59e0b',tabs:[
+              {id:'contracts',label:'Contracts'},{id:'economics',label:'Contract Economics'},
+              {id:'forecast',label:'Forecast'},{id:'checklist',label:'Checklist'},
+            ]},
+            {label:'Intelligence',color:'#8b5cf6',tabs:[
+              {id:'sfboard',label:'SF Board'},{id:'spend',label:'Spend'},
+              {id:'customers',label:'Customers'},{id:'analytics',label:'Analytics'},
+              {id:'reports',label:'Reports'},
+            ]},
+            {label:'Admin',color:'#06b6d4',tabs:[
+              {id:'summary',label:'Summary'},{id:'history',label:'History'},
+              {id:'datacheck',label:'Data Check'},{id:'settings',label:'Settings'},
+              {id:'health',label:'VCS Health'},
+            ]},
           ];
-          const tabGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'4px'}});
+          TAB_GROUPS_DISPLAY.forEach(grp=>{
+            container.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:grp.color,
+              marginTop:'6px',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.04em',
+              borderBottom:'1px solid '+grp.color+'33',paddingBottom:'2px'}},grp.label));
+            const tabGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',marginBottom:'4px'}});
+            const allTabs=grp.tabs;
           const virtualTabDefaults={
             '_statsbar':['admin','procurement','manager'].includes(cu.role),
             '_savebtn':(ROLE_PERMS[cu.role]||{}).save||false,
@@ -17694,6 +17773,7 @@ function renderSettings(c) {
             tabGrid.appendChild(btn);
           });
           container.appendChild(tabGrid);
+          }); // end TAB_GROUPS_DISPLAY.forEach
           const resetTabsBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(){
             const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
             delete all[i].tabOverrides;
@@ -19301,10 +19381,11 @@ function populateAIPresets() {
 }
 
 function renderAISuggestions() {
-  const sugg=$('ai-suggestions'); sugg.innerHTML='';
-  for (const s of getAISuggestions()) {
-    sugg.appendChild(el('button',{class:'ai-suggestion',onclick(){$('ai-input').value=s;sendAIMessage(s);$('ai-input').value='';}},s));
-  }
+  // Legacy: hide ai-suggestions div (replaced by ai-presets)
+  const sugg=$('ai-suggestions');
+  if(sugg) sugg.style.display='none';
+  // Populate the ai-presets div with role-based questions
+  populateAIPresets();
 }
 
 // ─── DateTime Clock ────────────────────────────────────────────────────────────
