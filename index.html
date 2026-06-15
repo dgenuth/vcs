@@ -5182,6 +5182,15 @@ const PERSONAL_SETTING_KEYS = ['theme','fontSize','compactRows','defaultView','s
 const GLOBAL_SETTING_KEYS = ['sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey','apiKey','grokKey'];
 const PERSIST_KEYS = [...PERSONAL_SETTING_KEYS, ...GLOBAL_SETTING_KEYS];
 
+// Debounced Drive sync — fires 3s after any settings change
+let _driveSyncTimer = null;
+function debouncedDriveSync() {
+  clearTimeout(_driveSyncTimer);
+  _driveSyncTimer = setTimeout(()=>{
+    saveConfigToDrive().catch(()=>{});
+  }, 3000);
+}
+
 function saveSettings() {
   try {
     const toSave = {};
@@ -5194,6 +5203,8 @@ function saveSettings() {
     // Save dbHiddenCols from S (not S.settings) — it lives on the main state
     if (S.dbHiddenCols instanceof Set) toSave.dbHiddenCols = [...S.dbHiddenCols];
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(toSave));
+    // Auto-sync to Drive 3s after any settings change (debounced)
+    debouncedDriveSync();
   } catch(e) { console.warn('Could not save settings:', e); }
 }
 
@@ -10605,8 +10616,28 @@ function renderChecklist(c) {
     PSX_CHECKLIST.forEach(s=>{S['_clOpen_'+s.label]=false;});
     const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}
   }},'▶ Collapse All'));
-  custRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){exportChecklistToCsv(custIn.value);}}, '⬇ Export'));
+  // Rep name (auto-fills, editable by admin)
+  custRow.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',flexShrink:'0'}},'Rep:'));
+  const repIn=el('input',{type:'text',class:'detail-edit-field',
+    placeholder:'Rep name',style:{width:'120px',height:'26px',fontSize:'10px'},
+    value:S._checklistRep||(USER.name||USER.email||'')});
+  repIn.addEventListener('change',e=>S._checklistRep=e.target.value.trim());
+  custRow.appendChild(repIn);
+  custRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){exportChecklistToCsv(custIn.value,repIn.value);}}, '⬇ Export'));
+  custRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){emailChecklist(custIn.value,repIn.value);}}, '✉ Email'));
   wrap.appendChild(custRow);
+  // Overall coverage summary
+  const allItems=PSX_CHECKLIST.flatMap(s=>s.items);
+  const coveredItems=allItems.filter(it=>findVendors(it.label).length>0);
+  const overallPct=allItems.length?Math.round(coveredItems.length/allItems.length*100):0;
+  const covBar=el('div',{style:{marginBottom:'10px',padding:'8px 12px',background:'var(--card)',borderRadius:'6px',border:'1px solid var(--border)',display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}});
+  covBar.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'700'}},'Overall Coverage:'));
+  const barWrap=el('div',{style:{flex:'1',height:'8px',background:'var(--border)',borderRadius:'4px',minWidth:'100px',overflow:'hidden'}});
+  const bar=el('div',{style:{height:'100%',width:overallPct+'%',background:overallPct>=80?'var(--green)':overallPct>=50?'var(--amber)':'var(--red)',borderRadius:'4px',transition:'width .3s'}});
+  barWrap.appendChild(bar); covBar.appendChild(barWrap);
+  covBar.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:overallPct>=80?'var(--green)':overallPct>=50?'var(--amber)':'var(--red)'}},overallPct+'%'));
+  covBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},coveredItems.length+' of '+allItems.length+' categories covered by contracted vendors'));
+  wrap.appendChild(covBar);
   const isConsultant=S._checklistView===1;
 
   // Vendor lookup map by keyword
@@ -10667,10 +10698,35 @@ function renderChecklist(c) {
           } else {
             vendorCol.appendChild(el('span',{style:{color:'var(--amber)',fontStyle:'italic'}},'No vendor mapped'));
           }
+          // Current vendor field (free text — for vendors not in DB)
+          const currV=el('input',{type:'text',placeholder:'Current vendor…',
+            style:{fontSize:'8px',height:'20px',width:'100%',marginTop:'3px',padding:'1px 4px',
+              border:'1px solid var(--border)',borderRadius:'3px',background:'var(--bg)',color:'var(--text)'},
+            value:(S._clCurrVendor||{})[custIn.value+'_'+item.label]||''});
+          currV.addEventListener('change',e=>{
+            if(!S._clCurrVendor) S._clCurrVendor={};
+            S._clCurrVendor[custIn.value+'_'+item.label]=e.target.value.trim();
+          });
+          vendorCol.appendChild(currV);
           row.appendChild(vendorCol);
+          const statusWrap=el('div',{style:{display:'flex',flexDirection:'column',gap:'2px'}});
           const sel=el('select',{class:'detail-edit-field',style:{height:'22px',fontSize:'8px',padding:'0 3px',width:'100%'}});
           ['','Not Started','In Progress','Done','N/A'].forEach(opt=>sel.appendChild(el('option',{value:opt},opt||'Status…')));
-          row.appendChild(sel);
+          // "Going with" dropdown — VCS vendors for this category
+          if(matchV.length>0){
+            const gwSel=el('select',{style:{height:'20px',fontSize:'8px',padding:'0 3px',width:'100%',
+              border:'1px solid var(--border)',borderRadius:'3px',background:'var(--bg)',color:'var(--text)'}});
+            gwSel.appendChild(el('option',{value:''},'→ Aligning with…'));
+            matchV.forEach(v=>gwSel.appendChild(el('option',{value:v.name},v.name.slice(0,25))));
+            gwSel.value=(S._clGoWith||{})[custIn.value+'_'+item.label]||'';
+            gwSel.addEventListener('change',e=>{
+              if(!S._clGoWith) S._clGoWith={};
+              S._clGoWith[custIn.value+'_'+item.label]=e.target.value;
+            });
+            statusWrap.appendChild(gwSel);
+          }
+          statusWrap.appendChild(sel);
+          row.appendChild(statusWrap);
         }
         body.appendChild(row);
       });
@@ -10681,8 +10737,23 @@ function renderChecklist(c) {
   c.appendChild(wrap);
 }
 
-function exportChecklistToCsv(customerName) {
-  let csv='Customer: '+customerName+'\r\nSection,Category / Line Item,Current Vendor,Status,Notes\r\n';
+function emailChecklist(customerName, repName) {
+  // Generate CSV content and open email modal
+  const csvContent = exportChecklistToCsv(customerName, repName, true);
+  const subject = `Vendor Coverage Checklist — ${customerName||'Customer'}`;
+  const body = `Please find the vendor coverage checklist for ${customerName||'this facility'} below.
+
+Prepared by: ${repName||USER.name||USER.email}
+Date: ${new Date().toLocaleDateString()}
+
+${csvContent.slice(0,2000)}`;
+  // Open email draft modal
+  const fakeVendor={name:customerName||'Customer',email:'',procContact:repName||USER.name||''};
+  openEmailModal(fakeVendor,{subject,body});
+}
+
+function exportChecklistToCsv(customerName, repName, returnContent) {
+  let csv='Customer: '+customerName+','+'Rep: '+(repName||USER.name||USER.email||'')+'\r\nSection,Category / Line Item,Current Vendor,Status,Notes\r\n';
   PSX_CHECKLIST.forEach(s=>s.items.forEach(item=>{
     csv+='"'+s.label+'","'+item.label+'",,,"\r\n';
   }));
@@ -12672,7 +12743,7 @@ async function exportComparisonDocx(res) {
 function renderReports(c) {
   const today=new Date();
   const hdrRow=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'10px'}});
-  hdrRow.appendChild(el('h3',{style:{fontSize:'13px',fontWeight:'600'}},'📑 Reports & Export Center'));
+  hdrRow.appendChild(el('h3',{style:{fontSize:'11px',fontWeight:'600',color:'var(--muted)'}},'Export Center'));
   hdrRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'10px'},onclick(){printContractReport();}},'🖨 Print Report'));
   c.appendChild(hdrRow);
 
@@ -17313,13 +17384,7 @@ function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
     buildFn(body);
     card.appendChild(body);
   }
-  c.appendChild(card);
-}
-
-function renderVCSHealth(c) {
-  c.innerHTML='';
-  const wrap=el('div',{style:{maxWidth:'900px',margin:'0 auto',padding:'12px 0'}});
-  wrap.appendChild(el('h2',{style:{margin:'0 0 12px',fontSize:'16px',fontWeight:'700'}},'🔍 VCS Health Check'));
+  
 
   const checks=[
     {label:'Google Drive Connection',icon:'☁',test:()=>!!S.settings?.driveFileId,pass:'Drive File ID configured',fail:'No Drive File ID in Settings'},
@@ -17443,16 +17508,7 @@ function renderVCSHealth(c) {
   sessSec.appendChild(infoGrid);
   wrap.appendChild(sessSec);
 
-  c.appendChild(wrap);
-}
-
-function renderSettings(c) {
-  c.innerHTML = ''; // CRITICAL: clear before re-rendering to prevent duplication
-  const wrap=el('div',{style:{maxWidth:'840px',margin:'0 auto',padding:'4px 0'}});
-
-  // ── Settings Header ──
-  const settingsHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'16px'}});
-  settingsHdr.appendChild(el('h2',{style:{margin:'0',fontSize:'16px',fontWeight:'700',flex:'1'}},'⚙ Settings'));
+  
   if(USER.role==='admin'||USER.role==='procurement') {
     settingsHdr.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){if(!S._settingsOpen)S._settingsOpen={};['handover','users','sf','drive','ms365','dialer','ai','apiusage'].forEach(k=>S._settingsOpen[k]=true);render();}},'▼ Expand All'));
     settingsHdr.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){if(!S._settingsOpen)S._settingsOpen={};['handover','users','sf','drive','ms365','dialer','ai','apiusage'].forEach(k=>S._settingsOpen[k]=false);render();}},'▶ Collapse All'));
@@ -18655,7 +18711,11 @@ function renderSettings(c) {
       const keyRow=el('div',{style:{marginBottom:'10px'}});
       keyRow.appendChild(el('label',{style:{display:'block',fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.04em'}},'Renzo API Key (shared secret)'));
       const keyIn=el('input',{type:'password',class:'modal-input',style:{width:'100%',marginBottom:'0',fontFamily:'monospace',fontSize:'10px'},placeholder:'renzo-vcs-key-...',value:S.settings.renzoApiKey||''});
-      keyIn.addEventListener('change',e=>{S.settings.renzoApiKey=e.target.value.trim();saveSettings();});
+      keyIn.addEventListener('change',e=>{
+        S.settings.renzoApiKey=e.target.value.trim();
+        saveSettings();
+        saveConfigToDrive().then(()=>toast('✓ Renzo key saved & synced to Drive','#22c55e')).catch(()=>toast('Renzo key saved locally (Drive sync failed)','#f59e0b'));
+      });
       keyRow.appendChild(keyIn);
       _rnBody.appendChild(keyRow);
 
@@ -19968,7 +20028,16 @@ function render() {
   const search=$('search');
   const hadFocus=document.activeElement===search, curPos=hadFocus?search.selectionStart:0;
   content.innerHTML='';
-  const titles={today:'📋 Today',callsheet:'📞 Call Sheet',expiring:'⏰ Expiring',vendordb:'🗂 Vendor Database',network:'🔗 Network Intel',itw:'🔧 In The Works',reviews:'📝 Reviews',calendar:'📅 Calendar',forecast:'📆 Forecast',analytics:'📊 Analytics',economics:'💰 Contract Economics',tiers:'📶 Tier Tracker',reports:'📑 Reports',summary:'📈 Summary',history:'🕐 History',datacheck:'✅ Data Check',settings:'⚙ Settings',customers:'👥 Customers & Clients'};
+  const titles={
+    today:'📋 Today',callsheet:'📞 Call Sheet',expiring:'⏰ Expiring',
+    vendordb:'🗂 Vendor Database',network:'🔗 Network Intel',itw:'🔧 In The Works',
+    reviews:'📝 Reviews',calendar:'📅 Calendar',forecast:'📆 Forecast',
+    analytics:'📊 Analytics',economics:'💰 Contract Economics',tiers:'📶 Tier Tracker',
+    reports:'📑 Reports',summary:'📈 Summary',history:'🕐 History',
+    datacheck:'✅ Data Check',settings:'⚙ Settings',customers:'👥 Customers & Clients',
+    sfboard:'☁ Salesforce Board',spend:'💹 Spend',contracts:'📄 Contracts',
+    compare:'⚖ Compare',checklist:'✅ Checklist',health:'🔍 VCS Health',
+  };
   $('view-title').textContent=titles[S.view]||S.view;
   const fl=$('filter-label');
   if (S.filterLabel){fl.textContent=`[${S.filterLabel}]`;fl.style.display='inline';}else fl.style.display='none';
