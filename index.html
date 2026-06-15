@@ -10124,8 +10124,9 @@ CRITICAL: Respond ONLY with valid JSON. No preamble, no markdown, no code fences
     {type:'text', text:'Extract all contract data from this vendor agreement for '+vendorName+':\n\n'+String(fileText).slice(0,25000)}
   ];
 
+  // Use configured key; if aiKeyShared is true, admin key is already in global settings loaded from Drive
   const apiKey = S.settings?.apiKey || S.settings?.anthropicApiKey || S.settings?.aiApiKey || localStorage.getItem('vcs_api_key') || '';
-  if(!apiKey) throw new Error('No Anthropic API key set in Settings → AI Configuration');
+  if(!apiKey) throw new Error('No API key configured — ask your admin to enable AI in Settings, or add your own key in Settings → AI Configuration');
 
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method:'POST',
@@ -10136,7 +10137,7 @@ CRITICAL: Respond ONLY with valid JSON. No preamble, no markdown, no code fences
       'anthropic-dangerous-direct-browser-access':'true'
     },
     body: JSON.stringify({
-      model:'claude-sonnet-4-20250514',
+      model:'claude-sonnet-4-6',
       max_tokens:2000,
       system: systemPrompt,
       messages:[{role:'user',content: userContent}]
@@ -17458,6 +17459,41 @@ function renderSettings(c) {
   }
   c.appendChild(settingsHdr);
 
+  // ── Global Sync Status Banner ──────────────────────────────────────────
+  const syncSec=el('div',{style:{
+    background:'rgba(79,124,255,.05)',border:'1px solid rgba(79,124,255,.15)',
+    borderRadius:'6px',padding:'10px 14px',marginBottom:'12px',
+    display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'
+  }});
+  const driveConnected=!!(window.GDriveToken && Date.now()<window.GDriveTokenExpiry-5000);
+  const lastSync=localStorage.getItem('vcs_last_drive_sync');
+  const lastSyncStr=lastSync?'Last synced: '+new Date(parseInt(lastSync)).toLocaleTimeString():'Never synced this session';
+  const syncInfo=el('div',{style:{flex:'1'}});
+  syncInfo.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',color:'var(--text)',marginBottom:'2px'}},'☁ Drive Config Sync'));
+  syncInfo.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},driveConnected?'Connected \u2014 '+lastSyncStr:'Not connected to Drive \u2014 settings will not sync across devices'));
+  syncSec.appendChild(syncInfo);
+  const syncAllBtn=el('button',{class:'btn-primary',style:{fontSize:'10px',padding:'5px 14px'},
+    onclick:async()=>{
+      syncAllBtn.disabled=true; syncAllBtn.textContent='⏳ Syncing...';
+      try{
+        await saveConfigToDrive();
+        localStorage.setItem('vcs_last_drive_sync',Date.now().toString());
+        syncAllBtn.textContent='✓ Synced!';
+        setTimeout(()=>{syncAllBtn.disabled=false;syncAllBtn.textContent='↑ Sync All to Drive';},2000);
+        toast('✓ All settings synced to Drive — available on all your devices','#22c55e');
+      }catch(e){
+        syncAllBtn.textContent='✗ Failed';
+        syncAllBtn.disabled=false;
+        toast('Drive sync failed: '+e.message,'#ef4444');
+      }
+    }},'↑ Sync All to Drive');
+  syncSec.appendChild(syncAllBtn);
+  if(USER.role==='admin'){
+    syncSec.appendChild(el('p',{style:{width:'100%',fontSize:'8px',color:'var(--muted)',margin:'4px 0 0'}},
+      '⚙ Admin tip: Global settings (API keys, SF credentials, Renzo key) sync for all users. Personal settings (theme, dialer URL) sync per device. Use "Sync All" after making any changes you want other users to pick up.'));
+  }
+  c.appendChild(syncSec);
+
   // ── Session Handover Generator ──
   const secHandover=el('div',{class:'settings-section'});
   secHandover.appendChild(el('h3',{},'📋 Session Handover Generator'));
@@ -18250,7 +18286,9 @@ function renderSettings(c) {
     shareToggle.checked = S.settings.aiKeyShared===true;
     shareToggle.addEventListener('change',()=>{
       S.settings.aiKeyShared=shareToggle.checked;
-      toast(shareToggle.checked?'API key sharing enabled — users can now use AI features':'API key sharing disabled');
+      debouncedSaveSettings();
+      saveConfigToDrive().catch(()=>{});
+      toast(shareToggle.checked?'✓ API key sharing ON — AI enabled for all users (saved to Drive)':'API key sharing OFF — users must configure their own key');
     });
     shareRow.appendChild(shareToggle);
     secAI.appendChild(shareRow);
@@ -19405,7 +19443,7 @@ async function sendAIMessage(userMsg) {
       resp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST', signal: _aiAbortController.signal,
         headers: {'Content-Type':'text/plain','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-        body: JSON.stringify({model:'claude-sonnet-4-20250514', max_tokens:1000, system:systemPrompt,
+        body: JSON.stringify({model:'claude-sonnet-4-6', max_tokens:1000, system:systemPrompt,
           messages: aiHistory.map(m=>({role:m.role,content:m.content}))})
       });
       if (!resp.ok) { const err=await resp.json().catch(()=>({})); throw new Error(err.error?.message||`HTTP ${resp.status}`); }
@@ -19439,6 +19477,16 @@ async function sendAIMessage(userMsg) {
       usage.estimatedCostCents = ((usage.estimatedCostCents||0) + costCents);
       usage.lastUsed = new Date().toISOString();
       localStorage.setItem(usageKey, JSON.stringify(usage));
+      // Periodically save usage to Drive (every 5 messages) for cross-device accumulation
+      if((usage.aiChat||0) % 5 === 0){
+        // Save to Drive config as part of per-user tracking
+        try{
+          const allUsage=JSON.parse(localStorage.getItem('vcs_ai_usage_all')||'{}');
+          allUsage[USER.email]={...usage,_savedAt:Date.now()};
+          localStorage.setItem('vcs_ai_usage_all',JSON.stringify(allUsage));
+          if(window.GDriveToken) saveConfigToDrive().catch(()=>{});
+        }catch(_){}
+      }
     } catch(e) {}
   } catch(err) {
     thinkEl.remove();
