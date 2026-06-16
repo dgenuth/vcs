@@ -17990,9 +17990,9 @@ function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
       S._settingsOpen[key]=!isOpen;
       render();
     }});
+  hdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',fontWeight:'400',marginRight:'2px'}},isOpen?'▼':'▶'));
   hdr.appendChild(el('span',{style:{fontSize:'14px'}},icon));
   hdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},title));
-  hdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',fontWeight:'400'}},isOpen?'▲':'▼'));
   card.appendChild(hdr);
   if(isOpen){
     const body=el('div',{style:{padding:'14px'}});
@@ -19163,7 +19163,7 @@ function renderSettings(c) {
 
   // Display preferences
   const sec4=el('div',{class:'settings-section'});
-  sec4.appendChild(el('h3',{},'🎨 Display Preferences'));
+  // header for Display Preferences added by makeCollapsibleSection below
   const prefDefs=[
     ['Compact rows (smaller row height)','compactRows'],
     ['Color score cells by urgency','showScoreColor'],
@@ -19176,11 +19176,11 @@ function renderSettings(c) {
     cb.addEventListener('change',()=>{S.settings[key]=cb.checked;debouncedSaveSettings();renderSettings(c);render();});
     row.appendChild(cb); sec4.appendChild(row);
   }
-  c.appendChild(sec4);
+  makeCollapsibleSection(sec4,'🎨 Display Preferences','vcs_s_prefs',false);c.appendChild(sec4);
 
   // Calendar / Availability
   const secCal=el('div',{class:'settings-section'});
-  secCal.appendChild(el('h3',{},'📅 Calendar Availability'));
+  // Calendar header built into collapsible wrapper below (before c.appendChild)
   secCal.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Mark days as closed (office closed) or OOO (you\'re out). These days are excluded from scheduling. Dates stored in your browser.'));
 
   const renderDayLists=()=>{
@@ -19225,11 +19225,11 @@ function renderSettings(c) {
     }
   };
   renderDayLists();
-  if(['admin','procurement','manager'].includes(USER.role))if(['admin','procurement','manager'].includes(USER.role))c.appendChild(secCal);
+  if(['admin','procurement','manager'].includes(USER.role))if(['admin','procurement','manager'].includes(USER.role)){const _cc=localStorage.getItem('vcs_s_cal')!=='1';const _cch=el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'6px'}},_cc?'▼':'▶');const _coh=el('div',{style:{display:'flex',alignItems:'center',cursor:'pointer',userSelect:'none',padding:'4px 0'}});_coh.onclick=function(){const n=secCal.style.display==='none';secCal.style.display=n?'':'none';_cch.textContent=n?'▼':'▶';localStorage.setItem('vcs_s_cal',n?'0':'1');};_coh.appendChild(_cch);_coh.appendChild(el('h3',{style:{margin:'0',display:'inline',fontSize:'13px'}},'📅 Calendar Availability'));_coh.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'6px'}},_cc?'click to collapse':'click to expand'));const _cow=el('div',{class:'settings-section'});_cow.appendChild(_coh);secCal.style.display=_cc?'':'none';_cow.appendChild(secCal);c.appendChild(_cow);}
 
   // Default View on load
   const secDefaults=el('div',{class:'settings-section'});
-  secDefaults.appendChild(el('h3',{},'🚀 Startup & Navigation'));
+  // header for Startup & Navigation added by makeCollapsibleSection below
   secDefaults.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'5px'}},'Default view on file load:'));
   const viewRow=el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'12px'}});
   [['📋 Today','today'],['📞 Call Sheet','callsheet'],['⏰ Expiring','expiring'],['🗂 Vendor DB','vendordb'],['📆 Forecast','forecast']].forEach(([label,val])=>{
@@ -19249,7 +19249,7 @@ function renderSettings(c) {
     kbTable.appendChild(el('span',{style:{color:'var(--muted)'}},desc));
   });
   secDefaults.appendChild(kbTable);
-  if(['admin','procurement','manager'].includes(USER.role))if(['admin','procurement','manager'].includes(USER.role))c.appendChild(secDefaults);
+  if(['admin','procurement','manager'].includes(USER.role))if(['admin','procurement','manager'].includes(USER.role)){makeCollapsibleSection(secDefaults,'🚀 Startup & Navigation','vcs_s_startup',false);c.appendChild(secDefaults);}
 
   // Theme & Appearance
   const secTheme=el('div',{class:'settings-section'});
