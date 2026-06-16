@@ -10645,7 +10645,7 @@ function renderChecklist(c) {
   c.innerHTML='';
   const wrap=el('div',{style:{maxWidth:'1000px',margin:'0 auto',padding:'12px 0'}});
   const hdr=el('div',{style:{marginBottom:'12px'}});
-  hdr.appendChild(el('h2',{style:{margin:'0 0 4px',fontSize:'16px',fontWeight:'700'}},'📋 Vendor Coverage Checklist'));
+  hdr.appendChild(el('h2',{style:{margin:'0 0 4px',fontSize:'16px',fontWeight:'700'}},'📋 Vendor Coverage Map'));
   hdr.appendChild(el('p',{style:{margin:'0',fontSize:'10px',color:'var(--muted)',lineHeight:'1.6'}},'Ensure every spend category at each facility has an aligned vendor. VCS matches each line item against your vendor database automatically.'));
   wrap.appendChild(hdr);
 
@@ -18064,7 +18064,7 @@ function renderSettings(c) {
     _rdBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.5'}},
       'Toggle which tabs are ON by default for each role. Users can still have individual overrides (shown with ⚡ in user management). Changes take effect on next login.'));
 
-    const ROLE_LIST=['admin','procurement','manager','sales','cro'];
+    const ROLE_LIST=['sales','admin','procurement','manager','cro'];
     const ALL_TABS=getNavTabGroups().flatMap(g=>g.tabs);
 
     ROLE_LIST.forEach(role=>{
