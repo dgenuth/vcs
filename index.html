@@ -703,6 +703,12 @@ body.light-theme .sb-logo-text{color:var(--blue)}
 ::-webkit-scrollbar-thumb{background:#3a3d52;border-radius:4px}
 ::-webkit-scrollbar-thumb:hover{background:var(--muted)}
 ::-webkit-scrollbar-corner{background:transparent}
+/* no-duplicate-titles policy: page titles live exclusively in #view-title.
+   Render functions must not add h1/h2 that repeat the nav-bar page name.
+   h3 section headings within a page are permitted and should not be removed.
+   Affected: sfboard, customers, contracts, spend, compare (see specs/).
+   Settings and health already had no duplicate h1/h2 before this change.
+   Reference: C:\VCS\specs\no-duplicate-titles.md */
 </style>
 </head>
 <body>
@@ -8506,7 +8512,9 @@ function renderCustomers(c) {
 
   // Header
   const hdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'12px',flexWrap:'wrap'}});
-  hdr.appendChild(el('h2',{style:{margin:'0',fontSize:'16px',fontWeight:'700',flex:'1'}},'👥 Customers & Clients'));
+  // title shown in #view-title header bar — h2 removed (no-duplicate-titles)
+  // spacer div preserves flex layout; flex:1 keeps the account-count badge right-aligned
+  hdr.appendChild(el('div',{style:{flex:'1'}}));
   if(S._custData){
     const {accounts=[]}=S._custData;
     const parents=accounts.filter(a=>!a.ParentId).length;
@@ -9113,7 +9121,9 @@ function renderSFBoard(c) {
 
   // ── Header toolbar ──
   const toolbar=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'12px',flexWrap:'wrap'}});
-  toolbar.appendChild(el('h2',{style:{margin:'0',fontSize:'16px',fontWeight:'700',flex:'1'}},'☁ Salesforce Board'));
+  // title shown in #view-title header bar — h2 removed (no-duplicate-titles)
+  // spacer div (flex:1) keeps the load button and year filter right-aligned in toolbar
+  toolbar.appendChild(el('div',{style:{flex:'1'}}));
   if(sb.lastLoaded) toolbar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Updated: '+sb.lastLoaded));
   const loadBtn=el('button',{class:'btn-primary',onclick:function(){console.log('[SF Board] btn clicked');loadSFBoard();}},sb.loading?'⏳ Loading...':'🔄 Load / Refresh');
   loadBtn.disabled=sb.loading;
@@ -11254,7 +11264,9 @@ function renderContracts(c) {
   const wrap=el('div',{style:{maxWidth:'1000px',margin:'0 auto',padding:'12px 0'}});
 
   const hdr=el('div',{style:{marginBottom:'12px'}});
-  hdr.appendChild(el('h2',{style:{margin:'0 0 4px 0',fontSize:'16px',fontWeight:'700'}},'📄 Contract Manager'));
+  // page title (Contract Manager) shown in #view-title header bar
+  // h2 removed per no-duplicate-titles spec — title not repeated in #content
+  // description <p> below provides tool context without duplicating the page heading
   hdr.appendChild(el('p',{style:{margin:'0',fontSize:'10px',color:'var(--muted)'}},'Upload vendor contracts. Claude reads every clause and extracts structured data — auto-filling VCS fields and powering the true-up calculations.'));
   wrap.appendChild(hdr);
 
@@ -11913,7 +11925,9 @@ function renderSpend(c) {
   const wrap=el('div',{style:{maxWidth:'1100px',margin:'0 auto',padding:'12px 0'}});
 
   const hdr=el('div',{style:{marginBottom:'12px'}});
-  hdr.appendChild(el('h2',{style:{margin:'0 0 4px 0',fontSize:'16px',fontWeight:'700'}},'💹 Spend Analytics & True-Up'));
+  // page title (Spend Analytics) shown in #view-title header bar
+  // h2 removed per no-duplicate-titles spec — title not repeated in #content
+  // description <p> below provides tool context without duplicating the page heading
   hdr.appendChild(el('p',{style:{margin:'0',fontSize:'10px',color:'var(--muted)'}},'Live spend data from Salesforce. Compare actual spend against contract admin fees to identify commission gaps.'));
   wrap.appendChild(hdr);
 
@@ -12423,7 +12437,9 @@ function renderContractCompare(c) {
   // Header
   const hdr = el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px'}});
   const hdrLeft=el('div',{});
-  hdrLeft.appendChild(el('h2',{style:{margin:'0 0 2px 0',fontSize:'16px',fontWeight:'700'}},'⚖️ Contract Comparison Tool'));
+  // page title (Contract Comparison) shown in #view-title header bar
+  // h2 removed per no-duplicate-titles spec — title not repeated in #content
+  // description <p> below provides tool context without duplicating the page heading
   hdrLeft.appendChild(el('p',{style:{margin:'0',fontSize:'10px',color:'var(--muted)'}},'Upload two agreements. Claude analyzes every clause and produces a color-coded negotiation cheat sheet.'));
   hdr.appendChild(hdrLeft);
   wrap.appendChild(hdr);
