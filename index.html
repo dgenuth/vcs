@@ -10759,7 +10759,28 @@ const PSX_CHECKLIST = [{"label":"REHAB","items":[{"label":"Therapy – In-House 
 
 function renderChecklist(c) {
   c.innerHTML='';
-  function _clSave(fac){if(!fac)return;try{localStorage.setItem('vcs_checklist_'+fac,JSON.stringify({currVendor:S._clCurrVendor||{},goWith:S._clGoWith||{},status:S._clStatus||{}}));}catch(e2){}}
+  // Checklist save/load with dirty tracking
+  function _clSave(fac,silent){
+    if(!fac)return;
+    try{
+      const data={
+        facility:fac,
+        rep:S._checklistRep||USER.name||'',
+        date:new Date().toISOString(),
+        currVendor:S._clCurrVendor||{},
+        goWith:S._clGoWith||{},
+        status:S._clStatus||{}
+      };
+      localStorage.setItem('vcs_checklist_'+fac,JSON.stringify(data));
+      // Also save to a list of all facilities with checklists
+      try{
+        const all=JSON.parse(localStorage.getItem('vcs_checklist_facilities')||'[]');
+        if(!all.includes(fac)){all.push(fac);localStorage.setItem('vcs_checklist_facilities',JSON.stringify(all));}
+      }catch(_){}
+      S._clDirty=false;
+      if(!silent) toast('✓ Checklist saved for '+fac,'#22c55e');
+    }catch(e2){toast('Save failed: '+e2.message,'#ef4444');}
+  }
   function _clLoad(fac){if(!fac)return;try{const sv=JSON.parse(localStorage.getItem('vcs_checklist_'+fac)||'{}');if(sv.currVendor)S._clCurrVendor=Object.assign({},S._clCurrVendor||{},sv.currVendor);if(sv.goWith)S._clGoWith=Object.assign({},S._clGoWith||{},sv.goWith);if(sv.status)S._clStatus=Object.assign({},S._clStatus||{},sv.status);}catch(e2){}}
   if(!S._clStatus)S._clStatus={};
   const wrap=el('div',{style:{maxWidth:'1000px',margin:'0 auto',padding:'12px 0'}});
@@ -10797,9 +10818,46 @@ function renderChecklist(c) {
     value:S._checklistRep||(USER.name||USER.email||'')});
   repIn.addEventListener('change',e=>S._checklistRep=e.target.value.trim());
   custRow.appendChild(repIn);
+  // Save button — explicit, shows dirty indicator
+  const saveClBtn=el('button',{class:'btn-primary',style:{fontSize:'10px',padding:'4px 12px'},onclick(){
+    _clSave(custIn.value);
+    saveClBtn.textContent='✓ Saved';
+    setTimeout(()=>{saveClBtn.textContent='💾 Save';},2000);
+  }},'💾 Save');
+  custRow.appendChild(saveClBtn);
   custRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){exportChecklistToCsv(custIn.value,repIn.value);}}, '⬇ Export'));
   custRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){emailChecklist(custIn.value,repIn.value);}}, '✉ Email'));
   wrap.appendChild(custRow);
+
+  // Saved facilities history row
+  const savedFacs=JSON.parse(localStorage.getItem('vcs_checklist_facilities')||'[]');
+  if(savedFacs.length>0){
+    const histRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'8px',flexWrap:'wrap',
+      padding:'6px 10px',background:'var(--card)',borderRadius:'6px',border:'1px solid var(--border)'}});
+    histRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',flexShrink:'0'}},'Saved:'));
+    savedFacs.slice(-8).forEach(fac=>{
+      const facBtn=el('button',{style:{fontSize:'9px',padding:'2px 8px',borderRadius:'8px',cursor:'pointer',
+        border:'1px solid var(--border)',background:custIn.value===fac?'var(--blue)':'var(--bg)',
+        color:custIn.value===fac?'#fff':'var(--text)'},
+        onclick(){
+          custIn.value=fac;
+          S._checklistFacility=fac;
+          _clLoad(fac);
+          const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}
+        }},fac);
+      histRow.appendChild(facBtn);
+    });
+    // Clear all button
+    histRow.appendChild(el('button',{style:{fontSize:'8px',padding:'1px 6px',borderRadius:'4px',cursor:'pointer',
+      border:'none',background:'none',color:'var(--muted)',marginLeft:'auto'},
+      onclick(){
+        if(!confirm('Clear all saved checklists?')) return;
+        savedFacs.forEach(f=>localStorage.removeItem('vcs_checklist_'+f));
+        localStorage.removeItem('vcs_checklist_facilities');
+        const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}
+      }},'✕ Clear all'));
+    wrap.appendChild(histRow);
+  }
   // Vendor lookup map by keyword — must be declared before coveredItems uses findVendors
   const catVendorMap={};
   [...(S.vendors||[]),...(S.channelVendors||[])].forEach(v=>{
@@ -14655,27 +14713,40 @@ function renderToday(c) {
   c.appendChild(tblWrap);
 
   // ── Relationship Follow-ups ──────────────────────────────────────────────
+  // Tier-based contact cadence (days) — can be overridden per vendor
+  const TIER_CADENCE={CALL:14,EMAIL:30,REVIEW:90,MONITOR:365};
   const _fuVendors=(S.vendors||[]).filter(isVisible).filter(v=>{
     const fu=parseDate(v.followUp);
-    const fuOverdue=fu?dayDiff(today,fu)>=0:false;
+    if(fu&&dayDiff(today,fu)>=0) return true; // explicit overdue follow-up
     const lc=parseDate(v.lastComm);
-    const daysSinceComm=lc?dayDiff(today,lc):999;
-    return fuOverdue||(daysSinceComm>30&&(v.tier==='CALL'||v.tier==='EMAIL'));
+    const cadence=v.contactFrequencyDays||TIER_CADENCE[v.tier]||30;
+    if(!lc) return v.tier==='CALL'||v.tier==='EMAIL'; // never contacted
+    return dayDiff(lc,today)>=cadence;
   }).sort((a,b)=>{
     const aFu=parseDate(a.followUp),bFu=parseDate(b.followUp);
     const aOvr=aFu?dayDiff(today,aFu)>=0:false,bOvr=bFu?dayDiff(today,bFu)>=0:false;
     if(aOvr!==bOvr) return aOvr?-1:1;
-    const tr=t=>t==='CALL'?0:t==='EMAIL'?1:2;
+    const tr=t=>t==='CALL'?0:t==='EMAIL'?1:t==='REVIEW'?2:3;
     if(tr(a.tier)!==tr(b.tier)) return tr(a.tier)-tr(b.tier);
-    return (b.score||0)-(a.score||0);
-  }).slice(0,10);
-  if(_fuVendors.length){
+    // Within same tier: longest without contact first
+    const alc=parseDate(a.lastComm),blc=parseDate(b.lastComm);
+    return (blc?dayDiff(blc,today):9999)-(alc?dayDiff(alc,today):9999);
+  });
+  const _fuAll=_fuVendors.length;
+  const _fuShow=_fuVendors.slice(0,20);
+  if(_fuShow.length){
     const fuSec=el('div',{class:'summary-section',style:{marginTop:'12px',marginBottom:'8px'}});
-    const fuHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}});
+    const fuHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px',flexWrap:'wrap'}});
     fuHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'13px'}},'📞 Relationship Follow-ups'));
-    fuHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Overdue or stale contacts'));
+    fuHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Showing '+_fuShow.length+' of '+_fuAll+' needing contact'));
+    // Cadence legend
+    const cadRow=el('div',{style:{display:'flex',gap:'4px',marginLeft:'auto',flexWrap:'wrap'}});
+    [{t:'CALL',d:14,c:'#ef4444'},{t:'EMAIL',d:30,c:'#f59e0b'},{t:'REVIEW',d:90,c:'#4f7cff'},{t:'MONITOR',d:365,c:'#6b7280'}]
+      .forEach(({t,d,c})=>cadRow.appendChild(el('span',{style:{fontSize:'7px',padding:'1px 5px',borderRadius:'8px',
+        border:'1px solid '+c+'55',color:c},title:t+': contact every '+d+' days'},t+' ~'+d+'d')));
+    fuHdr.appendChild(cadRow);
     fuSec.appendChild(fuHdr);
-    _fuVendors.forEach(v=>{
+    _fuShow.forEach(v=>{
       const lc=parseDate(v.lastComm),fu=parseDate(v.followUp);
       const daysSince=lc?dayDiff(today,lc):null,fuDays=fu?dayDiff(today,fu):null;
       const isOvr=fuDays!==null&&fuDays>=0;
