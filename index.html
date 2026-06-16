@@ -10679,22 +10679,7 @@ function renderChecklist(c) {
   custRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){exportChecklistToCsv(custIn.value,repIn.value);}}, '⬇ Export'));
   custRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){emailChecklist(custIn.value,repIn.value);}}, '✉ Email'));
   wrap.appendChild(custRow);
-  // Overall coverage summary
-  const allItems=PSX_CHECKLIST.flatMap(s=>s.items);
-  const coveredItems=allItems.filter(it=>findVendors(it.label).length>0);
-  const overallPct=allItems.length?Math.round(coveredItems.length/allItems.length*100):0;
-  const covBar=el('div',{style:{marginBottom:'10px',padding:'8px 12px',background:'var(--card)',borderRadius:'6px',border:'1px solid var(--border)',display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}});
-  covBar.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'700'}},'Overall Coverage:'));
-  const barWrap=el('div',{style:{flex:'1',height:'8px',background:'var(--border)',borderRadius:'4px',minWidth:'100px',overflow:'hidden'}});
-  const bar=el('div',{style:{height:'100%',width:overallPct+'%',background:overallPct>=80?'var(--green)':overallPct>=50?'var(--amber)':'var(--red)',borderRadius:'4px',transition:'width .3s'}});
-  barWrap.appendChild(bar); covBar.appendChild(barWrap);
-  covBar.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:overallPct>=80?'var(--green)':overallPct>=50?'var(--amber)':'var(--red)'}},overallPct+'%'));
-  covBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},coveredItems.length+' of '+allItems.length+' categories covered by contracted vendors'));
-  wrap.appendChild(covBar);
-  c.appendChild(wrap);
-  const isConsultant=S._checklistView===1;
-
-  // Vendor lookup map by keyword
+  // Vendor lookup map by keyword — must be declared before coveredItems uses findVendors
   const catVendorMap={};
   [...(S.vendors||[]),...(S.channelVendors||[])].forEach(v=>{
     const terms=[v.category,v.subCategory,v.product,v.about].filter(Boolean);
@@ -10715,6 +10700,21 @@ function renderChecklist(c) {
     });
     return [...found].slice(0,4);
   }
+
+  // Overall coverage summary
+  const allItems=PSX_CHECKLIST.flatMap(s=>s.items);
+  const coveredItems=allItems.filter(it=>findVendors(it.label).length>0);
+  const overallPct=allItems.length?Math.round(coveredItems.length/allItems.length*100):0;
+  const covBar=el('div',{style:{marginBottom:'10px',padding:'8px 12px',background:'var(--card)',borderRadius:'6px',border:'1px solid var(--border)',display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}});
+  covBar.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'700'}},'Overall Coverage:'));
+  const barWrap=el('div',{style:{flex:'1',height:'8px',background:'var(--border)',borderRadius:'4px',minWidth:'100px',overflow:'hidden'}});
+  const bar=el('div',{style:{height:'100%',width:overallPct+'%',background:overallPct>=80?'var(--green)':overallPct>=50?'var(--amber)':'var(--red)',borderRadius:'4px',transition:'width .3s'}});
+  barWrap.appendChild(bar); covBar.appendChild(barWrap);
+  covBar.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:overallPct>=80?'var(--green)':overallPct>=50?'var(--amber)':'var(--red)'}},overallPct+'%'));
+  covBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},coveredItems.length+' of '+allItems.length+' categories covered by contracted vendors'));
+  wrap.appendChild(covBar);
+  c.appendChild(wrap);
+  const isConsultant=S._checklistView===1;
 
   PSX_CHECKLIST.forEach(section=>{
     const secDiv=el('div',{style:'margin-bottom:6px;border:1px solid var(--border);border-radius:5px;overflow:hidden'});
@@ -17856,7 +17856,7 @@ function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
 function renderVCSHealth(c) {
   c.innerHTML='';
   const wrap=el('div',{style:{maxWidth:'900px',margin:'0 auto',padding:'12px 0'}});
-  wrap.appendChild(el('h2',{style:{margin:'0 0 12px',fontSize:'16px',fontWeight:'700'}},'🔍 VCS Health Check'));
+  wrap.appendChild(el('h2',{style:{margin:'0 0 12px',fontSize:'16px',fontWeight:'700'}},'⚡ System Status'));
 
   const checks=[
     {label:'Google Drive Connection',icon:'☁',test:()=>!!S.settings?.driveFileId,pass:'Drive File ID configured',fail:'No Drive File ID in Settings'},
@@ -17995,7 +17995,7 @@ function renderSettings(c) {
   const lastSyncStr=lastSync?'Last synced: '+new Date(parseInt(lastSync)).toLocaleTimeString():'Never synced this session';
   const syncInfo=el('div',{style:{flex:'1'}});
   syncInfo.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',color:'var(--text)',marginBottom:'2px'}},'☁ Drive Config Sync'));
-  syncInfo.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},driveConnected?'Connected \u2014 '+lastSyncStr:'Not connected to Drive \u2014 settings will not sync across devices'));
+  syncInfo.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},driveConnected?'Connected \u2014 '+lastSyncStr:'Not connected to Drive \u2014 config will not sync across devices'));
   syncSec.appendChild(syncInfo);
   const syncAllBtn=el('button',{class:'btn-primary',style:{fontSize:'10px',padding:'5px 14px'},
     onclick:async()=>{
@@ -18015,7 +18015,7 @@ function renderSettings(c) {
   syncSec.appendChild(syncAllBtn);
   if(USER.role==='admin'){
     syncSec.appendChild(el('p',{style:{width:'100%',fontSize:'8px',color:'var(--muted)',margin:'4px 0 0'}},
-      '⚙ Admin tip: Global settings (API keys, SF credentials, Renzo key) sync for all users. Personal settings (theme, dialer URL) sync per device. Use "Sync All" after making any changes you want other users to pick up.'));
+      '⚙ Admin tip: Global keys (API keys, SF credentials, Renzo key) sync for all users. Personal config (theme, dialer URL) syncs per device. Use "Sync All" after making changes you want other users to pick up.'));
   }
   c.appendChild(syncSec);
 
@@ -18069,7 +18069,7 @@ function renderSettings(c) {
 
     ROLE_LIST.forEach(role=>{
       const _rKey='vcs_rtd_'+role;
-      const _rColl=localStorage.getItem(_rKey)==='1';
+      const _rColl=localStorage.getItem(_rKey)!=='0';
       const roleSection=el('div',{style:{marginBottom:'8px',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
       const roleSectionHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'6px 10px',
         background:'var(--bg)',cursor:'pointer',userSelect:'none',fontWeight:'700',fontSize:'11px'},
@@ -18125,7 +18125,7 @@ function renderSettings(c) {
         const on=_effectiveTabs.has(t.id);
         const rbtn=document.createElement('button');
         rbtn._on=on;
-        rbtn.textContent=t.label+(on?' ✅':' 🚫');
+        rbtn.textContent=(t.id==='settings'?'⚙':t.id==='health'?'🔍':t.label)+(on?' ✅':' 🚫');
         rbtn.style.cssText='font-size:7px;padding:2px 6px;border-radius:3px;cursor:pointer;'
           +'border:1px solid '+(on?'rgba(34,197,94,.4)':'rgba(239,68,68,.3)')+';'
           +'background:'+(on?'rgba(34,197,94,.08)':'rgba(239,68,68,.05)')+';'
@@ -18206,7 +18206,7 @@ function renderSettings(c) {
     _umHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'8px'}},'(click to expand/collapse)'));
     secUsers.appendChild(_umHdr);
     const _umBody=el('div',{style:{display:_umCollapsed?'none':''}});
-    _umBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.5'}},'Control who can access VCS and what they can do. Only Admins can manage users. Stored in this browser — export user list to share settings with another device.'));
+    _umBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.5'}},'Control who can access VCS and what they can do. Only Admins can manage users. Stored in this browser — export user list to share access with another device.'));
 
     // Role legend
     const legend=el('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',marginBottom:'10px',padding:'6px 8px',background:'rgba(255,255,255,.03)',borderRadius:'4px',border:'1px solid var(--border)'}});
@@ -18691,7 +18691,7 @@ function renderSettings(c) {
   }},'💾 Save & Connect Drive');
   driveSaveBtnRow.appendChild(driveSaveBtn);
   secDrive.appendChild(driveSaveBtnRow);
-  secDrive.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.5',marginTop:'4px'}},'Your settings are saved to your browser and to Drive config — they persist across sessions and devices. Other users share the same Drive file and sign in with their own Google accounts (which you grant access).'));
+  secDrive.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.5',marginTop:'4px'}},'Your config is saved to your browser and to Drive — it persists across sessions and devices. Other users share the same Drive file and sign in with their own Google accounts (which you grant access).'));
   makeCollapsibleSection(secDrive,'📁 Google Drive','vcs_s_drive',true);
   c.appendChild(secDrive);
   } // end configDrive admin block
@@ -18944,7 +18944,7 @@ function renderSettings(c) {
   const optCard = el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',padding:'10px',marginTop:'8px'}});
   optCard.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',marginBottom:'8px'}},'Which dialer works best for you?'));
   [
-    ['Google Voice (free, recommended)','Select "Google Voice" above. Go to voice.google.com → Settings → Linked numbers → add your cell. Each ☎️ click opens Google Voice and rings you.','#34d399'],
+    ['Google Voice (free, recommended)','Select "Google Voice" above. Go to voice.google.com → Linked numbers → add your cell. Each ☎️ click opens Google Voice and rings you.','#34d399'],
     ['Zoom Phone','Select "Zoom Phone" above. Requires Zoom Phone license. Clicking ☎️ opens Zoom and dials.','#4f7cff'],
     ['RingCentral','Select "RingCentral" above. Requires RingCentral account. Clicking ☎️ opens the app.','#f59e0b'],
     ['Default (tel: link)','Leave as Default. Works if your PC has a softphone or Phone Link paired. Clicking ☎️ opens whatever app handles calls on your computer.','#6b7280'],
@@ -19052,7 +19052,7 @@ function renderSettings(c) {
   secDefaults.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'5px',fontWeight:'600'}},'⌨️ Keyboard Shortcuts'));
   const kbTable=el('div',{style:{display:'grid',gridTemplateColumns:'auto 1fr',gap:'3px 16px',fontSize:'10px',background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'4px',padding:'8px 12px'}});
   [['G then T','Go to Today'],['G then V','Go to Vendor Database'],['G then C','Go to Calendar'],['G then F','Go to Forecast'],['G then I','Go to In The Works'],
-   ['G then R','Go to Reports'],['G then S','Go to Settings'],
+   ['G then R','Go to Reports'],['G then S','Open App Config'],
    ['/ or F','Focus search box'],['Esc','Close panel / modal'],['?','Show this shortcut list'],
   ].forEach(([key,desc])=>{
     kbTable.appendChild(el('span',{style:{fontFamily:'monospace',background:'rgba(255,255,255,.06)',padding:'1px 5px',borderRadius:'3px',color:'var(--blue)',whiteSpace:'nowrap'}},key));
@@ -19122,7 +19122,7 @@ function renderSettings(c) {
 
   // Email Settings (was sec5 — now properly declared)
   const sec5=el('div',{class:'settings-section'});
-  sec5.appendChild(el('h3',{},'✉️ Email Settings'));
+  sec5.appendChild(el('h3',{},'✉️ Email Signature'));
   sec5.appendChild(el('label',{},'Default email signature (appended to drafts):'));
   const sigTa=el('textarea',{class:'modal-textarea',style:{height:'80px',marginTop:'5px'}});
   sigTa.value=S.settings.emailSignature||'';
