@@ -18161,14 +18161,20 @@ function renderSettings(c) {
     const rdBtnRow=el('div',{style:{display:'flex',gap:'4px',marginLeft:'auto'},onclick(e){e.stopPropagation();}});
     rdBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){
       e.stopPropagation();
-      const ROLE_LIST2=['admin','procurement','manager','sales','cro'];
+      const _allRoles2=new Set(getApprovedUsers().map(u=>u.role||'admin'));
+      if(typeof EMPLOYEE_DIRECTORY!=='undefined') EMPLOYEE_DIRECTORY.forEach(e=>_allRoles2.add(e.role||'admin'));
+      ['admin','procurement','manager','cro'].forEach(r=>_allRoles2.add(r));
+      const ROLE_LIST2=[..._allRoles2];
       ROLE_LIST2.forEach(r=>localStorage.setItem('vcs_rtd_'+r,'0'));
       const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
     }},'▼ All'));
     rdBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){
       e.stopPropagation();
-      const ROLE_LIST2=['admin','procurement','manager','sales','cro'];
-      ROLE_LIST2.forEach(r=>localStorage.setItem('vcs_rtd_'+r,'1'));
+      const _allRoles3=new Set(getApprovedUsers().map(u=>u.role||'admin'));
+      if(typeof EMPLOYEE_DIRECTORY!=='undefined') EMPLOYEE_DIRECTORY.forEach(e=>_allRoles3.add(e.role||'admin'));
+      ['admin','procurement','manager','cro'].forEach(r=>_allRoles3.add(r));
+      const ROLE_LIST3=[..._allRoles3];
+      ROLE_LIST3.forEach(r=>localStorage.setItem('vcs_rtd_'+r,'1'));
       const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
     }},'▶ All'));
     _rdHdr.appendChild(rdBtnRow);
@@ -18178,7 +18184,15 @@ function renderSettings(c) {
     _rdBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.5'}},
       'Toggle which tabs are ON by default for each role. Changes apply immediately — all users of that role are updated in real time and visible in User Management without a page reload. Individual overrides shown with ⚡.'));
 
-    const ROLE_LIST=['sales','admin','procurement','manager','cro'];
+    // Derive roles from actual users — not a hardcoded list
+    const _allUserRoles=new Set(getApprovedUsers().map(u=>u.role||'admin'));
+    // Also include roles from EMPLOYEE_DIRECTORY
+    if(typeof EMPLOYEE_DIRECTORY!=='undefined'){
+      EMPLOYEE_DIRECTORY.forEach(e=>_allUserRoles.add(e.role||'admin'));
+    }
+    // Always include these core roles
+    ['admin','procurement','manager','cro'].forEach(r=>_allUserRoles.add(r));
+    const ROLE_LIST=[..._allUserRoles].sort();
     const ALL_TABS=getNavTabGroups().flatMap(g=>g.tabs);
 
     ROLE_LIST.forEach(role=>{
@@ -18264,8 +18278,8 @@ function renderSettings(c) {
           }catch(e2){}
           const newOn=!nowOn;
           // Update ALL users of this role immediately — no "next load" needed
-          // 'sales' in ROLE_LIST is the display key; actual users are stored as 'sales_rep'
-          const _roleUserKey=role==='sales'?'sales_rep':role;
+          // role key matches actual user roles directly (derived from real users above)
+          const _roleUserKey=role;
           try{
             const allUsers=getApprovedUsers();
             allUsers.forEach(u=>{
