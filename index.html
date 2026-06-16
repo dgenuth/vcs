@@ -20725,7 +20725,7 @@ function render() {
     case 'tiers':
       renderTierTracker(content);
       // Auto-sync SF spend if not loaded and SF is connected
-      if(!SPEND_STATE.data?.vendors?.length&&S._sfToken&&!SPEND_STATE.loading){
+      if(!SPEND_STATE.data?.vendors?.length&&USER.sfToken&&!SPEND_STATE.loading){
         setTimeout(()=>{loadSpendData().then(()=>{const c2=$('content');if(c2&&S.view==='tiers'){c2.innerHTML='';renderTierTracker(c2);}}).catch(()=>{});},500);
       }
       break;
@@ -20733,21 +20733,27 @@ function render() {
     case 'sfboard':
       renderSFBoard(content);
       // Auto-load SF Board if not loaded and SF is connected
-      if(!S._sfBoard?.data&&S._sfToken&&!S._sfBoard?.loading){
+      if(!S._sfBoard?.data&&USER.sfToken&&!S._sfBoard?.loading){
         setTimeout(()=>{if(typeof loadSFBoard==='function')loadSFBoard().catch(()=>{});},300);
       }
       break;
     case 'customers':
       renderCustomers(content);
       // Auto-load customer data if not loaded
-      if(!S._custData&&S._sfToken&&!S._custLoading){
+      if(!S._custData&&USER.sfToken&&!S._custLoading){
         setTimeout(()=>{if(typeof loadCustomerData==='function')loadCustomerData().catch(()=>{});},300);
       }
       break;
     case 'compare':renderContractCompare(content);break;
     case 'contracts':renderContracts(content);break;
     case 'checklist':renderChecklist(content);break;
-    case 'spend':renderSpend(content);break;
+    case 'spend':
+      renderSpend(content);
+      // Auto-load spend data if not loaded and SF is connected (R3)
+      if(!SPEND_STATE.data?.vendors?.length&&USER.sfToken&&!SPEND_STATE.loading){
+        setTimeout(()=>{loadSpendData().catch(()=>{});},300);
+      }
+      break;
     case 'forecast':renderForecast(content);break;case 'analytics':renderAnalytics(content);break;case 'summary':renderSummary(content);break;
     case 'reports':renderReports(content);break;
     case 'history':renderHistory(content);break;case 'datacheck':renderDataCheck(content);break;case 'settings':renderSettings(content);break;case 'health':renderVCSHealth(content);break;
