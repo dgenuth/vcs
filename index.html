@@ -18096,6 +18096,164 @@ function renderVCSHealth(c) {
   wrap.appendChild(sessSec);
 }
 
+// Field access builder — standalone so role tab toggle can call it for any user
+function buildFieldAccess(container, userEmail) {
+    container.innerHTML='';
+    const currentUsers=getApprovedUsers();
+    const cu=currentUsers.find(x=>x.email===userEmail);
+    if(!cu) return;
+    const hf=cu.hiddenFields||[];
+
+    // All restrictable fields
+    container.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginBottom:'6px'}},'🔒 Field Access — click to toggle (amber = restricted, green = visible):'));
+    // Field groups for visual organization
+    const FIELD_GROUPS={
+      'Vendor Info':['gpo','name','category','subCategory','product','classOfTrade','markets','addedValue','website','status'],
+      'Contacts':['procContact','contactType','title','bizPhone','mobile','email','sharedContact','contactType2','title2','mobile2','email2'],
+      'Contract':['contractName','inContractSince','contractEffective','contractExpiry','autoRenewal','autoRenewalType','contractTerm','currentTerm','termEffective','termExpiry','terminationNotice','terminationWoCause','terminationReceived','assignment','assignmentConditions','exclusivity','signatory'],
+      'Financials':['adminFee','adminFeeNotes','tiers','perpetuity','tail','minYears','contractNo','reportFrequency','agreementType','pricingCommitment'],
+      'Docs & Pricing':['coverSheet','dataSheet','havePricing','pricingLocation','pricingDate','pricingFrequency','whitePapers','serviceSummary','videoRecording'],
+      'Activity':['comments','notes','lastComm','followUp','engagementReminder','needsLOP'],
+    };
+    const GROUP_COLORS={'Vendor Info':'#4f7cff','Contacts':'#22c55e','Contract':'#f59e0b','Financials':'#8b5cf6','Docs & Pricing':'#06b6d4','Activity':'#ec4899'};
+    const allFields=ALL_RESTRICTABLE_FIELDS;
+    // Render fields in groups with colored section headers
+    Object.entries(FIELD_GROUPS).forEach(([groupName,groupKeys])=>{
+      const groupFields=allFields.filter(f=>groupKeys.includes(f.key));
+      if(!groupFields.length) return;
+      const groupColor=GROUP_COLORS[groupName]||'var(--muted)';
+      const groupHdr=el('div',{style:{fontSize:'8px',fontWeight:'700',color:groupColor,
+        marginTop:'8px',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.05em',
+        borderBottom:'1px solid '+groupColor+'44',paddingBottom:'2px'}},groupName);
+      container.appendChild(groupHdr);
+      const fieldGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'4px'}});
+    groupFields.forEach(f=>{
+      const hidden=hf.includes(f.key);
+      const btn=document.createElement('button');
+      btn.dataset.fkey=f.key;
+      // Track hidden state on the button itself so we can toggle without rebuilding
+      btn._hidden = hidden;
+      function updateBtnStyle(isHidden){
+        btn.textContent=f.label+' '+(isHidden?'🚫':'✅');
+        btn.style.cssText='font-size:8px;padding:2px 8px;border-radius:4px;cursor:pointer;font-weight:500;'
+    +'border:1px solid '+(isHidden?'rgba(239,68,68,.4)':'rgba(34,197,94,.4)')+';'
+    +'background:'+(isHidden?'rgba(239,68,68,.1)':'rgba(34,197,94,.1)')+';'
+    +'color:'+(isHidden?'#f87171':'#4ade80')+';';
+      }
+      updateBtnStyle(hidden);
+      btn.addEventListener('click', function(e){
+        e.stopPropagation();
+        e.preventDefault();
+        const nowHidden = btn._hidden;
+        const all=getApprovedUsers();
+        const i=all.findIndex(x=>x.email===userEmail);
+        if(i<0){ console.warn('[FieldToggle] user not found:', userEmail); return; }
+        let newHf=[...(all[i].hiddenFields||[])];
+        if(nowHidden){ newHf=newHf.filter(k=>k!==f.key); }
+        else { if(!newHf.includes(f.key)) newHf.push(f.key); }
+        all[i].hiddenFields=newHf;
+        all[i]._customHiddenFields=true;
+        localStorage.setItem(AUTH_KEY,JSON.stringify(all));
+        // Update visual immediately — no rebuild needed
+        btn._hidden = !nowHidden;
+        updateBtnStyle(!nowHidden);
+        setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+      });
+      fieldGrid.appendChild(btn);
+    });
+    container.appendChild(fieldGrid);
+    }); // end Object.entries(FIELD_GROUPS).forEach
+    container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginBottom:'8px'}},'✅ = visible to user · 🚫 = hidden from user'));
+
+    // Tab access — toggleable per user (overrides role default)
+    container.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginBottom:'4px',marginTop:'8px'}},'📑 Tab Access (click to toggle):'));
+    const rolePerms=ROLE_PERMS[cu.role]||ROLE_PERMS.restricted;
+    const roleDefaultTabs=new Set(rolePerms.tabs||[]);
+    const tabOverrides=cu.tabOverrides||{}; // {tabId: true/false} overrides role default
+    // Derive groups from NAV_DEFS — stays in sync automatically
+    const TAB_GROUPS_DISPLAY=getNavTabGroups();
+    TAB_GROUPS_DISPLAY.forEach(grp=>{
+      container.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:grp.color,
+        marginTop:'6px',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.04em',
+        borderBottom:'1px solid '+grp.color+'33',paddingBottom:'2px'}},grp.label));
+      const tabGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',marginBottom:'4px'}});
+      const allTabs=grp.tabs;
+    const virtualTabDefaults={
+      '_statsbar':['admin','procurement','manager'].includes(cu.role),
+      '_savebtn':(ROLE_PERMS[cu.role]||{}).save||false,
+    };
+    allTabs.forEach(t=>{
+      const hasOverride=t.id in tabOverrides;
+      const roleDefault=t.id.startsWith('_')?(virtualTabDefaults[t.id]||false):roleDefaultTabs.has(t.id);
+      const hasAccess=hasOverride?tabOverrides[t.id]:roleDefault;
+      // Only show override indicator if state actually differs from role default
+      const isOverridden=hasOverride && (tabOverrides[t.id] !== roleDefault);
+      const btn=el('button',{
+        style:{
+    fontSize:'8px',padding:'2px 6px',borderRadius:'4px',cursor:'pointer',
+    border:'1px solid '+(hasAccess?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)'),
+    background:hasAccess?'rgba(34,197,94,.1)':'rgba(239,68,68,.1)',
+    color:hasAccess?'#4ade80':'#f87171',
+    outline:isOverridden?'1px dashed #f59e0b':''
+        },
+        title:(isOverridden?'⚠ Overriding role default. ':'')+(hasAccess?'Click to hide tab':'Click to show tab'),
+        onclick(e){
+    e.stopPropagation(); e.preventDefault();
+    const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
+    if(!all[i].tabOverrides) all[i].tabOverrides={};
+    const currentAccess=hasOverride?tabOverrides[t.id]:roleDefaultTabs.has(t.id);
+    all[i].tabOverrides[t.id]=!currentAccess;
+    localStorage.setItem(AUTH_KEY,JSON.stringify(all));
+    setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+    requestAnimationFrame(()=>buildFieldAccess(container,userEmail));
+        }
+      },t.label+' '+(hasAccess?'✅':'🚫')+(isOverridden?' ⚡':''));
+      tabGrid.appendChild(btn);
+    });
+    container.appendChild(tabGrid);
+    }); // end TAB_GROUPS_DISPLAY.forEach
+    const resetTabsBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(){
+      const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
+      delete all[i].tabOverrides;
+      localStorage.setItem(AUTH_KEY,JSON.stringify(all));
+      setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+      buildFieldAccess(container,userEmail);
+    }},'↺ Reset tabs to role defaults');
+    const resetFieldsBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(){
+      const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
+      all[i].hiddenFields=getDefaultHiddenFields(all[i].role);
+      all[i]._customHiddenFields=false;
+      localStorage.setItem(AUTH_KEY,JSON.stringify(all));
+      setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+      buildFieldAccess(container,userEmail);
+    }},'↺ Reset fields to role defaults');
+    container.appendChild(el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginTop:'4px'}},resetTabsBtn,resetFieldsBtn));
+    container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'2px'}},'⚡ = overriding role default · Click any field or tab to toggle · Changes save automatically'));
+
+    // Per-user AI toggle
+    const _cuFresh=getApprovedUsers().find(x=>x.email===userEmail);
+    const _aiOn=_cuFresh?(_cuFresh.aiEnabled!==false):true;
+    const aiToggleRow=el('div',{style:{marginTop:'10px',display:'flex',alignItems:'center',gap:'8px'}});
+    aiToggleRow.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)'}},'🤖 AI Assistant:'));
+    const aiBtn=el('button',{
+      style:{fontSize:'8px',padding:'3px 10px',borderRadius:'4px',cursor:'pointer',
+        border:'1px solid '+(_aiOn?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)'),
+        background:_aiOn?'rgba(34,197,94,.1)':'rgba(239,68,68,.1)',
+        color:_aiOn?'#4ade80':'#f87171'},
+      onclick(e){
+        e.stopPropagation();
+        const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
+        all[i].aiEnabled=!_aiOn;
+        localStorage.setItem(AUTH_KEY,JSON.stringify(all));
+        setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+        buildFieldAccess(container,userEmail);
+      }
+    },_aiOn?'Enabled ✅':'Disabled 🚫');
+    aiToggleRow.appendChild(aiBtn);
+    aiToggleRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'When disabled, AI calls return a "contact admin" message'));
+    container.appendChild(aiToggleRow);
+  }
+
 function renderSettings(c) {
   c.innerHTML = ''; // CRITICAL: clear before re-rendering
   // ── Global Sync Status Banner ──────────────────────────────────────────
@@ -18474,163 +18632,7 @@ function renderSettings(c) {
 
       // ── Field Access (all roles except admin/procurement) ──────────────────
       if(true){ // Show for all roles — admin can control any user's access
-        // Function to rebuild field access section in place (no full re-render)
-        function buildFieldAccess(container, userEmail) {
-          container.innerHTML='';
-          const currentUsers=getApprovedUsers();
-          const cu=currentUsers.find(x=>x.email===userEmail);
-          if(!cu) return;
-          const hf=cu.hiddenFields||[];
 
-          // All restrictable fields
-          container.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginBottom:'6px'}},'🔒 Field Access — click to toggle (amber = restricted, green = visible):'));
-          // Field groups for visual organization
-          const FIELD_GROUPS={
-            'Vendor Info':['gpo','name','category','subCategory','product','classOfTrade','markets','addedValue','website','status'],
-            'Contacts':['procContact','contactType','title','bizPhone','mobile','email','sharedContact','contactType2','title2','mobile2','email2'],
-            'Contract':['contractName','inContractSince','contractEffective','contractExpiry','autoRenewal','autoRenewalType','contractTerm','currentTerm','termEffective','termExpiry','terminationNotice','terminationWoCause','terminationReceived','assignment','assignmentConditions','exclusivity','signatory'],
-            'Financials':['adminFee','adminFeeNotes','tiers','perpetuity','tail','minYears','contractNo','reportFrequency','agreementType','pricingCommitment'],
-            'Docs & Pricing':['coverSheet','dataSheet','havePricing','pricingLocation','pricingDate','pricingFrequency','whitePapers','serviceSummary','videoRecording'],
-            'Activity':['comments','notes','lastComm','followUp','engagementReminder','needsLOP'],
-          };
-          const GROUP_COLORS={'Vendor Info':'#4f7cff','Contacts':'#22c55e','Contract':'#f59e0b','Financials':'#8b5cf6','Docs & Pricing':'#06b6d4','Activity':'#ec4899'};
-          const allFields=ALL_RESTRICTABLE_FIELDS;
-          // Render fields in groups with colored section headers
-          Object.entries(FIELD_GROUPS).forEach(([groupName,groupKeys])=>{
-            const groupFields=allFields.filter(f=>groupKeys.includes(f.key));
-            if(!groupFields.length) return;
-            const groupColor=GROUP_COLORS[groupName]||'var(--muted)';
-            const groupHdr=el('div',{style:{fontSize:'8px',fontWeight:'700',color:groupColor,
-              marginTop:'8px',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.05em',
-              borderBottom:'1px solid '+groupColor+'44',paddingBottom:'2px'}},groupName);
-            container.appendChild(groupHdr);
-            const fieldGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'4px'}});
-          groupFields.forEach(f=>{
-            const hidden=hf.includes(f.key);
-            const btn=document.createElement('button');
-            btn.dataset.fkey=f.key;
-            // Track hidden state on the button itself so we can toggle without rebuilding
-            btn._hidden = hidden;
-            function updateBtnStyle(isHidden){
-              btn.textContent=f.label+' '+(isHidden?'🚫':'✅');
-              btn.style.cssText='font-size:8px;padding:2px 8px;border-radius:4px;cursor:pointer;font-weight:500;'
-                +'border:1px solid '+(isHidden?'rgba(239,68,68,.4)':'rgba(34,197,94,.4)')+';'
-                +'background:'+(isHidden?'rgba(239,68,68,.1)':'rgba(34,197,94,.1)')+';'
-                +'color:'+(isHidden?'#f87171':'#4ade80')+';';
-            }
-            updateBtnStyle(hidden);
-            btn.addEventListener('click', function(e){
-              e.stopPropagation();
-              e.preventDefault();
-              const nowHidden = btn._hidden;
-              const all=getApprovedUsers();
-              const i=all.findIndex(x=>x.email===userEmail);
-              if(i<0){ console.warn('[FieldToggle] user not found:', userEmail); return; }
-              let newHf=[...(all[i].hiddenFields||[])];
-              if(nowHidden){ newHf=newHf.filter(k=>k!==f.key); }
-              else { if(!newHf.includes(f.key)) newHf.push(f.key); }
-              all[i].hiddenFields=newHf;
-              all[i]._customHiddenFields=true;
-              localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-              // Update visual immediately — no rebuild needed
-              btn._hidden = !nowHidden;
-              updateBtnStyle(!nowHidden);
-              setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
-            });
-            fieldGrid.appendChild(btn);
-          });
-          container.appendChild(fieldGrid);
-          }); // end Object.entries(FIELD_GROUPS).forEach
-          container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginBottom:'8px'}},'✅ = visible to user · 🚫 = hidden from user'));
-
-          // Tab access — toggleable per user (overrides role default)
-          container.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginBottom:'4px',marginTop:'8px'}},'📑 Tab Access (click to toggle):'));
-          const rolePerms=ROLE_PERMS[cu.role]||ROLE_PERMS.restricted;
-          const roleDefaultTabs=new Set(rolePerms.tabs||[]);
-          const tabOverrides=cu.tabOverrides||{}; // {tabId: true/false} overrides role default
-          // Derive groups from NAV_DEFS — stays in sync automatically
-          const TAB_GROUPS_DISPLAY=getNavTabGroups();
-          TAB_GROUPS_DISPLAY.forEach(grp=>{
-            container.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:grp.color,
-              marginTop:'6px',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.04em',
-              borderBottom:'1px solid '+grp.color+'33',paddingBottom:'2px'}},grp.label));
-            const tabGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',marginBottom:'4px'}});
-            const allTabs=grp.tabs;
-          const virtualTabDefaults={
-            '_statsbar':['admin','procurement','manager'].includes(cu.role),
-            '_savebtn':(ROLE_PERMS[cu.role]||{}).save||false,
-          };
-          allTabs.forEach(t=>{
-            const hasOverride=t.id in tabOverrides;
-            const roleDefault=t.id.startsWith('_')?(virtualTabDefaults[t.id]||false):roleDefaultTabs.has(t.id);
-            const hasAccess=hasOverride?tabOverrides[t.id]:roleDefault;
-            // Only show override indicator if state actually differs from role default
-            const isOverridden=hasOverride && (tabOverrides[t.id] !== roleDefault);
-            const btn=el('button',{
-              style:{
-                fontSize:'8px',padding:'2px 6px',borderRadius:'4px',cursor:'pointer',
-                border:'1px solid '+(hasAccess?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)'),
-                background:hasAccess?'rgba(34,197,94,.1)':'rgba(239,68,68,.1)',
-                color:hasAccess?'#4ade80':'#f87171',
-                outline:isOverridden?'1px dashed #f59e0b':''
-              },
-              title:(isOverridden?'⚠ Overriding role default. ':'')+(hasAccess?'Click to hide tab':'Click to show tab'),
-              onclick(e){
-                e.stopPropagation(); e.preventDefault();
-                const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
-                if(!all[i].tabOverrides) all[i].tabOverrides={};
-                const currentAccess=hasOverride?tabOverrides[t.id]:roleDefaultTabs.has(t.id);
-                all[i].tabOverrides[t.id]=!currentAccess;
-                localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-                setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
-                requestAnimationFrame(()=>buildFieldAccess(container,userEmail));
-              }
-            },t.label+' '+(hasAccess?'✅':'🚫')+(isOverridden?' ⚡':''));
-            tabGrid.appendChild(btn);
-          });
-          container.appendChild(tabGrid);
-          }); // end TAB_GROUPS_DISPLAY.forEach
-          const resetTabsBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(){
-            const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
-            delete all[i].tabOverrides;
-            localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-            setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
-            buildFieldAccess(container,userEmail);
-          }},'↺ Reset tabs to role defaults');
-          const resetFieldsBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(){
-            const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
-            all[i].hiddenFields=getDefaultHiddenFields(all[i].role);
-            all[i]._customHiddenFields=false;
-            localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-            setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
-            buildFieldAccess(container,userEmail);
-          }},'↺ Reset fields to role defaults');
-          container.appendChild(el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginTop:'4px'}},resetTabsBtn,resetFieldsBtn));
-          container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'2px'}},'⚡ = overriding role default · Click any field or tab to toggle · Changes save automatically'));
-
-          // Per-user AI toggle
-          const _cuFresh=getApprovedUsers().find(x=>x.email===userEmail);
-          const _aiOn=_cuFresh?(_cuFresh.aiEnabled!==false):true;
-          const aiToggleRow=el('div',{style:{marginTop:'10px',display:'flex',alignItems:'center',gap:'8px'}});
-          aiToggleRow.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)'}},'🤖 AI Assistant:'));
-          const aiBtn=el('button',{
-            style:{fontSize:'8px',padding:'3px 10px',borderRadius:'4px',cursor:'pointer',
-              border:'1px solid '+(_aiOn?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)'),
-              background:_aiOn?'rgba(34,197,94,.1)':'rgba(239,68,68,.1)',
-              color:_aiOn?'#4ade80':'#f87171'},
-            onclick(e){
-              e.stopPropagation();
-              const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
-              all[i].aiEnabled=!_aiOn;
-              localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-              setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
-              buildFieldAccess(container,userEmail);
-            }
-          },_aiOn?'Enabled ✅':'Disabled 🚫');
-          aiToggleRow.appendChild(aiBtn);
-          aiToggleRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'When disabled, AI calls return a "contact admin" message'));
-          container.appendChild(aiToggleRow);
-        }
         const fieldAccessContainer=el('div');
         fieldAccessContainer.dataset.bfaEmail=u.email;
         buildFieldAccess(fieldAccessContainer,u.email);
