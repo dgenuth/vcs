@@ -18174,7 +18174,7 @@ function renderSettings(c) {
     const _rdBody=el('div',{style:{display:_rdCollapsed?'none':'',marginTop:'8px'}});
 
     _rdBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.5'}},
-      'Toggle which tabs are ON by default for each role. Users can still have individual overrides (shown with ⚡ in user management). Changes take effect on next login.'));
+      'Toggle which tabs are ON by default for each role. Changes apply immediately — all users of that role are updated in real time and visible in User Management without a page reload. Individual overrides shown with ⚡.'));
 
     const ROLE_LIST=['sales','admin','procurement','manager','cro'];
     const ALL_TABS=getNavTabGroups().flatMap(g=>g.tabs);
