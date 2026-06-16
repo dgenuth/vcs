@@ -5620,6 +5620,8 @@ const ROLE_PERMS = {
     viewFees:false,viewContacts:false,viewFinancials:false,canCopy:false,
     tabs:['vendordb', 'settings'],settingsPersonalOnly:true,
   },
+  // 'sales' is an alias for 'sales_rep' used in Role Tab Defaults display; must exist so overrides restore correctly on hard refresh
+  sales:      {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,viewFees:false,viewContacts:false,viewFinancials:false,canCopy:false,tabs:['vendordb', 'settings'],settingsPersonalOnly:true},
   // Legacy aliases — map to nearest equivalent
   manager:    {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,viewFees:true,viewContacts:true,viewFinancials:true,canCopy:false,tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'checklist', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings', 'health'],settingsPersonalOnly:true},
   viewer:     {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,viewFees:true,viewContacts:false,viewFinancials:true,canCopy:false,tabs:['today', 'expiring', 'vendordb', 'network', 'economics', 'analytics', 'reports', 'summary', 'history', 'settings'],settingsPersonalOnly:true},
@@ -18262,10 +18264,12 @@ function renderSettings(c) {
           }catch(e2){}
           const newOn=!nowOn;
           // Update ALL users of this role immediately — no "next load" needed
+          // 'sales' in ROLE_LIST is the display key; actual users are stored as 'sales_rep'
+          const _roleUserKey=role==='sales'?'sales_rep':role;
           try{
             const allUsers=getApprovedUsers();
             allUsers.forEach(u=>{
-              if((u.role||'admin')!==role) return;
+              if((u.role||'admin')!==_roleUserKey) return;
               if(!u.tabOverrides) u.tabOverrides={};
               u.tabOverrides[t.id]=newOn;
             });
@@ -18281,9 +18285,9 @@ function renderSettings(c) {
           // Rebuild any open user management sections so they reflect the change immediately
           document.querySelectorAll('[data-bfa-email]').forEach(el2=>{
             const em=el2.dataset.bfaEmail;
-            // Only rebuild users of this role
+            // Only rebuild users of this role (map 'sales' display key → 'sales_rep' stored key)
             const uu=getApprovedUsers().find(u=>u.email===em);
-            if(uu&&(uu.role||'admin')===role){
+            if(uu&&(uu.role||'admin')===_roleUserKey){
               el2.innerHTML='';
               buildFieldAccess(el2,em);
             }
