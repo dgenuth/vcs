@@ -320,7 +320,7 @@ input[type='date']::-webkit-calendar-picker-indicator:hover{opacity:1}
 body.light-theme input[type='date']::-webkit-calendar-picker-indicator{filter:none}
 body{font-family:var(--font);background:var(--bg);color:var(--text);height:100vh;overflow:hidden}{display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:10px}
 /* Login */
-#login-screen{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;background:var(--bg)}
+#login-screen{position:absolute;inset:0;min-height:100vh;min-width:100vw;z-index:10000;display:flex;align-items:center;justify-content:center;background:var(--bg)}
 #upload-screen{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:var(--bg)}
 .login-box{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:40px 36px;max-width:420px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.4)}
 .oauth-btn{width:100%;padding:10px 14px;border-radius:5px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font);display:flex;align-items:center;justify-content:center;margin-bottom:10px;transition:opacity .15s}
@@ -5183,6 +5183,7 @@ const PERSONAL_SETTING_KEYS = ['theme','fontSize','compactRows','defaultView','s
   'myPhone','sfClientId']; // sfClientId is per-user (each user has own SF credentials)
 // Global settings — org-wide, admin-controlled, apply to all sessions
 const GLOBAL_SETTING_KEYS = ['sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey','apiKey','grokKey'];
+window.GLOBAL_SETTING_KEYS = GLOBAL_SETTING_KEYS;
 const PERSIST_KEYS = [...PERSONAL_SETTING_KEYS, ...GLOBAL_SETTING_KEYS];
 
 // Debounced Drive sync — fires 3s after any settings change
@@ -10693,7 +10694,7 @@ function renderChecklist(c) {
 
   // Vendor lookup map by keyword
   const catVendorMap={};
-  [...S.vendors,...(S.channelVendors||[])].forEach(v=>{
+  [...(S.vendors||[]),...(S.channelVendors||[])].forEach(v=>{
     const terms=[v.category,v.subCategory,v.product,v.about].filter(Boolean);
     terms.forEach(t=>{
       const k=t.toLowerCase();
@@ -14230,7 +14231,7 @@ function openPromoteToVendorDBModal(itwVendor) {
 
 function renderToday(c) {
   const today=new Date();
-  const allActive=S.vendors.filter(isVisible);
+  const allActive=(S.vendors||[]).filter(isVisible);
   const urgent=allActive.filter(v=>v.score>=8).length;
   const warning=allActive.filter(v=>v.score>=5&&v.score<8).length;
   const overdue=allActive.filter(v=>{const fu=parseDate(v.followUp);return fu&&dayDiff(today,fu)>0;}).length;
@@ -14438,9 +14439,19 @@ function renderToday(c) {
     }
     c.appendChild(sigSec);
     } // end collapse else
+  } else if (!USER.sfToken) {
+    // Salesforce not connected — show connect prompt so users can link it
+    const sfConnectSec=el('div',{style:{marginBottom:'12px',padding:'10px 12px',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'5px',display:'flex',gap:'10px',alignItems:'center'}});
+    sfConnectSec.appendChild(el('span',{style:{fontSize:'18px'}},'☁'));
+    const sfMsg=el('div',{style:{flex:'1'}});
+    sfMsg.appendChild(el('div',{style:{fontWeight:'600',fontSize:'11px',marginBottom:'2px'}},'Salesforce not connected'));
+    sfMsg.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)'}},'Connect Salesforce in Settings to load live Opportunities, Cases, and Signals here.'));
+    sfConnectSec.appendChild(sfMsg);
+    sfConnectSec.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){S.view='settings';render();}},'→ Connect Salesforce'));
+    c.appendChild(sfConnectSec);
   }
 
-  let vendors=S.vendors.filter(v=>S.showDismissed?!isSnoozed(v):isVisible(v));
+  let vendors=(S.vendors||[]).filter(v=>S.showDismissed?!isSnoozed(v):isVisible(v));
   if (S.filter) vendors=vendors.filter(S.filter);
   if (S.search) { const q=S.search.toLowerCase(); vendors=vendors.filter(v=>searchMatch(v,q)); }
   if (S.settings.autoSortByScore !== false) vendors.sort((a,b)=>b.score-a.score);
@@ -14499,7 +14510,7 @@ function renderToday(c) {
   outreachSec.appendChild(outHdr);
 
   // Build ranked outreach list
-  const allV=S.vendors.filter(isVisible);
+  const allV=(S.vendors||[]).filter(isVisible);
   const outreachItems=[];
   allV.forEach(v=>{
     const score=v.score||0;
@@ -20492,7 +20503,7 @@ function render() {
   if (_allowedTabs && !_allowedTabs.includes(S.view)) {
     S.view = _allowedTabs[0] || 'today';
   }
-  if (!S.loaded&&S.view!=='settings'){content.appendChild(el('p',{class:'muted',style:{padding:'24px'}},'No file loaded. Upload a workbook to begin.'));return;}
+  if (!S.loaded&&S.view!=='settings'&&S.view!=='health'){content.appendChild(el('p',{class:'muted',style:{padding:'24px'}},'No file loaded. Upload a workbook to begin.'));return;}
   switch(S.view){
     case 'today':renderToday(content);break;case 'callsheet':renderCallSheet(content);break;case 'expiring':renderExpiring(content);break;
     case 'vendordb':renderVendorDB(content);break;
