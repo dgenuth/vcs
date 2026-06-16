@@ -13341,8 +13341,8 @@ function renderNetworkIntel(c) {
     const matchDots='●'.repeat(score)+'○'.repeat(5-score);
 
     // Find what specifically matches
-    const matchedNeeds=aNeeds.filter(need=>vendorServiceText(topMatch).includes(need));
-    const reason=matchedNeeds.slice(0,2).join(', ');
+    const matchedNeeds2=aNeeds.filter(need=>vendorServiceText(topMatch).includes(need));
+    const reason2=matchedNeeds2.slice(0,2).join(', ');
 
     const card=el('div',{style:{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'5px',padding:'10px'}});
     // Header
@@ -13350,7 +13350,7 @@ function renderNetworkIntel(c) {
     const linkA=el('span',{class:'vendor-link',style:{fontWeight:'700',color:'var(--blue)'},onclick(){openDetail(vendorA);}},vendorA.name);
     hdr.appendChild(el('span',{style:{background:'rgba(79,124,255,.12)',color:'var(--blue)',padding:'2px 6px',borderRadius:'3px',fontSize:'9px'}},aCat));
     hdr.appendChild(el('span',{style:{color:'var(--muted)'}}, 'needs'));
-    hdr.appendChild(el('span',{style:{background:'rgba(34,197,94,.1)',color:'var(--green)',padding:'2px 6px',borderRadius:'3px',fontSize:'9px',fontWeight:'600'}},reason));
+    hdr.appendChild(el('span',{style:{background:'rgba(34,197,94,.1)',color:'var(--green)',padding:'2px 6px',borderRadius:'3px',fontSize:'9px',fontWeight:'600'}},reason2));
     hdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',letterSpacing:'1px',title:'Match strength: '+score+'/5'}},matchDots));
     card.appendChild(hdr);
 
@@ -13372,21 +13372,18 @@ function renderNetworkIntel(c) {
     card.appendChild(row);
 
     // Introduce button
-    const introBtn=el(‘button’,{class:’btn-xs’,style:{marginTop:’6px’,fontSize:’9px’,background:’rgba(79,124,255,.12)’,color:’var(--blue)’,border:’1px solid rgba(79,124,255,.3)’,borderRadius:’3px’,padding:’2px 8px’,cursor:’pointer’},
-      onclick(e){
-        e.stopPropagation();
-        const introSubj=’Introduction: ‘+vendorA.name+’ ↔ ‘+topMatch.name;
-        const introBody=’Hello,\n\nI wanted to connect two of our valued partners who I believe could benefit from working together:\n\n• ‘+vendorA.name+’ — ‘+(vendorA.category||vendorA.product||’vendor partner’)+’\n• ‘+topMatch.name+’ — ‘+(topMatch.category||topMatch.product||’vendor partner’)+’\n\nGiven the overlap in ‘+(matchedNeeds.slice(0,2).join(‘ and ‘)||’complementary services’)+’, I thought an introduction would be mutually beneficial.\n\nPlease feel free to connect directly — I\’ll leave it to you to explore any synergies.\n\nBest regards,\n’+(USER.name||USER.email);
-        // Build enriched vendor proxy so Renzo gets introduction context
-        const introContext=’INTRODUCTION: Introducing ‘+vendorA.name+’ (‘+(vendorA.category||’vendor’)+’) to ‘+topMatch.name+’ (‘+(topMatch.category||’vendor’)+’).\nOverlap: ‘+(matchedNeeds.slice(0,3).join(‘, ‘)||’complementary services’)+’.\nBoth are vendors in the Prime Source network.’;
-        const introVendorProxy=Object.assign({},vendorA,{
-          notes:introContext+(vendorA.notes?’\n\n’+vendorA.notes:’’),
-          _introTargetName:topMatch.name,
-          _introTargetCompany:topMatch.name,
-          _introTargetCategory:topMatch.category||’’,
-        });
-        openEmailModal(introVendorProxy,{title:’✉️ Introduce: ‘+vendorA.name+’ × ‘+topMatch.name,subject:introSubj,body:introBody});
-      }},’✉ Introduce’);
+    const introBtn=document.createElement('button');
+    introBtn.className='btn-xs';
+    introBtn.textContent='\u2709 Introduce';
+    introBtn.style.cssText='margin-top:6px;font-size:9px;background:rgba(79,124,255,.12);color:var(--blue);border:1px solid rgba(79,124,255,.3);border-radius:3px;padding:2px 8px;cursor:pointer';
+    introBtn.addEventListener('click',function(e){
+      e.stopPropagation();
+      const introSubj='Introduction: '+vendorA.name+' x '+topMatch.name;
+      const introBody='Hello,\n\nI wanted to connect two of our valued partners who I believe could benefit from working together:\n\n\u2022 '+vendorA.name+' \u2014 '+(vendorA.category||'vendor partner')+'\n\u2022 '+topMatch.name+' \u2014 '+(topMatch.category||'vendor partner')+'\n\nGiven their complementary focus areas, I thought an introduction would be mutually beneficial.\n\nPlease feel free to connect directly.\n\nBest regards,\n'+(USER.name||USER.email);
+      const introContext='INTRODUCTION: Introducing '+vendorA.name+' ('+(vendorA.category||'vendor')+') to '+topMatch.name+' ('+(topMatch.category||'vendor')+').\nBoth are vendors in the Prime Source network.';
+      const introProxy=Object.assign({},vendorA,{notes:introContext+(vendorA.notes?'\n\n'+vendorA.notes:'')});
+      openEmailModal(introProxy,{title:'Introduce: '+vendorA.name+' x '+topMatch.name,subject:introSubj,body:introBody});
+    });
     card.appendChild(introBtn);
 
     pairCards.appendChild(card);
