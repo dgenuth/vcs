@@ -10141,6 +10141,21 @@ function loadContractRecords(vendorName) {
   return window.S_contractStore[vendorName]||[];
 }
 
+// R1: Strip markdown fences, extract JSON object, remove control chars, fix trailing commas
+function cleanContractJSON(raw) {
+  // Strip markdown code fences
+  let s = raw.replace(/^```[a-zA-Z]*\r?\n?/,'').replace(/\r?\n?```\s*$/,'').trim();
+  // Extract the outermost JSON object (handles preamble/postamble text)
+  const start = s.indexOf('{');
+  const end   = s.lastIndexOf('}');
+  if (start !== -1 && end > start) s = s.slice(start, end + 1);
+  // Remove control characters: 0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F
+  s = s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+  // Remove trailing commas before } or ]
+  s = s.replace(/,(\s*[\}\]])/g, '$1');
+  return s;
+}
+
 async function extractContractWithClaude(fileText, fileName, vendorName) {
   const systemPrompt = `You are a contract analysis expert for Prime Source Expense Experts, a healthcare group purchasing organization (GPO). Extract structured data from vendor contracts with surgical precision.
 
@@ -10299,7 +10314,7 @@ CRITICAL: Respond ONLY with valid JSON. No preamble, no markdown, no code fences
     },
     body: JSON.stringify({
       model:'claude-sonnet-4-6',
-      max_tokens:2000,
+      max_tokens:4000,
       system: systemPrompt,
       messages:[{role:'user',content: userContent}]
     })
@@ -10307,8 +10322,12 @@ CRITICAL: Respond ONLY with valid JSON. No preamble, no markdown, no code fences
   if(!resp.ok){const err=await resp.json().catch(()=>({}));throw new Error(err.error?.message||`HTTP ${resp.status}`);}
   const data = await resp.json();
   const raw = data.content?.find(b=>b.type==='text')?.text||'{}';
-  const clean = raw.replace(/^```[a-z]*\n?/,'').replace(/\n?```$/,'').trim();
-  return JSON.parse(clean);
+  const clean = cleanContractJSON(raw);
+  try {
+    return JSON.parse(clean);
+  } catch(e) {
+    throw new Error('Contract data parse error: '+e.message+'. The document may be too complex — try a smaller file.');
+  }
 }
 
 async function saveContractToDrive(vendorName, fileName, fileObject) {
