@@ -3631,9 +3631,9 @@ function makeRenzoBtn(vendor, _unused, trigger, _unusedLabel, size) {
   return btn;
 }
 
-function openEmailModal(vendor) {
+function openEmailModal(vendor, opts) {
   openModal(body => {
-    body.appendChild(el('h3',{},`✉️ Draft Email — ${vendor.name}`));
+    body.appendChild(el('h3',{},opts?.title||`✉️ Draft Email — ${vendor.name}`));
     // Build email list from all contacts dynamically
     const emails = getAllContacts(vendor)
       .filter(c=>c.email)
@@ -3655,13 +3655,16 @@ function openEmailModal(vendor) {
 
     const today=new Date(); const exp=getCurrentExpiry(vendor);
     let subj='', draft='';
-    const greeting = vendor.procContact ? `Dear ${vendor.procContact},` : 'Hello,';
-    if (exp) {
-      const d=dayDiff(exp,today);
-      if (d<0) { subj=`Contract Follow-Up: ${vendor.name} — Renewal Discussion`; draft=`${greeting}\n\nI'm following up regarding our contract with ${vendor.name}, which expired on ${fmtDate(exp)}. I'd like to schedule time to discuss renewal options at your earliest convenience.\n\nPlease let me know your availability for a brief call.\n\nThank you,`; }
-      else { subj=`Contract Renewal Discussion: ${vendor.name} — Expiring ${fmtDate(exp)}`; draft=`${greeting}\n\nI'm reaching out regarding our contract with ${vendor.name}, which is set to expire on ${fmtDate(exp)} (${d} days). I'd like to schedule time to review the current terms and discuss renewal.\n\nPlease let me know your availability.\n\nThank you,`; }
-    } else { subj=`Contract Follow-Up: ${vendor.name}`; draft=`${greeting}\n\nI'm following up on our current agreement with ${vendor.name}. I'd like to connect to review the status and discuss next steps.\n\nPlease let me know your availability.\n\nThank you,`; }
-    if (S.settings.emailSignature) draft += '\n\n' + S.settings.emailSignature;
+    if(opts?.subject) { subj=opts.subject; draft=opts.body||''; }
+    else {
+      const greeting = vendor.procContact ? `Dear ${vendor.procContact},` : 'Hello,';
+      if (exp) {
+        const d=dayDiff(exp,today);
+        if (d<0) { subj=`Contract Follow-Up: ${vendor.name} — Renewal Discussion`; draft=`${greeting}\n\nI'm following up regarding our contract with ${vendor.name}, which expired on ${fmtDate(exp)}. I'd like to schedule time to discuss renewal options at your earliest convenience.\n\nPlease let me know your availability for a brief call.\n\nThank you,`; }
+        else { subj=`Contract Renewal Discussion: ${vendor.name} — Expiring ${fmtDate(exp)}`; draft=`${greeting}\n\nI'm reaching out regarding our contract with ${vendor.name}, which is set to expire on ${fmtDate(exp)} (${d} days). I'd like to schedule time to review the current terms and discuss renewal.\n\nPlease let me know your availability.\n\nThank you,`; }
+      } else { subj=`Contract Follow-Up: ${vendor.name}`; draft=`${greeting}\n\nI'm following up on our current agreement with ${vendor.name}. I'd like to connect to review the status and discuss next steps.\n\nPlease let me know your availability.\n\nThank you,`; }
+    }
+    if (S.settings.emailSignature && !opts?.body) draft += '\n\n' + S.settings.emailSignature;
 
     const subjIn=el('input',{type:'text',class:'modal-input',value:subj,placeholder:'Subject'});
     const draftTA=el('textarea',{class:'modal-textarea',style:{height:'160px'}},draft);
@@ -4446,11 +4449,46 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
           const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'3px'}});
           row.appendChild(el('span',{class:'vendor-link',style:{flex:'1'},onclick(){openDetail(v);}},v.name));
           row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},matchedNeeds.slice(0,2).join(', ')));
+          if(_canAct){
+            row.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',color:'var(--blue)',borderColor:'rgba(79,124,255,.3)',padding:'1px 6px'},
+              title:'Open email draft to introduce these two vendors',
+              onclick(e){
+                e.stopPropagation();
+                const introSubj=`Introduction: ${vendor.name} × ${v.name}`;
+                const introBody=`Hello,\n\nI wanted to connect two of our valued partners who I believe could benefit from working together:\n\n• ${vendor.name} — ${vendor.category||vendor.product||'vendor partner'}\n• ${v.name} — ${v.category||v.product||'vendor partner'}\n\nGiven the overlap in ${matchedNeeds.slice(0,2).join(' and ')}, I thought an introduction would be mutually beneficial.\n\nPlease feel free to connect directly — I'll leave it to you to explore any synergies.\n\nBest regards,\n${USER.name||USER.email}`;
+                openEmailModal(vendor,{title:`✉️ Introduce: ${vendor.name} × ${v.name}`,subject:introSubj,body:introBody});
+              }},'✉ Introduce'));
+          }
           relSec.appendChild(row);
         });
       }
       body.appendChild(relSec);
     }
+  }
+
+  // ── Fathom Meetings Stub ──
+  if(['admin','procurement','manager','cro'].includes(USER.role)){
+    const _fathomIsOpen=S._fathomOpen?.[vendor.name]===true;
+    const fathomSec=el('div',{style:{marginTop:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
+    const fathomHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'6px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none',borderBottom:'1px solid var(--border)'},
+      onclick(e){e.stopPropagation();if(!S._fathomOpen)S._fathomOpen={};S._fathomOpen[vendor.name]=!_fathomIsOpen;
+        const lbl=fathomHdr.querySelector('.fathom-lbl');if(lbl)lbl.textContent=S._fathomOpen[vendor.name]?'▲ collapse':'▼ expand';
+        const bdy=fathomSec.querySelector('.fathom-body');if(bdy)bdy.style.display=S._fathomOpen[vendor.name]?'':'none';
+      }});
+    fathomHdr.appendChild(el('span',{style:{fontSize:'11px'}},'📹'));
+    fathomHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Meetings'));
+    fathomHdr.appendChild(el('span',{class:'fathom-lbl',style:{fontSize:'9px',color:'var(--muted)'}},_fathomIsOpen?'▲ collapse':'▼ expand'));
+    fathomSec.appendChild(fathomHdr);
+    const fathomBody=el('div',{class:'fathom-body',style:{padding:'14px',display:_fathomIsOpen?'':'none'}});
+    const fathomConfigured=!!(S.settings?.fathomApiKey);
+    if(fathomConfigured){
+      fathomBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',margin:'0 0 8px'}},'Fathom meeting recordings for '+vendor.name+' will appear here.'));
+    } else {
+      fathomBody.appendChild(el('p',{style:{fontSize:'11px',color:'var(--text)',marginBottom:'10px'}},'Connect Fathom in Settings to see meeting recordings for this vendor.'));
+      fathomBody.appendChild(el('button',{class:'btn-ghost btn-action',style:{fontSize:'10px'},onclick(){closeDetail();S.view='settings';updateSidebar();render();}},'→ Configure Fathom'));
+    }
+    fathomSec.appendChild(fathomBody);
+    body.appendChild(fathomSec);
   }
 
   // ── Salesforce Data (Read-Only) — on-demand, click to load ──
@@ -5339,6 +5377,7 @@ async function saveConfigToDrive() {
       userSettings,
       users: getApprovedUsers(),
       vendorAliases: S.vendorAliases || {}, // persist cross-session alias links
+      aiUsageAll: JSON.parse(localStorage.getItem('vcs_ai_usage_all')||'{}'),
       savedBy: USER.email || 'unknown',
       savedAt: new Date().toISOString()
     };
@@ -5416,6 +5455,23 @@ async function loadConfigFromDrive() {
         }
         Object.assign(S.settings, mySettings);
       }
+    }
+
+    // Restore AI usage stats from Drive — merge so all-device totals accumulate
+    if (config.aiUsageAll && typeof config.aiUsageAll === 'object') {
+      try {
+        const existing = JSON.parse(localStorage.getItem('vcs_ai_usage_all')||'{}');
+        Object.assign(existing, config.aiUsageAll);
+        localStorage.setItem('vcs_ai_usage_all', JSON.stringify(existing));
+        // Also merge individual user keys so the monitor table is populated
+        Object.entries(config.aiUsageAll).forEach(([email,data])=>{
+          try{
+            const uk='vcs_ai_usage_'+email.replace(/[^a-z0-9]/gi,'_');
+            const local=JSON.parse(localStorage.getItem(uk)||'{}');
+            if((data.totalRequests||0)>(local.totalRequests||0)) localStorage.setItem(uk,JSON.stringify(data));
+          }catch(_){}
+        });
+      } catch(_) {}
     }
 
     // Always preserve the local device's googleClientId
@@ -6996,11 +7052,40 @@ function addNotesSection(body, vendor, title) {
     body.appendChild(sec); return;
   }
 
+  // Filter buttons — unique tags present in this vendor's notes
+  const uniqueTags=[...new Set(entries.map(e=>e.tag).filter(Boolean))];
+  if(uniqueTags.length>1){
+    let activeFilter='all';
+    const filterRow=el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginTop:'6px',marginBottom:'4px'}});
+    const applyFilter=(tag)=>{
+      activeFilter=tag;
+      [...filterRow.querySelectorAll('button')].forEach(b=>{
+        const isActive=b.dataset.tag===activeFilter;
+        b.style.background=isActive?'var(--blue)':'var(--card)';
+        b.style.color=isActive?'#fff':'var(--muted)';
+        b.style.borderColor=isActive?'var(--blue)':'var(--border)';
+      });
+      [...list.querySelectorAll('.note-card')].forEach(c=>{
+        const ct=c.dataset.tag||'';
+        c.style.display=(activeFilter==='all'||ct===activeFilter)?'':'none';
+      });
+    };
+    const allBtn=el('button',{dataset:{tag:'all'},style:{fontSize:'8px',padding:'2px 7px',borderRadius:'3px',cursor:'pointer',border:'1px solid var(--blue)',background:'var(--blue)',color:'#fff'},onclick(){applyFilter('all');}},'All ('+entries.length+')');
+    filterRow.appendChild(allBtn);
+    uniqueTags.forEach(tag=>{
+      const count=entries.filter(e=>e.tag===tag).length;
+      const col=NOTE_TAG_COLORS[tag]||'#94a3b8';
+      const btn=el('button',{dataset:{tag},style:{fontSize:'8px',padding:'2px 7px',borderRadius:'3px',cursor:'pointer',border:'1px solid var(--border)',background:'var(--card)',color:'var(--muted)'},onclick(){applyFilter(tag);}},tag.toUpperCase()+' ('+count+')');
+      filterRow.appendChild(btn);
+    });
+    sec.appendChild(filterRow);
+  }
+
   const list=el('div',{style:{marginTop:'4px',display:'flex',flexDirection:'column',gap:'4px'}});
 
   entries.forEach((entry,idx)=>{
     const isFirst = idx===0;
-    const card=el('div',{style:{
+    const card=el('div',{class:'note-card',dataset:{tag:entry.tag||''},style:{
       border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden',
       borderLeft:'3px solid '+(entry.tag?NOTE_TAG_COLORS[entry.tag]||'var(--border)':'var(--border)'),
     }});
@@ -7610,8 +7695,8 @@ function renderVendorDB(c) {
     } else {
       // Default visible columns per role — parsed exactly from Config column in User Accounts tab
     const ROLE_VISIBLE_COLS = {
-      admin:        new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
-      procurement:  new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
+      admin:        new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','lastComm','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
+      procurement:  new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','lastComm','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
       // CRO: sees Admin Fee, Perpetuity, Status, Score (confirmed from spreadsheet)
       cro:          new Set(['gpo','name','cat','subcat','product','markets','ar','expiry','status','fee','perp','score']),
       // Director of Operations: sees Perpetuity (confirmed), no financials otherwise
@@ -7630,10 +7715,10 @@ function renderVendorDB(c) {
       viewer:       new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
       // Restricted: custom — starts with minimal set, admin configures per-user
       restricted:   new Set(['gpo','name','cat','subcat','product','markets','ar','expiry']),
-      manager:      new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
+      manager:      new Set(['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','lastComm','status','tier','score','fee','perp','notice','contact','phone','email','notes']),
     };
     const roleVisible = ROLE_VISIBLE_COLS[USER.role||'restricted'] || ROLE_VISIBLE_COLS.restricted;
-    const allColKeys = ['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','status','tier','score','fee','perp','notice','contact','phone','email','notes'];
+    const allColKeys = ['gpo','name','cat','subcat','product','cot','markets','ar','expiry','days','lastComm','status','tier','score','fee','perp','notice','contact','phone','email','notes'];
     S.dbHiddenCols = new Set(allColKeys.filter(k => !roleVisible.has(k)));
     }
   }
@@ -7730,7 +7815,7 @@ function renderVendorDB(c) {
     {key:'pricingFrequency',label:'Update Pricing Frequency?',sortable:false,get:v=>v.pricingFrequency||'',fmt:v=>{const _v=v.pricingFrequency||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingFrequency||''},
     {key:'minYears',label:'Min. # yrs per Customer',sortable:false,get:v=>v.minYears||'',fmt:v=>{const _v=v.minYears||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.minYears||''},
     {key:'reportFrequency',label:'Report Frequency',sortable:false,get:v=>v.reportFrequency||'',fmt:v=>{const _v=v.reportFrequency||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.reportFrequency||''},
-    {key:'lastComm',label:'Latest Communication Date',sortable:false,get:v=>v.lastComm||'',fmt:v=>{const _v=v.lastComm||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.lastComm||''},
+    {key:'lastComm',label:'Last Contact',sortable:true,get:v=>{const d=parseDate(v.lastComm);return d?isoDate(d):'';},fmt:v=>{const d=parseDate(v.lastComm);if(!d)return el('span',{style:{color:'var(--muted)'}},'—');const ago=Math.floor((new Date()-d)/(1000*86400));const col=ago>90?'var(--red)':ago>30?'var(--amber)':'var(--green)';return el('span',{style:{color:col,fontWeight:'600'},title:fmtDate(d)},ago===0?'Today':ago===1?'Yesterday':ago+'d ago');},sk:v=>parseDate(v.lastComm)||new Date(0)},
     {key:'justification',label:'Short Justification',sortable:false,get:v=>v.justification||'',fmt:v=>{const _v=v.justification||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.justification||''},
     {key:'changeOfControl',label:'Change of Control (Y/N & Conditions)',sortable:false,get:v=>v.changeOfControl||'',fmt:v=>{const _v=v.changeOfControl||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.changeOfControl||''},
     {key:'attachment',label:'Attachment / Location',sortable:false,get:v=>v.attachment||'',fmt:v=>{const _v=v.attachment||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.attachment||''},
@@ -10291,8 +10376,8 @@ const CONTRACT_FIELD_MAP = [
     (ex.terminationNoticeDays?String(ex.terminationNoticeDays)+' days':null)},
   {field:'contractTerm',   label:'Contract Term',          extract:ex=>ex.contractTermMonths?ex.contractTermMonths+' months':(ex.contractTermYears?ex.contractTermYears+' years':null)},
   {field:'perpetuity',     label:'Perpetuity',             extract:ex=>ex.perpetuity||null},
-  {field:'expiry',         label:'Expiration Date',        extract:ex=>ex.expirationDate||null},
-  {field:'effectiveDate',  label:'Effective Date',         extract:ex=>ex.effectiveDate||null},
+  {field:'expiry',         label:'Expiration Date',        extract:ex=>{const d=ex.expirationDate||null;if(!d)return null;const m=d.match(/^(\d{4})-(\d{2})-(\d{2})$/);return m?m[2]+'/'+m[3]+'/'+m[1]:d;}},
+  {field:'effectiveDate',  label:'Effective Date',         extract:ex=>{const d=ex.effectiveDate||null;if(!d)return null;const m=d.match(/^(\d{4})-(\d{2})-(\d{2})$/);return m?m[2]+'/'+m[3]+'/'+m[1]:d;}},
   {field:'markets',        label:'Markets (Geographic)',   extract:ex=>ex.markets||null},
   {field:'classesOfTrade', label:'Classes of Trade',       extract:ex=>ex.classesOfTrade||null},
   {field:'exclusivity',    label:'Exclusivity',            extract:ex=>ex.keyTerms?.exclusivity||null},
@@ -10300,8 +10385,8 @@ const CONTRACT_FIELD_MAP = [
   {field:'product',        label:'Products/Services',      extract:ex=>ex.products||null},
   {field:'priceProtection',label:'Price Protection',       extract:ex=>ex.keyTerms?.priceProtection||null},
   // Additional VCS fields
-  {field:'contractEffective',label:'Effective Date (Contract)',extract:ex=>ex.effectiveDate||ex.effectiveDateCoverSheet||null},
-  {field:'contractExpiry', label:'Expiration Date (Contract)',extract:ex=>ex.expirationDate||ex.expirationDateCalculated||null},
+  {field:'contractEffective',label:'Effective Date (Contract)',extract:ex=>{const d=ex.effectiveDate||ex.effectiveDateCoverSheet||null;if(!d)return null;const m=d.match(/^(\d{4})-(\d{2})-(\d{2})$/);return m?m[2]+'/'+m[3]+'/'+m[1]:d;}},
+  {field:'contractExpiry', label:'Expiration Date (Contract)',extract:ex=>{const d=ex.expirationDate||ex.expirationDateCalculated||null;if(!d)return null;const m=d.match(/^(\d{4})-(\d{2})-(\d{2})$/);return m?m[2]+'/'+m[3]+'/'+m[1]:d;}},
   {field:'terminationNoticeDays',label:'Termination Notice Days',extract:ex=>ex.terminationNoticeDays?String(ex.terminationNoticeDays):null},
   {field:'assignment',     label:'Assignment',             extract:ex=>ex.keyTerms?.assignment||null},
   {field:'tail',           label:'Tail (years)',           extract:ex=>{
@@ -16197,10 +16282,10 @@ function getDateRangeLabel() {
 
 
 // ── Chart rendering helpers ───────────────────────────────────────────────────
-function renderSparklineChart(labels, values, seriesLabel, color, cumulative) {
+function renderSparklineChart(labels, values, seriesLabel, color, cumulative, onPointClick) {
   const wrap=el('div',{style:{position:'relative',height:'160px',marginBottom:'4px'}});
   const canvas=document.createElement('canvas');
-  canvas.style.cssText='width:100%;height:160px;display:block';
+  canvas.style.cssText='width:100%;height:160px;display:block;cursor:pointer';
   wrap.appendChild(canvas);
 
   requestAnimationFrame(()=>{
@@ -16252,11 +16337,25 @@ function renderSparklineChart(labels, values, seriesLabel, color, cumulative) {
       if(i%step!==0&&i!==labels.length-1) return;
       ctx.fillText(l.slice(-7),pad.l+i*xStep,pad.t+H+14);
     });
+    // Click handler — find nearest data point
+    if(onPointClick){
+      canvas.addEventListener('click',(e)=>{
+        const rect=canvas.getBoundingClientRect();
+        const mx=(e.clientX-rect.left)*(canvas.width/rect.width);
+        let nearest=-1,minDist=Infinity;
+        data.forEach((_,i)=>{
+          const x=pad.l+i*xStep;
+          const dist=Math.abs(mx-x);
+          if(dist<minDist){minDist=dist;nearest=i;}
+        });
+        if(nearest>=0) onPointClick(nearest,labels[nearest],values[nearest]);
+      });
+    }
   });
   return wrap;
 }
 
-function renderBarChart(labels, values, seriesLabel, defaultColor, colors) {
+function renderBarChart(labels, values, seriesLabel, defaultColor, colors, onBarClick) {
   const wrap=el('div',{style:{position:'relative',height:'180px',marginBottom:'4px'}});
   const canvas=document.createElement('canvas');
   canvas.style.cssText='width:100%;height:180px;display:block';
@@ -16304,6 +16403,19 @@ function renderBarChart(labels, values, seriesLabel, defaultColor, colors) {
       ctx.fillText(l.slice(0,14),0,0);
       ctx.restore();
     });
+    // Click handler — determine which bar was clicked by x position
+    if(onBarClick){
+      canvas.style.cursor='pointer';
+      canvas.addEventListener('click',(e)=>{
+        const rect=canvas.getBoundingClientRect();
+        const mx=(e.clientX-rect.left)*(canvas.width/rect.width);
+        labels.forEach((l,i)=>{
+          const bw=Math.max(8,W/labels.length-4);
+          const x=pad.l+i*(W/labels.length)+(W/labels.length-bw)/2;
+          if(mx>=x&&mx<=x+bw) onBarClick(i,l,values[i]);
+        });
+      });
+    }
   });
   return wrap;
 }
@@ -17850,7 +17962,7 @@ function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
     buildFn(body);
     card.appendChild(body);
   }
-  
+  c.appendChild(card);
 }
 
 function renderVCSHealth(c) {
@@ -18477,6 +18589,29 @@ function renderSettings(c) {
           }},'↺ Reset fields to role defaults');
           container.appendChild(el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginTop:'4px'}},resetTabsBtn,resetFieldsBtn));
           container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'2px'}},'⚡ = overriding role default · Click any field or tab to toggle · Changes save automatically'));
+
+          // Per-user AI toggle
+          const _cuFresh=getApprovedUsers().find(x=>x.email===userEmail);
+          const _aiOn=_cuFresh?(_cuFresh.aiEnabled!==false):true;
+          const aiToggleRow=el('div',{style:{marginTop:'10px',display:'flex',alignItems:'center',gap:'8px'}});
+          aiToggleRow.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)'}},'🤖 AI Assistant:'));
+          const aiBtn=el('button',{
+            style:{fontSize:'8px',padding:'3px 10px',borderRadius:'4px',cursor:'pointer',
+              border:'1px solid '+(_aiOn?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)'),
+              background:_aiOn?'rgba(34,197,94,.1)':'rgba(239,68,68,.1)',
+              color:_aiOn?'#4ade80':'#f87171'},
+            onclick(e){
+              e.stopPropagation();
+              const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
+              all[i].aiEnabled=!_aiOn;
+              localStorage.setItem(AUTH_KEY,JSON.stringify(all));
+              setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+              buildFieldAccess(container,userEmail);
+            }
+          },_aiOn?'Enabled ✅':'Disabled 🚫');
+          aiToggleRow.appendChild(aiBtn);
+          aiToggleRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'When disabled, AI calls return a "contact admin" message'));
+          container.appendChild(aiToggleRow);
         }
         const fieldAccessContainer=el('div');
         fieldAccessContainer.dataset.bfaEmail=u.email;
@@ -19120,39 +19255,42 @@ function renderSettings(c) {
   makeCollapsibleSection(secTheme,'🌙 Theme & Font','vcs_s_theme',false);
   c.appendChild(secTheme);
 
-  // Email Settings (was sec5 — now properly declared)
-  const sec5=el('div',{class:'settings-section'});
-  sec5.appendChild(el('h3',{},'✉️ Email Signature'));
-  sec5.appendChild(el('label',{},'Default email signature (appended to drafts):'));
-  const sigTa=el('textarea',{class:'modal-textarea',style:{height:'80px',marginTop:'5px'}});
-  sigTa.value=S.settings.emailSignature||'';
-  sigTa.addEventListener('change',()=>{S.settings.emailSignature=sigTa.value;toast('Signature saved');});
-  sec5.appendChild(sigTa); if(['admin','procurement','manager'].includes(USER.role))if(['admin','procurement','manager'].includes(USER.role))c.appendChild(sec5);
-
-  // Data info
-  if (S.loaded) {
-    const sec2=el('div',{class:'settings-section'});
-    sec2.appendChild(el('h3',{},'📂 File Info'));
-    [[`File`,S.fileName],[`PSD Vendors`,S.vendors.length],[`Pipeline`,S.itw.length],[`Reviews`,S.reviews.length],[`Comments loaded`,Object.keys(S.commentsMap).map(k=>`${Object.keys(S.commentsMap[k]).length} from comments${k}.xml`).join(', ')||'none'],[`Sheet File`,S.psdSheetFile||'auto-detected'],[`Unsaved Changes`,S.dirty.size]].forEach(([l,v])=>sec2.appendChild(el('div',{class:'setting-row'},el('span',{},l),el('span',{style:{fontWeight:'600',color:'var(--muted)'}},v))));
-    c.appendChild(sec2);
+  // Email Signature — collapsible via settingsCard
+  if(['admin','procurement','manager'].includes(USER.role)){
+    settingsCard(c,'✉️ Email Signature','✉️','emailSig',false,body=>{
+      body.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'4px'}},'Default email signature (appended to drafts):'));
+      const sigTa=el('textarea',{class:'modal-textarea',style:{height:'80px',marginTop:'5px'}});
+      sigTa.value=S.settings.emailSignature||'';
+      sigTa.addEventListener('change',()=>{S.settings.emailSignature=sigTa.value;toast('Signature saved');});
+      body.appendChild(sigTa);
+    });
   }
 
-  const sec3=el('div',{class:'settings-section'});
-  sec3.appendChild(el('h3',{},'💾 Data Actions'));
-  const btns=[
-    ['Export Changes as JSON','btn-primary',()=>{
-      const data=JSON.stringify({vendors:S.vendors.filter(v=>v._dirty).map(v=>({name:v.name,notes:v.notes,lastComm:v.lastComm instanceof Date?isoDate(v.lastComm):v.lastComm,followUp:v.followUp instanceof Date?isoDate(v.followUp):v.followUp})),dismissed:[...S.dismissed],history:S.history,exported:new Date().toISOString()},null,2);
-      const blob=new Blob([data],{type:'application/json'}); const url=URL.createObjectURL(blob);
-      const a=document.createElement('a');a.href=url;a.download='vcs_changes.json';a.click();URL.revokeObjectURL(url);
-      toast('Changes exported to JSON');
-    }],
-    ['Clear Session History','btn-ghost',()=>{if(confirm('Clear all session history?')){S.history=[];toast('History cleared');}}],
-    ['Reset Dismissed Vendors','btn-ghost',()=>{if(confirm('Restore all dismissed vendors?')){S.dismissed.clear();render();toast('Vendors restored');}}],
-    ['Reset All Snoozes','btn-ghost',()=>{if(confirm('Clear all snoozes?')){S.snoozed={};render();toast('Snoozes cleared');}}],
-    ['Clear AI Chat History','btn-ghost',()=>{aiHistory=[];localStorage.removeItem(AI_HISTORY_KEY);$('ai-messages').innerHTML='';toast('AI chat cleared');}],
-  ];
-  for (const [label,cls,fn] of btns) sec3.appendChild(el('button',{class:`${cls} btn-action`,style:{marginRight:'5px',marginBottom:'5px'},onclick:fn},label));
-  if(['admin','procurement','manager'].includes(USER.role))if(['admin','procurement','manager'].includes(USER.role))c.appendChild(sec3);
+  // File Info — collapsible via settingsCard
+  if (S.loaded) {
+    settingsCard(c,'📂 File Info','📂','fileInfo',false,body=>{
+      [[`File`,S.fileName],[`PSD Vendors`,S.vendors.length],[`Pipeline`,S.itw.length],[`Reviews`,S.reviews.length],[`Comments loaded`,Object.keys(S.commentsMap).map(k=>`${Object.keys(S.commentsMap[k]).length} from comments${k}.xml`).join(', ')||'none'],[`Sheet File`,S.psdSheetFile||'auto-detected'],[`Unsaved Changes`,S.dirty.size]].forEach(([l,v])=>body.appendChild(el('div',{class:'setting-row'},el('span',{},l),el('span',{style:{fontWeight:'600',color:'var(--muted)'}},v))));
+    });
+  }
+
+  // Data Actions — collapsible via settingsCard
+  if(['admin','procurement','manager'].includes(USER.role)){
+    settingsCard(c,'💾 Data Actions','💾','dataActions',false,body=>{
+      const btns=[
+        ['Export Changes as JSON','btn-primary',()=>{
+          const data=JSON.stringify({vendors:S.vendors.filter(v=>v._dirty).map(v=>({name:v.name,notes:v.notes,lastComm:v.lastComm instanceof Date?isoDate(v.lastComm):v.lastComm,followUp:v.followUp instanceof Date?isoDate(v.followUp):v.followUp})),dismissed:[...S.dismissed],history:S.history,exported:new Date().toISOString()},null,2);
+          const blob=new Blob([data],{type:'application/json'}); const url=URL.createObjectURL(blob);
+          const a=document.createElement('a');a.href=url;a.download='vcs_changes.json';a.click();URL.revokeObjectURL(url);
+          toast('Changes exported to JSON');
+        }],
+        ['Clear Session History','btn-ghost',()=>{if(confirm('Clear all session history?')){S.history=[];toast('History cleared');}}],
+        ['Reset Dismissed Vendors','btn-ghost',()=>{if(confirm('Restore all dismissed vendors?')){S.dismissed.clear();render();toast('Vendors restored');}}],
+        ['Reset All Snoozes','btn-ghost',()=>{if(confirm('Clear all snoozes?')){S.snoozed={};render();toast('Snoozes cleared');}}],
+        ['Clear AI Chat History','btn-ghost',()=>{aiHistory=[];localStorage.removeItem(AI_HISTORY_KEY);$('ai-messages').innerHTML='';toast('AI chat cleared');}],
+      ];
+      for (const [label,cls,fn] of btns) body.appendChild(el('button',{class:`${cls} btn-action`,style:{marginRight:'5px',marginBottom:'5px'},onclick:fn},label));
+    });
+  }
 
   // ── Renzo Integration Settings (Admin only) ──
   if(['admin','procurement'].includes(USER.role)){
@@ -19929,6 +20067,11 @@ async function sendAIMessage(userMsg) {
   const perms = ROLE_PERMS[USER.role||'restricted']||{};
   if(perms.aiEnabled === false) {
     appendAIMessage('assistant', '⚠ Your account does not have AI Assistant access. Contact your admin to enable it.');
+    return;
+  }
+  // Per-user AI enable/disable (set in User Management → field access)
+  if(USER.aiEnabled === false) {
+    appendAIMessage('assistant', 'AI not enabled for your account — contact admin.');
     return;
   }
 
