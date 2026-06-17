@@ -19697,13 +19697,19 @@ function renderSettings(c) {
       }
     }},'↑ Sync All to Drive');
   syncSec.appendChild(syncAllBtn);
-  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){S._settingsExpandAll=true;render();}},'▼ Expand All'));
-  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){S._settingsExpandAll=false;render();}},'▶ Collapse All'));
+  // D3: Expand/Collapse ALL known settings keys
+  const _allSettingsKeys=['emailSig','fileInfo','dataActions','handover','themeFont','startup','calendarAvail','displayPrefs','sfSettings','driveSettings','msSettings','renzoSettings','dialerSettings','apiConfig','userMgmt','roleTabDefaults','apiUsage','quickSetup','renzo'];
+  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){S._settingsExpandAll=true;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=true);render();}},'▼ Expand All'));
+  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){S._settingsExpandAll=false;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=false);render();}},'▶ Collapse All'));
   if(USER.role==='admin'){
     syncSec.appendChild(el('p',{style:{width:'100%',fontSize:'8px',color:'var(--muted)',margin:'4px 0 0'}},
       '⚙ Admin tip: Global keys (API keys, SF credentials, Renzo key) sync for all users. Personal config (theme, dialer URL) syncs per device. Use "Sync All" after making changes you want other users to pick up.'));
   }
   c.appendChild(syncSec);
+  // D2: Spacer so sticky settings bar never overlaps first card
+  const _settingsSpacer=el('div',{style:{height:'0px'}});
+  c.appendChild(_settingsSpacer);
+  requestAnimationFrame(()=>{const h=syncSec.getBoundingClientRect().height;if(h>0)_settingsSpacer.style.height=h+'px';});
 
   // S3: Quick Setup Checklist — progress bar + 6 items, collapsed when all complete
   if(USER.role==='admin'||USER.role==='procurement'){
@@ -20871,7 +20877,7 @@ function renderSettings(c) {
 
   // Email Signature — collapsible via settingsCard
   if(['admin','procurement','manager'].includes(USER.role)){
-    settingsCard(c,'✉️ Email Signature','✉️','emailSig',false,body=>{
+    settingsCard(c,'Email Signature','✉️','emailSig',false,body=>{
       body.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'4px'}},'Default email signature (appended to drafts):'));
       const sigTa=el('textarea',{class:'modal-textarea',style:{height:'80px',marginTop:'5px'}});
       sigTa.value=S.settings.emailSignature||'';
@@ -20882,14 +20888,14 @@ function renderSettings(c) {
 
   // File Info — collapsible via settingsCard
   if (S.loaded) {
-    settingsCard(c,'📂 File Info','📂','fileInfo',false,body=>{
+    settingsCard(c,'File Info','📂','fileInfo',false,body=>{
       [[`File`,S.fileName],[`PSD Vendors`,S.vendors.length],[`Pipeline`,S.itw.length],[`Reviews`,S.reviews.length],[`Comments loaded`,Object.keys(S.commentsMap).map(k=>`${Object.keys(S.commentsMap[k]).length} from comments${k}.xml`).join(', ')||'none'],[`Sheet File`,S.psdSheetFile||'auto-detected'],[`Unsaved Changes`,S.dirty.size]].forEach(([l,v])=>body.appendChild(el('div',{class:'setting-row'},el('span',{},l),el('span',{style:{fontWeight:'600',color:'var(--muted)'}},v))));
     });
   }
 
   // Data Actions — collapsible via settingsCard
   if(['admin','procurement','manager'].includes(USER.role)){
-    settingsCard(c,'💾 Data Actions','💾','dataActions',false,body=>{
+    settingsCard(c,'Data Actions','💾','dataActions',false,body=>{
       const btns=[
         ['Export Changes as JSON','btn-primary',()=>{
           const data=JSON.stringify({vendors:S.vendors.filter(v=>v._dirty).map(v=>({name:v.name,notes:v.notes,lastComm:v.lastComm instanceof Date?isoDate(v.lastComm):v.lastComm,followUp:v.followUp instanceof Date?isoDate(v.followUp):v.followUp})),dismissed:[...S.dismissed],history:S.history,exported:new Date().toISOString()},null,2);
