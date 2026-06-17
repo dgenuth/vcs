@@ -3951,6 +3951,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     if(USER.sfToken&&vendor.sfAccountId) qBar.appendChild(qBtn('☁','Open in Salesforce',()=>window.open(USER.sfInstance+'/lightning/r/Account/'+vendor.sfAccountId+'/view','_blank'),'#38bdf8'));
     if(_canAct2) qBar.appendChild(qBtn('⚡','AI Briefing',()=>openAIBriefingModal(vendor),'var(--amber)'));
     if(_canAct2) qBar.appendChild(qBtn('📅','Schedule meeting',()=>openCalendarEventModal(isoDate(new Date()),vendor.name)));
+    if(_canAct2) qBar.appendChild(qBtn('🎯','Meeting Mode — AI talking points',()=>openTalkingPointsModal(0,vendor),'var(--amber)'));
     stickySlot.appendChild(qBar);
   }
 
@@ -3977,6 +3978,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   }},'📅 Schedule'));
   if (_canAct) acts.appendChild(el('button',{class:'btn-amber btn-action',onclick(){openSnoozeModal(vendor);}},'💤 Snooze'));
   if (_canAct) acts.appendChild(el('button',{class:'btn-ghost btn-action',title:'AI briefing for this vendor',onclick(){openAIBriefingModal(vendor);}},'🤖 Brief'));
+  if (_canAct) acts.appendChild(el('button',{class:'btn-ghost btn-action',style:{color:'var(--amber)'},title:'Meeting Mode — AI talking points',onclick(){openTalkingPointsModal(0,vendor);}},'🎯 Meeting'));
   if (_canAct && vendor.source==='psd'&&!findITWVendor(vendor.name)) {
     acts.appendChild(el('button',{class:'btn-ghost btn-action',style:{color:'var(--green)'},title:'Add to In The Works pipeline',onclick(){openAddToITWModal(vendor.name);}},'+ Pipeline'));
   }
@@ -8567,46 +8569,138 @@ function openColumnFilterModal(col, filteredVendors) {
   });
 }
 
+// ─── Meeting Mode — AI Talking Points Generator ───────────────────────────────
+async function generateMeetingTalkingPoints(vendor) {
+  const apiKey=S.settings?.apiKey||S.settings?.anthropicApiKey||S.settings?.aiApiKey||localStorage.getItem('vcs_api_key')||'';
+  if(!apiKey) throw new Error('No API key configured — set in Settings → AI Configuration');
+  const expiry=getCurrentExpiry(vendor);
+  const daysAway=expiry?(()=>{const d=parseDate(expiry);return d?Math.round((d-new Date())/86400000):null;})():null;
+  const sfCases=(S._sfCases||[]).filter(c=>vendorNamesMatch(c.accountName||c.Account_Name__c||'',vendor.name)).slice(0,3);
+  const sfOpps=(S._sfOpps||[]).filter(o=>vendorNamesMatch(o.accountName||o.Account_Name__c||'',vendor.name)).slice(0,3);
+  const sfCtx=[
+    sfCases.length?'Open SF Cases: '+sfCases.map(c=>c.subject||c.CaseNumber||'').join(', '):'',
+    sfOpps.length?'SF Opportunities: '+sfOpps.map(o=>(o.name||o.Name||'')+(o.stageName||o.StageName?' ['+o.stageName+']':'')).join(', '):''
+  ].filter(Boolean).join('\n');
+  const ctx=[
+    'Vendor: '+vendor.name,
+    vendor.category?'Category: '+vendor.category:'',
+    vendor.adminFee?'Admin fee: '+vendor.adminFee:'',
+    expiry?('Contract expires: '+fmtDate(expiry)+(daysAway!==null?(' ('+(daysAway>0?daysAway+' days away':Math.abs(daysAway)+' days overdue')+')'):'')):'No expiry date on file',
+    vendor.tier?'Engagement tier: '+vendor.tier:'',
+    vendor.status?'Status: '+vendor.status:'',
+    vendor.procContact?'Contact: '+vendor.procContact:'',
+    vendor.lastComm?'Last contact: '+fmtDate(parseDate(vendor.lastComm)):'No contact recorded',
+    vendor.notes?'Vendor notes: '+vendor.notes.slice(0,600):'',
+    sfCtx
+  ].filter(Boolean).join('\n');
+  const sysP='You are a GPO vendor relationship assistant for Prime Source Expense Experts, a healthcare GPO. Generate 6-8 concise, actionable meeting talking points tailored to this specific vendor\'s situation. Focus on: contract status/renewal urgency, fee reconciliation needs, relationship health, open issues, and strategic priorities. Return ONLY a JSON array of strings, no preamble, no markdown. Each item under 18 words. Example: ["Confirm renewal intent - contract expires in 45 days", "Review Q2 admin fee reconciliation - variance noted"]';
+  const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'text/plain','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:700,system:sysP,messages:[{role:'user',content:'Generate meeting talking points for:\n\n'+ctx}]})});
+  if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+resp.status);}
+  const data=await resp.json();
+  const raw=(data.content?.find(b=>b.type==='text')?.text||'[]').replace(/```json/g,'').replace(/```/g,'').trim();
+  try{const pts=JSON.parse(raw);if(!Array.isArray(pts))throw new Error('not array');return pts.map(p=>({text:String(p)}));}
+  catch(e){return raw.split('\n').filter(l=>l.trim()).map(l=>({text:l.replace(/^[\d\-\.\*•]+\s*/,'').trim()})).filter(t=>t.text);}
+}
+
 // ─── Meeting Mode Modal — Talking Points ──────────────────────────────────────
-function openTalkingPointsModal(startIdx=0) {
+function openTalkingPointsModal(startIdx=0, vendor=null) {
   openModal(body=>{
     body.appendChild(el('h3',{},'🎯 Meeting Mode — Discussion Checklist'));
-    body.appendChild(el('p',{class:'modal-sub'},'Check off points as you discuss them. When done, choose a vendor to log the covered topics to their review notes.'));
-    const tpList=el('div',{style:{maxHeight:'340px',overflowY:'auto',margin:'8px 0'}});
-    const checked=new Set(S.tpChecked);
-    S.reviewTPs.forEach((tp,i)=>{
-      const row=el('label',{style:{display:'flex',gap:'8px',alignItems:'flex-start',padding:'6px 8px',borderBottom:'1px solid var(--border)',cursor:'pointer',borderLeft:'3px solid transparent',transition:'all .1s'}});
-      const cb=el('input',{type:'checkbox',style:{marginTop:'2px',accentColor:'var(--green)',flexShrink:'0'}}); cb.checked=checked.has(i);
-      cb.addEventListener('change',()=>{if(cb.checked){checked.add(i);row.style.borderLeftColor='var(--green)';row.style.background='rgba(34,197,94,.04)';}else{checked.delete(i);row.style.borderLeftColor='transparent';row.style.background='';}});
-      if (cb.checked){row.style.borderLeftColor='var(--green)';row.style.background='rgba(34,197,94,.04)';}
-      const txtWrap=el('div',{style:{flex:'1'}});
-      txtWrap.appendChild(el('div',{style:{fontSize:'11px',lineHeight:'1.5'}},tp.text));
-      row.append(cb,txtWrap); tpList.appendChild(row);
-    });
+    if(vendor){
+      const vendorHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'6px',padding:'6px 8px',background:'var(--bg)',borderRadius:'5px',border:'1px solid var(--border)'}});
+      vendorHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',color:'var(--blue)'}},vendor.name));
+      if(vendor.category) vendorHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',background:'var(--border)',padding:'1px 6px',borderRadius:'3px'}},vendor.category));
+      body.appendChild(vendorHdr);
+    } else {
+      body.appendChild(el('p',{class:'modal-sub'},'Check off points as you discuss them. When done, choose a vendor to log the covered topics to their review notes.'));
+    }
+    // Local TP list — starts from S.reviewTPs or empty for vendor-specific
+    const localTPs=vendor?[]:[...S.reviewTPs];
+    const checked=new Set(vendor?[]:S.tpChecked);
+    const tpList=el('div',{style:{maxHeight:'300px',overflowY:'auto',margin:'8px 0',border:'1px solid var(--border)',borderRadius:'4px'}});
+    function renderTPs(){
+      tpList.innerHTML='';
+      if(!localTPs.length){
+        tpList.appendChild(el('div',{style:{padding:'20px',textAlign:'center',color:'var(--muted)',fontSize:'10px'}},vendor?'Click "AI Generate" to create talking points for this vendor':'No talking points loaded'));
+        return;
+      }
+      localTPs.forEach((tp,i)=>{
+        const row=el('label',{style:{display:'flex',gap:'8px',alignItems:'flex-start',padding:'6px 8px',borderBottom:'1px solid var(--border)',cursor:'pointer',borderLeft:'3px solid transparent',transition:'all .1s'}});
+        const cb=el('input',{type:'checkbox',style:{marginTop:'2px',accentColor:'var(--green)',flexShrink:'0'}});
+        cb.checked=checked.has(i);
+        cb.addEventListener('change',()=>{if(cb.checked){checked.add(i);row.style.borderLeftColor='var(--green)';row.style.background='rgba(34,197,94,.04)';}else{checked.delete(i);row.style.borderLeftColor='transparent';row.style.background='';}});
+        if(cb.checked){row.style.borderLeftColor='var(--green)';row.style.background='rgba(34,197,94,.04)';}
+        const txtWrap=el('div',{style:{flex:'1'}});
+        txtWrap.appendChild(el('div',{style:{fontSize:'11px',lineHeight:'1.5'}},tp.text));
+        row.append(cb,txtWrap); tpList.appendChild(row);
+      });
+    }
+    renderTPs();
+    // AI Generate row (always shown; extra-prominent when vendor provided)
+    if(vendor){
+      const aiRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'6px'}});
+      const aiBtn=el('button',{class:'btn-blue btn-action'});
+      aiBtn.textContent='✨ AI Generate Talking Points';
+      aiBtn.addEventListener('click',async function(){
+        const orig=aiBtn.textContent;
+        aiBtn.textContent='Generating...'; aiBtn.disabled=true;
+        try{
+          const pts=await generateMeetingTalkingPoints(vendor);
+          localTPs.length=0; checked.clear();
+          pts.forEach(p=>localTPs.push(p));
+          renderTPs();
+          toast('✓ '+pts.length+' talking points generated for '+vendor.name);
+          aiBtn.textContent='✨ Regenerate';
+        }catch(e){
+          toast('AI error: '+e.message,'#ef4444');
+          aiBtn.textContent=orig;
+        }finally{aiBtn.disabled=false;}
+      });
+      aiRow.appendChild(aiBtn);
+      aiRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Powered by Claude — uses vendor data, contract info & SF context'));
+      body.insertBefore(aiRow,tpList);
+    }
     body.appendChild(tpList);
-    // Vendor selector + log button
+    // Log row
     body.appendChild(el('div',{style:{height:'1px',background:'var(--border)',margin:'8px 0'}}));
     const logRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap'}});
-    const vendorSel=el('select',{class:'modal-input',style:{flex:'1',marginBottom:'0'}});
-    vendorSel.appendChild(el('option',{value:''},'Select vendor to log notes to...'));
-    S.reviews.forEach(r=>vendorSel.appendChild(el('option',{value:r.name},r.name)));
-    logRow.appendChild(vendorSel);
-    logRow.appendChild(el('button',{class:'btn-green btn-action',onclick(){
-      if(!vendorSel.value){toast('Select a vendor first','#f59e0b');return;}
-      if(!checked.size){toast('Check at least one point','#f59e0b');return;}
-      const r=S.reviews.find(rv=>rv.name===vendorSel.value);
-      if(!r){toast('Vendor not found','#ef4444');return;}
-      const covered=[...checked].sort().map(i=>S.reviewTPs[i]?.text||'').filter(Boolean);
-      const entry=`${isoDate(new Date())}: Covered in review:\n${covered.map(p=>`• ${p}`).join('\n')}`;
-      r.sfNotes=(r.sfNotes||'')+'\n\n'+entry;
-      S.tpChecked=checked;
-      logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendorSel.value,action:`Logged ${covered.length} talking points to review`});
-      render();closeModal();toast(`✓ ${covered.length} talking point${covered.length!==1?'s':''} logged to ${vendorSel.value}`);
-    }},'✓ Log to Notes'));
-    logRow.appendChild(el('button',{class:'btn-ghost btn-action',onclick(){tpList.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=false);checked.clear();tpList.querySelectorAll('label').forEach(r=>{r.style.borderLeftColor='transparent';r.style.background='';});}},'Uncheck All'));
+    if(!vendor){
+      const vendorSel=el('select',{class:'modal-input',style:{flex:'1',marginBottom:'0'}});
+      vendorSel.appendChild(el('option',{value:''},'Select vendor to log notes to...'));
+      S.reviews.forEach(r=>vendorSel.appendChild(el('option',{value:r.name},r.name)));
+      logRow.appendChild(vendorSel);
+      logRow.appendChild(el('button',{class:'btn-green btn-action',onclick(){
+        if(!vendorSel.value){toast('Select a vendor first','#f59e0b');return;}
+        if(!checked.size){toast('Check at least one point','#f59e0b');return;}
+        const r=S.reviews.find(rv=>rv.name===vendorSel.value);
+        if(!r){toast('Vendor not found','#ef4444');return;}
+        const covered=[...checked].sort().map(i=>localTPs[i]?.text||'').filter(Boolean);
+        const entry=isoDate(new Date())+': Covered in review:\n'+covered.map(p=>'• '+p).join('\n');
+        r.sfNotes=(r.sfNotes||'')+'\n\n'+entry;
+        S.tpChecked=checked;
+        logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendorSel.value,action:'Logged '+covered.length+' talking points to review'});
+        render();closeModal();toast('✓ '+covered.length+' talking point'+(covered.length!==1?'s':'')+' logged to '+vendorSel.value);
+      }},'✓ Log to Notes'));
+    } else {
+      logRow.appendChild(el('button',{class:'btn-green btn-action',onclick(){
+        if(!checked.size){toast('Check at least one point first','#f59e0b');return;}
+        const covered=[...checked].sort().map(i=>localTPs[i]?.text||'').filter(Boolean);
+        const entry=isoDate(new Date())+': Meeting talking points covered:\n'+covered.map(p=>'• '+p).join('\n');
+        vendor.notes=(vendor.notes||'')+'\n\n'+entry;
+        markDirty(vendor); saveSessionState();
+        logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendor.name,action:'Logged '+covered.length+' meeting talking points'});
+        refreshDetailIfOpen(vendor);
+        closeModal();toast('✓ '+covered.length+' point'+(covered.length!==1?'s':'')+' logged to '+vendor.name+' notes');
+      }},'✓ Log Notes'));
+    }
+    logRow.appendChild(el('button',{class:'btn-ghost btn-action',onclick(){
+      tpList.querySelectorAll('input[type=checkbox]').forEach(cb2=>cb2.checked=false);
+      checked.clear();
+      tpList.querySelectorAll('label').forEach(r=>{r.style.borderLeftColor='transparent';r.style.background='';});
+    }},'Uncheck All'));
     body.appendChild(logRow);
     const btns=el('div',{class:'modal-btns'});
-    btns.appendChild(el('button',{class:'btn-secondary',onclick(){S.tpChecked=checked;closeModal();}},'Save & Close'));
+    btns.appendChild(el('button',{class:'btn-secondary',onclick(){if(!vendor)S.tpChecked=checked;closeModal();}},'Save & Close'));
     btns.appendChild(el('button',{class:'btn-ghost btn-action',onclick:closeModal},'Dismiss'));
     body.appendChild(btns);
   });
@@ -14468,6 +14562,33 @@ function syncTierSpend() {
   return updated;
 }
 
+async function explainTierProgress(td) {
+  const apiKey=S.settings?.apiKey||S.settings?.anthropicApiKey||S.settings?.aiApiKey||localStorage.getItem('vcs_api_key')||'';
+  if(!apiKey) throw new Error('No API key configured — set in Settings → AI Configuration');
+  const nextTier=td.tiers?.find(t=>td.currentSpend<t.threshold);
+  const currTier=td.tiers?.slice().reverse().find(t=>td.currentSpend>=t.threshold);
+  const remaining=nextTier?Math.max(0,nextTier.threshold-td.currentSpend):0;
+  const progress=nextTier&&nextTier.threshold>0?Math.min(100,(td.currentSpend/nextTier.threshold)*100):100;
+  const incValue=nextTier&&currTier?(nextTier.threshold*(nextTier.feePct||nextTier.fee||0)/100)-(td.currentSpend*(currTier.feePct||currTier.fee||0)/100):(nextTier?nextTier.threshold*(nextTier.feePct||nextTier.fee||0)/100:0);
+  const ctx=[
+    'Vendor: '+td.vendorName,
+    'Period: '+(S._tierDateFilter||'YTD'),
+    'Current Spend: $'+Math.round(td.currentSpend).toLocaleString(),
+    td._sfSynced?'Data source: Salesforce (live)':'Data source: manually entered',
+    currTier?'Current tier: '+(currTier.label||'Tier '+(td.tiers.indexOf(currTier)+1))+' @ '+(currTier.feePct||currTier.fee||0)+'%':'Current tier: below first threshold',
+    nextTier?('Next tier: '+(nextTier.label||'Tier '+(td.tiers.indexOf(nextTier)+1))+' @ $'+nextTier.threshold.toLocaleString()+' → '+(nextTier.feePct||nextTier.fee||0)+'% fee'):'All tiers achieved',
+    nextTier?'Progress to next tier: '+progress.toFixed(1)+'% ($'+Math.round(remaining).toLocaleString()+' remaining)':'',
+    nextTier&&incValue>0?'Incremental value of reaching next tier: ~$'+Math.round(incValue).toLocaleString()+'/yr':'',
+    td.monthlyRate?'Avg monthly spend: $'+Math.round(td.monthlyRate).toLocaleString():'No monthly rate set',
+    td.notes?'Notes: '+td.notes:''
+  ].filter(Boolean).join('\n');
+  const sysP='You are a GPO vendor analyst for Prime Source Expense Experts. Write a concise 3-5 sentence plain-English explanation of this vendor\'s tier progress situation. Include: where they stand now, how close they are to the next tier, the financial upside if they hit it, and one specific recommendation for accelerating spend (e.g., timing orders, consolidating purchases). Be concrete and data-driven. No bullet points — flowing sentences.';
+  const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'text/plain','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:400,system:sysP,messages:[{role:'user',content:'Explain this vendor\'s tier status:\n\n'+ctx}]})});
+  if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+resp.status);}
+  const data=await resp.json();
+  return data.content?.find(b=>b.type==='text')?.text||'No explanation available.';
+}
+
 function renderTierTracker(c) {
   c.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.6'}},'Track spend-to-tier progress for every vendor with volume-based fee structures. See how close you are to the next tier — and what it\'s worth to get there.'));
 
@@ -14532,6 +14653,28 @@ function renderTierTracker(c) {
     });
   }
 
+  // Date filter bar
+  if(!S._tierDateFilter) S._tierDateFilter='ytd';
+  const _tierPeriodOpts=[{key:'ytd',label:'YTD'},{key:'last_year',label:'Last Year'},{key:'contract_term',label:'Contract Term'},{key:'all',label:'All Time'},{key:'custom',label:'Custom'}];
+  const dateBar=el('div',{style:{display:'flex',gap:'4px',marginBottom:'10px',alignItems:'center',flexWrap:'wrap'}});
+  dateBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'4px'}},'Spend Period:'));
+  _tierPeriodOpts.forEach(p=>{
+    const pb=el('button',{class:'filter-tab'+(S._tierDateFilter===p.key?' active':''),onclick(){S._tierDateFilter=p.key;if(p.key!=='custom'){const _el=dateBar.querySelector('.tier-custom-range');if(_el)_el.style.display='none';}else{const _el=dateBar.querySelector('.tier-custom-range');if(_el)_el.style.display='';}render();}},p.label);
+    dateBar.appendChild(pb);
+  });
+  const customRange=el('div',{class:'tier-custom-range',style:{display:S._tierDateFilter==='custom'?'flex':'none',gap:'4px',alignItems:'center',marginLeft:'4px'}});
+  customRange.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'From:'));
+  const crFrom=el('input',{type:'date',class:'detail-edit-field',style:{fontSize:'9px'},value:S._tierCustomFrom||''});
+  crFrom.addEventListener('change',()=>{S._tierCustomFrom=crFrom.value;});
+  customRange.appendChild(crFrom);
+  customRange.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'To:'));
+  const crTo=el('input',{type:'date',class:'detail-edit-field',style:{fontSize:'9px'},value:S._tierCustomTo||''});
+  crTo.addEventListener('change',()=>{S._tierCustomTo=crTo.value;});
+  customRange.appendChild(crTo);
+  dateBar.appendChild(customRange);
+  const _tierPeriodLabel={ytd:'YTD',last_year:'Last Year',contract_term:'Contract Term',all:'All Time',custom:'Custom Range'}[S._tierDateFilter]||'YTD';
+  c.appendChild(dateBar);
+
   // Auto-suggest tier structures from PSD vendors
   if (!S.tierData.length) {
     const suggestSec=el('div',{class:'summary-section'});
@@ -14577,8 +14720,13 @@ function renderTierTracker(c) {
   _ttSumSec.appendChild(buildSortableTable(['Vendor','YTD Spend','Next Tier','Progress','ETA','Source'],_ttRows,_ttRowFn));
   c.appendChild(_ttSumSec);
 
+  // Filter tier data by period
+  const _visibleTierData=S._tierDateFilter==='contract_term'
+    ?S.tierData.filter(td=>{const v=S.vendors.find(sv=>vendorNamesMatch(sv.name,td.vendorName));if(!v)return true;const e=getCurrentExpiry(v);if(!e)return true;const d=parseDate(e);return d&&d>=new Date();})
+    :S.tierData;
+
   // Show tracked tiers
-  S.tierData.forEach((td,i)=>{
+  _visibleTierData.forEach((td,i)=>{
     const card=el('div',{class:'summary-section'});
     const hdr=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'8px'}});
     const tierNameEl=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',flex:'1'}});
@@ -14598,8 +14746,27 @@ function renderTierTracker(c) {
       btn.disabled=false; btn.textContent='🔄 Load & Sync SF';
     }},'🔄 Load & Sync SF'));
     }
-    hdrBtns.appendChild(el('button',{class:'btn-xs btn-danger',onclick(){if(confirm('Remove '+td.vendorName+'?')){S.tierData.splice(i,1);render();}}}, '✕'));
+    const aiExpBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'}},'🤖 AI Explain');
+    aiExpBtn.addEventListener('click',async function(){
+      const orig=aiExpBtn.textContent; aiExpBtn.textContent='⏳...'; aiExpBtn.disabled=true;
+      try{
+        const explanation=await explainTierProgress(td);
+        openModal(mb=>{
+          mb.appendChild(el('h3',{},'🤖 Tier Analysis: '+td.vendorName));
+          const txt=el('p',{style:{whiteSpace:'pre-wrap',lineHeight:'1.7',fontSize:'11px',margin:'10px 0'}});
+          txt.textContent=explanation;
+          mb.appendChild(txt);
+          const mbtns=el('div',{class:'modal-btns'});
+          mbtns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));
+          mb.appendChild(mbtns);
+        });
+      }catch(e){toast('AI error: '+e.message,'#ef4444');}
+      finally{aiExpBtn.textContent=orig; aiExpBtn.disabled=false;}
+    });
+    hdrBtns.appendChild(aiExpBtn);
+    hdrBtns.appendChild(el('button',{class:'btn-xs btn-danger',onclick(){if(confirm('Remove '+td.vendorName+'?')){const _ri=S.tierData.indexOf(td);if(_ri>-1)S.tierData.splice(_ri,1);render();}}}, '✕'));
     hdr.appendChild(hdrBtns); card.appendChild(hdr);
+    card.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginBottom:'6px'}},'Period: '+_tierPeriodLabel+(td._sfSynced?' · SF synced':'· manual spend')));
 
     if (td.tiers && td.tiers.length) {
       // Progress bars for each tier
