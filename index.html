@@ -17405,6 +17405,7 @@ function renderAnalytics(c) {
       monthCounts[key]=(monthCounts[key]||0)+1;
     });
     const months=Object.keys(monthCounts).sort();
+    console.log('[VCS Trends] Vendor Additions: '+months.length+' months, '+totalVendors+' total vendors');
 
     // Total vendors count above sparkline
     const totalRow=el('div',{style:{display:'flex',gap:'16px',alignItems:'center',marginBottom:'8px',flexWrap:'wrap'}});
@@ -17432,6 +17433,7 @@ function renderAnalytics(c) {
       if(fee>0&&spend>0) catFees[cat]=(catFees[cat]||0)+(spend*fee/100);
     });
     const catEntries=Object.entries(catFees).sort((a,b)=>b[1]-a[1]).slice(0,15);
+    console.log('[VCS Trends] Admin Fee by Category: '+catEntries.length+' categories with fee+spend data');
 
     if(catEntries.length>=2){
       catSec.appendChild(renderBarChart(catEntries.map(e=>e[0].slice(0,18)),catEntries.map(e=>Math.round(e[1])),'Est. Annual Fee $','#22c55e'));
@@ -17458,6 +17460,7 @@ function renderAnalytics(c) {
       quarters[key]=(quarters[key]||0)+1;
     });
     const qKeys=Object.keys(quarters).sort();
+    console.log('[VCS Trends] Contract Expiry Timeline: '+qKeys.length+' future quarters with expirations');
 
     if(qKeys.length>=2){
       expSec.appendChild(renderBarChart(qKeys,qKeys.map(k=>quarters[k]),'Contracts Expiring','#f59e0b'));
@@ -17471,10 +17474,16 @@ function renderAnalytics(c) {
     tierSec.appendChild(el('h3',{style:{marginBottom:'4px'}},'📶 Vendor Tier Distribution'));
     const tierCounts={CALL:0,EMAIL:0,REVIEW:0,MONITOR:0};
     S.vendors.filter(isVisible).filter(v=>_trInRange(parseDate(v.effectiveDate||v.contractStart||v.lastComm))).forEach(v=>{if(v.tier&&tierCounts[v.tier]!==undefined)tierCounts[v.tier]++;});
-    tierSec.appendChild(renderBarChart(
-      Object.keys(tierCounts),Object.values(tierCounts),'Vendors','',
-      ['#ef4444','#f59e0b','#4f7cff','#6b7280']
-    ));
+    const _tierTotal=Object.values(tierCounts).reduce((a,b)=>a+b,0);
+    console.log('[VCS Trends] Tier Distribution: '+_tierTotal+' vendors with tiers (CALL='+tierCounts.CALL+' EMAIL='+tierCounts.EMAIL+' REVIEW='+tierCounts.REVIEW+' MONITOR='+tierCounts.MONITOR+')');
+    if(_tierTotal===0){
+      tierSec.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'10px',textAlign:'center',padding:'20px'}},'No vendors have tiers assigned. Set a tier (CALL/EMAIL/REVIEW/MONITOR) on vendors to see distribution.'));
+    } else {
+      tierSec.appendChild(renderBarChart(
+        Object.keys(tierCounts),Object.values(tierCounts),'Vendors','',
+        ['#ef4444','#f59e0b','#4f7cff','#6b7280']
+      ));
+    }
     trendWrap.appendChild(tierSec);
 
     c.appendChild(trendWrap);
@@ -17789,8 +17798,34 @@ function renderAnalytics(c) {
       const rateSec=el('div',{class:'chart-section'});
       rateSec.appendChild(el('h4',{},'Contracted vs Actual Fee Rate (%)'));
       const rateC=el('canvas',{style:{maxHeight:'200px'}}); rateSec.appendChild(rateC); row2.appendChild(rateSec);
-      const rateData=sd.filter(v=>v.contractedPct>0&&v.totalSpend>0).slice(0,25).map(v=>({x:v.contractedPct,y:v.actualPct,label:v.name.slice(0,12)}));
-      new Chart(rateC,{type:'scatter',data:{datasets:[{label:'Vendors',data:rateData,backgroundColor:rateData.map(d=>d.y<d.x*0.8?'#ef4444':d.y>d.x*1.1?'#22c55e':'#4f7cff'),pointRadius:7,hoverRadius:9}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>`${ctx.raw.label}: contracted ${ctx.raw.x.toFixed(2)}% | actual ${ctx.raw.y.toFixed(2)}% | ${ctx.raw.y<ctx.raw.x*0.8?'⚠ Under-paying':'✓ On track'}`}}},scales:{x:{title:{display:true,text:'Contracted %',color:'var(--muted)',font:{size:9}},ticks:{color:'var(--muted)',font:{size:9}}},y:{title:{display:true,text:'Actual %',color:'var(--muted)',font:{size:9}},ticks:{color:'var(--muted)',font:{size:9}}}},onClick(e,els){if(els.length){const d=rateData[els[0].index];const v=sd.find(sv=>sv.name.slice(0,12)===d.label);const vcsV=v&&S.vendors.find(sv=>vendorNamesMatch(sv.name,v.name));if(vcsV)openDetail(vcsV);else toast('Vendor: '+d.label,'#4f7cff');}}}});
+      const rateData=sd.filter(v=>v.contractedPct>0&&v.totalSpend>0).slice(0,25).map(v=>({x:v.contractedPct,y:v.actualPct,label:v.name.slice(0,12),_name:v.name}));
+      const rateDetail=el('div',{style:{display:'none',marginTop:'8px',border:'1px solid var(--border)',borderRadius:'5px',background:'var(--bg)',padding:'10px',fontSize:'10px'}});
+      rateSec.appendChild(rateDetail);
+      let _rateLastIdx=-1;
+      new Chart(rateC,{type:'scatter',data:{datasets:[{label:'Vendors',data:rateData,backgroundColor:rateData.map(d=>d.y<d.x*0.8?'#ef4444':d.y>d.x*1.1?'#22c55e':'#4f7cff'),pointRadius:7,hoverRadius:9}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>`${ctx.raw.label}: contracted ${ctx.raw.x.toFixed(2)}% | actual ${ctx.raw.y.toFixed(2)}%`}}},scales:{x:{title:{display:true,text:'Contracted %',color:'var(--muted)',font:{size:9}},ticks:{color:'var(--muted)',font:{size:9}}},y:{title:{display:true,text:'Actual %',color:'var(--muted)',font:{size:9}},ticks:{color:'var(--muted)',font:{size:9}}}},onClick(e,els){
+        if(!els.length){rateDetail.style.display='none';_rateLastIdx=-1;return;}
+        const idx=els[0].index;
+        if(idx===_rateLastIdx){rateDetail.style.display='none';_rateLastIdx=-1;return;}
+        _rateLastIdx=idx;
+        const d=rateData[idx];
+        const v=sd.find(sv=>sv._name===d._name);
+        const vcsV=v&&S.vendors.find(sv=>vendorNamesMatch(sv.name,v._name||v.name));
+        rateDetail.innerHTML='';rateDetail.style.display='';
+        const status=d.y<d.x*0.8?'⚠ Under-paying':d.y>d.x*1.1?'↑ Over-paying':'✓ On track';
+        const col=d.y<d.x*0.8?'var(--red)':d.y>d.x*1.1?'var(--green)':'var(--blue)';
+        const hdr=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'8px'}});
+        const nm=el('span',{style:{fontWeight:'700',fontSize:'11px',color:vcsV?'var(--blue)':'var(--text)',cursor:vcsV?'pointer':'default'}},d._name||d.label);
+        if(vcsV)nm.onclick=()=>openDetail(vcsV);
+        hdr.appendChild(nm);
+        hdr.appendChild(el('span',{style:{fontWeight:'700',color:col}},status));
+        rateDetail.appendChild(hdr);
+        [[`Contracted fee rate`,d.x.toFixed(2)+'%'],[`Actual fee rate`,d.y.toFixed(2)+'%'],[`Delta`,((d.y-d.x).toFixed(2))+'%'],[`YTD Spend`,v?'$'+Math.round(v.totalSpend).toLocaleString():'—'],[`Fees Received`,v?'$'+Math.round(v.totalFees).toLocaleString():'—']].forEach(([l,val])=>{
+          const row2=el('div',{style:{display:'flex',justifyContent:'space-between',padding:'2px 0',borderBottom:'1px solid var(--border)',fontSize:'9px'}});
+          row2.appendChild(el('span',{style:{color:'var(--muted)'}},l));row2.appendChild(el('span',{style:{fontWeight:'600'}},String(val)));
+          rateDetail.appendChild(row2);
+        });
+        if(vcsV){const ob=el('button',{class:'btn-xs btn-ghost',style:{marginTop:'6px',fontSize:'9px'},onclick(){openDetail(vcsV);}});ob.textContent='Open Vendor Detail';rateDetail.appendChild(ob);}
+      }}});
       const _rateCInst=Chart.getChart(rateC); if(_rateCInst){ rateC._chartInstance=_rateCInst; rateC._storedConfig={type:_rateCInst.config.type,data:JSON.parse(JSON.stringify(_rateCInst.config.data)),options:_rateCInst.config.options}; }
       [spSec,gapSec,catSec2,rateSec].forEach(makeExpandable);
       cz.appendChild(row2);
@@ -18078,12 +18113,13 @@ function renderAnalytics(c) {
     const reps=Object.values(repMap)
       .filter(r=>{
         if(!r.name||r.name==='Unknown') return false;
-        const hasRealWork = r.opps.length>0||r.cases.length>0;
-        if(!hasRealWork&&!r._isVCSRep) return false;
-        if(r._isVCSRep&&r.opps.length===0&&r.cases.length===0) return false;
-        // Active staff filter — if EMPLOYEE_DIRECTORY is available and rep has an email, it must match
-        if(_dirEmails.size>0&&r.email&&!_dirEmails.has(r.email.toLowerCase())) return false;
-        return hasRealWork;
+        // F1: Only show EMPLOYEE_DIRECTORY users when directory is available; all appear even with 0 pipeline
+        if(_dirEmails.size>0){
+          return !!(r.email&&_dirEmails.has(r.email.toLowerCase()));
+        }
+        // Fallback: VCS reps or anyone with real activity
+        const hasRealWork=r.opps.length>0||r.cases.length>0;
+        return r._isVCSRep||hasRealWork;
       })
       .sort((a,b)=>{
         if(a._isVCSRep&&!b._isVCSRep) return -1;
@@ -18285,14 +18321,12 @@ function renderAnalytics(c) {
       c.appendChild(row1);
     });
 
-    // Detailed rep table — sortable, filterable, clickable rows
+    // Detailed rep table — sortable columns (F2: sticky headers, F3: no text filter)
     {
-      const repTblWrap=el('div',{style:{marginTop:'12px'}});
-      const repFi=el('input',{type:'text',placeholder:'Filter reps...',style:{marginBottom:'6px',width:'220px',fontSize:'10px',padding:'3px 8px',border:'1px solid var(--border)',borderRadius:'3px',background:'var(--bg)',color:'var(--text)'}});
-      repTblWrap.appendChild(repFi);
-      const repTbl=el('table',{class:'data-table'});
+      const repTblWrap=el('div',{style:{marginTop:'12px',maxHeight:'320px',overflowY:'auto',border:'1px solid var(--border)',borderRadius:'4px'}});
+      const repTbl=el('table',{class:'data-table',style:{width:'100%'}});
       const repTh=el('thead');const repHr=el('tr');
-      ['Rep','Opps','Pipeline','Overdue Tasks','Cases'].forEach(h=>repHr.appendChild(el('th',{style:{fontSize:'9px'}},h)));
+      ['Rep','Opps','Pipeline','Overdue Tasks','Cases'].forEach(h=>{const th=el('th',{style:{fontSize:'9px',position:'sticky',top:'0',zIndex:'1',background:'var(--card)'}},h);repHr.appendChild(th);});
       repTh.appendChild(repHr);repTbl.appendChild(repTh);
       const repTb=el('tbody');
       const _repRowFn=r=>{
@@ -18335,7 +18369,6 @@ function renderAnalytics(c) {
         repTb.appendChild(tr);
       });
       repTbl.appendChild(repTb);
-      repFi.addEventListener('input',()=>{const q=repFi.value.toLowerCase();[...repTb.rows].forEach(tr=>tr.style.display=!q||tr.textContent.toLowerCase().includes(q)?'':'none');});
       addSortToTable(repTbl,filteredReps,_repRowFn);
       repTblWrap.appendChild(repTbl);
       c.appendChild(repTblWrap);
