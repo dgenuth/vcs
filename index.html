@@ -403,6 +403,7 @@ body.ps-light-theme .page-sticky-hdr{background:#edf4fb;border-bottom-color:rgba
 /* Tables */
 .tbl-wrap{overflow-x:auto;overflow-y:auto;max-height:calc(100vh - 200px);margin-bottom:8px;border:1px solid var(--border);border-radius:4px}
 .tbl-wrap .data-table thead th{position:sticky;top:0;z-index:20;background:var(--sb)!important;box-shadow:0 2px 4px rgba(0,0,0,.18);will-change:transform}
+.summary-section .data-table thead th,.modal-body .data-table thead th,.scrollable-table-wrap .data-table thead th{position:sticky;top:0;z-index:1;background:var(--card)}
 body.ps-light-theme .tbl-wrap .data-table thead th{background:#0078b8!important;color:#fff!important;box-shadow:0 2px 4px rgba(0,0,0,.12)}
 .data-table{border-collapse:collapse;font-size:10px;width:max-content;min-width:100%}
 .data-table th{position:sticky;top:0;background:var(--sb);color:var(--muted);text-align:left;padding:5px 6px;border-bottom:2px solid var(--border);font-weight:500;white-space:nowrap;z-index:20;user-select:none;cursor:default;will-change:transform}
@@ -1096,8 +1097,11 @@ async function completeLogin() {
     }
   } catch(e) { console.warn('[VCS] Drive session check failed:', e.message); }
   setTimeout(applyCopyProtection, 300);
-  const autoLoaded = S.settings.driveAutoSync && S.settings.driveFileId && S.settings.googleClientId
-    ? await tryAutoLoadFromDrive()
+  // H2: If the session was active before a page reload (OAuth redirect or cache-bust),
+  // attempt Drive auto-load even when driveAutoSync is off — the user had a file loaded.
+  const _wasSessionActive = sessionStorage.getItem('vcs_session_active') === '1';
+  const autoLoaded = (S.settings.driveFileId && S.settings.googleClientId && (_wasSessionActive || S.settings.driveAutoSync))
+    ? await tryAutoLoadFromDrive(_wasSessionActive && !S.settings.driveAutoSync)
     : false;
   if (!autoLoaded) {
     $('upload-screen').style.display = 'flex';
@@ -1922,7 +1926,7 @@ async function loadFile(file) {
     } catch(scErr) { console.warn('[VCS] Share Criteria parse error (non-fatal):', scErr.message); }
 
     S.dbHiddenCols = new Set(); // Reset: show all permitted cols by default on each load
-    S.loaded=true; setTimeout(applyCopyProtection, 300); S.view=(['settings','datacheck'].includes(S.view)?S.settings.defaultView||'today':S.view)||'today'; S.search=''; S.dirty.clear();
+    S.loaded=true; sessionStorage.setItem('vcs_session_active','1'); setTimeout(applyCopyProtection, 300); S.view=(['settings','datacheck'].includes(S.view)?S.settings.defaultView||'today':S.view)||'today'; S.search=''; S.dirty.clear();
     $('search').value = '';
     $('upload-screen').style.display='none';
     $('app').style.display='flex';
@@ -5443,9 +5447,9 @@ const SETTINGS_STORAGE_KEY = 'vcs_user_settings_v2';
 const PERSONAL_SETTING_KEYS = ['theme','fontSize','compactRows','defaultView','showKPIs',
   'showHebrew','autoSortByScore','showSnoozed','showDismissedDefault','animateBadges',
   'emailSignature','cols','dbHiddenCols','sidebarWidth','closedDays','oooDays','dialerUrl',
-  'myPhone','sfClientId']; // sfClientId is per-user (each user has own SF credentials)
+  'myPhone','sfClientId','aiProvider']; // sfClientId is per-user (each user has own SF credentials)
 // Global settings — org-wide, admin-controlled, apply to all sessions
-const GLOBAL_SETTING_KEYS = ['sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey','apiKey','grokKey'];
+const GLOBAL_SETTING_KEYS = ['sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey','apiKey','grokKey','aiKeyShared','composioKey'];
 window.GLOBAL_SETTING_KEYS = GLOBAL_SETTING_KEYS;
 const PERSIST_KEYS = [...PERSONAL_SETTING_KEYS, ...GLOBAL_SETTING_KEYS];
 
@@ -6102,13 +6106,13 @@ async function logout(){
     }catch(e){console.warn('Drive push on logout failed:',e);}
   }
   USER.email=null;USER.name=null;USER.role=null;USER.loggedIn=false;USER.loginTime=null;USER.sfToken=null;USER.sfInstance=null;USER.hiddenFields=[];
-  sessionStorage.removeItem('vcs_session');sessionStorage.removeItem('vcs_sf_token');
+  sessionStorage.removeItem('vcs_session');sessionStorage.removeItem('vcs_sf_token');sessionStorage.removeItem('vcs_session_active');
   $('login-screen').style.display='flex';$('upload-screen').style.display='none';$('app').style.display='none';$('user-badge').style.display='none';
 }
 
 // Auto-load from Google Drive after login (requires HTTPS hosting)
-async function tryAutoLoadFromDrive(){
-  if(!S.settings.driveAutoSync) return false;
+async function tryAutoLoadFromDrive(force=false){
+  if(!S.settings.driveAutoSync&&!force) return false;
   try{
     toast('☁ Loading Vendor Catalogue from Google Drive...','#4f7cff');
     // Try proxy first — no auth needed, works for all users
