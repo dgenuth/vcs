@@ -13844,11 +13844,12 @@ function renderNetworkIntel(c) {
   // Top 10, minimum 3 pairs (fall back to unsorted global pool if filter too narrow)
   const _topN=Math.max(3,Math.min(10,filteredPairs.length));
   const topPairs=filteredPairs.length>=3?filteredPairs.slice(0,10):scoredPairs.slice(0,Math.max(3,Math.min(10,scoredPairs.length)));
+  console.log('[VCS NetworkIntel] vendors:',ALL.length,'pairs scored:',scoredPairs.length,'pairs shown:',topPairs.length);
   const countLbl=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'6px'}},
     'Showing '+topPairs.length+' of '+filteredPairs.length+' matches'+(scoredPairs.length!==filteredPairs.length?' ('+scoredPairs.length+' total)':''));
   xrefSec.appendChild(countLbl);
 
-  const pairCards=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(340px,1fr))',gap:'8px'}});
+  const pairCards=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(320px,1fr))',gap:'8px'}});
 
   if(!topPairs.length){
     pairCards.appendChild(el('p',{class:'muted',style:{padding:'10px 0'}},scoredPairs.length?'No matches for the selected category filter. Try "All".':'Not enough service description data to generate matches. Add "Product / Description" and "Added Value" details to your vendor records for smarter suggestions.'));
@@ -13856,41 +13857,41 @@ function renderNetworkIntel(c) {
 
   topPairs.forEach(({vendorA,topMatch,matchedNeeds,score})=>{
     const aCat=vendorA.category||'';
-    const reason=matchedNeeds.slice(0,2).join(', ');
+    const bCat=topMatch.category||'';
     const matchDots='●'.repeat(score)+'○'.repeat(5-score);
+    const whyText=matchedNeeds.length
+      ? vendorA.name+' ('+aCat+') needs '+matchedNeeds.slice(0,3).join(', ')+', which '+topMatch.name+' provides.'
+      : 'Complementary categories — '+aCat+' and '+bCat+' rarely overlap but frequently need each other.';
 
     const card=el('div',{style:{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'5px',padding:'10px'}});
-    // Header
-    const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'6px',flexWrap:'wrap'}});
-    hdr.appendChild(el('span',{style:{background:'rgba(79,124,255,.12)',color:'var(--blue)',padding:'2px 6px',borderRadius:'3px',fontSize:'9px'}},aCat));
-    hdr.appendChild(el('span',{style:{color:'var(--muted)'}},'needs'));
-    hdr.appendChild(el('span',{style:{background:'rgba(34,197,94,.1)',color:'var(--green)',padding:'2px 6px',borderRadius:'3px',fontSize:'9px',fontWeight:'600'}},reason));
-    hdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',letterSpacing:'1px'}},matchDots));
-    card.appendChild(hdr);
 
-    const row=el('div',{style:{display:'flex',gap:'10px',alignItems:'flex-start'}});
-    const aDiv=el('div',{style:{flex:'1',background:'rgba(79,124,255,.05)',borderRadius:'3px',padding:'5px 7px'}});
-    aDiv.appendChild(el('div',{style:{fontSize:'9px',color:'var(--blue)',fontWeight:'600',marginBottom:'2px'}},'The vendor:'));
-    const _aLnk=vLink(vendorA);_aLnk.style.cssText='font-size:10px;font-weight:600;';aDiv.appendChild(_aLnk);
-    aDiv.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},(vendorA.product||vendorA.addedValue||aCat||'').slice(0,60)));
-    row.appendChild(aDiv);
-    row.appendChild(el('span',{style:{alignSelf:'center',color:'var(--green)',fontSize:'16px'}},'⟷'));
-    const bDiv=el('div',{style:{flex:'1',background:'rgba(34,197,94,.05)',borderRadius:'3px',padding:'5px 7px'}});
-    bDiv.appendChild(el('div',{style:{fontSize:'9px',color:'var(--green)',fontWeight:'600',marginBottom:'2px'}},'Introduce to:'));
-    const _bLnk=vLink(topMatch);_bLnk.style.cssText='font-size:10px;font-weight:600;';bDiv.appendChild(_bLnk);
-    bDiv.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},(topMatch.product||topMatch.addedValue||topMatch.category||'').slice(0,60)));
-    if(topMatch.adminFee)bDiv.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},topMatch.adminFee+' admin fee'));
-    row.appendChild(bDiv);
-    card.appendChild(row);
+    // F2: Header — "Vendor A × Vendor B"
+    const titleRow=el('div',{style:{display:'flex',alignItems:'center',gap:'5px',marginBottom:'5px',flexWrap:'wrap'}});
+    const _aLnk=vLink(vendorA);_aLnk.style.cssText='font-size:11px;font-weight:700;';
+    const _bLnk=vLink(topMatch);_bLnk.style.cssText='font-size:11px;font-weight:700;';
+    titleRow.appendChild(_aLnk);
+    titleRow.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'13px','fontWeight':'400'}},'×'));
+    titleRow.appendChild(_bLnk);
+    card.appendChild(titleRow);
 
-    // "Why this match?" expandable
-    const whyRow=el('div',{style:{marginTop:'5px',display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap'}});
-    const whyToggle=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',padding:'1px 5px',color:'var(--muted)'}},
-      '▶ Why this match?');
-    const whyBody=el('div',{style:{display:'none',fontSize:'9px',color:'var(--muted)',marginTop:'4px',padding:'5px 8px',background:'var(--card)',borderRadius:'3px',lineHeight:'1.5'}});
-    whyBody.textContent='Matched keywords: '+matchedNeeds.join(', ')+' · Score: '+score+'/5 (complementary categories + '+matchedNeeds.length+' service overlap'+(matchedNeeds.length!==1?'s':'')+')'+(topMatch.markets?' · '+topMatch.name+' serves: '+topMatch.markets:'');
-    whyToggle.onclick=()=>{const open=whyBody.style.display!=='none';whyBody.style.display=open?'none':'';whyToggle.textContent=(open?'▶':'▼')+' Why this match?';};
-    whyRow.appendChild(whyToggle);
+    // Category tags + match dots
+    const metaRow=el('div',{style:{display:'flex',alignItems:'center',gap:'5px',marginBottom:'6px',flexWrap:'wrap'}});
+    metaRow.appendChild(el('span',{style:{background:'rgba(79,124,255,.12)',color:'var(--blue)',padding:'1px 5px',borderRadius:'3px',fontSize:'8px'}},aCat||'—'));
+    metaRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'×'));
+    metaRow.appendChild(el('span',{style:{background:'rgba(34,197,94,.1)',color:'var(--green)',padding:'1px 5px',borderRadius:'3px',fontSize:'8px'}},bCat||'—'));
+    metaRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--amber)',letterSpacing:'1px',marginLeft:'auto'}},matchDots));
+    card.appendChild(metaRow);
+
+    // Why text (always visible, concise)
+    card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.4',marginBottom:'6px',padding:'4px 6px',background:'var(--card)',borderRadius:'3px'}},whyText));
+
+    // Vendor detail snippets
+    const snipRow=el('div',{style:{display:'flex',gap:'8px',marginBottom:'6px'}});
+    if(vendorA.product||vendorA.addedValue)snipRow.appendChild(el('div',{style:{flex:'1',fontSize:'8px',color:'var(--muted)',lineHeight:'1.3'}},'"'+(vendorA.product||vendorA.addedValue||'').slice(0,50)+'"'));
+    if(topMatch.product||topMatch.addedValue)snipRow.appendChild(el('div',{style:{flex:'1',fontSize:'8px',color:'var(--muted)',lineHeight:'1.3'}},'"'+(topMatch.product||topMatch.addedValue||'').slice(0,50)+'"'));
+    if(snipRow.children.length)card.appendChild(snipRow);
+
+    const whyRow=el('div',{style:{marginTop:'2px',display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap'}});
     // Introduce button
     whyRow.appendChild(el('button',{class:'btn-xs',style:{fontSize:'9px',background:'rgba(79,124,255,.12)',color:'var(--blue)',border:'1px solid rgba(79,124,255,.3)',borderRadius:'3px',padding:'2px 8px',cursor:'pointer',marginLeft:'auto'},
       onclick(e){
@@ -13901,7 +13902,6 @@ function renderNetworkIntel(c) {
         openEmailModal(Object.assign({},vendorA,{notes:introContext+(vendorA.notes?'\n\n'+vendorA.notes:''),_introTargetName:topMatch.name,_introTargetCategory:topMatch.category||''}),{title:'✉️ Introduce: '+vendorA.name+' × '+topMatch.name,subject:introSubj,body:introBody});
       }},'✉ Introduce'));
     card.appendChild(whyRow);
-    card.appendChild(whyBody);
     pairCards.appendChild(card);
   });
 
