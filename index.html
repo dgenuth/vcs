@@ -18260,8 +18260,16 @@ function renderAnalytics(c) {
     }
     const sb=S._sfBoardData;
     const _rawRepOpps=sb?.opps||[], tasks=sb?.tasks||[], _rawRepCases=sb?.cases||[];
-    const opps=filterByDateRange(_rawRepOpps,'CloseDate');
+    // C4: Debug log before filter
+    console.log('[VCS RepPerf] Raw opps:',_rawRepOpps.length,'tasks:',tasks.length,'cases:',_rawRepCases.length);
+    console.log('[VCS RepPerf] Sample CloseDates:',_rawRepOpps.slice(0,3).map(o=>o.CloseDate));
+    // C1: YTD uses CloseDate in current calendar year (includes future close dates); All Time = no filter
+    const _repYear=new Date().getFullYear();
+    const _isYTD=!S._analyticsDateRange||S._analyticsDateRange==='ytd';
+    const _isAll=S._analyticsDateRange==='all';
+    const opps=_isAll?_rawRepOpps:_isYTD?_rawRepOpps.filter(o=>{const d=new Date(o.CloseDate||'');return!isNaN(d)&&d.getFullYear()===_repYear;}):filterByDateRange(_rawRepOpps,'CloseDate');
     const cases=filterByDateRange(_rawRepCases,'CreatedDate');
+    console.log('[VCS RepPerf] After filter ('+(_isYTD?'YTD yr '+_repYear:S._analyticsDateRange)+'):',opps.length,'opps,',cases.length,'cases');
     if(!opps.length&&!tasks.length){
       const loadSec=el('div',{class:'summary-section',style:{textAlign:'center',padding:'24px'}});
       loadSec.appendChild(el('p',{style:{fontSize:'12px',color:'var(--muted)',marginBottom:'12px'}},'Load the Salesforce Board to see rep performance data.'));
@@ -18552,29 +18560,56 @@ function renderAnalytics(c) {
       };
       filteredReps.forEach(r=>{
         const tr=el('tr',{style:{cursor:'pointer',borderLeft:'3px solid '+(r.overdueTask>2?'var(--red)':r.overdueTask>0?'var(--amber, #f59e0b)':'transparent')},onclick(){
+          // C2/C3: Two-tab popup (Opportunities + Cases), 75vw, scrollable 60vh, sticky thead
           openModal(body=>{
-            body.style.minWidth='min(85vw,920px)';
-            body.appendChild(el('h3',{style:{marginBottom:'10px'}},r.name+' — Opportunities ('+r.opps.length+')'));
-            if(!r.opps.length){body.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'10px'}},'No open opportunities.'));const bb=el('div',{class:'modal-btns'});bb.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(bb);return;}
-            const tbl2=el('table',{class:'data-table',style:{marginBottom:'8px'}});
-            const th2=el('thead');const hr2=el('tr');
-            ['Opp Name','Account','Stage','Amount','Close Date','Age (days)'].forEach(h=>hr2.appendChild(el('th',{style:{fontSize:'8px'}},h)));
-            th2.appendChild(hr2);tbl2.appendChild(th2);
-            const tb2=el('tbody');
+            body.style.cssText+='width:75vw;max-width:75vw;';
+            body.appendChild(el('h3',{style:{marginBottom:'10px'}},r.name+' — Details'));
+            // Tab bar
+            const tabBar=el('div',{style:{display:'flex',gap:'4px',marginBottom:'8px',borderBottom:'1px solid var(--border)'}});
+            const panes=[];
+            let _activeTab=0;
+            function showTab(i){_activeTab=i;tabs.forEach((t,j)=>{t.style.fontWeight=j===i?'700':'400';t.style.borderBottom=j===i?'2px solid var(--blue)':'2px solid transparent';t.style.color=j===i?'var(--blue)':'var(--muted)';});panes.forEach((p,j)=>p.style.display=j===i?'':'none');}
+            const tabs=[];
+            ['Opportunities ('+r.opps.length+')','Cases ('+r.cases.length+')'].forEach((label,i)=>{
+              const t=el('button',{style:{background:'none',border:'none',cursor:'pointer',padding:'4px 10px',fontSize:'10px',fontWeight:'400',color:'var(--muted)',borderBottom:'2px solid transparent'},onclick(){showTab(i);}},label);
+              tabs.push(t);tabBar.appendChild(t);
+            });
+            body.appendChild(tabBar);
+            // Opps pane
+            const oppPane=el('div',{style:{maxHeight:'60vh',overflowY:'auto'}});
             const today2=new Date();today2.setHours(0,0,0,0);
-            const _oFn=o=>{
-              const nameEl2=USER.sfInstance&&o.Id?el('a',{href:USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view',target:'_blank',rel:'noopener noreferrer',style:{color:'var(--blue)',fontWeight:'600',fontSize:'10px',textDecoration:'none'}},o.Name||'—'):el('span',{style:{fontWeight:'600',fontSize:'10px'}},o.Name||'—');
-              const age=o.CloseDate?Math.round((today2-new Date(o.CloseDate))/86400000):null;
-              const ageEl=el('span',{style:{color:age&&age>0?'var(--red)':age&&age>-30?'var(--amber, #f59e0b)':'var(--green)',fontWeight:'600'}},age!==null?String(age):'—');
-              return[nameEl2,o._accountName||o.Account?.Name||'—',o.StageName||'—','$'+Math.round(Number(o.Amount||0)).toLocaleString(),o.CloseDate||'—',ageEl];
-            };
-            r.opps.forEach(o=>{const tr2=document.createElement('tr');_oFn(o).forEach(v=>{const td=document.createElement('td');if(v instanceof Element)td.appendChild(v.cloneNode(true));else td.textContent=String(v);tr2.appendChild(td);});tb2.appendChild(tr2);});
-            tbl2.appendChild(tb2);
-            const fi2=el('input',{type:'text',placeholder:'Filter opportunities...',style:{marginBottom:'6px',width:'100%',fontSize:'10px',padding:'3px 8px',border:'1px solid var(--border)',borderRadius:'3px',background:'var(--bg)',color:'var(--text)'}});
-            fi2.addEventListener('input',()=>{const q=fi2.value.toLowerCase();[...tb2.rows].forEach(tr3=>tr3.style.display=!q||tr3.textContent.toLowerCase().includes(q)?'':'none');});
-            body.appendChild(fi2);body.appendChild(tbl2);
-            addSortToTable(tbl2,r.opps,_oFn);
-            body.appendChild(el('p',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px'}},'Age = days until/past close date. Red = past due.'));
+            if(r.opps.length){
+              const tOpp=el('table',{class:'data-table',style:{width:'100%'}});
+              const thO=el('thead',{style:{position:'sticky',top:'0',zIndex:'1',background:'var(--card)'}});const hrO=el('tr');
+              ['Opportunity','Account','Stage','Amount','Close Date'].forEach(h=>hrO.appendChild(el('th',{style:{fontSize:'8px',position:'sticky',top:'0',background:'var(--card)'}},h)));
+              thO.appendChild(hrO);tOpp.appendChild(thO);
+              const tbO=el('tbody');
+              const _oFn=o=>{
+                const nameEl2=USER.sfInstance&&o.Id?el('a',{href:USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view',target:'_blank',rel:'noopener noreferrer',style:{color:'var(--blue)',fontWeight:'600',fontSize:'10px',textDecoration:'none'}},o.Name||'—'):el('span',{style:{fontWeight:'600',fontSize:'10px'}},o.Name||'—');
+                return[nameEl2,o._accountName||o.Account?.Name||'—',o.StageName||'—','$'+Math.round(Number(o.Amount||0)).toLocaleString(),o.CloseDate||'—'];
+              };
+              r.opps.forEach(o=>{const tr2=el('tr',{style:{cursor:USER.sfInstance&&o.Id?'pointer':'default'},onclick(){if(USER.sfInstance&&o.Id)window.open(USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view','_blank');}});_oFn(o).forEach(v=>{const td=document.createElement('td');if(v instanceof Element)td.appendChild(v.cloneNode(true));else td.textContent=String(v);tr2.appendChild(td);});tbO.appendChild(tr2);});
+              tOpp.appendChild(tbO);addSortToTable(tOpp,r.opps,_oFn);oppPane.appendChild(tOpp);
+            } else { oppPane.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'10px',padding:'12px'}},'No opportunities.')); }
+            panes.push(oppPane);body.appendChild(oppPane);
+            // Cases pane
+            const casePane=el('div',{style:{maxHeight:'60vh',overflowY:'auto',display:'none'}});
+            if(r.cases.length){
+              const tCase=el('table',{class:'data-table',style:{width:'100%'}});
+              const thC=el('thead');const hrC=el('tr');
+              ['Subject','Account','Status','Priority'].forEach(h=>hrC.appendChild(el('th',{style:{fontSize:'8px',position:'sticky',top:'0',background:'var(--card)'}},h)));
+              thC.appendChild(hrC);tCase.appendChild(thC);
+              const tbC=el('tbody');
+              const _cFn=cs=>{
+                const nameEl3=USER.sfInstance&&cs.Id?el('a',{href:USER.sfInstance+'/lightning/r/Case/'+cs.Id+'/view',target:'_blank',rel:'noopener noreferrer',style:{color:'var(--blue)',fontWeight:'600',fontSize:'10px',textDecoration:'none'}},cs.Subject||'—'):el('span',{style:{fontWeight:'600',fontSize:'10px'}},cs.Subject||'—');
+                const priColor=cs.Priority==='High'?'var(--red)':cs.Priority==='Medium'?'var(--amber)':'var(--muted)';
+                return[nameEl3,cs._accountName||'—',cs.Status||'—',el('span',{style:{color:priColor,fontWeight:'600',fontSize:'9px'}},cs.Priority||'—')];
+              };
+              r.cases.forEach(cs=>{const tr2=el('tr',{style:{cursor:USER.sfInstance&&cs.Id?'pointer':'default'},onclick(){if(USER.sfInstance&&cs.Id)window.open(USER.sfInstance+'/lightning/r/Case/'+cs.Id+'/view','_blank');}});_cFn(cs).forEach(v=>{const td=document.createElement('td');if(v instanceof Element)td.appendChild(v.cloneNode(true));else td.textContent=String(v);tr2.appendChild(td);});tbC.appendChild(tr2);});
+              tCase.appendChild(tbC);addSortToTable(tCase,r.cases,_cFn);casePane.appendChild(tCase);
+            } else { casePane.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'10px',padding:'12px'}},'No cases.')); }
+            panes.push(casePane);body.appendChild(casePane);
+            showTab(0);
             const bb=el('div',{class:'modal-btns'});bb.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(bb);
           });
         }});
