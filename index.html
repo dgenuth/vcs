@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -3894,6 +3894,38 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   if (isDismissed) stickySlot.appendChild(el('span',{class:'dismissed-badge'},'DISMISSED'));
   if (snoozedUntil && snoozedUntil>new Date()) stickySlot.appendChild(el('span',{class:'snoozed-badge'},`💤 until ${fmtDate(snoozedUntil)}`));
 
+  // V4: Contact info always visible in header
+  if(vendor.procContact||vendor.bizPhone||vendor.mobile||vendor.email){
+    const contactRow=el('div',{style:{display:'flex',gap:'10px',flexWrap:'wrap',alignItems:'center',fontSize:'10px',padding:'2px 0 0 0',width:'100%'}});
+    if(vendor.procContact) contactRow.appendChild(el('span',{style:{color:'var(--text)',fontWeight:'600'}},vendor.procContact));
+    const ph=vendor.bizPhone||vendor.mobile;
+    if(ph) contactRow.appendChild(el('a',{href:'tel:'+ph.replace(/[^+\d]/g,''),style:{color:'var(--blue)',textDecoration:'none',fontSize:'10px'}},ph));
+    if(vendor.email) contactRow.appendChild(el('a',{href:'mailto:'+vendor.email,style:{color:'var(--blue)',textDecoration:'none',fontSize:'10px'}},vendor.email));
+    stickySlot.appendChild(contactRow);
+  }
+
+  // V3: Quick action bar — icon buttons with tooltips
+  {
+    const qBar=el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',width:'100%',padding:'4px 0 0 0',borderTop:'1px solid rgba(128,128,128,.1)',marginTop:'4px'}});
+    const _canAct2=['admin','procurement','manager','cro'].includes(USER.role);
+    const qBtn=(icon,tip,fn,col)=>{
+      const b=el('button',{title:tip,style:{fontSize:'14px',background:'none',border:'none',cursor:'pointer',padding:'2px 5px',borderRadius:'3px',color:col||'var(--text)',lineHeight:'1'},onclick:fn});
+      b.textContent=icon;
+      b.addEventListener('mouseenter',()=>b.style.background='var(--bg)');
+      b.addEventListener('mouseleave',()=>b.style.background='none');
+      return b;
+    };
+    const ph2=vendor.bizPhone||vendor.mobile;
+    if(ph2) qBar.appendChild(qBtn('📞','Call '+vendor.procContact,()=>dialPhone(ph2,vendor)));
+    if(_canAct2) qBar.appendChild(qBtn('📧','Send email',()=>openEmailModal(vendor),'var(--blue)'));
+    if(hasPermission('editNotes')) qBar.appendChild(qBtn('📝','Add note',()=>openStructuredNoteModal(vendor),'var(--green)'));
+    if(hasPermission('editContract')) qBar.appendChild(qBtn('📄','Edit contract',()=>{if(vendor._detailTab!=='contract'){vendor._detailTab='contract';openDetail(vendor,fromAnalytics,false);}else{openDetail(vendor,fromAnalytics,false);}}),'var(--amber)');
+    if(USER.sfToken&&vendor.sfAccountId) qBar.appendChild(qBtn('☁','Open in Salesforce',()=>window.open(USER.sfInstance+'/lightning/r/Account/'+vendor.sfAccountId+'/view','_blank'),'#38bdf8'));
+    if(_canAct2) qBar.appendChild(qBtn('⚡','AI Briefing',()=>openAIBriefingModal(vendor),'var(--amber)'));
+    if(_canAct2) qBar.appendChild(qBtn('📅','Schedule meeting',()=>openCalendarEventModal(isoDate(new Date()),vendor.name)));
+    stickySlot.appendChild(qBar);
+  }
+
   // ── Detail body header (about / follow-up — not sticky) ──
   const hdr=el('div',{class:'detail-hdr'});
   if (vendor.about) hdr.appendChild(el('p',{class:'detail-about'},String(vendor.about)));
@@ -4400,6 +4432,59 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
   // ── Vendor Relationships ──
   if (vendor.source === 'psd') renderRelationshipsSection(body, vendor);
+
+  // ── V2: Interaction Timeline ──
+  {
+    if(!S._tlOpen) S._tlOpen={};
+    const tlKey=vendor.name;
+    const tlEvents=[];
+    // Gather events from _notesLog
+    (vendor._notesLog||[]).forEach(n=>tlEvents.push({ts:new Date(n.ts||n.date||0),type:'note',icon:'📝',label:n.type||'note',text:n.text||'',author:n.user?n.user.split('@')[0]:''}));
+    if(itwVendor)(itwVendor._notesLog||[]).forEach(n=>tlEvents.push({ts:new Date(n.ts||n.date||0),type:'itw',icon:'💼',label:'pipeline',text:n.text||'',author:n.user?n.user.split('@')[0]:''}));
+    // lastComm
+    const lcDate=parseDate(vendor.lastComm);
+    if(lcDate) tlEvents.push({ts:lcDate,type:'comm',icon:'📞',label:'last contact',text:'Last communication recorded'});
+    // Contract effective/expiry
+    const eff2=parseDate(vendor.contractEffective||vendor.inContractSince);
+    if(eff2) tlEvents.push({ts:eff2,type:'contract',icon:'📄',label:'contract effective',text:'Contract effective date'});
+    const exp2=getCurrentExpiry(vendor);
+    if(exp2) tlEvents.push({ts:exp2,type:'contract',icon:'⏰',label:'contract expires',text:'Contract expiry date'});
+    // Follow-up
+    const fu2=parseDate(vendor.followUp);
+    if(fu2) tlEvents.push({ts:fu2,type:'followup',icon:'📅',label:'follow-up',text:'Scheduled follow-up'});
+
+    tlEvents.sort((a,b)=>b.ts-a.ts);
+
+    const tlSec=el('div',{class:'detail-section'});
+    const tlHdr=el('div',{class:'detail-sec-hdr',style:{cursor:'pointer'},onclick(){S._tlOpen[tlKey]=!S._tlOpen[tlKey];openDetail(vendor,fromAnalytics,false);}});
+    tlHdr.appendChild(el('h4',{class:'detail-sec-title',style:{marginBottom:'0'}},'🕒 Timeline ('+tlEvents.length+')'));
+    tlHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},(S._tlOpen[tlKey]?'▼':'▶')));
+    tlSec.appendChild(tlHdr);
+    if(S._tlOpen[tlKey]){
+      const shown=S._tlOpenAll?.[tlKey]?tlEvents:tlEvents.slice(0,10);
+      const tlList=el('div',{style:{marginTop:'6px',display:'flex',flexDirection:'column',gap:'3px',paddingLeft:'8px',borderLeft:'2px solid var(--border)'}});
+      shown.forEach(ev=>{
+        const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'flex-start',padding:'3px 0'}});
+        row.appendChild(el('span',{style:{fontSize:'13px',flexShrink:'0',marginTop:'1px'}},ev.icon));
+        const info=el('div',{style:{flex:'1'}});
+        const dateStr=ev.ts&&!isNaN(ev.ts.getTime())?ev.ts.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'}):'—';
+        const topRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap'}});
+        topRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'80px'}},dateStr));
+        topRow.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',background:'var(--card)',padding:'1px 5px',borderRadius:'3px',border:'1px solid var(--border)',color:'var(--muted)',textTransform:'uppercase'}},ev.label));
+        if(ev.author) topRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},ev.author));
+        info.appendChild(topRow);
+        if(ev.text) info.appendChild(el('div',{style:{fontSize:'10px',color:'var(--text)',marginTop:'2px',lineHeight:'1.4'}},ev.text.slice(0,120)+(ev.text.length>120?'...':'')));
+        row.appendChild(info);
+        tlList.appendChild(row);
+      });
+      if(tlEvents.length>10&&!S._tlOpenAll?.[tlKey]){
+        const moreBtn=el('button',{class:'btn-xs btn-ghost',style:{marginTop:'4px',fontSize:'9px'},onclick(){if(!S._tlOpenAll)S._tlOpenAll={};S._tlOpenAll[tlKey]=true;openDetail(vendor,fromAnalytics,false);}},'▼ Load '+(tlEvents.length-10)+' more');
+        tlList.appendChild(moreBtn);
+      }
+      tlSec.appendChild(tlList);
+    }
+    body.appendChild(tlSec);
+  }
 
   // ── Notes: PSD contract notes + ITW pipeline notes in unified timeline ──
   if (hasPermission('editNotes') || ['admin','procurement','manager','cro'].includes(USER.role)) {
@@ -7155,34 +7240,51 @@ function addNotesSection(body, vendor, title) {
   }
   sec.appendChild(hdr);
 
-  const entries = parseNoteEntries(vendor.notes);
-  if (!entries.length) {
+  // V1: render from _notesLog (structured) as primary source; legacy text notes at bottom
+  const logEntries=(vendor._notesLog||[]).map(n=>({
+    date:n.date||n.ts?.slice(0,10)||'',
+    tag:n.type||'general',
+    author:n.user?n.user.split('@')[0]:'',
+    content:n.text||''
+  }));
+
+  // Also parse legacy text notes — ones not already in _notesLog (by first-line match)
+  const logTexts=new Set(logEntries.map(e=>e.content.slice(0,40)));
+  const textEntries=parseNoteEntries(vendor.notes).filter(e=>!logTexts.has(e.content.slice(0,40)));
+
+  const allEntries=logEntries.length?logEntries:textEntries;
+  const hasLegacy=logEntries.length>0&&textEntries.length>0;
+
+  if(!allEntries.length&&!hasLegacy){
     sec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',padding:'6px 0',fontStyle:'italic'}},'No notes yet. Click + Add to start tracking activity.'));
     body.appendChild(sec); return;
   }
 
-  // Filter buttons — unique tags present in this vendor's notes
-  const uniqueTags=[...new Set(entries.map(e=>e.tag).filter(Boolean))];
+  // Filter chips — unique tags/types
+  const uniqueTags=[...new Set(allEntries.map(e=>e.tag).filter(Boolean))];
+  let activeFilter='all';
+  const filterRow=el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginTop:'6px',marginBottom:'4px'}});
+  const list=el('div',{style:{marginTop:'4px',display:'flex',flexDirection:'column',gap:'4px'}});
+
+  const applyFilter=(tag)=>{
+    activeFilter=tag;
+    [...filterRow.querySelectorAll('button')].forEach(b=>{
+      const isActive=b.dataset.tag===activeFilter;
+      b.style.background=isActive?'var(--blue)':'var(--card)';
+      b.style.color=isActive?'#fff':'var(--muted)';
+      b.style.borderColor=isActive?'var(--blue)':'var(--border)';
+    });
+    [...list.querySelectorAll('.note-card')].forEach(c=>{
+      const ct=c.dataset.tag||'';
+      c.style.display=(activeFilter==='all'||ct===activeFilter)?'':'none';
+    });
+  };
+
   if(uniqueTags.length>1){
-    let activeFilter='all';
-    const filterRow=el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginTop:'6px',marginBottom:'4px'}});
-    const applyFilter=(tag)=>{
-      activeFilter=tag;
-      [...filterRow.querySelectorAll('button')].forEach(b=>{
-        const isActive=b.dataset.tag===activeFilter;
-        b.style.background=isActive?'var(--blue)':'var(--card)';
-        b.style.color=isActive?'#fff':'var(--muted)';
-        b.style.borderColor=isActive?'var(--blue)':'var(--border)';
-      });
-      [...list.querySelectorAll('.note-card')].forEach(c=>{
-        const ct=c.dataset.tag||'';
-        c.style.display=(activeFilter==='all'||ct===activeFilter)?'':'none';
-      });
-    };
-    const allBtn=el('button',{dataset:{tag:'all'},style:{fontSize:'8px',padding:'2px 7px',borderRadius:'3px',cursor:'pointer',border:'1px solid var(--blue)',background:'var(--blue)',color:'#fff'},onclick(){applyFilter('all');}},'All ('+entries.length+')');
+    const allBtn=el('button',{dataset:{tag:'all'},style:{fontSize:'8px',padding:'2px 7px',borderRadius:'3px',cursor:'pointer',border:'1px solid var(--blue)',background:'var(--blue)',color:'#fff'},onclick(){applyFilter('all');}},'All ('+allEntries.length+')');
     filterRow.appendChild(allBtn);
     uniqueTags.forEach(tag=>{
-      const count=entries.filter(e=>e.tag===tag).length;
+      const count=allEntries.filter(e=>e.tag===tag).length;
       const col=NOTE_TAG_COLORS[tag]||'#94a3b8';
       const btn=el('button',{dataset:{tag},style:{fontSize:'8px',padding:'2px 7px',borderRadius:'3px',cursor:'pointer',border:'1px solid var(--border)',background:'var(--card)',color:'var(--muted)'},onclick(){applyFilter(tag);}},tag.toUpperCase()+' ('+count+')');
       filterRow.appendChild(btn);
@@ -7190,75 +7292,63 @@ function addNotesSection(body, vendor, title) {
     sec.appendChild(filterRow);
   }
 
-  const list=el('div',{style:{marginTop:'4px',display:'flex',flexDirection:'column',gap:'4px'}});
-
-  entries.forEach((entry,idx)=>{
-    const isFirst = idx===0;
-    const card=el('div',{class:'note-card',dataset:{tag:entry.tag||''},style:{
+  const _buildNoteCard=(entry,idx)=>{
+    const isFirst=idx===0;
+    const tag=entry.tag||'';
+    const card=el('div',{class:'note-card',dataset:{tag},style:{
       border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden',
-      borderLeft:'3px solid '+(entry.tag?NOTE_TAG_COLORS[entry.tag]||'var(--border)':'var(--border)'),
+      borderLeft:'3px solid '+(tag?NOTE_TAG_COLORS[tag]||'var(--border)':'var(--border)'),
     }});
-
-    // Entry header (always visible)
     const entryHdr=el('div',{style:{
       display:'flex',gap:'6px',alignItems:'center',padding:'5px 8px',
-      background:isFirst?'rgba(34,197,94,.04)':'var(--sb)',cursor:'pointer',
-      userSelect:'none',
+      background:isFirst?'rgba(34,197,94,.04)':'var(--sb)',cursor:'pointer',userSelect:'none',
     }});
-
-    if(entry.date){
-      entryHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'70px'}},entry.date));
-    } else {
-      entryHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'70px'}},'(no date)'));
-    }
-    if(entry.tag){
-      const tagEl=el('span',{style:{fontSize:'8px',fontWeight:'700',padding:'1px 5px',borderRadius:'3px',background:(NOTE_TAG_COLORS[entry.tag]||'#94a3b8')+'22',color:NOTE_TAG_COLORS[entry.tag]||'#94a3b8'}},entry.tag.toUpperCase());
-      entryHdr.appendChild(tagEl);
-    }
-    if(entry.author){
-      entryHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},entry.author));
-    }
-
-    // Preview — first line of content
-    const previewText = entry.content.split('\n')[0].slice(0,80)+(entry.content.length>80||entry.content.includes('\n')?'…':'');
-    const preview=el('span',{style:{fontSize:'10px',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text)'}},previewText);
-    entryHdr.appendChild(preview);
-
+    entryHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'70px'}},entry.date||'(no date)'));
+    if(tag){entryHdr.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',padding:'1px 5px',borderRadius:'3px',background:(NOTE_TAG_COLORS[tag]||'#94a3b8')+'22',color:NOTE_TAG_COLORS[tag]||'#94a3b8'}},tag.toUpperCase()));}
+    if(entry.author){entryHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},entry.author));}
+    const previewText=entry.content.split('\n')[0].slice(0,80)+(entry.content.length>80||entry.content.includes('\n')?'...':'');
+    entryHdr.appendChild(el('span',{style:{fontSize:'10px',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text)'}},previewText));
     const chevron=el('span',{style:{fontSize:'9px',color:'var(--muted)',flexShrink:'0'}},isFirst?'▼':'▶');
     entryHdr.appendChild(chevron);
-
-    // Entry body (collapsible, first entry expanded)
     const entryBody=el('div',{style:{padding:'6px 10px',background:'var(--bg)',display:isFirst?'block':'none'}});
     const nd=el('div',{class:'notes-area',style:{fontSize:'10px',lineHeight:'1.6'}});
-    renderNotesStr(nd, entry.content);
+    renderNotesStr(nd,entry.content);
     entryBody.appendChild(nd);
+    entryHdr.onclick=()=>{const open=entryBody.style.display!=='none';entryBody.style.display=open?'none':'block';chevron.textContent=open?'▶':'▼';};
+    card.appendChild(entryHdr);card.appendChild(entryBody);
+    return card;
+  };
 
-    entryHdr.onclick=()=>{
-      const open=entryBody.style.display!=='none';
-      entryBody.style.display=open?'none':'block';
-      chevron.textContent=open?'▶':'▼';
-    };
+  allEntries.forEach((entry,idx)=>list.appendChild(_buildNoteCard(entry,idx)));
 
-    card.appendChild(entryHdr);
-    card.appendChild(entryBody);
-    list.appendChild(card);
-  });
-
-  // Show/hide older entries if more than 3
-  if(entries.length>3){
+  if(allEntries.length>3){
     const showBtn=el('button',{class:'btn-xs btn-ghost',style:{width:'100%',marginTop:'2px',fontSize:'9px'},onclick(){
-      const allCards=[...list.querySelectorAll('div[style*="border-left"]')];
+      const allCards=[...list.querySelectorAll('.note-card')];
       const hidden=allCards.slice(3);
       const anyHidden=hidden[0]?.style.display==='none';
       hidden.forEach(c=>c.style.display=anyHidden?'':'none');
-      showBtn.textContent=anyHidden?'▲ Show less':'▼ Show '+(entries.length-3)+' older entries';
-    }},'▼ Show '+(entries.length-3)+' older entries');
-    // Hide entries after 3 by default
-    [...list.querySelectorAll('div[style*="border-left"]')].slice(3).forEach(c=>c.style.display='none');
+      showBtn.textContent=anyHidden?'▲ Show less':'▼ Show '+(allEntries.length-3)+' older entries';
+    }},'▼ Show '+(allEntries.length-3)+' older entries');
+    [...list.querySelectorAll('.note-card')].slice(3).forEach(c=>c.style.display='none');
     list.appendChild(showBtn);
   }
 
   sec.appendChild(list);
+
+  // V1: Legacy text notes at bottom (collapsible) if any weren't captured in _notesLog
+  if(hasLegacy){
+    const legWrap=el('div',{style:{marginTop:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
+    const legHdr=el('div',{style:{padding:'4px 8px',background:'var(--sb)',cursor:'pointer',fontSize:'9px',color:'var(--muted)',display:'flex',gap:'6px',alignItems:'center'},
+      onclick(){const b=legWrap.querySelector('.leg-body');const open=b.style.display!=='none';b.style.display=open?'none':'';legHdr.querySelector('span').textContent=open?'▶':'▼';}});
+    legHdr.appendChild(el('span',{},'▶'));
+    legHdr.appendChild(el('span',{style:{flex:'1'}},'Legacy Notes ('+textEntries.length+' entries — pre-structured format)'));
+    legWrap.appendChild(legHdr);
+    const legBody=el('div',{class:'leg-body',style:{display:'none',padding:'6px 8px'}});
+    textEntries.forEach((entry,idx)=>legBody.appendChild(_buildNoteCard(entry,idx)));
+    legWrap.appendChild(legBody);
+    sec.appendChild(legWrap);
+  }
+
   body.appendChild(sec);
 }
 
@@ -7369,6 +7459,12 @@ function addSortToTable(table, rows, rowFn) {
       });
     });
   });
+}
+
+function buildSortableTable(headers, rows, rowFn, opts) {
+  const wrap=buildTable(headers,rows,rowFn,opts);
+  if(wrap instanceof Element){const tbl=wrap.querySelector('table');if(tbl)addSortToTable(tbl,rows,rowFn);}
+  return wrap;
 }
 
 function buildTable(headers, rows, rowFn, opts) {
@@ -10440,6 +10536,8 @@ CRITICAL: Respond ONLY with valid JSON. No preamble, no markdown, no code fences
   "products": "description of covered products/services from agreement body",
   "markets": "National / [state list] / null — GEOGRAPHIC ONLY",
   "classesOfTrade": "types of facilities/customers covered (e.g. Long-term care, Hospitals) or null if not stated",
+  "vendorPhone": "vendor's primary contact phone number from the contract (signing contact or notice address) or null",
+  "contractValue": "total contract value, minimum committed spend, or fee guarantee as a plain number (e.g. 250000) — null if not stated",
   "discrepancies": [
     {"field": "field name", "valueA": "value from source A", "sourceA": "cover sheet / body / calculation", "valueB": "value from source B", "sourceB": "source name", "question": "plain-English question to ask the user"}
   ],
@@ -10577,8 +10675,8 @@ const CONTRACT_FIELD_MAP = [
     (ex.terminationNoticeDays?String(ex.terminationNoticeDays)+' days':null)},
   {field:'contractTerm',   label:'Contract Term',          extract:ex=>ex.contractTermMonths?ex.contractTermMonths+' months':(ex.contractTermYears?ex.contractTermYears+' years':null)},
   {field:'perpetuity',     label:'Perpetuity',             extract:ex=>ex.perpetuity||null},
-  {field:'expiry',         label:'Expiration Date',        extract:ex=>{const d=ex.expirationDate||null;if(!d)return null;const m=d.match(/^(\d{4})-(\d{2})-(\d{2})$/);return m?m[2]+'/'+m[3]+'/'+m[1]:d;}},
-  {field:'effectiveDate',  label:'Effective Date',         extract:ex=>{const d=ex.effectiveDate||null;if(!d)return null;const m=d.match(/^(\d{4})-(\d{2})-(\d{2})$/);return m?m[2]+'/'+m[3]+'/'+m[1]:d;}},
+  {field:'expiry',         label:'Expiration Date',        extract:ex=>{const d=ex.expirationDate||null;if(!d)return null;const m=d.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);return m?m[2].padStart(2,'0')+'/'+m[3].padStart(2,'0')+'/'+m[1]:d;}},
+  {field:'effectiveDate',  label:'Effective Date',         extract:ex=>{const d=ex.effectiveDate||null;if(!d)return null;const m=d.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);return m?m[2].padStart(2,'0')+'/'+m[3].padStart(2,'0')+'/'+m[1]:d;}},
   {field:'markets',        label:'Markets (Geographic)',   extract:ex=>ex.markets||null},
   {field:'classesOfTrade', label:'Classes of Trade',       extract:ex=>ex.classesOfTrade||null},
   {field:'exclusivity',    label:'Exclusivity',            extract:ex=>ex.keyTerms?.exclusivity||null},
@@ -10586,8 +10684,8 @@ const CONTRACT_FIELD_MAP = [
   {field:'product',        label:'Products/Services',      extract:ex=>ex.products||null},
   {field:'priceProtection',label:'Price Protection',       extract:ex=>ex.keyTerms?.priceProtection||null},
   // Additional VCS fields
-  {field:'contractEffective',label:'Effective Date (Contract)',extract:ex=>{const d=ex.effectiveDate||ex.effectiveDateCoverSheet||null;if(!d)return null;const m=d.match(/^(\d{4})-(\d{2})-(\d{2})$/);return m?m[2]+'/'+m[3]+'/'+m[1]:d;}},
-  {field:'contractExpiry', label:'Expiration Date (Contract)',extract:ex=>{const d=ex.expirationDate||ex.expirationDateCalculated||null;if(!d)return null;const m=d.match(/^(\d{4})-(\d{2})-(\d{2})$/);return m?m[2]+'/'+m[3]+'/'+m[1]:d;}},
+  {field:'contractEffective',label:'Effective Date (Contract)',extract:ex=>{const d=ex.effectiveDate||ex.effectiveDateCoverSheet||null;if(!d)return null;const m=d.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);return m?m[2].padStart(2,'0')+'/'+m[3].padStart(2,'0')+'/'+m[1]:d;}},
+  {field:'contractExpiry', label:'Expiration Date (Contract)',extract:ex=>{const d=ex.expirationDate||ex.expirationDateCalculated||null;if(!d)return null;const m=d.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);return m?m[2].padStart(2,'0')+'/'+m[3].padStart(2,'0')+'/'+m[1]:d;}},
   {field:'terminationNoticeDays',label:'Termination Notice Days',extract:ex=>ex.terminationNoticeDays?String(ex.terminationNoticeDays):null},
   {field:'assignment',     label:'Assignment',             extract:ex=>ex.keyTerms?.assignment||null},
   {field:'tail',           label:'Tail (years)',           extract:ex=>{
@@ -10601,6 +10699,8 @@ const CONTRACT_FIELD_MAP = [
   {field:'reportFrequency',label:'Report Frequency',      extract:ex=>ex.adminFee?.frequency||ex.paymentTerms?.frequency||null},
   {field:'paymentTerms',   label:'Payment Terms (Member)',extract:ex=>ex.paymentTerms?.memberPaymentTerms||null},
   {field:'comments',       label:'Notes / Comments',      extract:ex=>ex.notes||null},
+  {field:'vendorPhone',    label:'Vendor Phone',           extract:ex=>ex.vendorPhone||null},
+  {field:'contractValue',  label:'Contract Value ($)',      extract:ex=>ex.contractValue?'$'+Number(ex.contractValue).toLocaleString():null},
 ];
 
 
@@ -11033,18 +11133,22 @@ function renderChecklist(c) {
     custRow.appendChild(sfLogBtn);
   }
   // SF account autocomplete for facility input
-  const sfAccounts=(S._sfBoardData?.accounts||SPEND_STATE?.data?.accounts||[]).map(a=>a.Name||a.name||'').filter(Boolean);
+  const sfAccountObjs=(S._sfBoardData?.accounts||SPEND_STATE?.data?.accounts||[]);
+  const sfAccounts=sfAccountObjs.map(a=>({name:a.Name||a.name||'',city:a.BillingCity||a.billingCity||'',state:a.BillingState||a.billingState||''})).filter(a=>a.name);
   if(sfAccounts.length){
-    const acDrop=el('div',{style:{position:'absolute',zIndex:'200',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',boxShadow:'0 4px 12px rgba(0,0,0,.2)',maxHeight:'150px',overflowY:'auto',display:'none',minWidth:'220px'}});
+    const acDrop=el('div',{style:{position:'absolute',zIndex:'200',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',boxShadow:'0 4px 12px rgba(0,0,0,.2)',maxHeight:'150px',overflowY:'auto',display:'none',minWidth:'260px'}});
     acDrop.id='cl-ac-drop';
     custIn.style.position='relative';
     custIn.addEventListener('input',()=>{
       const q=(custIn.value||'').toLowerCase();acDrop.innerHTML='';
       if(q.length<2){acDrop.style.display='none';return;}
-      const hits=sfAccounts.filter(a=>a.toLowerCase().includes(q)).slice(0,5);
+      const hits=sfAccounts.filter(a=>a.name.toLowerCase().includes(q)||(a.city&&a.city.toLowerCase().includes(q))).slice(0,8);
       if(!hits.length){acDrop.style.display='none';return;}
-      hits.forEach(name=>{
-        const opt=el('div',{style:{padding:'5px 10px',fontSize:'10px',cursor:'pointer',borderBottom:'1px solid var(--border)'},onmousedown(e){e.preventDefault();custIn.value=name;acDrop.style.display='none';S._clLastFacility=name;_clLoad(name);const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}}},name);
+      hits.forEach(acc=>{
+        const loc=[acc.city,acc.state].filter(Boolean).join(', ');
+        const opt=el('div',{style:{padding:'5px 10px',fontSize:'10px',cursor:'pointer',borderBottom:'1px solid var(--border)'},onmousedown(e){e.preventDefault();custIn.value=acc.name;acDrop.style.display='none';S._clLastFacility=acc.name;_clLoad(acc.name);const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}}},'');
+        opt.appendChild(el('span',{style:{fontWeight:'600'}},acc.name));
+        if(loc) opt.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'6px'}},loc));
         opt.addEventListener('mouseover',()=>opt.style.background='var(--bg)');
         opt.addEventListener('mouseout',()=>opt.style.background='');
         acDrop.appendChild(opt);
@@ -11065,10 +11169,17 @@ function renderChecklist(c) {
     histFacs.forEach(fac=>{
       const entries=hist[fac]||[];
       const latest=entries[0];
+      // Compute coverage % for latest entry
+      const _histPct=(entry)=>{
+        if(!entry||!allItems)return 0;
+        const sel=Object.values(entry.goWith||{}).filter(Boolean).length;
+        return allItems.length?Math.round(sel/allItems.length*100):0;
+      };
+      const latestPct=_histPct(latest);
       const chip=el('div',{style:{position:'relative',display:'inline-flex',alignItems:'center',gap:'2px'}});
       const loadBtn=el('button',{class:'btn-xs col-toggle-btn',style:{fontSize:'8px',padding:'2px 6px'},
         onclick(){S._clLastFacility=fac;_clLoadEntry(latest);const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}}},
-        fac+(latest?' ('+latest.date+')':''));
+        fac+(latest?' ('+latest.date+') '+latestPct+'%':''));
       chip.appendChild(loadBtn);
       if(entries.length>1){
         const histBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',padding:'1px 3px',color:'var(--muted)'}},entries.length+'↓');
@@ -11109,17 +11220,25 @@ function renderChecklist(c) {
     return [...found].slice(0,4);
   }
 
-  // Overall coverage summary
+  // Overall coverage summary — two bars: Available (DB vendors) + Selected (GoWith choices)
   const allItems=PSX_CHECKLIST.flatMap(s=>s.items);
   const coveredItems=allItems.filter(it=>findVendors(it.label).length>0);
+  const selectedItems=allItems.filter(it=>S._clGoWith&&S._clGoWith[it.label]);
   const overallPct=allItems.length?Math.round(coveredItems.length/allItems.length*100):0;
-  const covBar=el('div',{style:{marginBottom:'10px',padding:'8px 12px',background:'var(--card)',borderRadius:'6px',border:'1px solid var(--border)',display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'}});
-  covBar.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'700'}},'Overall Coverage:'));
-  const barWrap=el('div',{style:{flex:'1',height:'8px',background:'var(--border)',borderRadius:'4px',minWidth:'100px',overflow:'hidden'}});
-  const bar=el('div',{style:{height:'100%',width:overallPct+'%',background:overallPct>=80?'var(--green)':overallPct>=50?'var(--amber)':'var(--red)',borderRadius:'4px',transition:'width .3s'}});
-  barWrap.appendChild(bar); covBar.appendChild(barWrap);
-  covBar.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:overallPct>=80?'var(--green)':overallPct>=50?'var(--amber)':'var(--red)'}},overallPct+'%'));
-  covBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},coveredItems.length+' of '+allItems.length+' categories covered by contracted vendors'));
+  const selectedPct=allItems.length?Math.round(selectedItems.length/allItems.length*100):0;
+  const covBar=el('div',{style:{marginBottom:'10px',padding:'8px 12px',background:'var(--card)',borderRadius:'6px',border:'1px solid var(--border)'}});
+  const _mkBar=(label,pct,count,total,color)=>{
+    const row=el('div',{style:{display:'flex',gap:'12px',alignItems:'center',marginBottom:'4px',flexWrap:'wrap'}});
+    row.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'700',minWidth:'90px'}},label));
+    const bw=el('div',{style:{flex:'1',height:'8px',background:'var(--border)',borderRadius:'4px',minWidth:'100px',overflow:'hidden'}});
+    bw.appendChild(el('div',{style:{height:'100%',width:pct+'%',background:color,borderRadius:'4px',transition:'width .3s'}},''));
+    row.appendChild(bw);
+    row.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:color,minWidth:'36px'}},pct+'%'));
+    row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},count+' of '+total));
+    return row;
+  };
+  covBar.appendChild(_mkBar('Overall Coverage (Available):',overallPct,coveredItems.length,allItems.length,overallPct>=80?'var(--green)':overallPct>=50?'var(--amber)':'var(--red)'));
+  covBar.appendChild(_mkBar('Selected Vendors:',selectedPct,selectedItems.length,allItems.length,selectedPct>=80?'var(--green)':selectedPct>=50?'var(--amber)':'var(--red)'));
   wrap.appendChild(covBar);
   c.appendChild(wrap);
   _clLoad(custIn.value);
@@ -13368,6 +13487,53 @@ function renderNetworkIntel(c) {
   const resultDiv=el('div'); searchSec.appendChild(resultDiv);
   c.appendChild(searchSec);
 
+  // N1a: Category fee benchmarks
+  const _bAllV=(S.allVendors||S.vendors);
+  const _catMap={};
+  _bAllV.forEach(v=>{const cat=v.category||'Other';if(!_catMap[cat])_catMap[cat]={cat,fees:[],n:0};_catMap[cat].n++;const f=parseFee(v.adminFee);if(f!==null)_catMap[cat].fees.push(f);});
+  const _catStats=Object.values(_catMap).filter(c=>c.fees.length>0).map(c=>{const avg=c.fees.reduce((a,b)=>a+b)/c.fees.length,mn=Math.min(...c.fees),mx=Math.max(...c.fees);return{cat:c.cat,n:c.n,wf:c.fees.length,avg,mn,mx};}).sort((a,b)=>b.wf-a.wf);
+  const benchSec=el('div',{class:'summary-section'});
+  benchSec.appendChild(el('h3',{},'📊 Category Fee Benchmarks'));
+  benchSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'Fee statistics by category across all '+_bAllV.length+' vendors. "Negotiate To" = 1% above avg, rounded to nearest 0.5%.'));
+  if(_catStats.length){
+    const _bRowFn=r=>{const tgt=Math.ceil((r.avg+1)*2)/2;return[r.cat,r.n+(r.wf<r.n?' ('+r.wf+' w/fee)':''),el('span',{style:{fontWeight:'600',color:'var(--blue)'}},r.avg.toFixed(1)+'%'),r.mn.toFixed(1)+'%',r.mx.toFixed(1)+'%',el('span',{style:{fontWeight:'600',color:'var(--green)'}},tgt.toFixed(1)+'%')];};
+    benchSec.appendChild(buildTable(['Category','Vendors','Avg Fee','Low','High','Negotiate To'],_catStats,_bRowFn));
+  } else {benchSec.appendChild(el('p',{class:'muted'},'No admin fee data found across vendors.'));}
+  c.appendChild(benchSec);
+
+  // N1b: What-If fee calculator
+  const wiSec=el('div',{class:'summary-section'});
+  wiSec.appendChild(el('h3',{},'🧮 What-If Fee Calculator'));
+  wiSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'Estimate the annual revenue impact of renegotiating an admin fee. Select a vendor to auto-fill current fee and SF spend.'));
+  const wiRow=el('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'flex-end',marginBottom:'8px'}});
+  const wiVSel=el('select',{style:{fontSize:'11px',padding:'4px 6px',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--bg)',color:'var(--text)',maxWidth:'200px'}});
+  wiVSel.appendChild(el('option',{value:''},'-- Select vendor --'));
+  _bAllV.filter(v=>parseFee(v.adminFee)!==null).sort((a,b)=>a.name.localeCompare(b.name)).forEach(v=>wiVSel.appendChild(el('option',{value:v.name},v.name)));
+  const wiCurr=el('input',{type:'number',step:'0.1',min:'0',max:'30',placeholder:'Current %',style:{width:'90px',fontSize:'11px',padding:'4px 6px',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--bg)',color:'var(--text)'}});
+  const wiNew=el('input',{type:'number',step:'0.1',min:'0',max:'30',placeholder:'New %',style:{width:'90px',fontSize:'11px',padding:'4px 6px',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--bg)',color:'var(--text)'}});
+  const wiSpend=el('input',{type:'number',step:'1000',min:'0',placeholder:'Annual spend $',style:{width:'130px',fontSize:'11px',padding:'4px 6px',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--bg)',color:'var(--text)'}});
+  const wiOut=el('div',{style:{marginTop:'8px'}});
+  const _wiCalc=()=>{
+    const cur=parseFloat(wiCurr.value),nxt=parseFloat(wiNew.value),spd=parseFloat(wiSpend.value);
+    if(isNaN(cur)||isNaN(nxt)||isNaN(spd)||spd<=0){wiOut.innerHTML='';return;}
+    const curInc=spd*(cur/100),nxtInc=spd*(nxt/100),delta=nxtInc-curInc;
+    const col=delta>=0?'var(--green)':'var(--red)';
+    wiOut.innerHTML='';
+    const g=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'8px',maxWidth:'420px'}});
+    const _wt=(lbl,val,c)=>{const t=el('div',{style:{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'4px',padding:'8px',textAlign:'center'}});t.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'2px'}},lbl));t.appendChild(el('div',{style:{fontSize:'16px',fontWeight:'700',color:c}},'$'+Math.round(val).toLocaleString()));return t;};
+    g.appendChild(_wt('Current Annual Fee',curInc,'var(--text)'));
+    g.appendChild(_wt('New Annual Fee',nxtInc,'var(--blue)'));
+    g.appendChild(_wt(delta>=0?'Annual Gain':'Annual Loss',Math.abs(delta),col));
+    wiOut.appendChild(g);
+    wiOut.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'4px'}},delta>=0?'Fee increase from '+cur+'% to '+nxt+'% gains $'+Math.abs(Math.round(delta)).toLocaleString()+'/yr.':'Fee decrease from '+cur+'% to '+nxt+'% costs $'+Math.abs(Math.round(delta)).toLocaleString()+'/yr.'));
+  };
+  wiVSel.onchange=()=>{const v=_bAllV.find(vv=>vv.name===wiVSel.value);if(v){const f=parseFee(v.adminFee);if(f!==null)wiCurr.value=f;const sfV=(SPEND_STATE?.data?.vendors||[]).find(sv=>vendorNamesMatch(sv.name,v.name));if(sfV&&sfV.totalSpend)wiSpend.value=Math.round(sfV.totalSpend);}};
+  [wiCurr,wiNew,wiSpend].forEach(i=>i.addEventListener('input',_wiCalc));
+  const _wiLbl=(txt,inp)=>{const d=el('div',{style:{display:'flex',flexDirection:'column',gap:'2px'}});d.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},txt));d.appendChild(inp);return d;};
+  wiRow.appendChild(_wiLbl('Vendor',wiVSel)); wiRow.appendChild(_wiLbl('Current %',wiCurr)); wiRow.appendChild(_wiLbl('New %',wiNew)); wiRow.appendChild(_wiLbl('Annual Spend $',wiSpend));
+  wiSec.appendChild(wiRow); wiSec.appendChild(wiOut);
+  c.appendChild(wiSec);
+
   // GPO breakdown
   const gpoSec=el('div',{class:'summary-section'});
   gpoSec.appendChild(el('h3',{},'📊 Vendor Universe — Click to Browse'));
@@ -13386,11 +13552,89 @@ function renderNetworkIntel(c) {
     }});
     card.appendChild(el('div',{style:{fontSize:'20px',fontWeight:'700',color:'var(--blue)'}},String(vs.length)));
     card.appendChild(el('div',{style:{fontWeight:'600',fontSize:'11px',marginBottom:'3px'}},gpo));
-    card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--green)',marginBottom:'2px'}},`Avg fee: ${avgFee}`));
-    card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.4'}},cats.slice(0,4).join(', ')+(cats.length>4?` +${cats.length-4}`:'')));
+    card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--green)',marginBottom:'2px'}},'Avg fee: '+avgFee));
+    card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.4'}},cats.slice(0,4).join(', ')+(cats.length>4?' +'+(cats.length-4):'')));
+    // N1c: Channel partner efficiency score
+    const _sfVds=(SPEND_STATE?.data?.vendors||[]);
+    if(_sfVds.length){
+      let _totExp=0,_totRec=0;
+      vs.forEach(v=>{const f=parseFee(v.adminFee);const sfV=_sfVds.find(sv=>vendorNamesMatch(sv.name,v.name));if(f!==null&&sfV&&sfV.totalSpend){_totExp+=sfV.totalSpend*(f/100);_totRec+=sfV.totalFees||0;}});
+      if(_totExp>0){
+        const eff=Math.round((_totRec/_totExp)*100);
+        const effCol=eff>=90?'var(--green)':eff>=70?'var(--amber)':'var(--red)';
+        card.appendChild(el('div',{style:{fontSize:'9px',marginTop:'4px',paddingTop:'4px',borderTop:'1px solid var(--border)',color:effCol}},`Fee efficiency: ${eff}%`));
+      }
+    }
     gpoGrid.appendChild(card);
   }
   gpoSec.appendChild(gpoGrid);
+
+  // N2: Vendor Universe browse panel
+  const _niUniV=(S.allVendors||[...S.vendors,...(S.channelVendors||[])]).filter(v=>v.name);
+  const _niUniCats=[...new Set(_niUniV.map(v=>v.category||'').filter(Boolean))].sort();
+  gpoSec.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',color:'var(--muted)',margin:'12px 0 6px',textTransform:'uppercase',letterSpacing:'0.05em'}},'Browse Vendor Universe ('+_niUniV.length+' total)'));
+  const _niCtlRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',alignItems:'center',marginBottom:'6px'}});
+  const _niSrch=el('input',{type:'text',class:'search-input',placeholder:'Search vendors...',style:{maxWidth:'180px'},value:S._niUnivSearch||''});
+  const _niSortSel=el('select',{style:{fontSize:'11px',padding:'4px 6px',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--bg)',color:'var(--text)'}});
+  [['name','Name A-Z'],['feeDesc','Fee High-Low'],['feeAsc','Fee Low-High'],['cat','Category']].forEach(([v,l])=>{const o=el('option',{value:v},l);if((S._niUnivSort||'name')===v)o.selected=true;_niSortSel.appendChild(o);});
+  const _niGrpBtn=el('button',{class:'btn-xs '+(S._niGroupByCat?'btn-primary':'btn-ghost')},S._niGroupByCat?'Grouped':'Flat');
+  const _niUniPanel=el('div',{style:{maxHeight:'360px',overflowY:'auto',borderTop:'1px solid var(--border)',paddingTop:'8px',marginTop:'4px'}});
+  const _niToday2=new Date();
+  const _niDotColor=v=>{const exp=v.contractExpiry||v.expiry;if(!exp)return'#9ca3af';const d=new Date(exp);if(isNaN(d))return'#9ca3af';const days=Math.round((d-_niToday2)/86400000);if(days<0)return'#ef4444';if(days<90)return'#f59e0b';return'#22c55e';};
+  const _niRefresh=()=>{
+    const q=(S._niUnivSearch||'').toLowerCase();
+    const cat=S._niUnivCat2||null;
+    const sort=S._niUnivSort||'name';
+    let filt=_niUniV.filter(v=>(!q||v.name.toLowerCase().includes(q)||(v.category||'').toLowerCase().includes(q))&&(!cat||(v.category||'')===cat));
+    filt.sort((a,b)=>{if(sort==='feeDesc'){const fa=parseFee(a.adminFee)??-1,fb=parseFee(b.adminFee)??-1;return fb-fa;}if(sort==='feeAsc'){const fa=parseFee(a.adminFee)??999,fb=parseFee(b.adminFee)??999;return fa-fb;}if(sort==='cat')return(a.category||'').localeCompare(b.category||'');return a.name.localeCompare(b.name);});
+    _niUniPanel.innerHTML='';
+    if(!filt.length){_niUniPanel.appendChild(el('p',{class:'muted',style:{padding:'8px 0'}},'No vendors match.'));return;}
+    if(S._niGroupByCat){
+      const byC={};filt.forEach(v=>{const cc=v.category||'Other';if(!byC[cc])byC[cc]=[];byC[cc].push(v);});
+      Object.entries(byC).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([cc,vs])=>{
+        _niUniPanel.appendChild(el('div',{style:{fontSize:'10px',fontWeight:'700',color:'var(--muted)',margin:'8px 0 4px',textTransform:'uppercase',letterSpacing:'0.05em'}},cc+' ('+vs.length+')'));
+        const row=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'4px'}});
+        vs.slice(0,40).forEach(v=>{
+          const chip=el('div',{style:{display:'inline-flex',alignItems:'center',gap:'4px',padding:'3px 8px',background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'12px',fontSize:'10px',cursor:'pointer'},onclick(){openDetail(v);}});
+          chip.appendChild(el('span',{style:{width:'7px',height:'7px',borderRadius:'50%',background:_niDotColor(v),flexShrink:'0',display:'inline-block'}}));
+          chip.appendChild(el('span',{},v.name));
+          const f=parseFee(v.adminFee);if(f!==null)chip.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'2px'}},f+'%'));
+          row.appendChild(chip);
+        });
+        if(vs.length>40)row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',padding:'3px 8px'}},'+'+( vs.length-40)+' more'));
+        _niUniPanel.appendChild(row);
+      });
+    } else {
+      const grid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(220px,1fr))',gap:'4px'}});
+      filt.slice(0,80).forEach(v=>{
+        const card=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',padding:'5px 8px',background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'4px',cursor:'pointer',fontSize:'10px'},onclick(){openDetail(v);}});
+        card.appendChild(el('span',{style:{width:'8px',height:'8px',borderRadius:'50%',background:_niDotColor(v),flexShrink:'0'}}));
+        const info=el('div',{style:{flex:'1',minWidth:'0'}});
+        info.appendChild(el('div',{style:{fontWeight:'600',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},v.name));
+        info.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},v.category||v.gpoSource||''));
+        card.appendChild(info);
+        const f=parseFee(v.adminFee);if(f!==null)card.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'600',color:'var(--green)',flexShrink:'0'}},f+'%'));
+        grid.appendChild(card);
+      });
+      if(filt.length>80)grid.appendChild(el('div',{style:{gridColumn:'1/-1',fontSize:'9px',color:'var(--muted)',padding:'4px'}},'Showing 80 of '+filt.length+' — search to narrow results.'));
+      _niUniPanel.appendChild(grid);
+    }
+  };
+  _niSrch.addEventListener('input',()=>{S._niUnivSearch=_niSrch.value;_niRefresh();});
+  _niSortSel.addEventListener('change',()=>{S._niUnivSort=_niSortSel.value;_niRefresh();});
+  _niGrpBtn.onclick=()=>{S._niGroupByCat=!S._niGroupByCat;_niGrpBtn.textContent=S._niGroupByCat?'Grouped':'Flat';_niGrpBtn.className='btn-xs '+(S._niGroupByCat?'btn-primary':'btn-ghost');_niRefresh();};
+  _niCtlRow.appendChild(_niSrch); _niCtlRow.appendChild(_niSortSel); _niCtlRow.appendChild(_niGrpBtn);
+  const _niUniCatRow=el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'6px',alignItems:'center'}});
+  _niUniCatRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Category:'));
+  [null,..._niUniCats].forEach(cat=>{
+    const isAct=(S._niUnivCat2||null)===cat;
+    const pill=el('button',{style:{fontSize:'9px',padding:'2px 8px',borderRadius:'9px',cursor:'pointer',border:'1px solid '+(isAct?'var(--blue)':'var(--border)'),background:isAct?'var(--blue)':'transparent',color:isAct?'#fff':'var(--text)'},
+      onclick(){S._niUnivCat2=cat;_niUniCatRow.querySelectorAll('button').forEach((b,bi)=>{const bc=[null,..._niUniCats][bi];const a=(S._niUnivCat2||null)===bc;b.style.border='1px solid '+(a?'var(--blue)':'var(--border)');b.style.background=a?'var(--blue)':'transparent';b.style.color=a?'#fff':'var(--text)';});_niRefresh();}},cat||'All');
+    _niUniCatRow.appendChild(pill);
+  });
+  gpoSec.appendChild(_niCtlRow); gpoSec.appendChild(_niUniCatRow); gpoSec.appendChild(_niUniPanel);
+  _niRefresh();
+
   c.appendChild(gpoSec);
 
   // Cross-referral engine
@@ -13445,7 +13689,7 @@ function renderNetworkIntel(c) {
   });
   scoredPairs.sort((a,b)=>b.score-a.score);
   // Category filter pills
-  const _niAllCats=[...new Set(scoredPairs.map(function(p){return p.vendorA.category||'';}).filter(Boolean))].sort();
+  const _niAllCats=[...new Set(scoredPairs.map(p=>p.vendorA.category||'').filter(Boolean))].sort();
   if(_niAllCats.length>1){
     const catRow=el('div',{style:{display:'flex',gap:'5px',flexWrap:'wrap',marginBottom:'8px',alignItems:'center'}});
     catRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Filter:'));
@@ -14275,6 +14519,30 @@ function renderTierTracker(c) {
     return;
   }
 
+  // P3: Sortable summary table at the top of tracked tiers
+  const _ttSumSec=el('div',{class:'summary-section',style:{marginBottom:'12px'}});
+  _ttSumSec.appendChild(el('h3',{},'📋 Tier Progress Summary'));
+  const _ttRows=S.tierData.map(td=>{
+    const nextTier=td.tiers?.find(t=>td.currentSpend<t.threshold)||td.tiers?.[td.tiers.length-1];
+    const progress=nextTier&&nextTier.threshold>0?Math.min(100,Math.round((td.currentSpend/nextTier.threshold)*100)):100;
+    const remaining=nextTier?Math.max(0,nextTier.threshold-td.currentSpend):0;
+    const monthsLeft=remaining>0&&td.monthlyRate>0?Math.ceil(remaining/td.monthlyRate):null;
+    return{td,nextTier,progress,remaining,monthsLeft};
+  });
+  const _ttRowFn=r=>[
+    el('span',{class:'vendor-link',style:{cursor:'pointer'},onclick(){openDetail(S.vendors.find(v=>vendorNamesMatch(v.name,r.td.vendorName))||{name:r.td.vendorName});}},r.td.vendorName),
+    '$'+(r.td.currentSpend||0).toLocaleString(),
+    r.nextTier?'$'+r.nextTier.threshold.toLocaleString()+' @ '+(r.nextTier.feePct||r.nextTier.fee||0)+'%':'—',
+    el('div',{style:{display:'flex',alignItems:'center',gap:'4px'}},
+      el('div',{style:{flex:'1',height:'6px',borderRadius:'3px',background:'var(--border)',overflow:'hidden',minWidth:'60px'}},
+        el('div',{style:{height:'100%',width:r.progress+'%',background:r.progress>=100?'var(--green)':'var(--blue)',borderRadius:'3px'}})),
+      el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'30px'}},r.progress+'%')),
+    r.monthsLeft?r.monthsLeft+'mo':'—',
+    r.td._sfSynced?el('span',{style:{color:'var(--green)',fontSize:'9px'}},'☁ SF'):'',
+  ];
+  _ttSumSec.appendChild(buildSortableTable(['Vendor','YTD Spend','Next Tier','Progress','ETA','Source'],_ttRows,_ttRowFn));
+  c.appendChild(_ttSumSec);
+
   // Show tracked tiers
   S.tierData.forEach((td,i)=>{
     const card=el('div',{class:'summary-section'});
@@ -14919,10 +15187,135 @@ function renderToday(c) {
     c.appendChild(sfConnectSec);
   }
 
+  // ── T2: Calendar Integration Summary ────────────────────────────────────
+  {
+    const calSec=el('div',{style:{marginBottom:'10px',border:'1px solid var(--border)',borderRadius:'5px',overflow:'hidden'}});
+    const calHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'5px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none'},
+      onclick(e){if(e.target.tagName==='BUTTON')return;S._calCollapsed=!S._calCollapsed;render();}});
+    calHdr.appendChild(el('span',{style:{fontSize:'13px'}},'📅'));
+    calHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Microsoft 365 Calendar'));
+    calHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},(S._calCollapsed?'▶':'▼')));
+    calSec.appendChild(calHdr);
+    if(!S._calCollapsed){
+      const calBody=el('div',{style:{padding:'8px 12px'}});
+      const calEvents=S._msCalendarEvents;
+      if(!calEvents||!calEvents.length){
+        calBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px'}},'No Microsoft 365 calendar loaded.'));
+        calBody.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){S.view='settings';render();}},'→ Connect Microsoft 365'));
+      } else {
+        const upcoming=calEvents.filter(ev=>{const s=new Date(ev.start?.dateTime||ev.start?.date||'');return s>=today;}).sort((a,b)=>new Date(a.start?.dateTime||a.start?.date)-new Date(b.start?.dateTime||b.start?.date)).slice(0,5);
+        calBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px'}},calEvents.length+' events loaded · showing next '+upcoming.length));
+        if(!upcoming.length){
+          calBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--green)'}},'✓ No upcoming events found'));
+        } else {
+          upcoming.forEach(ev=>{
+            const s=new Date(ev.start?.dateTime||ev.start?.date||'');
+            const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid rgba(128,128,128,.08)'}});
+            row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'80px'}},s.toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})));
+            row.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'600',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},ev.subject||ev.summary||'(No title)'));
+            if(ev.location?.displayName)row.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)',maxWidth:'100px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},ev.location.displayName));
+            calBody.appendChild(row);
+          });
+        }
+      }
+      calSec.appendChild(calBody);
+    }
+    c.appendChild(calSec);
+  }
+
   let vendors=(S.vendors||[]).filter(v=>S.showDismissed?!isSnoozed(v):isVisible(v));
   if (S.filter) vendors=vendors.filter(S.filter);
   if (S.search) { const q=S.search.toLowerCase(); vendors=vendors.filter(v=>searchMatch(v,q)); }
   if (S.settings.autoSortByScore !== false) vendors.sort((a,b)=>b.score-a.score);
+
+  // ── T1: 6-section Today Summary ──────────────────────────────────────────
+  if(!S.filter&&!S.search){
+    if(!S._todaySecOpen)S._todaySecOpen={urgent:true,call:true,email:false,review:false,pipeline:false,stats:false};
+    const _allV=(S.vendors||[]).filter(isVisible);
+    const _todaySections=[
+      {key:'urgent',icon:'🚨',label:'Urgent Actions',color:'var(--red)',
+        fn:()=>_allV.filter(v=>{const e=getCurrentExpiry(v);const dExp=e?dayDiff(e,today):null;const fu=parseDate(v.followUp);const fuD=fu?dayDiff(today,fu):0;return v.tier==='CALL'||(dExp!==null&&dExp>=0&&dExp<=30&&!isAutoRenew(v))||(fuD>7);}),
+        rowFn:v=>{const e=getCurrentExpiry(v);const dExp=e?dayDiff(e,today):null;return el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer',background:'rgba(239,68,68,.05)',borderLeft:'3px solid var(--red)'},onclick(){openDetail(v);}},
+          el('span',{style:{fontWeight:'700',fontSize:'11px',minWidth:'140px',color:'var(--blue)'}},v.name),
+          el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},v.category||''),
+          dExp!==null?el('span',{style:{fontSize:'9px',fontWeight:'700',color:dExp<=30?'var(--red)':'var(--muted)'}},dExp+'d to expiry'):'',
+          tierTag(v.tier)
+        );}},
+      {key:'call',icon:'📞',label:'Call Queue',color:'var(--red)',
+        fn:()=>_allV.filter(v=>v.tier==='CALL').sort((a,b)=>b.score-a.score),
+        rowFn:v=>{const fu=parseDate(v.followUp);const fuD=fu?dayDiff(today,fu):null;return el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer'},onclick(){openDetail(v);}},
+          el('span',{style:{fontWeight:'700',fontSize:'11px',minWidth:'140px',color:'var(--blue)'}},v.name),
+          el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},v.category||''),
+          v.procContact?el('span',{style:{fontSize:'9px',color:'var(--text)'}},v.procContact):'',
+          fuD!==null?el('span',{style:{fontSize:'9px',color:fuD>0?'var(--red)':'var(--muted)',fontWeight:fuD>0?'700':'400'}},(fuD>0?'Overdue '+fuD+'d':'Due '+(-fuD)+'d')):'',
+          scorePill(v.score)
+        );}},
+      {key:'email',icon:'📧',label:'Email Queue',color:'var(--amber)',
+        fn:()=>_allV.filter(v=>v.tier==='EMAIL').sort((a,b)=>b.score-a.score),
+        rowFn:v=>{const fu=parseDate(v.followUp);const fuD=fu?dayDiff(today,fu):null;return el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer'},onclick(){openDetail(v);}},
+          el('span',{style:{fontWeight:'700',fontSize:'11px',minWidth:'140px',color:'var(--blue)'}},v.name),
+          el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},v.category||''),
+          v.email?el('a',{href:'mailto:'+v.email,style:{fontSize:'9px',color:'var(--blue)'},onclick(e){e.stopPropagation();}},v.email):'',
+          fuD!==null?el('span',{style:{fontSize:'9px',color:fuD>0?'var(--amber)':'var(--muted)',fontWeight:fuD>0?'700':'400'}},(fuD>0?'Overdue '+fuD+'d':'Due '+(-fuD)+'d')):'',
+          scorePill(v.score)
+        );}},
+      {key:'review',icon:'📋',label:'Business Reviews Due',color:'var(--blue)',
+        fn:()=>_allV.filter(v=>{const fu=parseDate(v.followUp);return v.tier==='REVIEW'&&fu&&dayDiff(today,fu)>=0;}).sort((a,b)=>b.score-a.score),
+        rowFn:v=>{const fu=parseDate(v.followUp);return el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer'},onclick(){openDetail(v);}},
+          el('span',{style:{fontWeight:'700',fontSize:'11px',minWidth:'140px',color:'var(--blue)'}},v.name),
+          el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},v.category||''),
+          fu?el('span',{style:{fontSize:'9px',color:'var(--blue)'}},'Review: '+fmtDate(fu)):'',
+          scorePill(v.score)
+        );}},
+      {key:'pipeline',icon:'💼',label:'Pipeline Opportunities',color:'var(--blue)',
+        fn:()=>(S.itw||[]).filter(v=>isVisible(v)),
+        rowFn:v=>el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer'},onclick(){openDetail(v);}},
+          el('span',{style:{fontWeight:'700',fontSize:'11px',minWidth:'140px',color:'var(--blue)'}},v.name),
+          el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},v.category||''),
+          v.tier?tierTag(v.tier):'',
+          scorePill(v.score)
+        )},
+      {key:'stats',icon:'📊',label:'Quick Stats',color:'var(--text)',fn:()=>[],isStats:true},
+    ];
+    const secWrap=el('div',{style:{marginBottom:'8px'}});
+    _todaySections.forEach(sec=>{
+      const items=sec.isStats?[]:sec.fn();
+      const isOpen=S._todaySecOpen[sec.key];
+      const hdrEl=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'5px 8px',background:'var(--card)',borderRadius:'4px',cursor:'pointer',marginBottom:'2px',userSelect:'none',border:'1px solid var(--border)'},
+        onclick(){S._todaySecOpen[sec.key]=!S._todaySecOpen[sec.key];render();}});
+      hdrEl.appendChild(el('span',{style:{fontSize:'12px'}},sec.icon));
+      hdrEl.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},sec.label));
+      if(!sec.isStats)hdrEl.appendChild(el('span',{style:{fontSize:'10px',background:sec.color+'22',color:sec.color,padding:'1px 7px',borderRadius:'9px',fontWeight:'700'}},String(items.length)));
+      hdrEl.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},isOpen?'▼':'▶'));
+      secWrap.appendChild(hdrEl);
+      if(isOpen){
+        const body=el('div',{style:{marginBottom:'6px',padding:'4px 4px',border:'1px solid var(--border)',borderTop:'none',borderRadius:'0 0 4px 4px',background:'var(--bg)'}});
+        if(sec.isStats){
+          const sGrid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:'6px',padding:'4px'}});
+          [['CALL Tier',_allV.filter(v=>v.tier==='CALL').length,'var(--red)'],
+           ['EMAIL Tier',_allV.filter(v=>v.tier==='EMAIL').length,'var(--amber)'],
+           ['Expiring ≤30d',_allV.filter(v=>{const e=getCurrentExpiry(v);return e&&dayDiff(e,today)>=0&&dayDiff(e,today)<=30;}).length,'var(--red)'],
+           ['Overdue Follow-ups',_allV.filter(v=>{const fu=parseDate(v.followUp);return fu&&dayDiff(today,fu)>0;}).length,'var(--orange)'],
+           ['No Contract',_allV.filter(v=>!getCurrentExpiry(v)).length,'var(--muted)'],
+           ['Pipeline',S.itw?S.itw.filter(v=>isVisible(v)).length:0,'var(--blue)'],
+          ].forEach(([lbl,val,col])=>{
+            const sc=el('div',{style:{background:'var(--card)',borderRadius:'4px',padding:'6px 10px',textAlign:'center',border:'1px solid var(--border)'}});
+            sc.appendChild(el('div',{style:{fontSize:'20px',fontWeight:'700',color:col}},String(val)));
+            sc.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px'}},lbl));
+            sGrid.appendChild(sc);
+          });
+          body.appendChild(sGrid);
+        } else if(!items.length){
+          body.appendChild(el('div',{style:{padding:'8px 12px',fontSize:'10px',color:'var(--green)',fontWeight:'600'}},'✓ All clear'));
+        } else {
+          items.slice(0,15).forEach(v=>body.appendChild(sec.rowFn(v)));
+          if(items.length>15)body.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',padding:'4px 8px'}},'+' +(items.length-15)+' more — use filter tabs above'));
+        }
+        secWrap.appendChild(body);
+      }
+    });
+    c.appendChild(secWrap);
+  }
 
   // Action bar above table
   const tableBar=el('div',{style:{display:'flex',gap:'6px',marginBottom:'5px',alignItems:'center',flexWrap:'wrap'}});
@@ -15390,7 +15783,7 @@ function renderExpiring(c) {
   if (S.filter) shown=vendors.filter(S.filter);
 
   c.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px'}},shown.length+' vendor'+(shown.length!==1?'s':'')+' — click urgency tiles above to filter'));
-  c.appendChild(buildTable(
+  c.appendChild(buildSortableTable(
     ['Score','Vendor','Category','Current Expiry','Days','AR','Notice','Fee','Tier','Action'],
     shown,
     v=>{
@@ -15563,7 +15956,7 @@ function renderITW(c) {
     });
   }
 
-  c.appendChild(buildTable(
+  c.appendChild(buildSortableTable(
     ['Vendor','Section','Indicator','Category','Contact','Note (latest)','Actions'],
     items,
     v=>{
@@ -16960,10 +17353,11 @@ function renderAnalytics(c) {
     addSec.appendChild(el('h3',{style:{marginBottom:'4px'}},'📈 Vendor Additions Over Time'));
     addSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px'}},'New vendors added by month — '+_trLabel+'.'));
 
-    // Build monthly vendor count from lastComm or contractStart dates
+    // Build monthly vendor count — date priority: effectiveDate > contractStart > lastComm > addedDate > createdAt
     const monthCounts={};
+    const totalVendors=S.vendors.filter(v=>isVisible(v)).length;
     S.vendors.forEach(v=>{
-      const d=v.effectiveDate||v.contractStart||v.lastComm;
+      const d=v.effectiveDate||v.contractStart||v.lastComm||v.addedDate||v.createdAt;
       if(!d) return;
       const parsed=parseDate(d);
       if(!parsed||parsed.getFullYear()<2020) return;
@@ -16973,10 +17367,16 @@ function renderAnalytics(c) {
     });
     const months=Object.keys(monthCounts).sort();
 
+    // Total vendors count above sparkline
+    const totalRow=el('div',{style:{display:'flex',gap:'16px',alignItems:'center',marginBottom:'8px',flexWrap:'wrap'}});
+    totalRow.appendChild(el('span',{style:{fontSize:'22px',fontWeight:'700',color:'var(--blue)'}},String(totalVendors)));
+    totalRow.appendChild(el('span',{style:{fontSize:'11px',color:'var(--muted)',alignSelf:'flex-end',marginBottom:'4px'}},'Total Vendors'));
+    addSec.appendChild(totalRow);
+
     if(months.length>=2){
       addSec.appendChild(renderSparklineChart(months,months.map(m=>monthCounts[m]),'Vendors Added','#4f7cff',true));
     } else {
-      addSec.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'10px',textAlign:'center',padding:'20px'}},'Not enough dated vendor records to show trend. Add contract effective dates to vendors.'));
+      addSec.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'10px',textAlign:'center',padding:'20px'}},'Not enough dated vendor records to show trend. Add effectiveDate or contractStart to vendors.'));
     }
     trendWrap.appendChild(addSec);
 
@@ -17094,7 +17494,7 @@ function renderAnalytics(c) {
               const catVendors=vs.filter(isVisible).filter(v=>(v.category||'Uncategorized')===cat);
               const tbl=el('table',{class:'data-table',style:{margin:'0',fontSize:'9px'}});
               const th=el('thead');const hr2=el('tr');
-              ['Vendor','Status','Expiry','Days'].forEach(h=>hr2.appendChild(el('th',{style:{fontSize:'8px',padding:'3px 6px'}},h)));
+              ['Name','Contract Status','Expiry','Admin Fee','Action'].forEach(h=>hr2.appendChild(el('th',{style:{fontSize:'8px',padding:'3px 6px'}},h)));
               th.appendChild(hr2);tbl.appendChild(th);
               const tb=el('tbody');
               catVendors.sort((a,b)=>{const ea=getCurrentExpiry(a),eb=getCurrentExpiry(b);return (ea?ea.getTime():0)-(eb?eb.getTime():0);}).forEach(v=>{
@@ -17102,15 +17502,19 @@ function renderAnalytics(c) {
                 const d=expiry?dayDiff(expiry,today):null;
                 const statusCol=!expiry?'var(--muted)':d<0&&!isAutoRenew(v)?'var(--red)':d<=90?'var(--amber)':'var(--green)';
                 const statusTxt=!expiry?'No contract':d<0&&!isAutoRenew(v)?'Expired':d<=90?'Expiring':'Active';
-                const tr=el('tr',{style:{cursor:'pointer'},onclick(){openDetail(v);}});
-                tr.appendChild(el('td',{style:{fontWeight:'600',color:'var(--blue)',padding:'2px 6px'}},v.name));
+                const rowBg=statusTxt==='Expired'?'rgba(239,68,68,.07)':statusTxt==='Expiring'?'rgba(245,158,11,.07)':'';
+                const tr=el('tr',{style:{background:rowBg}});
+                tr.appendChild(el('td',{style:{fontWeight:'600',color:'var(--blue)',padding:'2px 6px',cursor:'pointer'},onclick(){openDetail(v);}},v.name));
                 tr.appendChild(el('td',{style:{color:statusCol,fontWeight:'600',padding:'2px 6px'}},statusTxt));
                 tr.appendChild(el('td',{style:{padding:'2px 6px',color:'var(--muted)'}},expiry?fmtDate(expiry):'—'));
-                tr.appendChild(el('td',{style:{padding:'2px 6px',color:d!==null&&d<0?'var(--red)':d!==null&&d<=90?'var(--amber)':'var(--muted)'}},d!==null?(d<0?d+' (past)':d+'d'):'—'));
+                tr.appendChild(el('td',{style:{padding:'2px 6px',color:'var(--muted)'}},v.adminFee||'—'));
+                const actTd=el('td',{style:{padding:'2px 6px'}});
+                actTd.appendChild(el('button',{class:'btn-secondary',style:{fontSize:'8px',padding:'1px 6px'},onclick(){openDetail(v);}},'Open'));
+                tr.appendChild(actTd);
                 tb.appendChild(tr);
               });
               tbl.appendChild(tb);detail.appendChild(tbl);
-              detail.appendChild(el('p',{style:{fontSize:'8px',color:'var(--muted)',margin:'4px 0 0'}},'Click any vendor row to open its detail panel.'));
+              detail.appendChild(el('p',{style:{fontSize:'8px',color:'var(--muted)',margin:'4px 0 0'}},'Click vendor name or Open to view full detail.'));
             }
           });
           detail.className='cat-detail';
@@ -17629,6 +18033,7 @@ function renderAnalytics(c) {
     });
     // Filter: active staff only + anyone with real activity; remove 'Unknown' and empty inactive
     const _dirEmails=typeof EMPLOYEE_DIRECTORY!=='undefined'?new Set(EMPLOYEE_DIRECTORY.map(e=>e.email.toLowerCase())):new Set();
+    const allAmountsZero=Object.values(repMap).every(r=>r.pipelineValue===0);
     const reps=Object.values(repMap)
       .filter(r=>{
         if(!r.name||r.name==='Unknown') return false;
@@ -17642,8 +18047,9 @@ function renderAnalytics(c) {
       .sort((a,b)=>{
         if(a._isVCSRep&&!b._isVCSRep) return -1;
         if(!a._isVCSRep&&b._isVCSRep) return 1;
+        if(allAmountsZero) return b.opps.length-a.opps.length;
         if(b.pipelineValue!==a.pipelineValue) return b.pipelineValue-a.pipelineValue;
-        return b.opps.length-a.opps.length; // tiebreaker: more opps float up even if $0
+        return b.opps.length-a.opps.length;
       });
 
     // Assign roles from EMPLOYEE_DIRECTORY by email match (before KPI cards)
@@ -17820,12 +18226,12 @@ function renderAnalytics(c) {
       if(typeof Chart==='undefined'||!filteredReps.length) return;
       const row1=el('div',{class:'charts-row'});
       const repSec=el('div',{class:'chart-section'});
-      repSec.appendChild(el('h4',{},'Pipeline Value by Rep'));
+      repSec.appendChild(el('h4',{},allAmountsZero?'Open Opps by Rep (no amounts on record)':'Pipeline Value by Rep'));
       const rc=el('canvas',{style:{maxHeight:'200px'}}); repSec.appendChild(rc);
       const rcDetail=el('div',{style:{display:'none',marginTop:'8px',maxHeight:'220px',overflowY:'auto',border:'1px solid var(--border)',borderRadius:'5px'}}); repSec.appendChild(rcDetail);
       row1.appendChild(repSec);
       let _rcLastIdx=-1;
-      new Chart(rc,{type:'bar',data:{labels:filteredReps.map(r=>r.name.split(' ')[0]),datasets:[{label:'Pipeline $',data:filteredReps.map(r=>r.pipelineValue),backgroundColor:'#4f7cff',hoverBackgroundColor:'#2d5ee0',borderRadius:3},{label:'Open Opps',data:filteredReps.map(r=>r.opps.length),backgroundColor:'#22c55e',hoverBackgroundColor:'#16a34a',borderRadius:3,yAxisID:'y2'}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+(ctx.dataset.yAxisID==='y2'?ctx.raw+' opps':'$'+Math.round(ctx.raw).toLocaleString())}}},scales:{y:{ticks:{color:'var(--muted)',font:{size:8},callback:v=>'$'+Math.round(v/1000)+'K'}},y2:{position:'right',ticks:{color:'var(--muted)',font:{size:8}},grid:{drawOnChartArea:false}},x:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(!els.length){rcDetail.style.display='none';_rcLastIdx=-1;return;}const idx=els[0].index;if(idx===_rcLastIdx){rcDetail.style.display='none';_rcLastIdx=-1;return;}_rcLastIdx=idx;const rep=filteredReps[idx];rcDetail.innerHTML='';rcDetail.style.display='';const hdr=el('div',{style:{padding:'6px 10px',fontWeight:'700',fontSize:'10px',borderBottom:'1px solid var(--border)',background:'var(--card)'}},rep.name+' — '+rep.opps.length+' Open Opp'+(rep.opps.length!==1?'s':''));rcDetail.appendChild(hdr);if(rep.opps.length){const tbl=el('table',{class:'data-table',style:{margin:'0',fontSize:'9px'}});const th2=el('thead');const hr2=el('tr');['Opportunity','Account','Stage','Amount','Close Date'].forEach(h=>hr2.appendChild(el('th',{style:{fontSize:'8px',padding:'3px 8px'}},h)));th2.appendChild(hr2);tbl.appendChild(th2);const tb2=el('tbody');rep.opps.forEach(o=>{const tr=el('tr',{style:{cursor:USER.sfInstance?'pointer':'default'},onclick(){if(USER.sfInstance&&o.Id)window.open(USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view','_blank');}});tr.appendChild(el('td',{style:{color:'var(--blue)',fontWeight:'600',padding:'3px 8px'}},o.Name||'—'));const an=o._accountName||o.Account?.Name||'—';const vv=S.vendors.find(sv=>vendorNamesMatch(sv.name,an));const anCell=el('td',{style:{padding:'3px 8px',fontSize:'9px'}});anCell.appendChild(vv?el('span',{class:'vendor-link',style:{color:'var(--blue)',cursor:'pointer'},onclick(ev){ev.stopPropagation();openDetail(vv);}},an):document.createTextNode(an));tr.appendChild(anCell);tr.appendChild(el('td',{style:{padding:'3px 8px',color:'var(--muted)',fontSize:'9px'}},o.StageName||'—'));tr.appendChild(el('td',{style:{padding:'3px 8px',fontWeight:'700',color:'var(--green)'}},'$'+Math.round(Number(o.Amount||0)).toLocaleString()));tr.appendChild(el('td',{style:{padding:'3px 8px',color:'var(--muted)',fontSize:'9px'}},o.CloseDate||'—'));tb2.appendChild(tr);});tbl.appendChild(tb2);rcDetail.appendChild(tbl);}else{rcDetail.appendChild(el('p',{style:{padding:'10px',color:'var(--muted)',fontSize:'9px'}},'No open opportunities for '+rep.name));}}}}); const _rcInst=Chart.getChart(rc); if(_rcInst){ rc._chartInstance=_rcInst; rc._storedConfig={type:_rcInst.config.type,data:JSON.parse(JSON.stringify(_rcInst.config.data)),options:_rcInst.config.options}; }
+      new Chart(rc,{type:'bar',data:{labels:filteredReps.map(r=>r.name.split(' ')[0]),datasets:[{label:allAmountsZero?'Opp Count':'Pipeline $',data:filteredReps.map(r=>allAmountsZero?r.opps.length:r.pipelineValue),backgroundColor:'#4f7cff',hoverBackgroundColor:'#2d5ee0',borderRadius:3},...(allAmountsZero?[]:[{label:'Open Opps',data:filteredReps.map(r=>r.opps.length),backgroundColor:'#22c55e',hoverBackgroundColor:'#16a34a',borderRadius:3,yAxisID:'y2'}])]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+(allAmountsZero?ctx.raw+' opps':ctx.dataset.yAxisID==='y2'?ctx.raw+' opps':'$'+Math.round(ctx.raw).toLocaleString())}}},scales:{y:{ticks:{color:'var(--muted)',font:{size:8},callback:v=>allAmountsZero?v:'$'+Math.round(v/1000)+'K'}},y2:{position:'right',ticks:{color:'var(--muted)',font:{size:8}},grid:{drawOnChartArea:false}},x:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(!els.length){rcDetail.style.display='none';_rcLastIdx=-1;return;}const idx=els[0].index;if(idx===_rcLastIdx){rcDetail.style.display='none';_rcLastIdx=-1;return;}_rcLastIdx=idx;const rep=filteredReps[idx];rcDetail.innerHTML='';rcDetail.style.display='';const hdr=el('div',{style:{padding:'6px 10px',fontWeight:'700',fontSize:'10px',borderBottom:'1px solid var(--border)',background:'var(--card)'}},rep.name+' — '+rep.opps.length+' Open Opp'+(rep.opps.length!==1?'s':''));rcDetail.appendChild(hdr);if(rep.opps.length){const tbl=el('table',{class:'data-table',style:{margin:'0',fontSize:'9px'}});const th2=el('thead');const hr2=el('tr');['Opportunity','Account','Stage','Amount','Close Date'].forEach(h=>hr2.appendChild(el('th',{style:{fontSize:'8px',padding:'3px 8px'}},h)));th2.appendChild(hr2);tbl.appendChild(th2);const tb2=el('tbody');rep.opps.forEach(o=>{const tr=el('tr',{style:{cursor:USER.sfInstance?'pointer':'default'},onclick(){if(USER.sfInstance&&o.Id)window.open(USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view','_blank');}});tr.appendChild(el('td',{style:{color:'var(--blue)',fontWeight:'600',padding:'3px 8px'}},o.Name||'—'));const an=o._accountName||o.Account?.Name||'—';const vv=S.vendors.find(sv=>vendorNamesMatch(sv.name,an));const anCell=el('td',{style:{padding:'3px 8px',fontSize:'9px'}});anCell.appendChild(vv?el('span',{class:'vendor-link',style:{color:'var(--blue)',cursor:'pointer'},onclick(ev){ev.stopPropagation();openDetail(vv);}},an):document.createTextNode(an));tr.appendChild(anCell);tr.appendChild(el('td',{style:{padding:'3px 8px',color:'var(--muted)',fontSize:'9px'}},o.StageName||'—'));tr.appendChild(el('td',{style:{padding:'3px 8px',fontWeight:'700',color:'var(--green)'}},'$'+Math.round(Number(o.Amount||0)).toLocaleString()));tr.appendChild(el('td',{style:{padding:'3px 8px',color:'var(--muted)',fontSize:'9px'}},o.CloseDate||'—'));tb2.appendChild(tr);});tbl.appendChild(tb2);rcDetail.appendChild(tbl);}else{rcDetail.appendChild(el('p',{style:{padding:'10px',color:'var(--muted)',fontSize:'9px'}},'No open opportunities for '+rep.name));}}}}); const _rcInst=Chart.getChart(rc); if(_rcInst){ rc._chartInstance=_rcInst; rc._storedConfig={type:_rcInst.config.type,data:JSON.parse(JSON.stringify(_rcInst.config.data)),options:_rcInst.config.options}; }
 
       const taskSec=el('div',{class:'chart-section'});
       taskSec.appendChild(el('h4',{},'Overdue Tasks by Rep'));
@@ -17838,14 +18244,61 @@ function renderAnalytics(c) {
       c.appendChild(row1);
     });
 
-    // Detailed rep table
-    c.appendChild(buildTable(
-      ['Rep','Opps','Pipeline','Overdue Tasks','Cases'],
-      filteredReps,
-      r=>[r.name,r.opps.length,'$'+Math.round(r.pipelineValue).toLocaleString(),
-        el('span',{style:{color:r.overdueTask>0?'var(--red)':'var(--green)',fontWeight:r.overdueTask>0?'700':'400'}},String(r.overdueTask)),
-        r.cases.length]
-    ));
+    // Detailed rep table — sortable, filterable, clickable rows
+    {
+      const repTblWrap=el('div',{style:{marginTop:'12px'}});
+      const repFi=el('input',{type:'text',placeholder:'Filter reps...',style:{marginBottom:'6px',width:'220px',fontSize:'10px',padding:'3px 8px',border:'1px solid var(--border)',borderRadius:'3px',background:'var(--bg)',color:'var(--text)'}});
+      repTblWrap.appendChild(repFi);
+      const repTbl=el('table',{class:'data-table'});
+      const repTh=el('thead');const repHr=el('tr');
+      ['Rep','Opps','Pipeline','Overdue Tasks','Cases'].forEach(h=>repHr.appendChild(el('th',{style:{fontSize:'9px'}},h)));
+      repTh.appendChild(repHr);repTbl.appendChild(repTh);
+      const repTb=el('tbody');
+      const _repRowFn=r=>{
+        const nameEl=el('span',{style:{fontWeight:'700',color:'var(--blue)',cursor:'pointer'}},r.name);
+        return[nameEl,r.opps.length,'$'+Math.round(r.pipelineValue).toLocaleString(),
+          el('span',{style:{color:r.overdueTask>0?'var(--red)':'var(--green)',fontWeight:r.overdueTask>0?'700':'400'}},String(r.overdueTask)),
+          r.cases.length];
+      };
+      filteredReps.forEach(r=>{
+        const tr=el('tr',{style:{cursor:'pointer',borderLeft:'3px solid '+(r.overdueTask>2?'var(--red)':r.overdueTask>0?'var(--amber, #f59e0b)':'transparent')},onclick(){
+          openModal(body=>{
+            body.style.minWidth='min(85vw,920px)';
+            body.appendChild(el('h3',{style:{marginBottom:'10px'}},r.name+' — Opportunities ('+r.opps.length+')'));
+            if(!r.opps.length){body.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'10px'}},'No open opportunities.'));const bb=el('div',{class:'modal-btns'});bb.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(bb);return;}
+            const tbl2=el('table',{class:'data-table',style:{marginBottom:'8px'}});
+            const th2=el('thead');const hr2=el('tr');
+            ['Opp Name','Account','Stage','Amount','Close Date','Age (days)'].forEach(h=>hr2.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+            th2.appendChild(hr2);tbl2.appendChild(th2);
+            const tb2=el('tbody');
+            const today2=new Date();today2.setHours(0,0,0,0);
+            const _oFn=o=>{
+              const nameEl2=USER.sfInstance&&o.Id?el('a',{href:USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view',target:'_blank',rel:'noopener noreferrer',style:{color:'var(--blue)',fontWeight:'600',fontSize:'10px',textDecoration:'none'}},o.Name||'—'):el('span',{style:{fontWeight:'600',fontSize:'10px'}},o.Name||'—');
+              const age=o.CloseDate?Math.round((today2-new Date(o.CloseDate))/86400000):null;
+              const ageEl=el('span',{style:{color:age&&age>0?'var(--red)':age&&age>-30?'var(--amber, #f59e0b)':'var(--green)',fontWeight:'600'}},age!==null?String(age):'—');
+              return[nameEl2,o._accountName||o.Account?.Name||'—',o.StageName||'—','$'+Math.round(Number(o.Amount||0)).toLocaleString(),o.CloseDate||'—',ageEl];
+            };
+            r.opps.forEach(o=>{const tr2=document.createElement('tr');_oFn(o).forEach(v=>{const td=document.createElement('td');if(v instanceof Element)td.appendChild(v.cloneNode(true));else td.textContent=String(v);tr2.appendChild(td);});tb2.appendChild(tr2);});
+            tbl2.appendChild(tb2);
+            const fi2=el('input',{type:'text',placeholder:'Filter opportunities...',style:{marginBottom:'6px',width:'100%',fontSize:'10px',padding:'3px 8px',border:'1px solid var(--border)',borderRadius:'3px',background:'var(--bg)',color:'var(--text)'}});
+            fi2.addEventListener('input',()=>{const q=fi2.value.toLowerCase();[...tb2.rows].forEach(tr3=>tr3.style.display=!q||tr3.textContent.toLowerCase().includes(q)?'':'none');});
+            body.appendChild(fi2);body.appendChild(tbl2);
+            addSortToTable(tbl2,r.opps,_oFn);
+            body.appendChild(el('p',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px'}},'Age = days until/past close date. Red = past due.'));
+            const bb=el('div',{class:'modal-btns'});bb.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(bb);
+          });
+        }});
+        _repRowFn(r).forEach(v=>{const td=document.createElement('td');if(v instanceof Element)td.appendChild(v.cloneNode(true));else td.textContent=String(v);tr.appendChild(td);});
+        tr.addEventListener('mouseenter',()=>tr.style.background='var(--bg)');
+        tr.addEventListener('mouseleave',()=>tr.style.background='');
+        repTb.appendChild(tr);
+      });
+      repTbl.appendChild(repTb);
+      repFi.addEventListener('input',()=>{const q=repFi.value.toLowerCase();[...repTb.rows].forEach(tr=>tr.style.display=!q||tr.textContent.toLowerCase().includes(q)?'':'none');});
+      addSortToTable(repTbl,filteredReps,_repRowFn);
+      repTblWrap.appendChild(repTbl);
+      c.appendChild(repTblWrap);
+    }
   }
 }
 
@@ -18057,7 +18510,7 @@ function renderSummary(c) {
     const sec4=el('div',{class:'summary-section'});
     const rangeLabel=S.summaryRange==='all'?'All time':S.summaryRange==='custom'?`${S.summaryFrom} – ${S.summaryTo||'today'}`:`Last ${S.summaryRange}d`;
     sec4.appendChild(el('h3',{style:{color:'var(--blue)',marginBottom:'6px'}},`📝 Recently Contacted (${rangeLabel})`));
-    sec4.appendChild(buildTable(['Vendor','Last Comm','Note Preview'],notesVendors.sort((a,b)=>(parseDate(b.lastComm)||0)-(parseDate(a.lastComm)||0)).slice(0,30),v=>[vLink(v),fmtDate(parseDate(v.lastComm)),el('span',{class:'note-preview'},String(v.notes||'').split('|')[0]?.slice(0,100)||'')]));
+    sec4.appendChild(buildSortableTable(['Vendor','Last Comm','Note Preview'],notesVendors.sort((a,b)=>(parseDate(b.lastComm)||0)-(parseDate(a.lastComm)||0)).slice(0,30),v=>[vLink(v),fmtDate(parseDate(v.lastComm)),el('span',{class:'note-preview'},String(v.notes||'').split('|')[0]?.slice(0,100)||'')]));
     makeCollapsibleSection(sec4,'🎨 Display Preferences','vcs_s_display',false);
   c.appendChild(sec4);
   }
@@ -18324,7 +18777,7 @@ function renderDataCheck(c) {
   for(const [sev,label] of [['high','🔴 High Priority'],['med','🟡 Medium'],['low','⚪ Low']]) {
     const g=grouped[sev]; if(!g.length) continue;
     c.appendChild(el('h3',{class:'group-header',style:{borderLeftColor:sevColor[sev],color:sevColor[sev]}},label+' ('+g.length+')'));
-    c.appendChild(buildTable(
+    c.appendChild(buildSortableTable(
       ['Issue','Vendor','Category','Contact','Fix'],
       g,
       ({vendor:v,type,fix})=>[
@@ -18589,14 +19042,15 @@ function renderVCSHealth(c) {
   wrap.appendChild(el('h2',{style:{margin:'0 0 12px',fontSize:'16px',fontWeight:'700'}},'⚡ System Status'));
 
   const checks=[
-    {label:'Google Drive Connection',icon:'☁',test:()=>!!S.settings?.driveFileId,pass:'Drive File ID configured',fail:'No Drive File ID in Settings'},
-    {label:'Salesforce Connection',icon:'☁',test:()=>!!USER.sfToken,pass:'Connected as '+USER.email,fail:'Not connected — go to Settings to connect'},
-    {label:'GAS Proxy',icon:'🔗',test:()=>!!VCS_PROXY_URL,pass:VCS_PROXY_URL.slice(0,40)+'…',fail:'No proxy URL configured'},
-    {label:'API Key (AI)',icon:'🤖',test:()=>!!(S.settings?.apiKey||localStorage.getItem('vcs_api_key')),pass:'API key configured',fail:'No API key — contract extraction unavailable'},
-    {label:'Vendors Loaded',icon:'🗂',test:()=>S.vendors?.length>0,pass:S.vendors?.length+' vendors in database',fail:'No vendors loaded'},
-    {label:'Channel Partners',icon:'🤝',test:()=>(S.channelVendors?.length||0)>0,pass:(S.channelVendors?.length||0)+' channel partner vendors',fail:'No channel vendor data'},
-    {label:'User Session',icon:'👤',test:()=>!!USER.email,pass:USER.email+' ('+USER.role+')',fail:'No user session'},
-    {label:'Renzo API Key',icon:'✉',test:()=>!!(S.settings?.renzoApiKey||S.settings?.renzoOutreachKey),pass:'Renzo outreach key configured',fail:'No Renzo key — AI outreach unavailable'},
+    {label:'Google Drive Connection',icon:'☁',test:()=>!!S.settings?.driveFileId,pass:'Drive File ID configured',fail:'No Drive File ID — go to Settings → Integrations'},
+    {label:'Salesforce Connection',icon:'☁',test:()=>!!USER.sfToken,pass:'Connected as '+USER.email,fail:'Not connected — go to Settings to connect SF'},
+    {label:'GAS Proxy',icon:'🔗',test:()=>!!VCS_PROXY_URL,pass:VCS_PROXY_URL.slice(0,40)+'…',fail:'No proxy URL configured — check Settings → Integrations'},
+    {label:'Claude API Key',icon:'🤖',test:()=>!!(S.settings?.apiKey||localStorage.getItem('vcs_api_key')),pass:'API key configured (contract OCR + AI chat enabled)',fail:'No API key — set in Settings → AI Configuration to enable contract extraction & AI chat'},
+    {label:'Vendors Loaded',icon:'🗂',test:()=>S.vendors?.length>0,pass:(S.vendors?.length||0)+' direct vendors + '+(S.channelVendors?.length||0)+' channel = '+(((S.vendors?.length||0)+(S.channelVendors?.length||0)))+' total',fail:'No vendors loaded — upload a vendor file'},
+    {label:'Channel Partners',icon:'🤝',test:()=>(S.channelVendors?.length||0)>0,pass:(S.channelVendors?.length||0)+' channel partner vendors across GPOs',fail:'No channel vendor data — load channel partners in Settings'},
+    {label:'User Session',icon:'👤',test:()=>!!USER.email,pass:USER.email+' ('+USER.role+')',fail:'No user session — reload the page'},
+    {label:'Renzo API Key',icon:'✉',test:()=>!!(S.settings?.renzoApiKey||S.settings?.renzoOutreachKey),pass:'Renzo outreach key configured',fail:'No Renzo key — set in Settings → Renzo to enable AI outreach'},
+    {label:'No Smart Quotes in JS',icon:'🔤',test:()=>{const _ss=document.querySelectorAll('script:not([src])');let _f=0;_ss.forEach(s=>{for(let i=0;i<s.textContent.length;i++){const c=s.textContent.charCodeAt(i);if(c===0x2018||c===0x2019||c===0x201c||c===0x201d){_f++;break;}}});return _f===0;},pass:'Clean — no curly/smart quotes in script tags',fail:'Smart quotes found in JS! Run fix_smart_quotes.py immediately'},
   ];
 
   const grid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:'8px',marginBottom:'16px'}});
@@ -18925,6 +19379,47 @@ function renderSettings(c) {
   }
   c.appendChild(syncSec);
 
+  // S3: Quick Setup Checklist — progress bar + 6 items, collapsed when all complete
+  if(USER.role==='admin'||USER.role==='procurement'){
+    const _setupItems=[
+      {key:'drive',label:'Connect Google Drive',done:!!window.GDriveToken,tip:'Go to Google Drive section below'},
+      {key:'sf',label:'Connect Salesforce',done:!!(USER.sfToken&&USER.sfInstance),tip:'Go to Salesforce section below'},
+      {key:'api',label:'Set Claude API Key',done:!!(S.settings&&S.settings.apiKey),tip:'Go to AI Settings below'},
+      {key:'users',label:'Add team members',done:(getApprovedUsers()||[]).length>1,tip:'Go to User Management below'},
+      {key:'vendors',label:'Upload vendor data',done:!!(S.vendors&&S.vendors.length>0),tip:'Upload your vendor Excel file'},
+      {key:'dialer',label:'Configure dialer URL',done:!!(S.settings&&S.settings.dialerUrl),tip:'Go to Dialer Settings below'},
+    ];
+    const doneCount=_setupItems.filter(i=>i.done).length;
+    const allDone=doneCount===_setupItems.length;
+    if(!allDone||!S._setupChecklistDismissed){
+      const setupSec=el('div',{style:{marginBottom:'12px',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
+      const setupHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'8px 12px',background:'var(--card)',cursor:'pointer'},
+        onclick(){S._setupChecklistOpen=!S._setupChecklistOpen;render();}});
+      setupHdr.appendChild(el('span',{style:{fontSize:'13px'}},allDone?'✅':'⚙'));
+      setupHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},allDone?'Setup Complete':'Quick Setup'));
+      // Progress bar
+      const progWrap=el('div',{style:{width:'120px',height:'7px',background:'var(--border)',borderRadius:'4px',overflow:'hidden',flexShrink:'0'}});
+      progWrap.appendChild(el('div',{style:{height:'100%',width:Math.round(doneCount/_setupItems.length*100)+'%',background:allDone?'var(--green)':'var(--blue)',borderRadius:'4px'}},''));
+      setupHdr.appendChild(progWrap);
+      setupHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',whiteSpace:'nowrap'}},doneCount+'/'+_setupItems.length));
+      if(allDone)setupHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(e){e.stopPropagation();S._setupChecklistDismissed=true;render();}},'Dismiss'));
+      setupHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},(S._setupChecklistOpen?'▼':'▶')));
+      setupSec.appendChild(setupHdr);
+      if(S._setupChecklistOpen){
+        const setupBody=el('div',{style:{padding:'8px 12px',display:'flex',flexDirection:'column',gap:'5px'}});
+        _setupItems.forEach(item=>{
+          const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',fontSize:'10px'}});
+          row.appendChild(el('span',{style:{fontSize:'13px',flexShrink:'0'}},item.done?'✅':'⬜'));
+          row.appendChild(el('span',{style:{flex:'1',color:item.done?'var(--muted)':'var(--text)',textDecoration:item.done?'line-through':'none'}},item.label));
+          if(!item.done)row.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)',fontStyle:'italic'}},item.tip));
+          setupBody.appendChild(row);
+        });
+        setupSec.appendChild(setupBody);
+      }
+      c.appendChild(setupSec);
+    }
+  }
+
 
   // ── Role Tab Defaults (Admin only) ──────────────────────────────────────
   if (hasPermission('manageUsers')) {
@@ -19167,6 +19662,42 @@ function renderSettings(c) {
 
     // User table
     const users=getApprovedUsers();
+
+    // S1: Bulk action bar — select all + action dropdown
+    const bulkBar=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'8px',padding:'6px 8px',background:'var(--card)',borderRadius:'4px',border:'1px solid var(--border)',flexWrap:'wrap'}});
+    const selAllCb=el('input',{type:'checkbox',title:'Select / deselect all users'});
+    bulkBar.appendChild(selAllCb);
+    bulkBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'4px'}},'Select all'));
+    const bulkSel=el('select',{style:{fontSize:'9px',padding:'2px 6px',border:'1px solid var(--border)',borderRadius:'3px',background:'var(--bg)',color:'var(--text)',cursor:'pointer'}});
+    [['','-- Bulk Action --'],['enable_ai','Enable AI for selected'],['disable_ai','Disable AI for selected'],['set_role','Set role for selected...'],['remove','Remove selected users']].forEach(([v,lbl])=>{
+      bulkSel.appendChild(el('option',{value:v},lbl));
+    });
+    bulkBar.appendChild(bulkSel);
+    bulkBar.appendChild(el('button',{class:'btn-xs btn-primary',onclick(){
+      const action=bulkSel.value;if(!action)return;
+      const checked=[...tblWrap.querySelectorAll('input.um-cb:checked')].map(cb=>cb.dataset.email);
+      if(!checked.length){toast('No users selected','var(--amber)');return;}
+      const all=getApprovedUsers();
+      if(action==='remove'){
+        if(!confirm('Remove '+checked.length+' user(s)?'))return;
+        setApprovedUsers(all.filter(u=>!checked.includes(u.email)));
+        renderSettings(c);return;
+      }
+      if(action==='enable_ai'||action==='disable_ai'){
+        const enable=action==='enable_ai';
+        all.forEach(u=>{if(checked.includes(u.email)){if(!u.featureFlags)u.featureFlags={};u.featureFlags.aiEnabled=enable;}});
+        setApprovedUsers(all);toast('✓ AI '+(enable?'enabled':'disabled')+' for '+checked.length+' user(s)');renderSettings(c);return;
+      }
+      if(action==='set_role'){
+        const newRole=prompt('Enter role for '+checked.length+' user(s): admin, procurement, manager, viewer, sales, restricted');
+        if(!newRole||!ROLES[newRole]){toast('Invalid role','var(--amber)');return;}
+        all.forEach(u=>{if(checked.includes(u.email))u.role=newRole;});
+        setApprovedUsers(all);toast('✓ Role set to '+newRole+' for '+checked.length+' user(s)');renderSettings(c);return;
+      }
+    }},'Apply'));
+    selAllCb.addEventListener('change',()=>tblWrap.querySelectorAll('input.um-cb').forEach(cb=>cb.checked=selAllCb.checked));
+    _umBody.appendChild(bulkBar);
+
     // ── Compact rows with expandable details ─────────────────────────────────
     const tblWrap=el('div',{style:{marginBottom:'12px'}});
     users.forEach((u,uidx)=>{
@@ -19175,6 +19706,11 @@ function renderSettings(c) {
 
       // ── Main line: always visible ─────────────────────────────────────────
       const mainLine=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',flexWrap:'wrap'}});
+
+      // S1: per-row checkbox
+      const rowCb=el('input',{type:'checkbox',class:'um-cb',style:{cursor:'pointer',flexShrink:'0'}});
+      rowCb.dataset.email=u.email;
+      mainLine.appendChild(rowCb);
 
       // Expand toggle
       const expBtn=el('button',{style:{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:'9px',padding:'0 2px',flexShrink:'0'}},'+');
@@ -20238,28 +20774,76 @@ function out(o){return ContentService.createTextOutput(JSON.stringify(o)).setMim
       if(!usageKeys.length){
         apiSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'No AI usage recorded yet.'));
       } else {
+        // S2: enhanced table with mini bar, session/month split, reset per user, inline AI toggle, export CSV
+        const allData=usageKeys.map(k=>{try{return{k,d:JSON.parse(localStorage.getItem(k)||'{}')};}catch(e){return null;}}).filter(Boolean);
+        const maxCost=Math.max(1,...allData.map(x=>x.d.estimatedCostCents||0));
+        const nowMonth=new Date().toISOString().slice(0,7);
+
         const tbl=el('table',{class:'data-table'});
-        const thead=el('thead'); const hr=el('tr');
-        ['User','AI Chat','Contract Compare','Contract OCR','Total Requests','Est. Cost','Last Used'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
-        thead.appendChild(hr); tbl.appendChild(thead);
+        const thead=el('thead');const hr=el('tr');
+        ['User','AI Chat','Contract+OCR','Est. Cost','Monthly','Usage','AI On','Reset','Last Used'].forEach(h=>hr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+        thead.appendChild(hr);tbl.appendChild(thead);
         const tbody=el('tbody');
-        usageKeys.sort().forEach(k=>{
-          try{
-            const d=JSON.parse(localStorage.getItem(k)||'{}');
-            const cost=d.estimatedCostCents||0;
-            const tr=el('tr');
-            tr.appendChild(el('td',{style:{fontSize:'10px',fontWeight:'600'}},d.user||(d.email||k.replace('vcs_ai_usage_','').replace(/_/g,'@'))));
-            tr.appendChild(el('td',{style:{fontSize:'10px',textAlign:'center',color:'var(--blue)'}},String(d.aiChat||0)));
-            tr.appendChild(el('td',{style:{fontSize:'10px',textAlign:'center',color:'var(--blue)'}},String(d.contractCompare||0)));
-            tr.appendChild(el('td',{style:{fontSize:'10px',textAlign:'center',color:'var(--blue)'}},String(d.contractOcr||0)));
-            tr.appendChild(el('td',{style:{fontSize:'10px',textAlign:'center',fontWeight:'600',color:'var(--text)'}},String(d.totalRequests||d.count||0)));
-            tr.appendChild(el('td',{style:{fontSize:'10px',color:cost>5000?'var(--red)':cost>1000?'var(--amber)':'var(--green)',fontWeight:'600'}},cost>100?'$'+(cost/100).toFixed(2):(cost.toFixed(1)+'¢')));
-            tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},d.lastUsed?new Date(d.lastUsed).toLocaleDateString('en-US',{month:'short',day:'numeric'})+'  '+new Date(d.lastUsed).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):'—'));
-            tbody.appendChild(tr);
-          }catch(e){}
+        allData.sort((a,b)=>(b.d.estimatedCostCents||0)-(a.d.estimatedCostCents||0)).forEach(({k,d})=>{
+          const cost=d.estimatedCostCents||0;
+          const monthlyCost=d.monthlyCosts?.[nowMonth]||0;
+          const userEmail=d.email||k.replace('vcs_ai_usage_','').replace(/_/g,'@');
+          const matchedUser=getApprovedUsers().find(u=>u.email===userEmail);
+          const aiEnabled=matchedUser?.featureFlags?.aiEnabled!==false;
+          const barPct=maxCost>0?Math.round((cost/maxCost)*100):0;
+
+          const tr=el('tr');
+          // User
+          tr.appendChild(el('td',{style:{fontSize:'10px',fontWeight:'600',maxWidth:'140px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},d.user||userEmail.split('@')[0]));
+          // AI Chat
+          tr.appendChild(el('td',{style:{fontSize:'10px',textAlign:'center',color:'var(--blue)'}},String(d.aiChat||0)));
+          // Contract+OCR
+          tr.appendChild(el('td',{style:{fontSize:'10px',textAlign:'center',color:'var(--blue)'}},String((d.contractCompare||0)+(d.contractOcr||0))));
+          // Est. Cost (total)
+          tr.appendChild(el('td',{style:{fontSize:'10px',color:cost>5000?'var(--red)':cost>1000?'var(--amber)':'var(--green)',fontWeight:'600'}},cost>100?'$'+(cost/100).toFixed(2):(cost.toFixed(1)+'c')));
+          // Monthly cost
+          tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},monthlyCost>100?'$'+(monthlyCost/100).toFixed(2):(monthlyCost.toFixed(1)+'c')));
+          // Mini bar chart
+          const barTd=el('td',{style:{minWidth:'60px'}});
+          const barBg=el('div',{style:{height:'8px',background:'var(--border)',borderRadius:'4px',overflow:'hidden',minWidth:'50px'}});
+          barBg.appendChild(el('div',{style:{height:'100%',width:barPct+'%',background:cost>5000?'var(--red)':cost>1000?'var(--amber)':'var(--blue)',borderRadius:'4px'}},''));
+          barTd.appendChild(barBg);
+          tr.appendChild(barTd);
+          // AI toggle
+          const togTd=el('td',{style:{textAlign:'center'}});
+          const togLbl=el('label',{style:{fontSize:'9px',cursor:'pointer',display:'flex',alignItems:'center',gap:'3px',justifyContent:'center'}});
+          const togCb=el('input',{type:'checkbox'});
+          togCb.checked=aiEnabled;
+          togCb.addEventListener('change',()=>{
+            const all2=getApprovedUsers();const ui=all2.findIndex(u=>u.email===userEmail);
+            if(ui>=0){if(!all2[ui].featureFlags)all2[ui].featureFlags={};all2[ui].featureFlags.aiEnabled=togCb.checked;setApprovedUsers(all2);toast('✓ AI '+(togCb.checked?'enabled':'disabled')+' for '+userEmail);}
+          });
+          togLbl.appendChild(togCb);togLbl.appendChild(el('span',{},aiEnabled?'On':'Off'));
+          togTd.appendChild(togLbl);tr.appendChild(togTd);
+          // Reset button
+          const rstTd=el('td');
+          rstTd.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',color:'var(--muted)'},onclick(){
+            if(!confirm('Reset usage stats for '+userEmail+'?'))return;
+            localStorage.removeItem(k);render();toast('✓ Usage reset for '+userEmail);
+          }},'Reset'));
+          tr.appendChild(rstTd);
+          // Last used
+          tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)',whiteSpace:'nowrap'}},d.lastUsed?new Date(d.lastUsed).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—'));
+          tbody.appendChild(tr);
         });
-        tbl.appendChild(tbody); apiSec.appendChild(tbl);
-        apiSec.appendChild(el('button',{class:'btn-xs btn-danger',style:{marginTop:'8px'},onclick(){if(confirm('Clear all API usage stats?')){usageKeys.forEach(k=>localStorage.removeItem(k));render();toast('Usage stats cleared');}}},'🗑 Clear All Stats'));
+        tbl.appendChild(tbody);apiSec.appendChild(tbl);
+
+        // Action buttons row
+        const btnRow=el('div',{style:{display:'flex',gap:'6px',marginTop:'8px',flexWrap:'wrap'}});
+        // Export CSV
+        btnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){
+          const rows=[['User','Email','AI Chat','Contract Compare','OCR','Total','Est. Cost ($)','Last Used']];
+          allData.forEach(({d,k})=>{const c=(d.estimatedCostCents||0)/100;rows.push([d.user||'',d.email||k.replace('vcs_ai_usage_','').replace(/_/g,'@'),d.aiChat||0,d.contractCompare||0,d.contractOcr||0,d.totalRequests||0,c.toFixed(4),d.lastUsed||'']);});
+          const csv=rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
+          const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='vcs_ai_usage.csv';a.click();
+        }},'⬇ Export CSV'));
+        btnRow.appendChild(el('button',{class:'btn-xs btn-danger',onclick(){if(confirm('Clear all API usage stats?')){usageKeys.forEach(k=>localStorage.removeItem(k));render();toast('Usage stats cleared');}}},'🗑 Clear All'));
+        apiSec.appendChild(btnRow);
       }
     }
     c.appendChild(apiSec);
