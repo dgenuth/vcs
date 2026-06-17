@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -3918,28 +3918,15 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     if(ph) contactRow.appendChild(el('a',{href:'tel:'+ph.replace(/[^+\d]/g,''),style:{color:'var(--blue)',textDecoration:'none',fontSize:'10px'}},ph));
     if(vendor.email) contactRow.appendChild(el('a',{href:'#',style:{color:'var(--blue)',textDecoration:'none',fontSize:'10px'},onclick(e){e.preventDefault();e.stopPropagation();openEmailModal(vendor);}},vendor.email));
     stickySlot.appendChild(contactRow);
-    // D6: Split Contacts button when ' / ' detected in any contact field
-    const _contactNameFields=['procContact','contactName','contact','primaryContact','contactFullName'];
-    const _contactPhoneFields=['bizPhone','phone','contactPhone','mobile'];
-    const _hasSplittable=[..._contactNameFields,..._contactPhoneFields].some(f=>vendor[f]&&vendor[f].includes(' / '));
+    // D6: Split Contacts button when ' / ' detected in name or phone
+    const _hasSplittable=(vendor.procContact&&vendor.procContact.includes(' / '))||(vendor.bizPhone&&vendor.bizPhone.includes(' / '))||(vendor.mobile&&vendor.mobile.includes(' / '));
     if(_hasSplittable&&hasPermission('editContact')){
       const splitBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px',marginTop:'3px',color:'var(--amber)',borderColor:'rgba(245,158,11,.4)'},onclick(e){
         e.stopPropagation();
         const changes=[];
-        _contactNameFields.forEach(f=>{
-          if(vendor[f]&&vendor[f].includes(' / ')){
-            const pts=vendor[f].split(' / ');vendor[f]=pts[0].trim();
-            if(!vendor.shared2)vendor.shared2=pts[1].trim();
-            changes.push(f+': '+pts[0].trim()+' + '+pts[1].trim());
-          }
-        });
-        _contactPhoneFields.forEach(f=>{
-          if(vendor[f]&&vendor[f].includes(' / ')){
-            const pts=vendor[f].split(' / ');vendor[f]=pts[0].trim();
-            if(!vendor.mobile2)vendor.mobile2=pts[1].trim();
-            changes.push(f+': '+pts[0].trim()+' + '+pts[1].trim());
-          }
-        });
+        if(vendor.procContact&&vendor.procContact.includes(' / ')){const pts=vendor.procContact.split(' / ');vendor.procContact=pts[0].trim();if(!vendor.shared2)vendor.shared2=pts[1].trim();changes.push('Contact: '+pts[0].trim()+' + '+pts[1].trim());}
+        if(vendor.bizPhone&&vendor.bizPhone.includes(' / ')){const pts=vendor.bizPhone.split(' / ');vendor.bizPhone=pts[0].trim();if(!vendor.mobile2)vendor.mobile2=pts[1].trim();changes.push('Phone: '+pts[0].trim()+' + '+pts[1].trim());}
+        if(vendor.mobile&&vendor.mobile.includes(' / ')){const pts=vendor.mobile.split(' / ');vendor.mobile=pts[0].trim();if(!vendor.mobile2)vendor.mobile2=pts[1].trim();changes.push('Mobile: '+pts[0].trim()+' + '+pts[1].trim());}
         markDirty(vendor);saveSessionState();
         toast('⚡ Split: '+changes.join('; '));
         refreshDetailIfOpen(vendor);
@@ -3964,9 +3951,9 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     if(ph2) qBar.appendChild(qBtn('📞','Call '+vendor.procContact,()=>dialPhone(ph2,vendor)));
     if(_canAct2) qBar.appendChild(qBtn('📧','Send email',()=>openEmailModal(vendor),'var(--blue)'));
     if(hasPermission('editNotes')) qBar.appendChild(qBtn('📝','Add note',()=>openStructuredNoteModal(vendor),'var(--green)'));
-    if(hasPermission('editContract')) qBar.appendChild(qBtn('📄','Edit contract',()=>{S._contractsPresetVendor=vendor.name;S.view='contracts';render();},'var(--amber)'));
+    if(hasPermission('editContract')) qBar.appendChild(qBtn('📄','Edit contract',()=>{if(vendor._detailTab!=='contract'){vendor._detailTab='contract';openDetail(vendor,fromAnalytics,false);}else{openDetail(vendor,fromAnalytics,false);}}),'var(--amber)');
     if(USER.sfToken&&vendor.sfAccountId) qBar.appendChild(qBtn('☁','Open in Salesforce',()=>window.open(USER.sfInstance+'/lightning/r/Account/'+vendor.sfAccountId+'/view','_blank'),'#38bdf8'));
-    if(USER.sfToken&&vendor.sfAccountId) qBar.appendChild(qBtn('📊','SF Dashboard',()=>window.open(USER.sfInstance+'/lightning/r/Account/'+vendor.sfAccountId+'/view','_blank'),'var(--blue)'));
+    if(_canAct2) qBar.appendChild(qBtn('⚡','AI Briefing',()=>openAIBriefingModal(vendor),'var(--amber)'));
     if(_canAct2) qBar.appendChild(qBtn('📅','Schedule meeting',()=>openCalendarEventModal(isoDate(new Date()),vendor.name)));
     if(_canAct2) qBar.appendChild(qBtn('🎯','Meeting Mode — AI talking points',()=>openTalkingPointsModal(0,vendor),'var(--amber)'));
     stickySlot.appendChild(qBar);
@@ -4634,8 +4621,11 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     const _fathomIsOpen=S._fathomOpen?.[vendor.name]===true;
     const fathomSec=el('div',{style:{marginTop:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
     const fathomHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'6px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none',borderBottom:_fathomIsOpen?'1px solid var(--border)':'none'},
-      onclick(e){e.stopPropagation();if(!S._fathomOpen)S._fathomOpen={};S._fathomOpen[vendor.name]=!S._fathomOpen[vendor.name];refreshDetailIfOpen(vendor);}
-      });
+      onclick(e){e.stopPropagation();if(!S._fathomOpen)S._fathomOpen={};S._fathomOpen[vendor.name]=!S._fathomOpen[vendor.name];
+        const lbl=fathomHdr.querySelector('.fathom-lbl');if(lbl)lbl.textContent=S._fathomOpen[vendor.name]?'▲ collapse':'▼ expand';
+        const bdy=fathomSec.querySelector('.fathom-body');if(bdy)bdy.style.display=S._fathomOpen[vendor.name]?'':'none';
+        fathomHdr.style.borderBottom=S._fathomOpen[vendor.name]?'1px solid var(--border)':'none';
+      }});
     fathomHdr.appendChild(el('span',{style:{fontSize:'11px'}},'📹'));
     fathomHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Meetings'));
     fathomHdr.appendChild(el('span',{class:'fathom-lbl',style:{fontSize:'9px',color:'var(--muted)'}},_fathomIsOpen?'▲ collapse':'▼ expand'));
@@ -4658,8 +4648,11 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     const _mediaIsOpen=S._mediaOpen?.[vendor.name]===true;
     const mediaSec=el('div',{style:{marginTop:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
     const mediaHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'6px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none',borderBottom:_mediaIsOpen?'1px solid var(--border)':'none'},
-      onclick(e){e.stopPropagation();if(!S._mediaOpen)S._mediaOpen={};S._mediaOpen[vendor.name]=!S._mediaOpen[vendor.name];refreshDetailIfOpen(vendor);}
-      });
+      onclick(e){e.stopPropagation();if(!S._mediaOpen)S._mediaOpen={};S._mediaOpen[vendor.name]=!_mediaIsOpen;
+        const lbl=mediaHdr.querySelector('.media-lbl');if(lbl)lbl.textContent=S._mediaOpen[vendor.name]?'▲ collapse':'▼ expand';
+        const bdy=mediaSec.querySelector('.media-body');if(bdy)bdy.style.display=S._mediaOpen[vendor.name]?'':'none';
+        mediaHdr.style.borderBottom=S._mediaOpen[vendor.name]?'1px solid var(--border)':'none';
+      }});
     mediaHdr.appendChild(el('span',{style:{fontSize:'11px'}},'📎'));
     mediaHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Media & Links'));
     if(vendor._mediaLinks.length>0)mediaHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',background:'var(--bg)',borderRadius:'9px',padding:'1px 6px',border:'1px solid var(--border)'}},String(vendor._mediaLinks.length)));
@@ -4733,7 +4726,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     sfHdr.appendChild(el('h4',{class:'detail-sec-title',style:{marginBottom:'0'}},'☁ Salesforce'));
     sfSec.appendChild(sfHdr);
 
-    const sfWrap=el('div',{style:{marginTop:'4px',maxHeight:'320px',overflowY:'auto'}});
+    const sfWrap=el('div',{style:{marginTop:'4px'}});
     sfSec.appendChild(sfWrap);
     body.appendChild(sfSec);
 
@@ -4864,7 +4857,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       }
       const sfTabs2=["Details","Spend","Opportunities","Cases"];
       if(!vendor._sfTab) vendor._sfTab="Details";
-      const tabBar2=el("div",{style:{display:"flex",gap:"2px",marginBottom:"6px",borderBottom:"1px solid var(--border)",paddingBottom:"2px",position:"sticky",top:"0",zIndex:"5",background:"var(--bg)"}});
+      const tabBar2=el("div",{style:{display:"flex",gap:"2px",marginBottom:"6px",borderBottom:"1px solid var(--border)",paddingBottom:"2px"}});
       sfTabs2.forEach(tab=>{
         const active=vendor._sfTab===tab;
         const btn=el("button",{style:{padding:"3px 8px",fontSize:"9px",fontWeight:"600",border:"none",cursor:"pointer",borderRadius:"3px 3px 0 0",background:active?"var(--blue)":"transparent",color:active?"white":"var(--muted)"},onclick(e){e.stopPropagation();vendor._sfTab=tab;renderSFPanel();}},tab);
@@ -8669,7 +8662,7 @@ function openTalkingPointsModal(startIdx=0, vendor=null) {
       });
       aiRow.appendChild(aiBtn);
       aiRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Powered by Claude — uses vendor data, contract info & SF context'));
-      body.appendChild(aiRow);
+      body.insertBefore(aiRow,tpList);
     }
     body.appendChild(tpList);
     // Log row
@@ -10847,6 +10840,14 @@ const CONTRACT_FIELD_MAP = [
   {field:'comments',       label:'Notes / Comments',      extract:ex=>ex.notes||null},
   {field:'vendorPhone',    label:'Vendor Phone',           extract:ex=>ex.vendorPhone||null},
   {field:'contractValue',  label:'Contract Value ($)',      extract:ex=>ex.contractValue?'$'+Number(ex.contractValue).toLocaleString():null},
+  {field:'autoRenewCount', label:'# Renewals Allowed',       extract:function(ex){
+    var t=ex.autoRenewTimesAllowed;
+    if(t===null||t===undefined) return null;
+    if(typeof t==='number') return String(t);
+    var s=String(t).toLowerCase();
+    if(s==='unlimited') return 'Unlimited';
+    return String(t);
+  }},
 ];
 
 
@@ -10932,8 +10933,14 @@ function openApplyContractModal(vendor, extracted, onApplied) {
       const hasExtracted = !!f.newVal;
       const bg = hasConflict ? 'rgba(245,158,11,.04)' : '';
 
-      // Field label
-      const labelCell=el('div',{style:{padding:'6px 8px',borderBottom:'1px solid var(--border)',borderRight:'1px solid var(--border)',background:bg,color:hasExtracted?'var(--text)':'var(--muted)',fontWeight:hasExtracted?'500':'400'}},f.label+(hasExtracted?'':' ✏'));
+      // Field label with per-field confidence indicator
+      const discMatch=(extracted.discrepancies||[]).find(function(d){return d.field===f.field;});
+      const fieldConf=discMatch?'low':(extracted.extractionConfidence==='LOW'?'medium':'high');
+      const confBadge=fieldConf==='high'?'':
+        (fieldConf==='medium'?el('span',{style:{fontSize:'7px',background:'rgba(245,158,11,.2)',color:'#f59e0b',borderRadius:'3px',padding:'0 3px',marginLeft:'3px'},title:'Medium confidence — verify this field'},'~'):
+         el('span',{style:{fontSize:'7px',background:'rgba(239,68,68,.2)',color:'#ef4444',borderRadius:'3px',padding:'0 3px',marginLeft:'3px'},title:'Low confidence — discrepancy detected, review carefully'},'!'));
+      const labelCell=el('div',{style:{padding:'6px 8px',borderBottom:'1px solid var(--border)',borderRight:'1px solid var(--border)',background:bg,color:hasExtracted?'var(--text)':'var(--muted)',fontWeight:hasExtracted?'500':'400',display:'flex',alignItems:'center',gap:'2px'}},f.label+(hasExtracted?'':' ✏'));
+      if(confBadge) labelCell.appendChild(confBadge);
       grid.appendChild(labelCell);
 
       // Current value cell (what's already in VCS)
@@ -11190,6 +11197,8 @@ const PSX_CHECKLIST = [{"label":"REHAB","items":[{"label":"Therapy – In-House 
 
 function renderChecklist(c) {
   c.innerHTML='';
+  // Declare allItems early — used in _histPct closure before coverage section
+  const allItems=(typeof PSX_CHECKLIST!=='undefined'&&PSX_CHECKLIST)?PSX_CHECKLIST.flatMap(function(s){return s.items;}):[]; 
   if(!S.loaded){c.appendChild(el('p',{style:{padding:'20px',color:'var(--muted)'}},'Please load a vendor file first.'));return;}
   if(typeof PSX_CHECKLIST==='undefined'||!PSX_CHECKLIST.length){c.appendChild(el('p',{style:{padding:'20px',color:'var(--muted)'}},'Checklist data not found. Reload the page.'));return;}
   try {
@@ -11349,28 +11358,74 @@ function renderChecklist(c) {
 
   // Vendor lookup map by keyword — must be declared before coveredItems uses findVendors
   const catVendorMap={};
-  [...(S.vendors||[]),...(S.channelVendors||[])].forEach(v=>{
-    const terms=[v.category,v.subCategory,v.product,v.about].filter(Boolean);
-    terms.forEach(t=>{
-      const k=t.toLowerCase();
+  const _allChecklistVendors=[...(S.vendors||[]),...(S.channelVendors||[])];
+  _allChecklistVendors.forEach(function(v){
+    const terms=[v.category,v.subCategory].filter(Boolean);
+    terms.forEach(function(t){
+      const k=t.toLowerCase().trim();
       if(!catVendorMap[k]) catVendorMap[k]=[];
       if(!catVendorMap[k].includes(v)) catVendorMap[k].push(v);
     });
   });
+  const CHECKLIST_CAT_MAP={
+    'bakery':'bakery','bread':'bakery','produce':'produce','dairy':'dairy',
+    'meat':'meat','poultry':'meat','seafood':'seafood',
+    'grocery':'grocery','dry goods':'grocery','canned goods':'grocery',
+    'beverages':'beverages','coffee':'beverages','juice':'beverages',
+    'ice cream':'frozen foods','frozen':'frozen foods',
+    'housekeeping':'housekeeping','cleaning':'housekeeping','janitorial':'housekeeping',
+    'laundry':'laundry','linen':'laundry','towel':'laundry',
+    'maintenance':'maintenance','hvac':'maintenance',
+    'pest control':'pest control','pest':'pest control',
+    'trash':'waste management','waste':'waste management',
+    'ice machine':'ice machines','ice machines':'ice machines',
+    'copy machine':'office equipment','copier':'office equipment','printer':'office equipment',
+    'therapy':'therapy','rehab':'therapy','rehabilitation':'therapy',
+    'physical therapy':'therapy','occupational therapy':'therapy','speech therapy':'therapy',
+    'medical supplies':'medical supplies','clinical supplies':'medical supplies',
+    'pharmacy':'pharmacy','medications':'pharmacy','drugs':'pharmacy',
+    'wound care':'medical supplies','incontinence':'medical supplies',
+    'uniforms':'uniforms','scrubs':'uniforms','apparel':'uniforms',
+    'office supplies':'office supplies','paper products':'office supplies',
+    'technology':'technology','it services':'technology','software':'technology',
+    'dining':'dining services','food service':'dining services',
+    'disposables':'dining services','tableware':'dining services',
+    'building services':'building services','construction':'building services',
+    'furniture':'furniture','flooring':'flooring','matting':'flooring',
+    'security':'security','safety':'safety'
+  };
   function findVendors(label) {
-    const q=label.toLowerCase();
-    const words=q.split(/[\s\-\/,]+/).filter(w=>w.length>3);
-    const found=new Set();
-    Object.entries(catVendorMap).forEach(([key,vList])=>{
-      if(words.some(w=>key.includes(w)||w.includes(key.slice(0,8)))){
-        vList.forEach(v=>found.add(v));
-      }
+    var q=(label||'').toLowerCase().trim();
+    var found=[];
+    var seen=new Set();
+    var mappedCat=CHECKLIST_CAT_MAP[q];
+    if(mappedCat&&catVendorMap[mappedCat]){
+      catVendorMap[mappedCat].forEach(function(v){if(!seen.has(v.name)){seen.add(v.name);found.push(v);}});
+    }
+    if(catVendorMap[q]){
+      catVendorMap[q].forEach(function(v){if(!seen.has(v.name)){seen.add(v.name);found.push(v);}});
+    }
+    if(found.length<3){
+      var words=q.split(/[\s\-\/,]+/).filter(function(w){return w.length>4;});
+      Object.entries(catVendorMap).forEach(function(e){
+        var key=e[0],vList=e[1];
+        if(words.some(function(w){return key===w;})){
+          vList.forEach(function(v){if(!seen.has(v.name)){seen.add(v.name);found.push(v);}});
+        }
+      });
+    }
+    found.sort(function(a,b){
+      var aIsChannel=(S.channelVendors||[]).includes(a)?1:0;
+      var bIsChannel=(S.channelVendors||[]).includes(b)?1:0;
+      if(aIsChannel!==bIsChannel) return aIsChannel-bIsChannel;
+      var aFee=parseFloat((a.adminFee||'0').replace(/[^0-9.]/g,''))||0;
+      var bFee=parseFloat((b.adminFee||'0').replace(/[^0-9.]/g,''))||0;
+      return bFee-aFee;
     });
-    return [...found].slice(0,4);
+    return found.slice(0,5);
   }
 
   // Overall coverage summary — two bars: Available (DB vendors) + Selected (GoWith choices)
-  const allItems=PSX_CHECKLIST.flatMap(s=>s.items);
   const coveredItems=allItems.filter(it=>findVendors(it.label).length>0);
   const selectedItems=allItems.filter(it=>S._clGoWith&&S._clGoWith[it.label]);
   const overallPct=allItems.length?Math.round(coveredItems.length/allItems.length*100):0;
@@ -11877,7 +11932,6 @@ function renderContracts(c) {
 
   const comboInput=el('input',{type:'text',class:'detail-edit-field',style:{width:'100%',height:'30px',paddingRight:'24px'},
     placeholder:'Type or select vendor...'});
-  if(S._contractsPresetVendor){selectedVendorName=S._contractsPresetVendor;comboInput.value=S._contractsPresetVendor;delete S._contractsPresetVendor;}
   const comboArrow=el('span',{style:{position:'absolute',right:'6px',top:'7px',fontSize:'10px',color:'var(--muted)',pointerEvents:'none'}},'▾');
   const comboDropdown=el('div',{style:{
     position:'absolute',top:'32px',left:'0',right:'0',
@@ -13807,19 +13861,21 @@ function renderNetworkIntel(c) {
   ALL.forEach(vendorA=>{
     const aCat=vendorA.category||'';
     const aNeeds=Object.entries(SERVICE_NEEDS).find(([k])=>aCat.toLowerCase().includes(k.toLowerCase()))?.[1]||[];
+    if(!aNeeds.length) return;
     ALL.forEach(vendorB=>{
       if(vendorB.name===vendorA.name) return;
-      if((vendorB.category||'')===(vendorA.category||'')) return; // competitors/same category
+      if((vendorB.category||'')===(vendorA.category||'')) return; // competitors
       const pairKey=[vendorA.name,vendorB.name].sort().join('|||');
       if(seenPairs.has(pairKey)) return;
+      const bText=vendorServiceText(vendorB);
+      const matchedN=aNeeds.filter(need=>bText.includes(need));
+      if(!matchedN.length) return;
       // Skip if already documented relationship
       const hasRel=(vendorA.vendorRelationships||'').toLowerCase().includes(vendorB.name.toLowerCase())||(vendorB.vendorRelationships||'').toLowerCase().includes(vendorA.name.toLowerCase());
       if(hasRel) return;
       seenPairs.add(pairKey);
-      const bText=vendorServiceText(vendorB);
-      const matchedN=aNeeds.length?aNeeds.filter(need=>bText.includes(need)):[];
-      // Scoring: keyword matches get higher score; any cross-category pair scores at least 1
-      const score=matchedN.length?Math.min(5,2+Math.min(3,matchedN.length)):1;
+      // Scoring: complementary category base=2, +1 per matched need keyword (max 3 extra)
+      const score=Math.min(5,2+Math.min(3,matchedN.length));
       scoredPairs.push({vendorA,topMatch:vendorB,matchedNeeds:matchedN,score});
     });
   });
@@ -13841,15 +13897,12 @@ function renderNetworkIntel(c) {
   }
 
   const filteredPairs=S._niCatFilter?scoredPairs.filter(p=>(p.vendorA.category||'')===S._niCatFilter):scoredPairs;
-  // Top 10, minimum 3 pairs (fall back to unsorted global pool if filter too narrow)
-  const _topN=Math.max(3,Math.min(10,filteredPairs.length));
-  const topPairs=filteredPairs.length>=3?filteredPairs.slice(0,10):scoredPairs.slice(0,Math.max(3,Math.min(10,scoredPairs.length)));
-  console.log('[VCS NetworkIntel] vendors:',ALL.length,'pairs scored:',scoredPairs.length,'pairs shown:',topPairs.length);
+  const topPairs=filteredPairs.slice(0,20);
   const countLbl=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'6px'}},
     'Showing '+topPairs.length+' of '+filteredPairs.length+' matches'+(scoredPairs.length!==filteredPairs.length?' ('+scoredPairs.length+' total)':''));
   xrefSec.appendChild(countLbl);
 
-  const pairCards=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(320px,1fr))',gap:'8px'}});
+  const pairCards=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(340px,1fr))',gap:'8px'}});
 
   if(!topPairs.length){
     pairCards.appendChild(el('p',{class:'muted',style:{padding:'10px 0'}},scoredPairs.length?'No matches for the selected category filter. Try "All".':'Not enough service description data to generate matches. Add "Product / Description" and "Added Value" details to your vendor records for smarter suggestions.'));
@@ -13857,41 +13910,41 @@ function renderNetworkIntel(c) {
 
   topPairs.forEach(({vendorA,topMatch,matchedNeeds,score})=>{
     const aCat=vendorA.category||'';
-    const bCat=topMatch.category||'';
+    const reason=matchedNeeds.slice(0,2).join(', ');
     const matchDots='●'.repeat(score)+'○'.repeat(5-score);
-    const whyText=matchedNeeds.length
-      ? vendorA.name+' ('+aCat+') needs '+matchedNeeds.slice(0,3).join(', ')+', which '+topMatch.name+' provides.'
-      : 'Complementary categories — '+aCat+' and '+bCat+' rarely overlap but frequently need each other.';
 
     const card=el('div',{style:{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'5px',padding:'10px'}});
+    // Header
+    const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'6px',flexWrap:'wrap'}});
+    hdr.appendChild(el('span',{style:{background:'rgba(79,124,255,.12)',color:'var(--blue)',padding:'2px 6px',borderRadius:'3px',fontSize:'9px'}},aCat));
+    hdr.appendChild(el('span',{style:{color:'var(--muted)'}},'needs'));
+    hdr.appendChild(el('span',{style:{background:'rgba(34,197,94,.1)',color:'var(--green)',padding:'2px 6px',borderRadius:'3px',fontSize:'9px',fontWeight:'600'}},reason));
+    hdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',letterSpacing:'1px'}},matchDots));
+    card.appendChild(hdr);
 
-    // F2: Header — "Vendor A × Vendor B"
-    const titleRow=el('div',{style:{display:'flex',alignItems:'center',gap:'5px',marginBottom:'5px',flexWrap:'wrap'}});
-    const _aLnk=vLink(vendorA);_aLnk.style.cssText='font-size:11px;font-weight:700;';
-    const _bLnk=vLink(topMatch);_bLnk.style.cssText='font-size:11px;font-weight:700;';
-    titleRow.appendChild(_aLnk);
-    titleRow.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'13px','fontWeight':'400'}},'×'));
-    titleRow.appendChild(_bLnk);
-    card.appendChild(titleRow);
+    const row=el('div',{style:{display:'flex',gap:'10px',alignItems:'flex-start'}});
+    const aDiv=el('div',{style:{flex:'1',background:'rgba(79,124,255,.05)',borderRadius:'3px',padding:'5px 7px'}});
+    aDiv.appendChild(el('div',{style:{fontSize:'9px',color:'var(--blue)',fontWeight:'600',marginBottom:'2px'}},'The vendor:'));
+    const _aLnk=vLink(vendorA);_aLnk.style.cssText='font-size:10px;font-weight:600;';aDiv.appendChild(_aLnk);
+    aDiv.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},(vendorA.product||vendorA.addedValue||aCat||'').slice(0,60)));
+    row.appendChild(aDiv);
+    row.appendChild(el('span',{style:{alignSelf:'center',color:'var(--green)',fontSize:'16px'}},'⟷'));
+    const bDiv=el('div',{style:{flex:'1',background:'rgba(34,197,94,.05)',borderRadius:'3px',padding:'5px 7px'}});
+    bDiv.appendChild(el('div',{style:{fontSize:'9px',color:'var(--green)',fontWeight:'600',marginBottom:'2px'}},'Introduce to:'));
+    const _bLnk=vLink(topMatch);_bLnk.style.cssText='font-size:10px;font-weight:600;';bDiv.appendChild(_bLnk);
+    bDiv.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},(topMatch.product||topMatch.addedValue||topMatch.category||'').slice(0,60)));
+    if(topMatch.adminFee)bDiv.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},topMatch.adminFee+' admin fee'));
+    row.appendChild(bDiv);
+    card.appendChild(row);
 
-    // Category tags + match dots
-    const metaRow=el('div',{style:{display:'flex',alignItems:'center',gap:'5px',marginBottom:'6px',flexWrap:'wrap'}});
-    metaRow.appendChild(el('span',{style:{background:'rgba(79,124,255,.12)',color:'var(--blue)',padding:'1px 5px',borderRadius:'3px',fontSize:'8px'}},aCat||'—'));
-    metaRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'×'));
-    metaRow.appendChild(el('span',{style:{background:'rgba(34,197,94,.1)',color:'var(--green)',padding:'1px 5px',borderRadius:'3px',fontSize:'8px'}},bCat||'—'));
-    metaRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--amber)',letterSpacing:'1px',marginLeft:'auto'}},matchDots));
-    card.appendChild(metaRow);
-
-    // Why text (always visible, concise)
-    card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.4',marginBottom:'6px',padding:'4px 6px',background:'var(--card)',borderRadius:'3px'}},whyText));
-
-    // Vendor detail snippets
-    const snipRow=el('div',{style:{display:'flex',gap:'8px',marginBottom:'6px'}});
-    if(vendorA.product||vendorA.addedValue)snipRow.appendChild(el('div',{style:{flex:'1',fontSize:'8px',color:'var(--muted)',lineHeight:'1.3'}},'"'+(vendorA.product||vendorA.addedValue||'').slice(0,50)+'"'));
-    if(topMatch.product||topMatch.addedValue)snipRow.appendChild(el('div',{style:{flex:'1',fontSize:'8px',color:'var(--muted)',lineHeight:'1.3'}},'"'+(topMatch.product||topMatch.addedValue||'').slice(0,50)+'"'));
-    if(snipRow.children.length)card.appendChild(snipRow);
-
-    const whyRow=el('div',{style:{marginTop:'2px',display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap'}});
+    // "Why this match?" expandable
+    const whyRow=el('div',{style:{marginTop:'5px',display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap'}});
+    const whyToggle=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',padding:'1px 5px',color:'var(--muted)'}},
+      '▶ Why this match?');
+    const whyBody=el('div',{style:{display:'none',fontSize:'9px',color:'var(--muted)',marginTop:'4px',padding:'5px 8px',background:'var(--card)',borderRadius:'3px',lineHeight:'1.5'}});
+    whyBody.textContent='Matched keywords: '+matchedNeeds.join(', ')+' · Score: '+score+'/5 (complementary categories + '+matchedNeeds.length+' service overlap'+(matchedNeeds.length!==1?'s':'')+')'+(topMatch.markets?' · '+topMatch.name+' serves: '+topMatch.markets:'');
+    whyToggle.onclick=()=>{const open=whyBody.style.display!=='none';whyBody.style.display=open?'none':'';whyToggle.textContent=(open?'▶':'▼')+' Why this match?';};
+    whyRow.appendChild(whyToggle);
     // Introduce button
     whyRow.appendChild(el('button',{class:'btn-xs',style:{fontSize:'9px',background:'rgba(79,124,255,.12)',color:'var(--blue)',border:'1px solid rgba(79,124,255,.3)',borderRadius:'3px',padding:'2px 8px',cursor:'pointer',marginLeft:'auto'},
       onclick(e){
@@ -13902,6 +13955,7 @@ function renderNetworkIntel(c) {
         openEmailModal(Object.assign({},vendorA,{notes:introContext+(vendorA.notes?'\n\n'+vendorA.notes:''),_introTargetName:topMatch.name,_introTargetCategory:topMatch.category||''}),{title:'✉️ Introduce: '+vendorA.name+' × '+topMatch.name,subject:introSubj,body:introBody});
       }},'✉ Introduce'));
     card.appendChild(whyRow);
+    card.appendChild(whyBody);
     pairCards.appendChild(card);
   });
 
@@ -15179,9 +15233,6 @@ function openPromoteToVendorDBModal(itwVendor) {
 }
 
 function renderToday(c) {
-  if(!S._todayOpen) S._todayOpen={};
-  // Default all sections open
-  ['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>{if(S._todayOpen[k]===undefined)S._todayOpen[k]=true;});
   const today=new Date();
   const allActive=(S.vendors||[]).filter(isVisible);
   const urgent=allActive.filter(v=>v.score>=8).length;
@@ -15229,10 +15280,6 @@ function renderToday(c) {
   dimLabel.append(dimCb,' Show dismissed'); tabs.appendChild(dimLabel);
   stickyHdr.appendChild(tabs);
   c.appendChild(stickyHdr);
-  // B5: Spacer so sticky bar never overlaps first content row
-  const _todaySpacer=el('div',{style:{height:'0px'}});
-  c.appendChild(_todaySpacer);
-  requestAnimationFrame(()=>{const h=stickyHdr.getBoundingClientRect().height;if(h>0)_todaySpacer.style.height=h+'px';});
 
   // ── SF-Powered Signals (if connected) ──────────────────────────────────────
   if(USER.sfToken && S._sfSignals !== false) {
@@ -15551,9 +15598,6 @@ function renderToday(c) {
     openBulkEmailModal(sel);
   }},'✉ Bulk Email '+(S.filter?'(filtered)':'All')));
   tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){exportCSV(vendors,'today_filtered');}}, '⬇ CSV'));
-  // B1/B2: Collapse All / Expand All for Today tab sections
-  tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'auto'},onclick(){['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>S._todayOpen[k]=false);S._sfSignalCollapsed=true;render();}},'▶ Collapse All'));
-  tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>S._todayOpen[k]=true);S._sfSignalCollapsed=false;render();}},'▼ Expand All'));
   stickyHdr.appendChild(tableBar);
 
   // Build column-aware table using settings.cols visibility
@@ -15562,9 +15606,6 @@ function renderToday(c) {
   const visIdx=ALL_KEYS.map((k,i)=>(k==='_cb'||S.settings.cols[k]!==false)?i:-1).filter(i=>i>=0);
   const headers=visIdx.map(i=>ALL_HDRS[i]);
   // Outer container — buildTable creates its own tbl-wrap inside
-  // B3: Set default Today tab column widths (40px | 1fr | 120px | 100px | 80px | 120px)
-  const _todayColDefaults={'':40,'Score':55,'Vendor':220,'Category':120,'Contact':100,'Phone':100,'Email':130,'Current Expiry':100,'Days':80,'AR':50,'Follow-Up':90,'Tier':60,'Why':120,'Actions':120};
-  Object.entries(_todayColDefaults).forEach(([k,w])=>{if(!S.colWidths[k])S.colWidths[k]=w;});
   const tblWrap=el('div',{id:'today-table',style:{flex:'1',minHeight:'0',overflowX:'auto',overflowY:'auto'}});
   tblWrap.appendChild(buildTable(headers, vendors, v=>{
     const exp=getCurrentExpiry(v); const days=exp?dayDiff(exp,today):null;
@@ -15605,22 +15646,17 @@ function renderToday(c) {
     return fuOverdue||(daysSinceComm>30&&(v.tier==='CALL'||v.tier==='EMAIL'));
   }).sort((a,b)=>_fuScore(b)-_fuScore(a)).slice(0,10);
   if(_fuVendors.length){
-    const _fuOpen=S._todayOpen.fu!==false;
     const fuSec=el('div',{class:'summary-section',style:{marginTop:'12px',marginBottom:'8px'}});
-    const fuHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:_fuOpen?'8px':'0',cursor:'pointer',userSelect:'none'},onclick(){S._todayOpen.fu=!S._todayOpen.fu;render();}});
-    fuHdr.appendChild(el('span',{style:{fontSize:'12px',color:'var(--muted)',minWidth:'16px'}},_fuOpen?'▼':'▶'));
+    const fuHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}});
     fuHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'13px'}},'📞 Relationship Follow-ups'));
     fuHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Overdue or stale contacts · sorted by priority score'));
     fuSec.appendChild(fuHdr);
-    if(_fuOpen) _fuVendors.forEach(v=>{
+    _fuVendors.forEach(v=>{
       const lc=parseDate(v.lastComm),fu=parseDate(v.followUp);
       const daysSince=lc?dayDiff(today,lc):null,fuDays=fu?dayDiff(today,fu):null;
       const isOvr=fuDays!==null&&fuDays>=0;
       const priScore=Math.round(_fuScore(v));
       const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'5px 8px',borderRadius:'4px',marginBottom:'3px',flexWrap:'wrap',background:isOvr?'rgba(239,68,68,.06)':'rgba(245,158,11,.04)',border:'1px solid '+(isOvr?'rgba(239,68,68,.15)':'rgba(245,158,11,.12)')}});
-      // B4: Score pill FIRST, before vendor name
-      const _pc=priScore>30?'#ef4444':priScore>=15?'#f59e0b':'#6b7280';
-      row.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',color:'#fff',background:_pc,borderRadius:'3px',padding:'1px 5px',flexShrink:'0'},title:'Priority score'},String(priScore)));
       row.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontWeight:'700',fontSize:'11px',minWidth:'130px',textAlign:'left'},onclick(){openDetail(v);}},v.name));
       if(v.category) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'80px'}},v.category));
       const tc={'CALL':'#ef4444','EMAIL':'#f59e0b','REVIEW':'#4f7cff','MONITOR':'#6b7280'}[v.tier]||'#6b7280';
@@ -15633,6 +15669,7 @@ function renderToday(c) {
         const fuLabel=isOvr?'⚠ '+fuDays+'d overdue':'Due '+fmtDate(fu);
         row.appendChild(el('span',{style:{fontSize:'9px',color:isOvr?'#ef4444':'var(--muted)',fontWeight:isOvr?'700':'400'}},fuLabel));
       }
+      {const _pc=priScore>30?'#ef4444':priScore>=15?'#f59e0b':'#6b7280';row.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',color:'#fff',background:_pc,borderRadius:'3px',padding:'1px 5px'},title:'Priority score: (tier×10) + (days overdue×0.5) + vendor score'},String(priScore)));}
       const acts=el('div',{style:{display:'flex',gap:'4px',marginLeft:'auto'}});
       acts.appendChild(el('button',{class:'btn-xs btn-blue',onclick(e){e.stopPropagation();openEmailModal(v);}},'✉ Email'));
       acts.appendChild(el('button',{class:'btn-xs btn-green',onclick(e){e.stopPropagation();openDetail(v);}},'📞 Call'));
@@ -15654,22 +15691,17 @@ function renderToday(c) {
     return (b.currentSpend||b.lastYearSpend||0)-(a.currentSpend||a.lastYearSpend||0);
   }).slice(0,8);
   if(_revDue.length){
-    const _revOpen=S._todayOpen.rev!==false;
     const revSec=el('div',{class:'summary-section',style:{marginTop:'12px',marginBottom:'8px'}});
-    const revHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:_revOpen?'8px':'0',cursor:'pointer',userSelect:'none'},onclick(){S._todayOpen.rev=!S._todayOpen.rev;render();}});
-    revHdr.appendChild(el('span',{style:{fontSize:'12px',color:'var(--muted)',minWidth:'16px'}},_revOpen?'▼':'▶'));
+    const revHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}});
     revHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'13px'}},'📊 Business Reviews Due'));
     revHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'REVIEW tier vendors overdue for a formal review (>90 days)'));
     revSec.appendChild(revHdr);
-    if(_revOpen) _revDue.forEach(v=>{
+    _revDue.forEach(v=>{
       const lr=parseDate(v.lastReview);
       const daysSinceRev=lr?dayDiff(today,lr):null;
       const revLabel=daysSinceRev===null?'Never reviewed':'Last: '+fmtDate(lr)+' ('+daysSinceRev+'d ago)';
       const revColor=daysSinceRev===null?'var(--red)':daysSinceRev>180?'var(--red)':daysSinceRev>90?'var(--amber)':'var(--muted)';
       const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'5px 8px',borderRadius:'4px',marginBottom:'3px',flexWrap:'wrap',background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.12)'}});
-      // B4: Score pill FIRST
-      const _rs=v.score||0;const _rc=_rs>=8?'#ef4444':_rs>=5?'#f59e0b':'#6b7280';
-      row.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',color:'#fff',background:_rc,borderRadius:'3px',padding:'1px 5px',flexShrink:'0'},title:'Priority score'},String(_rs)));
       row.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontWeight:'700',fontSize:'11px',minWidth:'130px',textAlign:'left'},onclick(){openDetail(v);}},v.name));
       if(v.category) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'80px'}},v.category));
       row.appendChild(el('span',{style:{fontSize:'9px',color:revColor,fontWeight:'600'}},revLabel));
@@ -15683,10 +15715,8 @@ function renderToday(c) {
   }
 
   // ── Smart Outreach Intelligence ──
-  const _outOpen=S._todayOpen.outreach!==false;
   const outreachSec=el('div',{class:'summary-section',style:{marginTop:'12px'}});
-  const outHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:_outOpen?'8px':'0',cursor:'pointer',userSelect:'none'},onclick(){S._todayOpen.outreach=!S._todayOpen.outreach;render();}});
-  outHdr.appendChild(el('span',{style:{fontSize:'12px',color:'var(--muted)',minWidth:'16px'}},_outOpen?'▼':'▶'));
+  const outHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}});
   outHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'13px'}},'🧠 Outreach Intelligence'));
   outHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'AI-ranked relationship priorities'));
   outreachSec.appendChild(outHdr);
@@ -15723,9 +15753,9 @@ function renderToday(c) {
   });
   outreachItems.sort((a,b)=>b.priority-a.priority);
   
-  if(_outOpen&&!outreachItems.length){
+  if(!outreachItems.length){
     outreachSec.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'10px'}},'No urgent outreach items — great job staying on top of your portfolio!'));
-  } else if(_outOpen) {
+  } else {
     const list=el('div',{});
     outreachItems.slice(0,8).forEach(item=>{
       const {v,reasons,ctx,expDays}=item;
@@ -15759,13 +15789,8 @@ function renderToday(c) {
   // ── SF Board Data (cases, opps, tasks due today) ─────────────────────────
   const sb=S._sfBoardData;
   if(sb&&sb.opps){
-    const _sfbOpen=S._todayOpen.sfboard!==false;
     const sfSec=el('div',{class:'summary-section'});
-    const sfSecHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:_sfbOpen?'8px':'0',cursor:'pointer',userSelect:'none'},onclick(){S._todayOpen.sfboard=!S._todayOpen.sfboard;render();}});
-    sfSecHdr.appendChild(el('span',{style:{fontSize:'12px',color:'var(--muted)',minWidth:'16px'}},_sfbOpen?'▼':'▶'));
-    sfSecHdr.appendChild(el('h3',{style:{margin:'0'}},'☁ Salesforce — Action Required Today'));
-    sfSec.appendChild(sfSecHdr);
-    if(_sfbOpen){
+    sfSec.appendChild(el('h3',{style:{marginBottom:'8px'}},'☁ Salesforce — Action Required Today'));
 
     // My open opps closing this month
     const now=new Date();
@@ -15831,7 +15856,6 @@ function renderToday(c) {
     if(!myOpps.length&&!myCases.length&&!myTasks.length){
       sfSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--green)',textAlign:'center',padding:'12px'}},'✓ No urgent SF items today'));
     }
-    } // end if(_sfbOpen)
 
     c.appendChild(sfSec);
   } else if(USER.sfToken){
@@ -18255,16 +18279,8 @@ function renderAnalytics(c) {
     }
     const sb=S._sfBoardData;
     const _rawRepOpps=sb?.opps||[], tasks=sb?.tasks||[], _rawRepCases=sb?.cases||[];
-    // C4: Debug log before filter
-    console.log('[VCS RepPerf] Raw opps:',_rawRepOpps.length,'tasks:',tasks.length,'cases:',_rawRepCases.length);
-    console.log('[VCS RepPerf] Sample CloseDates:',_rawRepOpps.slice(0,3).map(o=>o.CloseDate));
-    // C1: YTD uses CloseDate in current calendar year (includes future close dates); All Time = no filter
-    const _repYear=new Date().getFullYear();
-    const _isYTD=!S._analyticsDateRange||S._analyticsDateRange==='ytd';
-    const _isAll=S._analyticsDateRange==='all';
-    const opps=_isAll?_rawRepOpps:_isYTD?_rawRepOpps.filter(o=>{const d=new Date(o.CloseDate||'');return!isNaN(d)&&d.getFullYear()===_repYear;}):filterByDateRange(_rawRepOpps,'CloseDate');
+    const opps=filterByDateRange(_rawRepOpps,'CloseDate');
     const cases=filterByDateRange(_rawRepCases,'CreatedDate');
-    console.log('[VCS RepPerf] After filter ('+(_isYTD?'YTD yr '+_repYear:S._analyticsDateRange)+'):',opps.length,'opps,',cases.length,'cases');
     if(!opps.length&&!tasks.length){
       const loadSec=el('div',{class:'summary-section',style:{textAlign:'center',padding:'24px'}});
       loadSec.appendChild(el('p',{style:{fontSize:'12px',color:'var(--muted)',marginBottom:'12px'}},'Load the Salesforce Board to see rep performance data.'));
@@ -18532,10 +18548,9 @@ function renderAnalytics(c) {
       const tc2=el('canvas',{style:{maxHeight:'200px'}}); taskSec.appendChild(tc2);
       const tc2Detail=el('div',{style:{display:'none',marginTop:'8px',maxHeight:'220px',overflowY:'auto',border:'1px solid var(--border)',borderRadius:'5px'}}); taskSec.appendChild(tc2Detail);
       row1.appendChild(taskSec);
-      const _overdueFilter=t=>t.ActivityDate&&new Date(t.ActivityDate)<today&&t.Status!=='Completed';
-      const withOverdue=filteredReps.filter(r=>r.tasks.filter(_overdueFilter).length>0);
+      const withOverdue=filteredReps.filter(r=>r.tasks.length>0);
       let _tc2LastIdx=-1;
-      new Chart(tc2,{type:'bar',data:{labels:withOverdue.map(r=>r.name.split(' ')[0]),datasets:[{label:'Total Tasks',data:withOverdue.map(r=>r.tasks.length),backgroundColor:'rgba(79,124,255,.5)',borderRadius:3},{label:'Overdue',data:withOverdue.map(r=>r.tasks.filter(_overdueFilter).length),backgroundColor:'#ef4444',hoverBackgroundColor:'#c42828',borderRadius:3}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+ctx.raw+' tasks'}}},scales:{y:{beginAtZero:true,ticks:{color:'var(--muted)',font:{size:8}}},x:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(!els.length){tc2Detail.style.display='none';_tc2LastIdx=-1;return;}const idx=els[0].index;if(idx===_tc2LastIdx){tc2Detail.style.display='none';_tc2LastIdx=-1;return;}_tc2LastIdx=idx;const rep=withOverdue[idx];const overdueTasks=rep.tasks.filter(t=>t.ActivityDate&&new Date(t.ActivityDate)<today&&t.Status!=='Completed');tc2Detail.innerHTML='';tc2Detail.style.display='';const hdr2=el('div',{style:{padding:'6px 10px',fontWeight:'700',fontSize:'10px',borderBottom:'1px solid var(--border)',background:'var(--card)'}},rep.name+' — '+overdueTasks.length+' Overdue Task'+(overdueTasks.length!==1?'s':''));tc2Detail.appendChild(hdr2);if(overdueTasks.length){const tbl=el('table',{class:'data-table',style:{margin:'0',fontSize:'9px'}});const th2=el('thead');const hr2=el('tr');['Subject','Due Date','Account','Status'].forEach(h=>hr2.appendChild(el('th',{style:{fontSize:'8px',padding:'3px 8px'}},h)));th2.appendChild(hr2);tbl.appendChild(th2);const tb2=el('tbody');overdueTasks.forEach(t=>{const tr=el('tr',{style:{cursor:USER.sfInstance?'pointer':'default'},onclick(){if(USER.sfInstance&&t.Id)window.open(USER.sfInstance+'/lightning/r/Task/'+t.Id+'/view','_blank');}});const daysOverdue=t.ActivityDate?Math.round((new Date()-new Date(t.ActivityDate))/86400000):0;tr.appendChild(el('td',{style:{color:'var(--text)',fontWeight:'600',padding:'3px 8px'}},t.Subject||'—'));tr.appendChild(el('td',{style:{padding:'3px 8px',color:'var(--red)',fontWeight:'600'}},t.ActivityDate||'—'+(daysOverdue>0?' ('+daysOverdue+'d overdue)':'')));tr.appendChild(el('td',{style:{padding:'3px 8px',color:'var(--muted)',fontSize:'9px'}},t.What?.Name||'—'));tr.appendChild(el('td',{style:{padding:'3px 8px',color:'var(--muted)',fontSize:'9px'}},t.Status||'—'));tb2.appendChild(tr);});tbl.appendChild(tb2);tc2Detail.appendChild(tbl);}else{tc2Detail.appendChild(el('p',{style:{padding:'10px',color:'var(--muted)',fontSize:'9px'}},'No overdue tasks for '+rep.name));}}}}); const _tc2Inst=Chart.getChart(tc2); if(_tc2Inst){ tc2._chartInstance=_tc2Inst; tc2._storedConfig={type:_tc2Inst.config.type,data:JSON.parse(JSON.stringify(_tc2Inst.config.data)),options:_tc2Inst.config.options}; }
+      new Chart(tc2,{type:'bar',data:{labels:withOverdue.map(r=>r.name.split(' ')[0]),datasets:[{label:'Total Tasks',data:withOverdue.map(r=>r.tasks.length),backgroundColor:'rgba(79,124,255,.5)',borderRadius:3},{label:'Overdue',data:withOverdue.map(r=>r.overdueTask),backgroundColor:'#ef4444',hoverBackgroundColor:'#c42828',borderRadius:3}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+ctx.raw+' tasks'}}},scales:{y:{beginAtZero:true,ticks:{color:'var(--muted)',font:{size:8}}},x:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(!els.length){tc2Detail.style.display='none';_tc2LastIdx=-1;return;}const idx=els[0].index;if(idx===_tc2LastIdx){tc2Detail.style.display='none';_tc2LastIdx=-1;return;}_tc2LastIdx=idx;const rep=withOverdue[idx];const overdueTasks=rep.tasks.filter(t=>t.ActivityDate&&new Date(t.ActivityDate)<today&&t.Status!=='Completed');tc2Detail.innerHTML='';tc2Detail.style.display='';const hdr2=el('div',{style:{padding:'6px 10px',fontWeight:'700',fontSize:'10px',borderBottom:'1px solid var(--border)',background:'var(--card)'}},rep.name+' — '+overdueTasks.length+' Overdue Task'+(overdueTasks.length!==1?'s':''));tc2Detail.appendChild(hdr2);if(overdueTasks.length){const tbl=el('table',{class:'data-table',style:{margin:'0',fontSize:'9px'}});const th2=el('thead');const hr2=el('tr');['Subject','Due Date','Account','Status'].forEach(h=>hr2.appendChild(el('th',{style:{fontSize:'8px',padding:'3px 8px'}},h)));th2.appendChild(hr2);tbl.appendChild(th2);const tb2=el('tbody');overdueTasks.forEach(t=>{const tr=el('tr',{style:{cursor:USER.sfInstance?'pointer':'default'},onclick(){if(USER.sfInstance&&t.Id)window.open(USER.sfInstance+'/lightning/r/Task/'+t.Id+'/view','_blank');}});const daysOverdue=t.ActivityDate?Math.round((new Date()-new Date(t.ActivityDate))/86400000):0;tr.appendChild(el('td',{style:{color:'var(--text)',fontWeight:'600',padding:'3px 8px'}},t.Subject||'—'));tr.appendChild(el('td',{style:{padding:'3px 8px',color:'var(--red)',fontWeight:'600'}},t.ActivityDate||'—'+(daysOverdue>0?' ('+daysOverdue+'d overdue)':'')));tr.appendChild(el('td',{style:{padding:'3px 8px',color:'var(--muted)',fontSize:'9px'}},t.What?.Name||'—'));tr.appendChild(el('td',{style:{padding:'3px 8px',color:'var(--muted)',fontSize:'9px'}},t.Status||'—'));tb2.appendChild(tr);});tbl.appendChild(tb2);tc2Detail.appendChild(tbl);}else{tc2Detail.appendChild(el('p',{style:{padding:'10px',color:'var(--muted)',fontSize:'9px'}},'No overdue tasks for '+rep.name));}}}}); const _tc2Inst=Chart.getChart(tc2); if(_tc2Inst){ tc2._chartInstance=_tc2Inst; tc2._storedConfig={type:_tc2Inst.config.type,data:JSON.parse(JSON.stringify(_tc2Inst.config.data)),options:_tc2Inst.config.options}; }
       c.appendChild(row1);
     });
 
@@ -18555,56 +18570,29 @@ function renderAnalytics(c) {
       };
       filteredReps.forEach(r=>{
         const tr=el('tr',{style:{cursor:'pointer',borderLeft:'3px solid '+(r.overdueTask>2?'var(--red)':r.overdueTask>0?'var(--amber, #f59e0b)':'transparent')},onclick(){
-          // C2/C3: Two-tab popup (Opportunities + Cases), 75vw, scrollable 60vh, sticky thead
           openModal(body=>{
-            body.style.cssText+='width:75vw;max-width:75vw;';
-            body.appendChild(el('h3',{style:{marginBottom:'10px'}},r.name+' — Details'));
-            // Tab bar
-            const tabBar=el('div',{style:{display:'flex',gap:'4px',marginBottom:'8px',borderBottom:'1px solid var(--border)'}});
-            const panes=[];
-            let _activeTab=0;
-            function showTab(i){_activeTab=i;tabs.forEach((t,j)=>{t.style.fontWeight=j===i?'700':'400';t.style.borderBottom=j===i?'2px solid var(--blue)':'2px solid transparent';t.style.color=j===i?'var(--blue)':'var(--muted)';});panes.forEach((p,j)=>p.style.display=j===i?'':'none');}
-            const tabs=[];
-            ['Opportunities ('+r.opps.length+')','Cases ('+r.cases.length+')'].forEach((label,i)=>{
-              const t=el('button',{style:{background:'none',border:'none',cursor:'pointer',padding:'4px 10px',fontSize:'10px',fontWeight:'400',color:'var(--muted)',borderBottom:'2px solid transparent'},onclick(){showTab(i);}},label);
-              tabs.push(t);tabBar.appendChild(t);
-            });
-            body.appendChild(tabBar);
-            // Opps pane
-            const oppPane=el('div',{style:{maxHeight:'60vh',overflowY:'auto'}});
+            body.style.minWidth='min(85vw,920px)';
+            body.appendChild(el('h3',{style:{marginBottom:'10px'}},r.name+' — Opportunities ('+r.opps.length+')'));
+            if(!r.opps.length){body.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'10px'}},'No open opportunities.'));const bb=el('div',{class:'modal-btns'});bb.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(bb);return;}
+            const tbl2=el('table',{class:'data-table',style:{marginBottom:'8px'}});
+            const th2=el('thead');const hr2=el('tr');
+            ['Opp Name','Account','Stage','Amount','Close Date','Age (days)'].forEach(h=>hr2.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+            th2.appendChild(hr2);tbl2.appendChild(th2);
+            const tb2=el('tbody');
             const today2=new Date();today2.setHours(0,0,0,0);
-            if(r.opps.length){
-              const tOpp=el('table',{class:'data-table',style:{width:'100%'}});
-              const thO=el('thead',{style:{position:'sticky',top:'0',zIndex:'1',background:'var(--card)'}});const hrO=el('tr');
-              ['Opportunity','Account','Stage','Amount','Close Date'].forEach(h=>hrO.appendChild(el('th',{style:{fontSize:'8px',position:'sticky',top:'0',background:'var(--card)'}},h)));
-              thO.appendChild(hrO);tOpp.appendChild(thO);
-              const tbO=el('tbody');
-              const _oFn=o=>{
-                const nameEl2=USER.sfInstance&&o.Id?el('a',{href:USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view',target:'_blank',rel:'noopener noreferrer',style:{color:'var(--blue)',fontWeight:'600',fontSize:'10px',textDecoration:'none'}},o.Name||'—'):el('span',{style:{fontWeight:'600',fontSize:'10px'}},o.Name||'—');
-                return[nameEl2,o._accountName||o.Account?.Name||'—',o.StageName||'—','$'+Math.round(Number(o.Amount||0)).toLocaleString(),o.CloseDate||'—'];
-              };
-              r.opps.forEach(o=>{const tr2=el('tr',{style:{cursor:USER.sfInstance&&o.Id?'pointer':'default'},onclick(){if(USER.sfInstance&&o.Id)window.open(USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view','_blank');}});_oFn(o).forEach(v=>{const td=document.createElement('td');if(v instanceof Element)td.appendChild(v.cloneNode(true));else td.textContent=String(v);tr2.appendChild(td);});tbO.appendChild(tr2);});
-              tOpp.appendChild(tbO);addSortToTable(tOpp,r.opps,_oFn);oppPane.appendChild(tOpp);
-            } else { oppPane.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'10px',padding:'12px'}},'No opportunities.')); }
-            panes.push(oppPane);body.appendChild(oppPane);
-            // Cases pane
-            const casePane=el('div',{style:{maxHeight:'60vh',overflowY:'auto',display:'none'}});
-            if(r.cases.length){
-              const tCase=el('table',{class:'data-table',style:{width:'100%'}});
-              const thC=el('thead');const hrC=el('tr');
-              ['Subject','Account','Status','Priority'].forEach(h=>hrC.appendChild(el('th',{style:{fontSize:'8px',position:'sticky',top:'0',background:'var(--card)'}},h)));
-              thC.appendChild(hrC);tCase.appendChild(thC);
-              const tbC=el('tbody');
-              const _cFn=cs=>{
-                const nameEl3=USER.sfInstance&&cs.Id?el('a',{href:USER.sfInstance+'/lightning/r/Case/'+cs.Id+'/view',target:'_blank',rel:'noopener noreferrer',style:{color:'var(--blue)',fontWeight:'600',fontSize:'10px',textDecoration:'none'}},cs.Subject||'—'):el('span',{style:{fontWeight:'600',fontSize:'10px'}},cs.Subject||'—');
-                const priColor=cs.Priority==='High'?'var(--red)':cs.Priority==='Medium'?'var(--amber)':'var(--muted)';
-                return[nameEl3,cs._accountName||'—',cs.Status||'—',el('span',{style:{color:priColor,fontWeight:'600',fontSize:'9px'}},cs.Priority||'—')];
-              };
-              r.cases.forEach(cs=>{const tr2=el('tr',{style:{cursor:USER.sfInstance&&cs.Id?'pointer':'default'},onclick(){if(USER.sfInstance&&cs.Id)window.open(USER.sfInstance+'/lightning/r/Case/'+cs.Id+'/view','_blank');}});_cFn(cs).forEach(v=>{const td=document.createElement('td');if(v instanceof Element)td.appendChild(v.cloneNode(true));else td.textContent=String(v);tr2.appendChild(td);});tbC.appendChild(tr2);});
-              tCase.appendChild(tbC);addSortToTable(tCase,r.cases,_cFn);casePane.appendChild(tCase);
-            } else { casePane.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'10px',padding:'12px'}},'No cases.')); }
-            panes.push(casePane);body.appendChild(casePane);
-            showTab(0);
+            const _oFn=o=>{
+              const nameEl2=USER.sfInstance&&o.Id?el('a',{href:USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view',target:'_blank',rel:'noopener noreferrer',style:{color:'var(--blue)',fontWeight:'600',fontSize:'10px',textDecoration:'none'}},o.Name||'—'):el('span',{style:{fontWeight:'600',fontSize:'10px'}},o.Name||'—');
+              const age=o.CloseDate?Math.round((today2-new Date(o.CloseDate))/86400000):null;
+              const ageEl=el('span',{style:{color:age&&age>0?'var(--red)':age&&age>-30?'var(--amber, #f59e0b)':'var(--green)',fontWeight:'600'}},age!==null?String(age):'—');
+              return[nameEl2,o._accountName||o.Account?.Name||'—',o.StageName||'—','$'+Math.round(Number(o.Amount||0)).toLocaleString(),o.CloseDate||'—',ageEl];
+            };
+            r.opps.forEach(o=>{const tr2=document.createElement('tr');_oFn(o).forEach(v=>{const td=document.createElement('td');if(v instanceof Element)td.appendChild(v.cloneNode(true));else td.textContent=String(v);tr2.appendChild(td);});tb2.appendChild(tr2);});
+            tbl2.appendChild(tb2);
+            const fi2=el('input',{type:'text',placeholder:'Filter opportunities...',style:{marginBottom:'6px',width:'100%',fontSize:'10px',padding:'3px 8px',border:'1px solid var(--border)',borderRadius:'3px',background:'var(--bg)',color:'var(--text)'}});
+            fi2.addEventListener('input',()=>{const q=fi2.value.toLowerCase();[...tb2.rows].forEach(tr3=>tr3.style.display=!q||tr3.textContent.toLowerCase().includes(q)?'':'none');});
+            body.appendChild(fi2);body.appendChild(tbl2);
+            addSortToTable(tbl2,r.opps,_oFn);
+            body.appendChild(el('p',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px'}},'Age = days until/past close date. Red = past due.'));
             const bb=el('div',{class:'modal-btns'});bb.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(bb);
           });
         }});
@@ -19692,19 +19680,13 @@ function renderSettings(c) {
       }
     }},'↑ Sync All to Drive');
   syncSec.appendChild(syncAllBtn);
-  // D3: Expand/Collapse ALL known settings keys
-  const _allSettingsKeys=['emailSig','fileInfo','dataActions','handover','themeFont','startup','calendarAvail','displayPrefs','sfSettings','driveSettings','msSettings','renzoSettings','dialerSettings','apiConfig','userMgmt','roleTabDefaults','apiUsage','quickSetup','renzo'];
-  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){S._settingsExpandAll=true;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=true);render();}},'▼ Expand All'));
-  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){S._settingsExpandAll=false;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=false);render();}},'▶ Collapse All'));
+  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){S._settingsExpandAll=true;render();}},'▼ Expand All'));
+  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){S._settingsExpandAll=false;render();}},'▶ Collapse All'));
   if(USER.role==='admin'){
     syncSec.appendChild(el('p',{style:{width:'100%',fontSize:'8px',color:'var(--muted)',margin:'4px 0 0'}},
       '⚙ Admin tip: Global keys (API keys, SF credentials, Renzo key) sync for all users. Personal config (theme, dialer URL) syncs per device. Use "Sync All" after making changes you want other users to pick up.'));
   }
   c.appendChild(syncSec);
-  // D2: Spacer so sticky settings bar never overlaps first card
-  const _settingsSpacer=el('div',{style:{height:'0px'}});
-  c.appendChild(_settingsSpacer);
-  requestAnimationFrame(()=>{const h=syncSec.getBoundingClientRect().height;if(h>0)_settingsSpacer.style.height=h+'px';});
 
   // S3: Quick Setup Checklist — progress bar + 6 items, collapsed when all complete
   if(USER.role==='admin'||USER.role==='procurement'){
@@ -20872,7 +20854,7 @@ function renderSettings(c) {
 
   // Email Signature — collapsible via settingsCard
   if(['admin','procurement','manager'].includes(USER.role)){
-    settingsCard(c,'Email Signature','✉️','emailSig',false,body=>{
+    settingsCard(c,'✉️ Email Signature','✉️','emailSig',false,body=>{
       body.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'4px'}},'Default email signature (appended to drafts):'));
       const sigTa=el('textarea',{class:'modal-textarea',style:{height:'80px',marginTop:'5px'}});
       sigTa.value=S.settings.emailSignature||'';
@@ -20883,14 +20865,14 @@ function renderSettings(c) {
 
   // File Info — collapsible via settingsCard
   if (S.loaded) {
-    settingsCard(c,'File Info','📂','fileInfo',false,body=>{
+    settingsCard(c,'📂 File Info','📂','fileInfo',false,body=>{
       [[`File`,S.fileName],[`PSD Vendors`,S.vendors.length],[`Pipeline`,S.itw.length],[`Reviews`,S.reviews.length],[`Comments loaded`,Object.keys(S.commentsMap).map(k=>`${Object.keys(S.commentsMap[k]).length} from comments${k}.xml`).join(', ')||'none'],[`Sheet File`,S.psdSheetFile||'auto-detected'],[`Unsaved Changes`,S.dirty.size]].forEach(([l,v])=>body.appendChild(el('div',{class:'setting-row'},el('span',{},l),el('span',{style:{fontWeight:'600',color:'var(--muted)'}},v))));
     });
   }
 
   // Data Actions — collapsible via settingsCard
   if(['admin','procurement','manager'].includes(USER.role)){
-    settingsCard(c,'Data Actions','💾','dataActions',false,body=>{
+    settingsCard(c,'💾 Data Actions','💾','dataActions',false,body=>{
       const btns=[
         ['Export Changes as JSON','btn-primary',()=>{
           const data=JSON.stringify({vendors:S.vendors.filter(v=>v._dirty).map(v=>({name:v.name,notes:v.notes,lastComm:v.lastComm instanceof Date?isoDate(v.lastComm):v.lastComm,followUp:v.followUp instanceof Date?isoDate(v.followUp):v.followUp})),dismissed:[...S.dismissed],history:S.history,exported:new Date().toISOString()},null,2);
