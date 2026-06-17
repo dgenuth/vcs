@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -5985,6 +5985,16 @@ function setApprovedUsers(u, skipDriveSync){
   }
 }
 
+// Returns restrictive-by-default featureFlags for a given role (applied on user add or role change)
+function getDefaultFeatureFlags(role) {
+  const full={export:true,addVendor:true,showFinancials:true,editContracts:true,aiEnabled:true};
+  const noFin={export:true,addVendor:false,showFinancials:false,editContracts:false,aiEnabled:true};
+  const viewer={export:false,addVendor:false,showFinancials:false,editContracts:false,aiEnabled:false};
+  const map={admin:full,procurement:full,manager:{export:true,addVendor:true,showFinancials:true,editContracts:true,aiEnabled:true},
+    cro:noFin,finance_sr:full,finance_jr:{...full,addVendor:false,editContracts:false},
+    viewer:viewer,sales:{...noFin,export:false},sales_rep:{...viewer,showFinancials:false},restricted:viewer};
+  return Object.assign({},viewer,map[role]||viewer);
+}
 // Login attempt log — stored in localStorage, admin-viewable
 function getLoginLog(){try{return JSON.parse(localStorage.getItem(LOGIN_LOG_KEY)||'[]');}catch(e){return[];}}
 function logLoginAttempt(email,success,reason){
@@ -11141,7 +11151,7 @@ function renderChecklist(c) {
     custRow.appendChild(sfLogBtn);
   }
   // SF account autocomplete for facility input
-  const sfAccountObjs=(S._sfBoardData?.accounts||(typeof SPEND_STATE!=='undefined'?SPEND_STATE?.data?.accounts:null)||[]);
+  const sfAccountObjs=(S._sfBoardData?.accounts||SPEND_STATE?.data?.accounts||[]);
   const sfAccounts=sfAccountObjs.map(a=>({name:a.Name||a.name||'',city:a.BillingCity||a.billingCity||'',state:a.BillingState||a.billingState||''})).filter(a=>a.name);
   if(sfAccounts.length){
     const acDrop=el('div',{style:{position:'absolute',zIndex:'200',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',boxShadow:'0 4px 12px rgba(0,0,0,.2)',maxHeight:'150px',overflowY:'auto',display:'none',minWidth:'260px'}});
@@ -18821,7 +18831,7 @@ function makeCollapsibleSection(sec, title, storageKey, defaultCollapsed) {
   }});
   const chev=el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'6px'}},isCollapsed?'▶':'▼');
   hdr.appendChild(chev);
-  hdr.appendChild(el('h3',{style:{margin:'0',display:'inline',fontSize:'13px'}},title));
+  hdr.appendChild(el('h3',{style:{margin:'0',display:'inline',fontSize:'13px',color:'var(--text)'}},title));
   hdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'6px'}},'click to '+(isCollapsed?'expand':'collapse')));
   // Wrap existing content
   const body=el('div',{style:{display:isCollapsed?'none':''}});
@@ -19045,7 +19055,7 @@ function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
     }});
   hdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',fontWeight:'400',marginRight:'2px'}},isOpen?'▼':'▶'));
   hdr.appendChild(el('span',{style:{fontSize:'14px'}},icon));
-  hdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},title));
+  hdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1',color:'var(--text)'}},title));
   card.appendChild(hdr);
   if(isOpen){
     const body=el('div',{style:{padding:'14px'}});
@@ -19231,7 +19241,7 @@ function buildFieldAccess(container, userEmail) {
         marginTop:'8px',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.05em',
         borderBottom:'1px solid '+groupColor+'44',paddingBottom:'2px'}},groupName);
       container.appendChild(groupHdr);
-      const fieldGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'4px'}});
+      const fieldGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'4px',paddingLeft:'8px'}});
     groupFields.forEach(f=>{
       const hidden=hf.includes(f.key);
       const btn=document.createElement('button');
@@ -19281,7 +19291,7 @@ function buildFieldAccess(container, userEmail) {
       container.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:grp.color,
         marginTop:'6px',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.04em',
         borderBottom:'1px solid '+grp.color+'33',paddingBottom:'2px'}},grp.label));
-      const tabGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',marginBottom:'4px'}});
+      const tabGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',marginBottom:'4px',paddingLeft:'8px'}});
       const allTabs=grp.tabs;
     const virtualTabDefaults={
       '_statsbar':['admin','procurement','manager'].includes(cu.role),
@@ -19337,8 +19347,8 @@ function buildFieldAccess(container, userEmail) {
 
     // Per-user AI toggle
     const _cuFresh=getApprovedUsers().find(x=>x.email===userEmail);
-    const _aiOn=_cuFresh?(_cuFresh.aiEnabled!==false):true;
-    const aiToggleRow=el('div',{style:{marginTop:'10px',display:'flex',alignItems:'center',gap:'8px'}});
+    const _aiOn=_cuFresh?.featureFlags?.aiEnabled!==false;
+    const aiToggleRow=el('div',{style:{marginTop:'10px',display:'flex',alignItems:'center',gap:'8px',paddingLeft:'8px'}});
     aiToggleRow.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)'}},'🤖 AI Assistant:'));
     const aiBtn=el('button',{
       style:{fontSize:'8px',padding:'3px 10px',borderRadius:'4px',cursor:'pointer',
@@ -19348,7 +19358,8 @@ function buildFieldAccess(container, userEmail) {
       onclick(e){
         e.stopPropagation();
         const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
-        all[i].aiEnabled=!_aiOn;
+        if(!all[i].featureFlags)all[i].featureFlags={};
+        all[i].featureFlags.aiEnabled=!_aiOn;
         localStorage.setItem(AUTH_KEY,JSON.stringify(all));
         setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
         buildFieldAccess(container,userEmail);
@@ -19365,7 +19376,8 @@ function renderSettings(c) {
   const syncSec=el('div',{style:{
     background:'rgba(79,124,255,.05)',border:'1px solid rgba(79,124,255,.15)',
     borderRadius:'6px',padding:'10px 14px',marginBottom:'12px',
-    display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap'
+    display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap',
+    position:'sticky',top:'0',zIndex:'10',backdropFilter:'blur(4px)'
   }});
   const driveConnected=!!(window.GDriveToken && Date.now()<window.GDriveTokenExpiry-5000);
   const lastSync=localStorage.getItem('vcs_last_drive_sync');
@@ -19668,16 +19680,7 @@ function renderSettings(c) {
     const _umBody=el('div',{style:{display:_umCollapsed?'none':''}});
     _umBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.5'}},'Control who can access VCS and what they can do. Only Admins can manage users. Stored in this browser — export user list to share access with another device.'));
 
-    // Role legend
-    const legend=el('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',marginBottom:'10px',padding:'6px 8px',background:'rgba(255,255,255,.03)',borderRadius:'4px',border:'1px solid var(--border)'}});
-    legend.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'4px',alignSelf:'center'}},'Roles:'));
-    const roleDescriptions={admin:'Full access — manage users, settings, edit all',manager:'Edit contracts/notes, save, export — no user management',viewer:'View everything, no edits, no export',restricted:'View only — admin sets which fields are hidden'};
-    for(const[role,desc] of Object.entries(roleDescriptions)){
-      const pill=el('span',{style:{fontSize:'9px',padding:'2px 7px',borderRadius:'10px',background:'rgba(255,255,255,.05)',border:'1px solid var(--border)',cursor:'default'},title:desc});
-      pill.appendChild(el('span',{style:{color:ROLE_COLORS[role],fontWeight:'700'}},ROLES[role]));
-      legend.appendChild(pill);
-    }
-    _umBody.appendChild(legend);
+    // Role legend removed per B4 (redundant UI)
 
     // User table
     const users=getApprovedUsers();
@@ -19688,7 +19691,7 @@ function renderSettings(c) {
     bulkBar.appendChild(selAllCb);
     bulkBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'4px'}},'Select all'));
     const bulkSel=el('select',{style:{fontSize:'9px',padding:'2px 6px',border:'1px solid var(--border)',borderRadius:'3px',background:'var(--bg)',color:'var(--text)',cursor:'pointer'}});
-    [['','-- Bulk Action --'],['enable_ai','Enable AI for selected'],['disable_ai','Disable AI for selected'],['set_role','Set role for selected...'],['remove','Remove selected users']].forEach(([v,lbl])=>{
+    [['','-- Bulk Action --'],['enable_ai','Enable AI for selected'],['disable_ai','Disable AI for selected'],['allow_export','Allow Export for selected'],['restrict_export','Restrict Export for selected'],['allow_addvendor','Allow Add Vendor for selected'],['restrict_addvendor','Restrict Add Vendor for selected'],['show_financials','Show Financials for selected'],['hide_financials','Hide Financials for selected'],['set_role','Set role for selected...'],['remove','Remove selected users']].forEach(([v,lbl])=>{
       bulkSel.appendChild(el('option',{value:v},lbl));
     });
     bulkBar.appendChild(bulkSel);
@@ -19707,10 +19710,25 @@ function renderSettings(c) {
         all.forEach(u=>{if(checked.includes(u.email)){if(!u.featureFlags)u.featureFlags={};u.featureFlags.aiEnabled=enable;}});
         setApprovedUsers(all);toast('✓ AI '+(enable?'enabled':'disabled')+' for '+checked.length+' user(s)');renderSettings(c);return;
       }
+      if(action==='allow_export'||action==='restrict_export'){
+        const val=action==='allow_export';
+        all.forEach(u=>{if(checked.includes(u.email)){if(!u.featureFlags)u.featureFlags={};u.featureFlags.export=val;}});
+        setApprovedUsers(all);toast('✓ Export '+(val?'allowed':'restricted')+' for '+checked.length+' user(s)');renderSettings(c);return;
+      }
+      if(action==='allow_addvendor'||action==='restrict_addvendor'){
+        const val=action==='allow_addvendor';
+        all.forEach(u=>{if(checked.includes(u.email)){if(!u.featureFlags)u.featureFlags={};u.featureFlags.addVendor=val;}});
+        setApprovedUsers(all);toast('✓ Add Vendor '+(val?'allowed':'restricted')+' for '+checked.length+' user(s)');renderSettings(c);return;
+      }
+      if(action==='show_financials'||action==='hide_financials'){
+        const val=action==='show_financials';
+        all.forEach(u=>{if(checked.includes(u.email)){if(!u.featureFlags)u.featureFlags={};u.featureFlags.showFinancials=val;}});
+        setApprovedUsers(all);toast('✓ Financials '+(val?'shown':'hidden')+' for '+checked.length+' user(s)');renderSettings(c);return;
+      }
       if(action==='set_role'){
         const newRole=prompt('Enter role for '+checked.length+' user(s): admin, procurement, manager, viewer, sales, restricted');
         if(!newRole||!ROLES[newRole]){toast('Invalid role','var(--amber)');return;}
-        all.forEach(u=>{if(checked.includes(u.email))u.role=newRole;});
+        all.forEach(u=>{if(checked.includes(u.email)){u.role=newRole;u.featureFlags=getDefaultFeatureFlags(newRole);}});
         setApprovedUsers(all);toast('✓ Role set to '+newRole+' for '+checked.length+' user(s)');renderSettings(c);return;
       }
     }},'Apply'));
@@ -19762,8 +19780,9 @@ function renderSettings(c) {
           const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);
           if(i>=0){
             all[i].role=sel.value;
-            // Auto-apply default hidden fields for new role (only if not manually customized)
+            // Auto-apply default hidden fields and feature flags for new role (only if not manually customized)
             if(!all[i]._customHiddenFields) all[i].hiddenFields = getDefaultHiddenFields(sel.value);
+            all[i].featureFlags = getDefaultFeatureFlags(sel.value);
             setApprovedUsers(all);
             if(isYou){USER.role=sel.value;updateUserBadge();}
             roleBadge.textContent=ROLES[sel.value]||sel.value;
@@ -19910,7 +19929,7 @@ function renderSettings(c) {
       if(!e||!e.includes('@')){toast('Enter a valid email','#f59e0b');return;}
       const all=getApprovedUsers();
       if(all.find(x=>x.email===e)){toast('User already exists','#f59e0b');return;}
-      all.push({email:e,name:e.split('@')[0],role:roleIn.value,password:pwNewIn.value.trim(),hiddenFields:[],added:isoDate(new Date()),addedBy:USER.email});
+      all.push({email:e,name:e.split('@')[0],role:roleIn.value,password:pwNewIn.value.trim(),hiddenFields:[],featureFlags:getDefaultFeatureFlags(roleIn.value),added:isoDate(new Date()),addedBy:USER.email});
       setApprovedUsers(all);
       emailIn.value='';pwNewIn.value='';
       renderSettings(c);
