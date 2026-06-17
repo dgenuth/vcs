@@ -8597,13 +8597,15 @@ async function generateMeetingTalkingPoints(vendor) {
     vendor.notes?'Vendor notes: '+vendor.notes.slice(0,600):'',
     sfCtx
   ].filter(Boolean).join('\n');
-  const sysP='You are a GPO vendor relationship assistant for Prime Source Expense Experts, a healthcare GPO. Generate 6-8 concise, actionable meeting talking points tailored to this specific vendor\'s situation. Focus on: contract status/renewal urgency, fee reconciliation needs, relationship health, open issues, and strategic priorities. Return ONLY a JSON array of strings, no preamble, no markdown. Each item under 18 words. Example: ["Confirm renewal intent - contract expires in 45 days", "Review Q2 admin fee reconciliation - variance noted"]';
+  const sysP='You are a GPO vendor relationship assistant for Prime Source Expense Experts, a healthcare GPO. Generate 5-8 concise, actionable meeting talking points tailored to this specific vendor\'s situation. Focus on: contract status/renewal urgency, fee reconciliation needs, relationship health, open issues, and strategic priorities. Return ONLY a JSON array of strings, no preamble, no markdown. Each item under 18 words. Example: ["Confirm renewal intent - contract expires in 45 days", "Review Q2 admin fee reconciliation - variance noted"]';
+  console.log('[VCS MeetingMode] Generating talking points for:',vendor.name,'context length:',ctx.length);
   const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'text/plain','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:700,system:sysP,messages:[{role:'user',content:'Generate meeting talking points for:\n\n'+ctx}]})});
   if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+resp.status);}
   const data=await resp.json();
   const raw=(data.content?.find(b=>b.type==='text')?.text||'[]').replace(/```json/g,'').replace(/```/g,'').trim();
-  try{const pts=JSON.parse(raw);if(!Array.isArray(pts))throw new Error('not array');return pts.map(p=>({text:String(p)}));}
-  catch(e){return raw.split('\n').filter(l=>l.trim()).map(l=>({text:l.replace(/^[\d\-\.\*•]+\s*/,'').trim()})).filter(t=>t.text);}
+  console.log('[VCS MeetingMode] Raw response length:',raw.length,'first 100 chars:',raw.slice(0,100));
+  try{const pts=JSON.parse(raw);if(!Array.isArray(pts))throw new Error('not array');console.log('[VCS MeetingMode] Parsed',pts.length,'talking points');return pts.map(p=>({text:String(p)}));}
+  catch(e){const fallback=raw.split('\n').filter(l=>l.trim()).map(l=>({text:l.replace(/^[\d\-\.\*•]+\s*/,'').trim()})).filter(t=>t.text);console.log('[VCS MeetingMode] JSON parse failed, fallback lines:',fallback.length);return fallback;}
 }
 
 // ─── Meeting Mode Modal — Talking Points ──────────────────────────────────────
@@ -14812,26 +14814,28 @@ function renderTierTracker(c) {
       btn.disabled=false; btn.textContent='🔄 Load & Sync SF';
     }},'🔄 Load & Sync SF'));
     }
+    const aiPanel=el('div',{style:{display:'none',margin:'6px 0 4px 0',padding:'8px 10px',background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'4px',fontSize:'10px',lineHeight:'1.6',color:'var(--text)',whiteSpace:'pre-wrap'}});
+    let _aiPanelLoaded=false;
     const aiExpBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'}},'🤖 AI Explain');
     aiExpBtn.addEventListener('click',async function(){
-      const orig=aiExpBtn.textContent; aiExpBtn.textContent='⏳...'; aiExpBtn.disabled=true;
+      const isOpen=aiPanel.style.display!=='none';
+      if(isOpen){aiPanel.style.display='none';aiExpBtn.textContent='🤖 AI Explain';return;}
+      aiPanel.style.display='';
+      if(_aiPanelLoaded) return;
+      aiExpBtn.textContent='⏳ Generating...'; aiExpBtn.disabled=true;
+      aiPanel.textContent='Analyzing tier progress...';
       try{
+        if(!td.tiers||!td.tiers.length){aiPanel.textContent='No tier data available for this vendor.';_aiPanelLoaded=true;return;}
         const explanation=await explainTierProgress(td);
-        openModal(mb=>{
-          mb.appendChild(el('h3',{},'🤖 Tier Analysis: '+td.vendorName));
-          const txt=el('p',{style:{whiteSpace:'pre-wrap',lineHeight:'1.7',fontSize:'11px',margin:'10px 0'}});
-          txt.textContent=explanation;
-          mb.appendChild(txt);
-          const mbtns=el('div',{class:'modal-btns'});
-          mbtns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));
-          mb.appendChild(mbtns);
-        });
-      }catch(e){toast('AI error: '+e.message,'#ef4444');}
-      finally{aiExpBtn.textContent=orig; aiExpBtn.disabled=false;}
+        aiPanel.textContent=explanation||'No explanation available.';
+        _aiPanelLoaded=true;
+      }catch(e){aiPanel.textContent='AI error: '+e.message;toast('AI error: '+e.message,'#ef4444');}
+      finally{aiExpBtn.textContent='🤖 AI Explain ▲'; aiExpBtn.disabled=false;}
     });
     hdrBtns.appendChild(aiExpBtn);
     hdrBtns.appendChild(el('button',{class:'btn-xs btn-danger',onclick(){if(confirm('Remove '+td.vendorName+'?')){const _ri=S.tierData.indexOf(td);if(_ri>-1)S.tierData.splice(_ri,1);render();}}}, '✕'));
     hdr.appendChild(hdrBtns); card.appendChild(hdr);
+    card.appendChild(aiPanel);
     card.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginBottom:'6px'}},'Period: '+_tierPeriodLabel+(td._sfSynced?' · SF synced':'· manual spend')));
 
     if (td.tiers && td.tiers.length) {
