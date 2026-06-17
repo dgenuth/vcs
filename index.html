@@ -11133,7 +11133,7 @@ function renderChecklist(c) {
     custRow.appendChild(sfLogBtn);
   }
   // SF account autocomplete for facility input
-  const sfAccountObjs=(S._sfBoardData?.accounts||SPEND_STATE?.data?.accounts||[]);
+  const sfAccountObjs=(S._sfBoardData?.accounts||(typeof SPEND_STATE!=='undefined'?SPEND_STATE?.data?.accounts:null)||[]);
   const sfAccounts=sfAccountObjs.map(a=>({name:a.Name||a.name||'',city:a.BillingCity||a.billingCity||'',state:a.BillingState||a.billingState||''})).filter(a=>a.name);
   if(sfAccounts.length){
     const acDrop=el('div',{style:{position:'absolute',zIndex:'200',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',boxShadow:'0 4px 12px rgba(0,0,0,.2)',maxHeight:'150px',overflowY:'auto',display:'none',minWidth:'260px'}});
