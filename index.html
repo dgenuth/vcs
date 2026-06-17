@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -3918,15 +3918,28 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     if(ph) contactRow.appendChild(el('a',{href:'tel:'+ph.replace(/[^+\d]/g,''),style:{color:'var(--blue)',textDecoration:'none',fontSize:'10px'}},ph));
     if(vendor.email) contactRow.appendChild(el('a',{href:'#',style:{color:'var(--blue)',textDecoration:'none',fontSize:'10px'},onclick(e){e.preventDefault();e.stopPropagation();openEmailModal(vendor);}},vendor.email));
     stickySlot.appendChild(contactRow);
-    // D6: Split Contacts button when ' / ' detected in name or phone
-    const _hasSplittable=(vendor.procContact&&vendor.procContact.includes(' / '))||(vendor.bizPhone&&vendor.bizPhone.includes(' / '))||(vendor.mobile&&vendor.mobile.includes(' / '));
+    // D6: Split Contacts button when ' / ' detected in any contact field
+    const _contactNameFields=['procContact','contactName','contact','primaryContact','contactFullName'];
+    const _contactPhoneFields=['bizPhone','phone','contactPhone','mobile'];
+    const _hasSplittable=[..._contactNameFields,..._contactPhoneFields].some(f=>vendor[f]&&vendor[f].includes(' / '));
     if(_hasSplittable&&hasPermission('editContact')){
       const splitBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px',marginTop:'3px',color:'var(--amber)',borderColor:'rgba(245,158,11,.4)'},onclick(e){
         e.stopPropagation();
         const changes=[];
-        if(vendor.procContact&&vendor.procContact.includes(' / ')){const pts=vendor.procContact.split(' / ');vendor.procContact=pts[0].trim();if(!vendor.shared2)vendor.shared2=pts[1].trim();changes.push('Contact: '+pts[0].trim()+' + '+pts[1].trim());}
-        if(vendor.bizPhone&&vendor.bizPhone.includes(' / ')){const pts=vendor.bizPhone.split(' / ');vendor.bizPhone=pts[0].trim();if(!vendor.mobile2)vendor.mobile2=pts[1].trim();changes.push('Phone: '+pts[0].trim()+' + '+pts[1].trim());}
-        if(vendor.mobile&&vendor.mobile.includes(' / ')){const pts=vendor.mobile.split(' / ');vendor.mobile=pts[0].trim();if(!vendor.mobile2)vendor.mobile2=pts[1].trim();changes.push('Mobile: '+pts[0].trim()+' + '+pts[1].trim());}
+        _contactNameFields.forEach(f=>{
+          if(vendor[f]&&vendor[f].includes(' / ')){
+            const pts=vendor[f].split(' / ');vendor[f]=pts[0].trim();
+            if(!vendor.shared2)vendor.shared2=pts[1].trim();
+            changes.push(f+': '+pts[0].trim()+' + '+pts[1].trim());
+          }
+        });
+        _contactPhoneFields.forEach(f=>{
+          if(vendor[f]&&vendor[f].includes(' / ')){
+            const pts=vendor[f].split(' / ');vendor[f]=pts[0].trim();
+            if(!vendor.mobile2)vendor.mobile2=pts[1].trim();
+            changes.push(f+': '+pts[0].trim()+' + '+pts[1].trim());
+          }
+        });
         markDirty(vendor);saveSessionState();
         toast('⚡ Split: '+changes.join('; '));
         refreshDetailIfOpen(vendor);
@@ -8662,7 +8675,7 @@ function openTalkingPointsModal(startIdx=0, vendor=null) {
       });
       aiRow.appendChild(aiBtn);
       aiRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Powered by Claude — uses vendor data, contract info & SF context'));
-      body.insertBefore(aiRow,tpList);
+      body.appendChild(aiRow);
     }
     body.appendChild(tpList);
     // Log row
@@ -11183,8 +11196,6 @@ const PSX_CHECKLIST = [{"label":"REHAB","items":[{"label":"Therapy – In-House 
 
 function renderChecklist(c) {
   c.innerHTML='';
-  // Declare allItems early — used in _histPct closure before coverage section
-  const allItems=(typeof PSX_CHECKLIST!=='undefined'&&PSX_CHECKLIST)?PSX_CHECKLIST.flatMap(function(s){return s.items;}):[]; 
   if(!S.loaded){c.appendChild(el('p',{style:{padding:'20px',color:'var(--muted)'}},'Please load a vendor file first.'));return;}
   if(typeof PSX_CHECKLIST==='undefined'||!PSX_CHECKLIST.length){c.appendChild(el('p',{style:{padding:'20px',color:'var(--muted)'}},'Checklist data not found. Reload the page.'));return;}
   try {
@@ -11365,6 +11376,7 @@ function renderChecklist(c) {
   }
 
   // Overall coverage summary — two bars: Available (DB vendors) + Selected (GoWith choices)
+  const allItems=PSX_CHECKLIST.flatMap(s=>s.items);
   const coveredItems=allItems.filter(it=>findVendors(it.label).length>0);
   const selectedItems=allItems.filter(it=>S._clGoWith&&S._clGoWith[it.label]);
   const overallPct=allItems.length?Math.round(coveredItems.length/allItems.length*100):0;
@@ -13800,21 +13812,19 @@ function renderNetworkIntel(c) {
   ALL.forEach(vendorA=>{
     const aCat=vendorA.category||'';
     const aNeeds=Object.entries(SERVICE_NEEDS).find(([k])=>aCat.toLowerCase().includes(k.toLowerCase()))?.[1]||[];
-    if(!aNeeds.length) return;
     ALL.forEach(vendorB=>{
       if(vendorB.name===vendorA.name) return;
-      if((vendorB.category||'')===(vendorA.category||'')) return; // competitors
+      if((vendorB.category||'')===(vendorA.category||'')) return; // competitors/same category
       const pairKey=[vendorA.name,vendorB.name].sort().join('|||');
       if(seenPairs.has(pairKey)) return;
-      const bText=vendorServiceText(vendorB);
-      const matchedN=aNeeds.filter(need=>bText.includes(need));
-      if(!matchedN.length) return;
       // Skip if already documented relationship
       const hasRel=(vendorA.vendorRelationships||'').toLowerCase().includes(vendorB.name.toLowerCase())||(vendorB.vendorRelationships||'').toLowerCase().includes(vendorA.name.toLowerCase());
       if(hasRel) return;
       seenPairs.add(pairKey);
-      // Scoring: complementary category base=2, +1 per matched need keyword (max 3 extra)
-      const score=Math.min(5,2+Math.min(3,matchedN.length));
+      const bText=vendorServiceText(vendorB);
+      const matchedN=aNeeds.length?aNeeds.filter(need=>bText.includes(need)):[];
+      // Scoring: keyword matches get higher score; any cross-category pair scores at least 1
+      const score=matchedN.length?Math.min(5,2+Math.min(3,matchedN.length)):1;
       scoredPairs.push({vendorA,topMatch:vendorB,matchedNeeds:matchedN,score});
     });
   });
@@ -13836,7 +13846,9 @@ function renderNetworkIntel(c) {
   }
 
   const filteredPairs=S._niCatFilter?scoredPairs.filter(p=>(p.vendorA.category||'')===S._niCatFilter):scoredPairs;
-  const topPairs=filteredPairs.slice(0,20);
+  // Top 10, minimum 3 pairs (fall back to unsorted global pool if filter too narrow)
+  const _topN=Math.max(3,Math.min(10,filteredPairs.length));
+  const topPairs=filteredPairs.length>=3?filteredPairs.slice(0,10):scoredPairs.slice(0,Math.max(3,Math.min(10,scoredPairs.length)));
   const countLbl=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'6px'}},
     'Showing '+topPairs.length+' of '+filteredPairs.length+' matches'+(scoredPairs.length!==filteredPairs.length?' ('+scoredPairs.length+' total)':''));
   xrefSec.appendChild(countLbl);
@@ -18487,9 +18499,10 @@ function renderAnalytics(c) {
       const tc2=el('canvas',{style:{maxHeight:'200px'}}); taskSec.appendChild(tc2);
       const tc2Detail=el('div',{style:{display:'none',marginTop:'8px',maxHeight:'220px',overflowY:'auto',border:'1px solid var(--border)',borderRadius:'5px'}}); taskSec.appendChild(tc2Detail);
       row1.appendChild(taskSec);
-      const withOverdue=filteredReps.filter(r=>r.tasks.length>0);
+      const _overdueFilter=t=>t.ActivityDate&&new Date(t.ActivityDate)<today&&t.Status!=='Completed';
+      const withOverdue=filteredReps.filter(r=>r.tasks.filter(_overdueFilter).length>0);
       let _tc2LastIdx=-1;
-      new Chart(tc2,{type:'bar',data:{labels:withOverdue.map(r=>r.name.split(' ')[0]),datasets:[{label:'Total Tasks',data:withOverdue.map(r=>r.tasks.length),backgroundColor:'rgba(79,124,255,.5)',borderRadius:3},{label:'Overdue',data:withOverdue.map(r=>r.overdueTask),backgroundColor:'#ef4444',hoverBackgroundColor:'#c42828',borderRadius:3}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+ctx.raw+' tasks'}}},scales:{y:{beginAtZero:true,ticks:{color:'var(--muted)',font:{size:8}}},x:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(!els.length){tc2Detail.style.display='none';_tc2LastIdx=-1;return;}const idx=els[0].index;if(idx===_tc2LastIdx){tc2Detail.style.display='none';_tc2LastIdx=-1;return;}_tc2LastIdx=idx;const rep=withOverdue[idx];const overdueTasks=rep.tasks.filter(t=>t.ActivityDate&&new Date(t.ActivityDate)<today&&t.Status!=='Completed');tc2Detail.innerHTML='';tc2Detail.style.display='';const hdr2=el('div',{style:{padding:'6px 10px',fontWeight:'700',fontSize:'10px',borderBottom:'1px solid var(--border)',background:'var(--card)'}},rep.name+' — '+overdueTasks.length+' Overdue Task'+(overdueTasks.length!==1?'s':''));tc2Detail.appendChild(hdr2);if(overdueTasks.length){const tbl=el('table',{class:'data-table',style:{margin:'0',fontSize:'9px'}});const th2=el('thead');const hr2=el('tr');['Subject','Due Date','Account','Status'].forEach(h=>hr2.appendChild(el('th',{style:{fontSize:'8px',padding:'3px 8px'}},h)));th2.appendChild(hr2);tbl.appendChild(th2);const tb2=el('tbody');overdueTasks.forEach(t=>{const tr=el('tr',{style:{cursor:USER.sfInstance?'pointer':'default'},onclick(){if(USER.sfInstance&&t.Id)window.open(USER.sfInstance+'/lightning/r/Task/'+t.Id+'/view','_blank');}});const daysOverdue=t.ActivityDate?Math.round((new Date()-new Date(t.ActivityDate))/86400000):0;tr.appendChild(el('td',{style:{color:'var(--text)',fontWeight:'600',padding:'3px 8px'}},t.Subject||'—'));tr.appendChild(el('td',{style:{padding:'3px 8px',color:'var(--red)',fontWeight:'600'}},t.ActivityDate||'—'+(daysOverdue>0?' ('+daysOverdue+'d overdue)':'')));tr.appendChild(el('td',{style:{padding:'3px 8px',color:'var(--muted)',fontSize:'9px'}},t.What?.Name||'—'));tr.appendChild(el('td',{style:{padding:'3px 8px',color:'var(--muted)',fontSize:'9px'}},t.Status||'—'));tb2.appendChild(tr);});tbl.appendChild(tb2);tc2Detail.appendChild(tbl);}else{tc2Detail.appendChild(el('p',{style:{padding:'10px',color:'var(--muted)',fontSize:'9px'}},'No overdue tasks for '+rep.name));}}}}); const _tc2Inst=Chart.getChart(tc2); if(_tc2Inst){ tc2._chartInstance=_tc2Inst; tc2._storedConfig={type:_tc2Inst.config.type,data:JSON.parse(JSON.stringify(_tc2Inst.config.data)),options:_tc2Inst.config.options}; }
+      new Chart(tc2,{type:'bar',data:{labels:withOverdue.map(r=>r.name.split(' ')[0]),datasets:[{label:'Total Tasks',data:withOverdue.map(r=>r.tasks.length),backgroundColor:'rgba(79,124,255,.5)',borderRadius:3},{label:'Overdue',data:withOverdue.map(r=>r.tasks.filter(_overdueFilter).length),backgroundColor:'#ef4444',hoverBackgroundColor:'#c42828',borderRadius:3}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:9},color:'var(--text)'}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+ctx.raw+' tasks'}}},scales:{y:{beginAtZero:true,ticks:{color:'var(--muted)',font:{size:8}}},x:{ticks:{color:'var(--text)',font:{size:9}}}},onClick(e,els){if(!els.length){tc2Detail.style.display='none';_tc2LastIdx=-1;return;}const idx=els[0].index;if(idx===_tc2LastIdx){tc2Detail.style.display='none';_tc2LastIdx=-1;return;}_tc2LastIdx=idx;const rep=withOverdue[idx];const overdueTasks=rep.tasks.filter(t=>t.ActivityDate&&new Date(t.ActivityDate)<today&&t.Status!=='Completed');tc2Detail.innerHTML='';tc2Detail.style.display='';const hdr2=el('div',{style:{padding:'6px 10px',fontWeight:'700',fontSize:'10px',borderBottom:'1px solid var(--border)',background:'var(--card)'}},rep.name+' — '+overdueTasks.length+' Overdue Task'+(overdueTasks.length!==1?'s':''));tc2Detail.appendChild(hdr2);if(overdueTasks.length){const tbl=el('table',{class:'data-table',style:{margin:'0',fontSize:'9px'}});const th2=el('thead');const hr2=el('tr');['Subject','Due Date','Account','Status'].forEach(h=>hr2.appendChild(el('th',{style:{fontSize:'8px',padding:'3px 8px'}},h)));th2.appendChild(hr2);tbl.appendChild(th2);const tb2=el('tbody');overdueTasks.forEach(t=>{const tr=el('tr',{style:{cursor:USER.sfInstance?'pointer':'default'},onclick(){if(USER.sfInstance&&t.Id)window.open(USER.sfInstance+'/lightning/r/Task/'+t.Id+'/view','_blank');}});const daysOverdue=t.ActivityDate?Math.round((new Date()-new Date(t.ActivityDate))/86400000):0;tr.appendChild(el('td',{style:{color:'var(--text)',fontWeight:'600',padding:'3px 8px'}},t.Subject||'—'));tr.appendChild(el('td',{style:{padding:'3px 8px',color:'var(--red)',fontWeight:'600'}},t.ActivityDate||'—'+(daysOverdue>0?' ('+daysOverdue+'d overdue)':'')));tr.appendChild(el('td',{style:{padding:'3px 8px',color:'var(--muted)',fontSize:'9px'}},t.What?.Name||'—'));tr.appendChild(el('td',{style:{padding:'3px 8px',color:'var(--muted)',fontSize:'9px'}},t.Status||'—'));tb2.appendChild(tr);});tbl.appendChild(tb2);tc2Detail.appendChild(tbl);}else{tc2Detail.appendChild(el('p',{style:{padding:'10px',color:'var(--muted)',fontSize:'9px'}},'No overdue tasks for '+rep.name));}}}}); const _tc2Inst=Chart.getChart(tc2); if(_tc2Inst){ tc2._chartInstance=_tc2Inst; tc2._storedConfig={type:_tc2Inst.config.type,data:JSON.parse(JSON.stringify(_tc2Inst.config.data)),options:_tc2Inst.config.options}; }
       c.appendChild(row1);
     });
 
