@@ -1671,6 +1671,7 @@ function parsePSD(sheet, sourceName) {
       extraContacts: parseExtraContacts(r[73]), // Column BV — JSON array of contacts 3+
       vendorRelationships: parseVendorRelationships(r[74]), // Column BW — JSON array of related vendor links
       sfAccountId: String(r[75]||'').trim(), // Column BX — manual Salesforce Account ID link
+      vendorAliases: String(r[76]||'').trim().split(';').filter(Boolean), // Column BY — semicolon-separated alias names
       _dirty:false,
     };
     v.score = isDirect ? calcScore(v) : 0;
@@ -1929,7 +1930,10 @@ async function loadFile(file) {
     const gpCount = S.channelVendors.length;
     // Rebuild vendorAliases from spreadsheet records (survives Drive config loss)
     if(!S.vendorAliases) S.vendorAliases={};
-    (S.vendors||[]).forEach(v=>{ if(v.vendorAliases&&Array.isArray(v.vendorAliases)){v.vendorAliases.forEach(a=>{S.vendorAliases[normName(a)]=v.name;});}});
+    (S.vendors||[]).forEach(v=>{
+      if(v.vendorAliases&&Array.isArray(v.vendorAliases)){v.vendorAliases.forEach(a=>{if(a)S.vendorAliases[normName(a)]=v.name;});}
+      if(v.vendorAliasOf) S.vendorAliases[normName(v.name)]=v.vendorAliasOf;
+    });
     toast(`Loaded ${S.vendors.length} direct + ${gpCount} channel partner vendors, ${S.itw.length} pipeline, ${S.reviews.length} reviews`);
     startAutoSave();
 
@@ -2284,6 +2288,7 @@ async function executeSave() {
         // Serialize array fields to JSON string
         if (field === 'extraContacts') val = serializeExtraContacts(val);
         if (field === 'vendorRelationships') val = serializeVendorRelationships(val);
+        if (field === 'vendorAliases') val = Array.isArray(val) ? val.join(';') : String(val||'');
         if (!val && val !== 0) continue;
         let strVal;
         if (DATE_FIELDS.has(field)) {
@@ -10158,7 +10163,7 @@ function renderSFSalesView(wrap, opps, cases, tasks) {
   wrap.appendChild(oppSec);
 
   // Overdue tasks
-  const overdueTasks=tasks.filter(t=>t.ActivityDate&&new Date(t.ActivityDate)<new Date());
+  const overdueTasks=tasks.filter(t=>t.ActivityDate&&new Date(t.ActivityDate)<new Date()&&t.Status!=='Completed');
   if(overdueTasks.length){
     const taskSec=el('div',{style:{background:'rgba(245,158,11,.05)',border:'1px solid rgba(245,158,11,.3)',borderRadius:'6px',padding:'12px'}});
     taskSec.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',color:'var(--amber)',marginBottom:'8px'}},'⚠ Overdue Tasks ('+overdueTasks.length+')'));
@@ -11044,6 +11049,9 @@ const PSX_CHECKLIST = [{"label":"REHAB","items":[{"label":"Therapy – In-House 
 
 function renderChecklist(c) {
   c.innerHTML='';
+  if(!S.loaded){c.appendChild(el('p',{style:{padding:'20px',color:'var(--muted)'}},'Please load a vendor file first.'));return;}
+  if(typeof PSX_CHECKLIST==='undefined'||!PSX_CHECKLIST.length){c.appendChild(el('p',{style:{padding:'20px',color:'var(--muted)'}},'Checklist data not found. Reload the page.'));return;}
+  try {
   function _clSave(fac){if(!fac)return;try{localStorage.setItem('vcs_checklist_'+fac,JSON.stringify({currVendor:S._clCurrVendor||{},goWith:S._clGoWith||{},status:S._clStatus||{}}));}catch(e2){}}
   function _clLoad(fac){if(!fac)return;try{const sv=JSON.parse(localStorage.getItem('vcs_checklist_'+fac)||'{}');if(sv.currVendor)S._clCurrVendor=Object.assign({},S._clCurrVendor||{},sv.currVendor);if(sv.goWith)S._clGoWith=Object.assign({},S._clGoWith||{},sv.goWith);if(sv.status)S._clStatus=Object.assign({},S._clStatus||{},sv.status);if(sv.rep)S._checklistRep=sv.rep;}catch(e2){}}
   function _clGetHistory(){try{return JSON.parse(localStorage.getItem('vcs_checklist_history')||'{}');}catch(e){return {};}}
@@ -11320,6 +11328,15 @@ function renderChecklist(c) {
     }
     wrap.appendChild(secDiv);
   });
+  } catch(err) {
+    c.innerHTML='';
+    const _errDiv=el('div',{style:{padding:'20px',color:'var(--red)'}});
+    _errDiv.appendChild(el('h3',{},'Checklist Error'));
+    _errDiv.appendChild(el('p',{},err.message));
+    _errDiv.appendChild(el('button',{class:'btn-primary',onclick:function(){render();}}, 'Retry'));
+    c.appendChild(_errDiv);
+    console.error('[VCS] Checklist crash:', err);
+  }
 }
 
 function emailChecklist(customerName, repName) {
@@ -17971,7 +17988,9 @@ function renderAnalytics(c) {
       }).catch(()=>{});
     }
     const sb=S._sfBoardData;
-    const opps=sb?.opps||[], tasks=sb?.tasks||[], cases=sb?.cases||[];
+    const _rawRepOpps=sb?.opps||[], tasks=sb?.tasks||[], _rawRepCases=sb?.cases||[];
+    const opps=filterByDateRange(_rawRepOpps,'CloseDate');
+    const cases=filterByDateRange(_rawRepCases,'CreatedDate');
     if(!opps.length&&!tasks.length){
       const loadSec=el('div',{class:'summary-section',style:{textAlign:'center',padding:'24px'}});
       loadSec.appendChild(el('p',{style:{fontSize:'12px',color:'var(--muted)',marginBottom:'12px'}},'Load the Salesforce Board to see rep performance data.'));
@@ -20163,7 +20182,25 @@ function renderSettings(c) {
         '&code_challenge=' + codeChallenge +
         '&code_challenge_method=S256' +
         '&prompt=select_account';
-      window.location.href = authUrl;
+      // Use popup so the main page keeps S.loaded and avoids a redirect loop
+      const _msPop = window.open(authUrl, 'ms_oauth_connect', 'width=600,height=700,left=200,top=100');
+      if (!_msPop) { toast('Popup blocked — allow popups for this page','#f59e0b'); return; }
+      const _prevMsTok = getMSToken();
+      const _msPoll = setInterval(() => {
+        try {
+          if (_msPop.closed) {
+            clearInterval(_msPoll);
+            // handleMSCallback in popup saved the token — detect it
+            if (getMSToken() && getMSToken() !== _prevMsTok) {
+              if (clientId) S.settings.msGraphClientId = clientId;
+              if (tenantId) S.settings.msGraphTenantId = tenantId;
+              updateMSStatus();
+              toast('Microsoft 365 connected!', '#22c55e');
+              saveConfigToDrive().catch(()=>{});
+            }
+          }
+        } catch(e) {}
+      }, 500);
     });
   }},'🔗 Connect Microsoft Account'));
   msBtns.appendChild(el('button',{class:'btn-xs btn-ghost', onclick() {
@@ -22854,6 +22891,8 @@ async function ensureMSToken() {
       if(clientId){S.settings.msGraphClientId=clientId;localStorage.setItem('vcs_ms_clientid_temp',clientId);}
       if(tenantId){S.settings.msGraphTenantId=tenantId;localStorage.setItem('vcs_ms_tenantid_temp',tenantId);}
       console.log('[VCS] Microsoft 365 connected:', me.displayName || 'OK');
+      // If running in popup (parent window opened us for OAuth), close self after saving
+      if (window.opener && !window.opener.closed) { setTimeout(()=>window.close(), 500); return; }
       setTimeout(()=>saveConfigToDrive().catch(()=>{}), 2000);
     } else {
       console.warn('[VCS] MS token exchange failed:', td.error_description || JSON.stringify(td));
