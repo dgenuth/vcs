@@ -3964,9 +3964,9 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     if(ph2) qBar.appendChild(qBtn('📞','Call '+vendor.procContact,()=>dialPhone(ph2,vendor)));
     if(_canAct2) qBar.appendChild(qBtn('📧','Send email',()=>openEmailModal(vendor),'var(--blue)'));
     if(hasPermission('editNotes')) qBar.appendChild(qBtn('📝','Add note',()=>openStructuredNoteModal(vendor),'var(--green)'));
-    if(hasPermission('editContract')) qBar.appendChild(qBtn('📄','Edit contract',()=>{if(vendor._detailTab!=='contract'){vendor._detailTab='contract';openDetail(vendor,fromAnalytics,false);}else{openDetail(vendor,fromAnalytics,false);}}),'var(--amber)');
+    if(hasPermission('editContract')) qBar.appendChild(qBtn('📄','Edit contract',()=>{S._contractsPresetVendor=vendor.name;S.view='contracts';render();},'var(--amber)'));
     if(USER.sfToken&&vendor.sfAccountId) qBar.appendChild(qBtn('☁','Open in Salesforce',()=>window.open(USER.sfInstance+'/lightning/r/Account/'+vendor.sfAccountId+'/view','_blank'),'#38bdf8'));
-    if(_canAct2) qBar.appendChild(qBtn('⚡','AI Briefing',()=>openAIBriefingModal(vendor),'var(--amber)'));
+    if(USER.sfToken&&vendor.sfAccountId) qBar.appendChild(qBtn('📊','SF Dashboard',()=>window.open(USER.sfInstance+'/lightning/r/Account/'+vendor.sfAccountId+'/view','_blank'),'var(--blue)'));
     if(_canAct2) qBar.appendChild(qBtn('📅','Schedule meeting',()=>openCalendarEventModal(isoDate(new Date()),vendor.name)));
     if(_canAct2) qBar.appendChild(qBtn('🎯','Meeting Mode — AI talking points',()=>openTalkingPointsModal(0,vendor),'var(--amber)'));
     stickySlot.appendChild(qBar);
@@ -4634,11 +4634,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     const _fathomIsOpen=S._fathomOpen?.[vendor.name]===true;
     const fathomSec=el('div',{style:{marginTop:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
     const fathomHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'6px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none',borderBottom:_fathomIsOpen?'1px solid var(--border)':'none'},
-      onclick(e){e.stopPropagation();if(!S._fathomOpen)S._fathomOpen={};S._fathomOpen[vendor.name]=!S._fathomOpen[vendor.name];
-        const lbl=fathomHdr.querySelector('.fathom-lbl');if(lbl)lbl.textContent=S._fathomOpen[vendor.name]?'▲ collapse':'▼ expand';
-        const bdy=fathomSec.querySelector('.fathom-body');if(bdy)bdy.style.display=S._fathomOpen[vendor.name]?'':'none';
-        fathomHdr.style.borderBottom=S._fathomOpen[vendor.name]?'1px solid var(--border)':'none';
-      }});
+      onclick(e){e.stopPropagation();if(!S._fathomOpen)S._fathomOpen={};S._fathomOpen[vendor.name]=!S._fathomOpen[vendor.name];refreshDetailIfOpen(vendor);}
+      });
     fathomHdr.appendChild(el('span',{style:{fontSize:'11px'}},'📹'));
     fathomHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Meetings'));
     fathomHdr.appendChild(el('span',{class:'fathom-lbl',style:{fontSize:'9px',color:'var(--muted)'}},_fathomIsOpen?'▲ collapse':'▼ expand'));
@@ -4661,11 +4658,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     const _mediaIsOpen=S._mediaOpen?.[vendor.name]===true;
     const mediaSec=el('div',{style:{marginTop:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
     const mediaHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'6px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none',borderBottom:_mediaIsOpen?'1px solid var(--border)':'none'},
-      onclick(e){e.stopPropagation();if(!S._mediaOpen)S._mediaOpen={};S._mediaOpen[vendor.name]=!_mediaIsOpen;
-        const lbl=mediaHdr.querySelector('.media-lbl');if(lbl)lbl.textContent=S._mediaOpen[vendor.name]?'▲ collapse':'▼ expand';
-        const bdy=mediaSec.querySelector('.media-body');if(bdy)bdy.style.display=S._mediaOpen[vendor.name]?'':'none';
-        mediaHdr.style.borderBottom=S._mediaOpen[vendor.name]?'1px solid var(--border)':'none';
-      }});
+      onclick(e){e.stopPropagation();if(!S._mediaOpen)S._mediaOpen={};S._mediaOpen[vendor.name]=!S._mediaOpen[vendor.name];refreshDetailIfOpen(vendor);}
+      });
     mediaHdr.appendChild(el('span',{style:{fontSize:'11px'}},'📎'));
     mediaHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Media & Links'));
     if(vendor._mediaLinks.length>0)mediaHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',background:'var(--bg)',borderRadius:'9px',padding:'1px 6px',border:'1px solid var(--border)'}},String(vendor._mediaLinks.length)));
@@ -4739,7 +4733,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     sfHdr.appendChild(el('h4',{class:'detail-sec-title',style:{marginBottom:'0'}},'☁ Salesforce'));
     sfSec.appendChild(sfHdr);
 
-    const sfWrap=el('div',{style:{marginTop:'4px'}});
+    const sfWrap=el('div',{style:{marginTop:'4px',maxHeight:'320px',overflowY:'auto'}});
     sfSec.appendChild(sfWrap);
     body.appendChild(sfSec);
 
@@ -4870,7 +4864,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       }
       const sfTabs2=["Details","Spend","Opportunities","Cases"];
       if(!vendor._sfTab) vendor._sfTab="Details";
-      const tabBar2=el("div",{style:{display:"flex",gap:"2px",marginBottom:"6px",borderBottom:"1px solid var(--border)",paddingBottom:"2px"}});
+      const tabBar2=el("div",{style:{display:"flex",gap:"2px",marginBottom:"6px",borderBottom:"1px solid var(--border)",paddingBottom:"2px",position:"sticky",top:"0",zIndex:"5",background:"var(--bg)"}});
       sfTabs2.forEach(tab=>{
         const active=vendor._sfTab===tab;
         const btn=el("button",{style:{padding:"3px 8px",fontSize:"9px",fontWeight:"600",border:"none",cursor:"pointer",borderRadius:"3px 3px 0 0",background:active?"var(--blue)":"transparent",color:active?"white":"var(--muted)"},onclick(e){e.stopPropagation();vendor._sfTab=tab;renderSFPanel();}},tab);
@@ -11883,6 +11877,7 @@ function renderContracts(c) {
 
   const comboInput=el('input',{type:'text',class:'detail-edit-field',style:{width:'100%',height:'30px',paddingRight:'24px'},
     placeholder:'Type or select vendor...'});
+  if(S._contractsPresetVendor){selectedVendorName=S._contractsPresetVendor;comboInput.value=S._contractsPresetVendor;delete S._contractsPresetVendor;}
   const comboArrow=el('span',{style:{position:'absolute',right:'6px',top:'7px',fontSize:'10px',color:'var(--muted)',pointerEvents:'none'}},'▾');
   const comboDropdown=el('div',{style:{
     position:'absolute',top:'32px',left:'0',right:'0',
