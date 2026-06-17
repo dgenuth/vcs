@@ -13445,77 +13445,77 @@ function renderNetworkIntel(c) {
   });
   scoredPairs.sort((a,b)=>b.score-a.score);
   // Category filter pills
-  const _niAllCats=[...new Set(scoredPairs.map(p=>p.vendorA.category||’’).filter(Boolean))].sort();
+  const _niAllCats=[...new Set(scoredPairs.map(function(p){return p.vendorA.category||'';}).filter(Boolean))].sort();
   if(_niAllCats.length>1){
-    const catRow=el(‘div’,{style:{display:’flex’,gap:’5px’,flexWrap:’wrap’,marginBottom:’8px’,alignItems:’center’}});
-    catRow.appendChild(el(‘span’,{style:{fontSize:’9px’,color:’var(--muted)’}},’Filter:’));
+    const catRow=el('div',{style:{display:'flex',gap:'5px',flexWrap:'wrap',marginBottom:'8px',alignItems:'center'}});
+    catRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Filter:'));
     [null,..._niAllCats].forEach(cat=>{
       const isAct=(S._niCatFilter||null)===cat;
-      const pill=el(‘button’,{style:{fontSize:’9px’,padding:’2px 8px’,borderRadius:’9px’,cursor:’pointer’,border:’1px solid ‘+(isAct?’var(--blue)’:’var(--border)’),background:isAct?’var(--blue)’:’transparent’,color:isAct?’#fff’:’var(--text)’},
-        onclick(){S._niCatFilter=cat;render();}},cat||’All’);
+      const pill=el('button',{style:{fontSize:'9px',padding:'2px 8px',borderRadius:'9px',cursor:'pointer',border:'1px solid '+(isAct?'var(--blue)':'var(--border)'),background:isAct?'var(--blue)':'transparent',color:isAct?'#fff':'var(--text)'},
+        onclick(){S._niCatFilter=cat;render();}},cat||'All');
       catRow.appendChild(pill);
     });
     xrefSec.appendChild(catRow);
   }
 
-  const filteredPairs=S._niCatFilter?scoredPairs.filter(p=>(p.vendorA.category||’’)===S._niCatFilter):scoredPairs;
+  const filteredPairs=S._niCatFilter?scoredPairs.filter(p=>(p.vendorA.category||'')===S._niCatFilter):scoredPairs;
   const topPairs=filteredPairs.slice(0,20);
-  const countLbl=el(‘div’,{style:{fontSize:’9px’,color:’var(--muted)’,marginBottom:’6px’}},
-    ‘Showing ‘+topPairs.length+’ of ‘+filteredPairs.length+’ matches’+(scoredPairs.length!==filteredPairs.length?’ (‘+scoredPairs.length+’ total)’:’’));
+  const countLbl=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'6px'}},
+    'Showing '+topPairs.length+' of '+filteredPairs.length+' matches'+(scoredPairs.length!==filteredPairs.length?' ('+scoredPairs.length+' total)':''));
   xrefSec.appendChild(countLbl);
 
-  const pairCards=el(‘div’,{style:{display:’grid’,gridTemplateColumns:’repeat(auto-fill,minmax(340px,1fr))’,gap:’8px’}});
+  const pairCards=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(340px,1fr))',gap:'8px'}});
 
   if(!topPairs.length){
-    pairCards.appendChild(el(‘p’,{class:’muted’,style:{padding:’10px 0’}},scoredPairs.length?’No matches for the selected category filter. Try "All".’:’Not enough service description data to generate matches. Add "Product / Description" and "Added Value" details to your vendor records for smarter suggestions.’));
+    pairCards.appendChild(el('p',{class:'muted',style:{padding:'10px 0'}},scoredPairs.length?'No matches for the selected category filter. Try "All".':'Not enough service description data to generate matches. Add "Product / Description" and "Added Value" details to your vendor records for smarter suggestions.'));
   }
 
   topPairs.forEach(({vendorA,topMatch,matchedNeeds,score})=>{
-    const aCat=vendorA.category||’’;
-    const reason=matchedNeeds.slice(0,2).join(‘, ‘);
-    const matchDots=’●’.repeat(score)+’○’.repeat(5-score);
+    const aCat=vendorA.category||'';
+    const reason=matchedNeeds.slice(0,2).join(', ');
+    const matchDots='●'.repeat(score)+'○'.repeat(5-score);
 
-    const card=el(‘div’,{style:{background:’var(--bg)’,border:’1px solid var(--border)’,borderRadius:’5px’,padding:’10px’}});
+    const card=el('div',{style:{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'5px',padding:'10px'}});
     // Header
-    const hdr=el(‘div’,{style:{display:’flex’,alignItems:’center’,gap:’6px’,marginBottom:’6px’,flexWrap:’wrap’}});
-    hdr.appendChild(el(‘span’,{style:{background:’rgba(79,124,255,.12)’,color:’var(--blue)’,padding:’2px 6px’,borderRadius:’3px’,fontSize:’9px’}},aCat));
-    hdr.appendChild(el(‘span’,{style:{color:’var(--muted)’}},’needs’));
-    hdr.appendChild(el(‘span’,{style:{background:’rgba(34,197,94,.1)’,color:’var(--green)’,padding:’2px 6px’,borderRadius:’3px’,fontSize:’9px’,fontWeight:’600’}},reason));
-    hdr.appendChild(el(‘span’,{style:{fontSize:’9px’,color:’var(--muted)’,letterSpacing:’1px’}},matchDots));
+    const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'6px',flexWrap:'wrap'}});
+    hdr.appendChild(el('span',{style:{background:'rgba(79,124,255,.12)',color:'var(--blue)',padding:'2px 6px',borderRadius:'3px',fontSize:'9px'}},aCat));
+    hdr.appendChild(el('span',{style:{color:'var(--muted)'}},'needs'));
+    hdr.appendChild(el('span',{style:{background:'rgba(34,197,94,.1)',color:'var(--green)',padding:'2px 6px',borderRadius:'3px',fontSize:'9px',fontWeight:'600'}},reason));
+    hdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',letterSpacing:'1px'}},matchDots));
     card.appendChild(hdr);
 
-    const row=el(‘div’,{style:{display:’flex’,gap:’10px’,alignItems:’flex-start’}});
-    const aDiv=el(‘div’,{style:{flex:’1’,background:’rgba(79,124,255,.05)’,borderRadius:’3px’,padding:’5px 7px’}});
-    aDiv.appendChild(el(‘div’,{style:{fontSize:’9px’,color:’var(--blue)’,fontWeight:’600’,marginBottom:’2px’}},’The vendor:’));
-    aDiv.appendChild(el(‘div’,{class:’vendor-link’,style:{fontSize:’10px’,fontWeight:’600’},onclick(){openDetail(vendorA);}},vendorA.name));
-    aDiv.appendChild(el(‘div’,{style:{fontSize:’9px’,color:’var(--muted)’}},(vendorA.product||vendorA.addedValue||aCat||’’).slice(0,60)));
+    const row=el('div',{style:{display:'flex',gap:'10px',alignItems:'flex-start'}});
+    const aDiv=el('div',{style:{flex:'1',background:'rgba(79,124,255,.05)',borderRadius:'3px',padding:'5px 7px'}});
+    aDiv.appendChild(el('div',{style:{fontSize:'9px',color:'var(--blue)',fontWeight:'600',marginBottom:'2px'}},'The vendor:'));
+    aDiv.appendChild(el('div',{class:'vendor-link',style:{fontSize:'10px',fontWeight:'600'},onclick(){openDetail(vendorA);}},vendorA.name));
+    aDiv.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},(vendorA.product||vendorA.addedValue||aCat||'').slice(0,60)));
     row.appendChild(aDiv);
-    row.appendChild(el(‘span’,{style:{alignSelf:’center’,color:’var(--green)’,fontSize:’16px’}},’⟷’));
-    const bDiv=el(‘div’,{style:{flex:’1’,background:’rgba(34,197,94,.05)’,borderRadius:’3px’,padding:’5px 7px’}});
-    bDiv.appendChild(el(‘div’,{style:{fontSize:’9px’,color:’var(--green)’,fontWeight:’600’,marginBottom:’2px’}},’Introduce to:’));
-    bDiv.appendChild(el(‘div’,{class:’vendor-link’,style:{fontSize:’10px’,fontWeight:’600’},onclick(){openDetail(topMatch);}},topMatch.name));
-    bDiv.appendChild(el(‘div’,{style:{fontSize:’9px’,color:’var(--muted)’}},(topMatch.product||topMatch.addedValue||topMatch.category||’’).slice(0,60)));
-    if(topMatch.adminFee)bDiv.appendChild(el(‘div’,{style:{fontSize:’9px’,color:’var(--muted)’}},topMatch.adminFee+’ admin fee’));
+    row.appendChild(el('span',{style:{alignSelf:'center',color:'var(--green)',fontSize:'16px'}},'⟷'));
+    const bDiv=el('div',{style:{flex:'1',background:'rgba(34,197,94,.05)',borderRadius:'3px',padding:'5px 7px'}});
+    bDiv.appendChild(el('div',{style:{fontSize:'9px',color:'var(--green)',fontWeight:'600',marginBottom:'2px'}},'Introduce to:'));
+    bDiv.appendChild(el('div',{class:'vendor-link',style:{fontSize:'10px',fontWeight:'600'},onclick(){openDetail(topMatch);}},topMatch.name));
+    bDiv.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},(topMatch.product||topMatch.addedValue||topMatch.category||'').slice(0,60)));
+    if(topMatch.adminFee)bDiv.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},topMatch.adminFee+' admin fee'));
     row.appendChild(bDiv);
     card.appendChild(row);
 
     // "Why this match?" expandable
-    const whyRow=el(‘div’,{style:{marginTop:’5px’,display:’flex’,gap:’6px’,alignItems:’center’,flexWrap:’wrap’}});
-    const whyToggle=el(‘button’,{class:’btn-xs btn-ghost’,style:{fontSize:’8px’,padding:’1px 5px’,color:’var(--muted)’}},
-      ‘▶ Why this match?’);
-    const whyBody=el(‘div’,{style:{display:’none’,fontSize:’9px’,color:’var(--muted)’,marginTop:’4px’,padding:’5px 8px’,background:’var(--card)’,borderRadius:’3px’,lineHeight:’1.5’}});
-    whyBody.textContent=’Matched keywords: ‘+matchedNeeds.join(‘, ‘)+’ · Score: ‘+score+’/5 (complementary categories + ‘+matchedNeeds.length+’ service overlap’+(matchedNeeds.length!==1?’s’:’’)+’)’+(topMatch.markets?’ · ‘+topMatch.name+’ serves: ‘+topMatch.markets:’’);
-    whyToggle.onclick=()=>{const open=whyBody.style.display!==’none’;whyBody.style.display=open?’none’:’’;whyToggle.textContent=(open?’▶’:’▼’)+’ Why this match?’;};
+    const whyRow=el('div',{style:{marginTop:'5px',display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap'}});
+    const whyToggle=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',padding:'1px 5px',color:'var(--muted)'}},
+      '▶ Why this match?');
+    const whyBody=el('div',{style:{display:'none',fontSize:'9px',color:'var(--muted)',marginTop:'4px',padding:'5px 8px',background:'var(--card)',borderRadius:'3px',lineHeight:'1.5'}});
+    whyBody.textContent='Matched keywords: '+matchedNeeds.join(', ')+' · Score: '+score+'/5 (complementary categories + '+matchedNeeds.length+' service overlap'+(matchedNeeds.length!==1?'s':'')+')'+(topMatch.markets?' · '+topMatch.name+' serves: '+topMatch.markets:'');
+    whyToggle.onclick=()=>{const open=whyBody.style.display!=='none';whyBody.style.display=open?'none':'';whyToggle.textContent=(open?'▶':'▼')+' Why this match?';};
     whyRow.appendChild(whyToggle);
     // Introduce button
-    whyRow.appendChild(el(‘button’,{class:’btn-xs’,style:{fontSize:’9px’,background:’rgba(79,124,255,.12)’,color:’var(--blue)’,border:’1px solid rgba(79,124,255,.3)’,borderRadius:’3px’,padding:’2px 8px’,cursor:’pointer’,marginLeft:’auto’},
+    whyRow.appendChild(el('button',{class:'btn-xs',style:{fontSize:'9px',background:'rgba(79,124,255,.12)',color:'var(--blue)',border:'1px solid rgba(79,124,255,.3)',borderRadius:'3px',padding:'2px 8px',cursor:'pointer',marginLeft:'auto'},
       onclick(e){
         e.stopPropagation();
-        const introSubj=’Introduction: ‘+vendorA.name+’ ↔ ‘+topMatch.name;
-        const introBody=’Hello,\n\nI wanted to connect two of our valued partners who I believe could benefit from working together:\n\n• ‘+vendorA.name+’ — ‘+(vendorA.category||vendorA.product||’vendor partner’)+’\n• ‘+topMatch.name+’ — ‘+(topMatch.category||topMatch.product||’vendor partner’)+’\n\nGiven the overlap in ‘+(matchedNeeds.slice(0,2).join(‘ and ‘)||’complementary services’)+’, I thought an introduction would be mutually beneficial.\n\nPlease feel free to connect directly — I\’ll leave it to you to explore any synergies.\n\nBest regards,\n’+(USER.name||USER.email);
-        const introContext=’INTRODUCTION: Introducing ‘+vendorA.name+’ (‘+(vendorA.category||’vendor’)+’) to ‘+topMatch.name+’ (‘+(topMatch.category||’vendor’)+’).\nOverlap: ‘+(matchedNeeds.slice(0,3).join(‘, ‘)||’complementary services’)+’.\nBoth are vendors in the Prime Source network.’;
-        openEmailModal(Object.assign({},vendorA,{notes:introContext+(vendorA.notes?’\n\n’+vendorA.notes:’’),_introTargetName:topMatch.name,_introTargetCategory:topMatch.category||’’}),{title:’✉️ Introduce: ‘+vendorA.name+’ × ‘+topMatch.name,subject:introSubj,body:introBody});
-      }},’✉ Introduce’));
+        const introSubj='Introduction: '+vendorA.name+' ↔ '+topMatch.name;
+        const introBody='Hello,\n\nI wanted to connect two of our valued partners who I believe could benefit from working together:\n\n• '+vendorA.name+' — '+(vendorA.category||vendorA.product||'vendor partner')+'\n• '+topMatch.name+' — '+(topMatch.category||topMatch.product||'vendor partner')+'\n\nGiven the overlap in '+(matchedNeeds.slice(0,2).join(' and ')||'complementary services')+', I thought an introduction would be mutually beneficial.\n\nPlease feel free to connect directly — I\'ll leave it to you to explore any synergies.\n\nBest regards,\n'+(USER.name||USER.email);
+        const introContext='INTRODUCTION: Introducing '+vendorA.name+' ('+(vendorA.category||'vendor')+') to '+topMatch.name+' ('+(topMatch.category||'vendor')+').\nOverlap: '+(matchedNeeds.slice(0,3).join(', ')||'complementary services')+'.\nBoth are vendors in the Prime Source network.';
+        openEmailModal(Object.assign({},vendorA,{notes:introContext+(vendorA.notes?'\n\n'+vendorA.notes:''),_introTargetName:topMatch.name,_introTargetCategory:topMatch.category||''}),{title:'✉️ Introduce: '+vendorA.name+' × '+topMatch.name,subject:introSubj,body:introBody});
+      }},'✉ Introduce'));
     card.appendChild(whyRow);
     card.appendChild(whyBody);
     pairCards.appendChild(card);
