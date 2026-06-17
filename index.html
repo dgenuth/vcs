@@ -11183,6 +11183,8 @@ const PSX_CHECKLIST = [{"label":"REHAB","items":[{"label":"Therapy – In-House 
 
 function renderChecklist(c) {
   c.innerHTML='';
+  // Declare allItems early — used in _histPct closure before coverage section
+  const allItems=(typeof PSX_CHECKLIST!=='undefined'&&PSX_CHECKLIST)?PSX_CHECKLIST.flatMap(function(s){return s.items;}):[]; 
   if(!S.loaded){c.appendChild(el('p',{style:{padding:'20px',color:'var(--muted)'}},'Please load a vendor file first.'));return;}
   if(typeof PSX_CHECKLIST==='undefined'||!PSX_CHECKLIST.length){c.appendChild(el('p',{style:{padding:'20px',color:'var(--muted)'}},'Checklist data not found. Reload the page.'));return;}
   try {
@@ -11363,7 +11365,6 @@ function renderChecklist(c) {
   }
 
   // Overall coverage summary — two bars: Available (DB vendors) + Selected (GoWith choices)
-  const allItems=PSX_CHECKLIST.flatMap(s=>s.items);
   const coveredItems=allItems.filter(it=>findVendors(it.label).length>0);
   const selectedItems=allItems.filter(it=>S._clGoWith&&S._clGoWith[it.label]);
   const overallPct=allItems.length?Math.round(coveredItems.length/allItems.length*100):0;
