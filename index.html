@@ -8597,15 +8597,13 @@ async function generateMeetingTalkingPoints(vendor) {
     vendor.notes?'Vendor notes: '+vendor.notes.slice(0,600):'',
     sfCtx
   ].filter(Boolean).join('\n');
-  const sysP='You are a GPO vendor relationship assistant for Prime Source Expense Experts, a healthcare GPO. Generate 5-8 concise, actionable meeting talking points tailored to this specific vendor\'s situation. Focus on: contract status/renewal urgency, fee reconciliation needs, relationship health, open issues, and strategic priorities. Return ONLY a JSON array of strings, no preamble, no markdown. Each item under 18 words. Example: ["Confirm renewal intent - contract expires in 45 days", "Review Q2 admin fee reconciliation - variance noted"]';
-  console.log('[VCS MeetingMode] Generating talking points for:',vendor.name,'context length:',ctx.length);
+  const sysP='You are a GPO vendor relationship assistant for Prime Source Expense Experts, a healthcare GPO. Generate 6-8 concise, actionable meeting talking points tailored to this specific vendor\'s situation. Focus on: contract status/renewal urgency, fee reconciliation needs, relationship health, open issues, and strategic priorities. Return ONLY a JSON array of strings, no preamble, no markdown. Each item under 18 words. Example: ["Confirm renewal intent - contract expires in 45 days", "Review Q2 admin fee reconciliation - variance noted"]';
   const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'text/plain','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:700,system:sysP,messages:[{role:'user',content:'Generate meeting talking points for:\n\n'+ctx}]})});
   if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+resp.status);}
   const data=await resp.json();
   const raw=(data.content?.find(b=>b.type==='text')?.text||'[]').replace(/```json/g,'').replace(/```/g,'').trim();
-  console.log('[VCS MeetingMode] Raw response length:',raw.length,'first 100 chars:',raw.slice(0,100));
-  try{const pts=JSON.parse(raw);if(!Array.isArray(pts))throw new Error('not array');console.log('[VCS MeetingMode] Parsed',pts.length,'talking points');return pts.map(p=>({text:String(p)}));}
-  catch(e){const fallback=raw.split('\n').filter(l=>l.trim()).map(l=>({text:l.replace(/^[\d\-\.\*•]+\s*/,'').trim()})).filter(t=>t.text);console.log('[VCS MeetingMode] JSON parse failed, fallback lines:',fallback.length);return fallback;}
+  try{const pts=JSON.parse(raw);if(!Array.isArray(pts))throw new Error('not array');return pts.map(p=>({text:String(p)}));}
+  catch(e){return raw.split('\n').filter(l=>l.trim()).map(l=>({text:l.replace(/^[\d\-\.\*•]+\s*/,'').trim()})).filter(t=>t.text);}
 }
 
 // ─── Meeting Mode Modal — Talking Points ──────────────────────────────────────
@@ -11016,8 +11014,140 @@ function openApplyContractModal(vendor, extracted, onApplied) {
       if(onApplied) onApplied(changed);
       refreshDetailIfOpen(vendor);
     }},'✓ Apply Selected'));
+    // If no vendor was selected — offer to add to In The Works
+    if(!vendor || !vendor.name || vendor.name.startsWith('Contract:')) {
+      btns.appendChild(el('button',{class:'btn-secondary',
+        style:{background:'rgba(79,124,255,.15)',borderColor:'rgba(79,124,255,.4)',color:'var(--blue)'},
+        onclick:function(){
+          // Create ITW entry from extracted data
+          const itwEntry = {
+            vendorName: extracted.vendorName||vendor.name,
+            status: 'Under Review',
+            notes: 'Contract analyzed. Key terms: '+
+              (extracted.effectiveDate?'Effective: '+extracted.effectiveDate+'. ':'') +
+              (extracted.expirationDate?'Expires: '+extracted.expirationDate+'. ':'') +
+              (extracted.adminFee&&extracted.adminFee.percentage?'Fee: '+extracted.adminFee.percentage+'%. ':''),
+            contractFileName: vendor._contractFileName||'',
+            addedDate: isoDate(new Date()),
+            _fromContractExtraction: true
+          };
+          if(!S.itw) S.itw=[];
+          S.itw.push(itwEntry);
+          markDirty({name:itwEntry.vendorName},'status','','Under Review');
+          closeModal();
+          toast('Added to In The Works: '+itwEntry.vendorName,'#22c55e');
+          if(S.view!=='itw'){S.view='itw';render();}
+        }},'📋 Add to In The Works'));
+    }
     btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
     body.appendChild(btns);
+
+    // ── AI Contract Conversation Panel ──────────────────────────────────────
+    const aiPanelWrap = el('div',{style:{marginTop:'16px',borderTop:'1px solid var(--border)',paddingTop:'12px'}});
+    aiPanelWrap.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'6px',display:'flex',alignItems:'center',gap:'6px'}},
+      '🤖 Ask About This Contract'));
+    aiPanelWrap.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'8px',marginTop:'0'}},
+      'Ask any question about the contract. Pin answers to save them to contract notes.'));
+
+    // Conversation history for this session
+    const _contractConvo = [];
+    const contractText = typeof extracted._rawText === 'string' ? extracted._rawText : JSON.stringify(extracted);
+
+    const chatMsgs = el('div',{style:{maxHeight:'200px',overflowY:'auto',marginBottom:'8px',
+      background:'var(--bg)',borderRadius:'4px',border:'1px solid var(--border)',padding:'8px'}});
+    chatMsgs.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',textAlign:'center'}},'Ask a question to start the conversation'));
+
+    const chatInput = el('input',{type:'text',class:'detail-edit-field',
+      placeholder:'e.g. "Is there a most favored nation clause?" or "Summarize termination rights"',
+      style:{width:'100%',marginBottom:'6px',fontSize:'10px'}});
+    const chatRow = el('div',{style:{display:'flex',gap:'6px'}});
+    const chatSendBtn = el('button',{class:'btn-primary',style:{fontSize:'10px',whiteSpace:'nowrap'},
+      onclick:async function(){
+        const q = chatInput.value.trim();
+        if(!q) return;
+        chatInput.value='';
+        chatSendBtn.disabled=true; chatSendBtn.textContent='⏳';
+
+        // Add user message
+        const userMsg = el('div',{style:{marginBottom:'8px'}});
+        userMsg.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--blue)',marginBottom:'2px'}},'You:'));
+        userMsg.appendChild(el('div',{style:{fontSize:'10px'}},q));
+        chatMsgs.appendChild(userMsg);
+
+        _contractConvo.push({role:'user',content:q});
+
+        // Build messages for Claude
+        const sysPrompt = 'You are a contract analysis assistant. You have been given the extracted data and text from a vendor contract for '+
+          (extracted.vendorName||'a vendor')+'. Answer questions about it accurately and concisely. '+
+          'If you are uncertain, say so. Contract data: '+contractText.slice(0,8000);
+
+        try {
+          const apiKey = S.settings?.apiKey||localStorage.getItem('vcs_api_key')||'';
+          if(!apiKey) throw new Error('No API key configured');
+          const resp = await fetch('https://api.anthropic.com/v1/messages',{
+            method:'POST',
+            headers:{'Content-Type':'application/json','x-api-key':apiKey,
+              'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+            body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:800,
+              system:sysPrompt, messages:_contractConvo})
+          });
+          const data = await resp.json();
+          const answer = data.content&&data.content[0]&&data.content[0].text||'No response';
+          _contractConvo.push({role:'assistant',content:answer});
+
+          const aiMsg = el('div',{style:{marginBottom:'8px',background:'rgba(79,124,255,.05)',borderRadius:'4px',padding:'6px'}});
+          const aiHeader = el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'2px'}});
+          aiHeader.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)'}},'AI:'));
+          const pinBtn = el('button',{style:{fontSize:'8px',padding:'1px 6px',border:'1px solid var(--border)',
+            background:'none',borderRadius:'3px',cursor:'pointer',color:'var(--muted)'}},
+            '📌 Pin');
+          pinBtn.onclick = function(){
+            // Pin = save to vendor notes
+            const noteText = '[Contract Q&A - '+new Date().toLocaleDateString()+']\nQ: '+q+'\nA: '+answer;
+            const v = S.vendors.find(function(x){return x.name===extracted.vendorName;});
+            if(v){
+              v.notes = (v.notes||'') + '\n\n' + noteText;
+              markDirty(v,'notes','',v.notes);
+              pinBtn.textContent='📌 Pinned ✓';
+              pinBtn.style.color='var(--green)';
+              toast('Saved to '+v.name+' notes','#22c55e');
+            } else {
+              // No vendor yet — save to a pending notes store
+              if(!S._pendingContractNotes) S._pendingContractNotes={};
+              const key=extracted.vendorName||'unknown';
+              S._pendingContractNotes[key]=(S._pendingContractNotes[key]||'')+'\n\n'+noteText;
+              pinBtn.textContent='📌 Pinned ✓';
+              toast('Saved to pending notes (will attach when vendor is created)','#4f7cff');
+            }
+          };
+          aiHeader.appendChild(pinBtn);
+          aiMsg.appendChild(aiHeader);
+          aiMsg.appendChild(el('div',{style:{fontSize:'10px',lineHeight:'1.5'}},answer));
+          chatMsgs.appendChild(aiMsg);
+          chatMsgs.scrollTop = chatMsgs.scrollHeight;
+        } catch(err){
+          chatMsgs.appendChild(el('div',{style:{color:'var(--red)',fontSize:'9px'}},'Error: '+err.message));
+        }
+        chatSendBtn.disabled=false; chatSendBtn.textContent='Ask';
+      }},'Ask');
+
+    chatRow.appendChild(chatInput);
+    chatRow.appendChild(chatSendBtn);
+    aiPanelWrap.appendChild(chatMsgs);
+    aiPanelWrap.appendChild(chatRow);
+
+    // Quick question chips
+    const quickRow = el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginTop:'4px'}});
+    ['Summarize key terms','Any concerning clauses?','What are termination rights?',
+     'Is there a most favored nation clause?','What volume commitments are required?'].forEach(function(q){
+      const chip = el('button',{style:{fontSize:'8px',padding:'2px 8px',borderRadius:'8px',cursor:'pointer',
+        border:'1px solid var(--border)',background:'var(--bg)',color:'var(--muted)'},
+        onclick:function(){chatInput.value=q;}},q);
+      quickRow.appendChild(chip);
+    });
+    aiPanelWrap.appendChild(quickRow);
+    body.appendChild(aiPanelWrap);
+
   }, true); // lockDismiss=true for safety
 }
 
@@ -11964,7 +12094,7 @@ function renderContracts(c) {
       opt.onclick=()=>{
         comboInput.value=v.name; selectedVendorName=v.name;
         comboDropdown.style.display='none';
-        if(extractBtn){extractBtn.disabled=false;extractBtn.style.opacity='1';}
+        // extractBtn is always enabled — vendor name is optional
       };
       comboDropdown.appendChild(opt);
     });
@@ -12105,17 +12235,19 @@ function renderContracts(c) {
   uploadSec.appendChild(statusEl);
 
   const btnRow=el('div',{style:{display:'flex',gap:'8px'}});
-  const extractBtn=el('button',{class:'btn-primary',disabled:true,style:{opacity:'0.5'},onclick:async()=>{
+  const extractBtn=el('button',{class:'btn-primary',onclick:async()=>{
     const vName=selectedVendorName||comboInput.value.trim();
-    if(!vName){toast('Select a vendor first','#f59e0b');return;}
+    // Vendor name is optional — can extract without one and decide later
+    // vName may be empty; that's OK
     if(!selectedFileText){toast('Upload a file first','#f59e0b');return;}
     extractBtn.disabled=true; extractBtn.textContent='⏳ Extracting...';
     statusEl.style.color='var(--muted)'; statusEl.textContent='Claude is reading the contract... (~15 seconds)';
     try {
       const fileText = typeof selectedFileText==='string'?selectedFileText:selectedFileText;
       const extracted = await extractContractWithClaude(fileText, selectedFile.name, vName);
+      const vNameFinal = vName || ('Contract: '+(selectedFile.name.replace(/\.\w+$/,'')));
       const record = {
-        vendorName: vName, fileName: selectedFile.name,
+        vendorName: vNameFinal, fileName: selectedFile.name,
         uploadDate: isoDate(new Date()), uploadTime: new Date().toLocaleTimeString(),
         extractedData: extracted, rawTextLength: typeof fileText==='string'?fileText.length:0,
         confidence: extracted.extractionConfidence||'MEDIUM',
@@ -14814,28 +14946,26 @@ function renderTierTracker(c) {
       btn.disabled=false; btn.textContent='🔄 Load & Sync SF';
     }},'🔄 Load & Sync SF'));
     }
-    const aiPanel=el('div',{style:{display:'none',margin:'6px 0 4px 0',padding:'8px 10px',background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'4px',fontSize:'10px',lineHeight:'1.6',color:'var(--text)',whiteSpace:'pre-wrap'}});
-    let _aiPanelLoaded=false;
     const aiExpBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'}},'🤖 AI Explain');
     aiExpBtn.addEventListener('click',async function(){
-      const isOpen=aiPanel.style.display!=='none';
-      if(isOpen){aiPanel.style.display='none';aiExpBtn.textContent='🤖 AI Explain';return;}
-      aiPanel.style.display='';
-      if(_aiPanelLoaded) return;
-      aiExpBtn.textContent='⏳ Generating...'; aiExpBtn.disabled=true;
-      aiPanel.textContent='Analyzing tier progress...';
+      const orig=aiExpBtn.textContent; aiExpBtn.textContent='⏳...'; aiExpBtn.disabled=true;
       try{
-        if(!td.tiers||!td.tiers.length){aiPanel.textContent='No tier data available for this vendor.';_aiPanelLoaded=true;return;}
         const explanation=await explainTierProgress(td);
-        aiPanel.textContent=explanation||'No explanation available.';
-        _aiPanelLoaded=true;
-      }catch(e){aiPanel.textContent='AI error: '+e.message;toast('AI error: '+e.message,'#ef4444');}
-      finally{aiExpBtn.textContent='🤖 AI Explain ▲'; aiExpBtn.disabled=false;}
+        openModal(mb=>{
+          mb.appendChild(el('h3',{},'🤖 Tier Analysis: '+td.vendorName));
+          const txt=el('p',{style:{whiteSpace:'pre-wrap',lineHeight:'1.7',fontSize:'11px',margin:'10px 0'}});
+          txt.textContent=explanation;
+          mb.appendChild(txt);
+          const mbtns=el('div',{class:'modal-btns'});
+          mbtns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));
+          mb.appendChild(mbtns);
+        });
+      }catch(e){toast('AI error: '+e.message,'#ef4444');}
+      finally{aiExpBtn.textContent=orig; aiExpBtn.disabled=false;}
     });
     hdrBtns.appendChild(aiExpBtn);
     hdrBtns.appendChild(el('button',{class:'btn-xs btn-danger',onclick(){if(confirm('Remove '+td.vendorName+'?')){const _ri=S.tierData.indexOf(td);if(_ri>-1)S.tierData.splice(_ri,1);render();}}}, '✕'));
     hdr.appendChild(hdrBtns); card.appendChild(hdr);
-    card.appendChild(aiPanel);
     card.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginBottom:'6px'}},'Period: '+_tierPeriodLabel+(td._sfSynced?' · SF synced':'· manual spend')));
 
     if (td.tiers && td.tiers.length) {
