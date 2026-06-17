@@ -15184,6 +15184,9 @@ function openPromoteToVendorDBModal(itwVendor) {
 }
 
 function renderToday(c) {
+  if(!S._todayOpen) S._todayOpen={};
+  // Default all sections open
+  ['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>{if(S._todayOpen[k]===undefined)S._todayOpen[k]=true;});
   const today=new Date();
   const allActive=(S.vendors||[]).filter(isVisible);
   const urgent=allActive.filter(v=>v.score>=8).length;
@@ -15231,6 +15234,10 @@ function renderToday(c) {
   dimLabel.append(dimCb,' Show dismissed'); tabs.appendChild(dimLabel);
   stickyHdr.appendChild(tabs);
   c.appendChild(stickyHdr);
+  // B5: Spacer so sticky bar never overlaps first content row
+  const _todaySpacer=el('div',{style:{height:'0px'}});
+  c.appendChild(_todaySpacer);
+  requestAnimationFrame(()=>{const h=stickyHdr.getBoundingClientRect().height;if(h>0)_todaySpacer.style.height=h+'px';});
 
   // ── SF-Powered Signals (if connected) ──────────────────────────────────────
   if(USER.sfToken && S._sfSignals !== false) {
@@ -15549,6 +15556,9 @@ function renderToday(c) {
     openBulkEmailModal(sel);
   }},'✉ Bulk Email '+(S.filter?'(filtered)':'All')));
   tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){exportCSV(vendors,'today_filtered');}}, '⬇ CSV'));
+  // B1/B2: Collapse All / Expand All for Today tab sections
+  tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'auto'},onclick(){['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>S._todayOpen[k]=false);S._sfSignalCollapsed=true;render();}},'▶ Collapse All'));
+  tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>S._todayOpen[k]=true);S._sfSignalCollapsed=false;render();}},'▼ Expand All'));
   stickyHdr.appendChild(tableBar);
 
   // Build column-aware table using settings.cols visibility
@@ -15557,6 +15567,9 @@ function renderToday(c) {
   const visIdx=ALL_KEYS.map((k,i)=>(k==='_cb'||S.settings.cols[k]!==false)?i:-1).filter(i=>i>=0);
   const headers=visIdx.map(i=>ALL_HDRS[i]);
   // Outer container — buildTable creates its own tbl-wrap inside
+  // B3: Set default Today tab column widths (40px | 1fr | 120px | 100px | 80px | 120px)
+  const _todayColDefaults={'':40,'Score':55,'Vendor':220,'Category':120,'Contact':100,'Phone':100,'Email':130,'Current Expiry':100,'Days':80,'AR':50,'Follow-Up':90,'Tier':60,'Why':120,'Actions':120};
+  Object.entries(_todayColDefaults).forEach(([k,w])=>{if(!S.colWidths[k])S.colWidths[k]=w;});
   const tblWrap=el('div',{id:'today-table',style:{flex:'1',minHeight:'0',overflowX:'auto',overflowY:'auto'}});
   tblWrap.appendChild(buildTable(headers, vendors, v=>{
     const exp=getCurrentExpiry(v); const days=exp?dayDiff(exp,today):null;
@@ -15597,17 +15610,22 @@ function renderToday(c) {
     return fuOverdue||(daysSinceComm>30&&(v.tier==='CALL'||v.tier==='EMAIL'));
   }).sort((a,b)=>_fuScore(b)-_fuScore(a)).slice(0,10);
   if(_fuVendors.length){
+    const _fuOpen=S._todayOpen.fu!==false;
     const fuSec=el('div',{class:'summary-section',style:{marginTop:'12px',marginBottom:'8px'}});
-    const fuHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}});
+    const fuHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:_fuOpen?'8px':'0',cursor:'pointer',userSelect:'none'},onclick(){S._todayOpen.fu=!S._todayOpen.fu;render();}});
+    fuHdr.appendChild(el('span',{style:{fontSize:'12px',color:'var(--muted)',minWidth:'16px'}},_fuOpen?'▼':'▶'));
     fuHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'13px'}},'📞 Relationship Follow-ups'));
     fuHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Overdue or stale contacts · sorted by priority score'));
     fuSec.appendChild(fuHdr);
-    _fuVendors.forEach(v=>{
+    if(_fuOpen) _fuVendors.forEach(v=>{
       const lc=parseDate(v.lastComm),fu=parseDate(v.followUp);
       const daysSince=lc?dayDiff(today,lc):null,fuDays=fu?dayDiff(today,fu):null;
       const isOvr=fuDays!==null&&fuDays>=0;
       const priScore=Math.round(_fuScore(v));
       const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'5px 8px',borderRadius:'4px',marginBottom:'3px',flexWrap:'wrap',background:isOvr?'rgba(239,68,68,.06)':'rgba(245,158,11,.04)',border:'1px solid '+(isOvr?'rgba(239,68,68,.15)':'rgba(245,158,11,.12)')}});
+      // B4: Score pill FIRST, before vendor name
+      const _pc=priScore>30?'#ef4444':priScore>=15?'#f59e0b':'#6b7280';
+      row.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',color:'#fff',background:_pc,borderRadius:'3px',padding:'1px 5px',flexShrink:'0'},title:'Priority score'},String(priScore)));
       row.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontWeight:'700',fontSize:'11px',minWidth:'130px',textAlign:'left'},onclick(){openDetail(v);}},v.name));
       if(v.category) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'80px'}},v.category));
       const tc={'CALL':'#ef4444','EMAIL':'#f59e0b','REVIEW':'#4f7cff','MONITOR':'#6b7280'}[v.tier]||'#6b7280';
@@ -15620,7 +15638,6 @@ function renderToday(c) {
         const fuLabel=isOvr?'⚠ '+fuDays+'d overdue':'Due '+fmtDate(fu);
         row.appendChild(el('span',{style:{fontSize:'9px',color:isOvr?'#ef4444':'var(--muted)',fontWeight:isOvr?'700':'400'}},fuLabel));
       }
-      {const _pc=priScore>30?'#ef4444':priScore>=15?'#f59e0b':'#6b7280';row.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',color:'#fff',background:_pc,borderRadius:'3px',padding:'1px 5px'},title:'Priority score: (tier×10) + (days overdue×0.5) + vendor score'},String(priScore)));}
       const acts=el('div',{style:{display:'flex',gap:'4px',marginLeft:'auto'}});
       acts.appendChild(el('button',{class:'btn-xs btn-blue',onclick(e){e.stopPropagation();openEmailModal(v);}},'✉ Email'));
       acts.appendChild(el('button',{class:'btn-xs btn-green',onclick(e){e.stopPropagation();openDetail(v);}},'📞 Call'));
@@ -15642,17 +15659,22 @@ function renderToday(c) {
     return (b.currentSpend||b.lastYearSpend||0)-(a.currentSpend||a.lastYearSpend||0);
   }).slice(0,8);
   if(_revDue.length){
+    const _revOpen=S._todayOpen.rev!==false;
     const revSec=el('div',{class:'summary-section',style:{marginTop:'12px',marginBottom:'8px'}});
-    const revHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}});
+    const revHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:_revOpen?'8px':'0',cursor:'pointer',userSelect:'none'},onclick(){S._todayOpen.rev=!S._todayOpen.rev;render();}});
+    revHdr.appendChild(el('span',{style:{fontSize:'12px',color:'var(--muted)',minWidth:'16px'}},_revOpen?'▼':'▶'));
     revHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'13px'}},'📊 Business Reviews Due'));
     revHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'REVIEW tier vendors overdue for a formal review (>90 days)'));
     revSec.appendChild(revHdr);
-    _revDue.forEach(v=>{
+    if(_revOpen) _revDue.forEach(v=>{
       const lr=parseDate(v.lastReview);
       const daysSinceRev=lr?dayDiff(today,lr):null;
       const revLabel=daysSinceRev===null?'Never reviewed':'Last: '+fmtDate(lr)+' ('+daysSinceRev+'d ago)';
       const revColor=daysSinceRev===null?'var(--red)':daysSinceRev>180?'var(--red)':daysSinceRev>90?'var(--amber)':'var(--muted)';
       const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'5px 8px',borderRadius:'4px',marginBottom:'3px',flexWrap:'wrap',background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.12)'}});
+      // B4: Score pill FIRST
+      const _rs=v.score||0;const _rc=_rs>=8?'#ef4444':_rs>=5?'#f59e0b':'#6b7280';
+      row.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',color:'#fff',background:_rc,borderRadius:'3px',padding:'1px 5px',flexShrink:'0'},title:'Priority score'},String(_rs)));
       row.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontWeight:'700',fontSize:'11px',minWidth:'130px',textAlign:'left'},onclick(){openDetail(v);}},v.name));
       if(v.category) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'80px'}},v.category));
       row.appendChild(el('span',{style:{fontSize:'9px',color:revColor,fontWeight:'600'}},revLabel));
@@ -15666,8 +15688,10 @@ function renderToday(c) {
   }
 
   // ── Smart Outreach Intelligence ──
+  const _outOpen=S._todayOpen.outreach!==false;
   const outreachSec=el('div',{class:'summary-section',style:{marginTop:'12px'}});
-  const outHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'8px'}});
+  const outHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:_outOpen?'8px':'0',cursor:'pointer',userSelect:'none'},onclick(){S._todayOpen.outreach=!S._todayOpen.outreach;render();}});
+  outHdr.appendChild(el('span',{style:{fontSize:'12px',color:'var(--muted)',minWidth:'16px'}},_outOpen?'▼':'▶'));
   outHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'13px'}},'🧠 Outreach Intelligence'));
   outHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'AI-ranked relationship priorities'));
   outreachSec.appendChild(outHdr);
@@ -15704,9 +15728,9 @@ function renderToday(c) {
   });
   outreachItems.sort((a,b)=>b.priority-a.priority);
   
-  if(!outreachItems.length){
+  if(_outOpen&&!outreachItems.length){
     outreachSec.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'10px'}},'No urgent outreach items — great job staying on top of your portfolio!'));
-  } else {
+  } else if(_outOpen) {
     const list=el('div',{});
     outreachItems.slice(0,8).forEach(item=>{
       const {v,reasons,ctx,expDays}=item;
@@ -15740,8 +15764,13 @@ function renderToday(c) {
   // ── SF Board Data (cases, opps, tasks due today) ─────────────────────────
   const sb=S._sfBoardData;
   if(sb&&sb.opps){
+    const _sfbOpen=S._todayOpen.sfboard!==false;
     const sfSec=el('div',{class:'summary-section'});
-    sfSec.appendChild(el('h3',{style:{marginBottom:'8px'}},'☁ Salesforce — Action Required Today'));
+    const sfSecHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:_sfbOpen?'8px':'0',cursor:'pointer',userSelect:'none'},onclick(){S._todayOpen.sfboard=!S._todayOpen.sfboard;render();}});
+    sfSecHdr.appendChild(el('span',{style:{fontSize:'12px',color:'var(--muted)',minWidth:'16px'}},_sfbOpen?'▼':'▶'));
+    sfSecHdr.appendChild(el('h3',{style:{margin:'0'}},'☁ Salesforce — Action Required Today'));
+    sfSec.appendChild(sfSecHdr);
+    if(_sfbOpen){
 
     // My open opps closing this month
     const now=new Date();
@@ -15807,6 +15836,7 @@ function renderToday(c) {
     if(!myOpps.length&&!myCases.length&&!myTasks.length){
       sfSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--green)',textAlign:'center',padding:'12px'}},'✓ No urgent SF items today'));
     }
+    } // end if(_sfbOpen)
 
     c.appendChild(sfSec);
   } else if(USER.sfToken){
