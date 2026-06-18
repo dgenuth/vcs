@@ -11590,8 +11590,8 @@ function renderChecklist(c) {
       var aIsChannel=(S.channelVendors||[]).includes(a)?1:0;
       var bIsChannel=(S.channelVendors||[]).includes(b)?1:0;
       if(aIsChannel!==bIsChannel) return aIsChannel-bIsChannel;
-      var aFee=parseFloat((a.adminFee||'0').replace(/[^0-9.]/g,''))||0;
-      var bFee=parseFloat((b.adminFee||'0').replace(/[^0-9.]/g,''))||0;
+      var aFee=parseFloat(String(a.adminFee||'0').replace(/[^0-9.]/g,''))||0;
+      var bFee=parseFloat(String(b.adminFee||'0').replace(/[^0-9.]/g,''))||0;
       return bFee-aFee;
     });
     return found.slice(0,5);
@@ -13185,14 +13185,14 @@ ${typeof CMP.docBText === 'string' ? smartChunkContract(CMP.docBText, 40000) : '
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method:'POST',
       headers:{
-        'Content-Type':'text/plain',
+        'Content-Type':'application/json',
         'x-api-key': apiKey,
         'anthropic-version':'2023-06-01',
         'anthropic-dangerous-direct-browser-access':'true'
       },
       body: JSON.stringify({
-        model:'claude-opus-4-6',
-        max_tokens:16000,
+        model:'claude-sonnet-4-6',
+        max_tokens:8000,
         system: systemPrompt,
         messages,
       })
