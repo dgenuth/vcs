@@ -2095,8 +2095,19 @@ function upsertSharedString(ssXml, text) {
 
   // Search for existing exact match — plain <t> or <t xml:space="preserve">
   // We check both forms since existing strings use either
-  const plainRe = new RegExp('<si><t(?:[^>]*)>' + escaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '</t></si>');
-  const existingMatch = ssXml.match(plainRe);
+  // Safe dynamic RegExp — if escaped text creates invalid range, fall back to indexOf
+  let existingMatch = null;
+  try {
+    const plainRe = new RegExp('<si><t(?:[^>]*)>' + escaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '</t></si>');
+    existingMatch = ssXml.match(plainRe);
+  } catch(e) {
+    // Fallback: simple string search for exact match
+    const plainSearch = '<si><t>' + escaped + '</t></si>';
+    const plainSearch2 = '<si><t xml:space="preserve">' + escaped + '</t></si>';
+    if (ssXml.includes(plainSearch) || ssXml.includes(plainSearch2)) {
+      existingMatch = [plainSearch]; // dummy match — just need truthy
+    }
+  }
   if (existingMatch) {
     // Count index of this match
     const idx = (ssXml.slice(0, ssXml.indexOf(existingMatch[0])).match(/<si>/g) || []).length;
@@ -2135,10 +2146,15 @@ function upsertComment(commentsXml, ref, newNoteText, authorName) {
   }
 
   // Escape the new note text for XML
-  const escapedNote = newNoteText
-    .replace(/&/g, '&amp;')
+  // Escape all XML special characters + strip any control characters
+  const escapedNote = (newNoteText||'')
+    .replace(/[ -
+-]/g, '') // remove control chars
+    .replace(/&/g, '&amp;')  // & must be first
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 
   // Standard rPr blocks matching existing file format
   const boldRpr = `<rPr><b/><sz val="9"/><color indexed="81"/><rFont val="Tahoma"/><family val="2"/></rPr>`;
@@ -4489,7 +4505,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     const tlEvents=[];
     // Gather events from _notesLog
     (vendor._notesLog||[]).forEach(n=>tlEvents.push({ts:new Date(n.ts||n.date||0),type:'note',icon:'📝',label:n.type||'note',text:n.text||'',author:n.user?n.user.split('@')[0]:''}));
-    if(itwVendor)(itwVendor._notesLog||[]).forEach(n=>tlEvents.push({ts:new Date(n.ts||n.date||0),type:'itw',icon:'💼',label:'pipeline',text:n.text||'',author:n.user?n.user.split('@')[0]:''}));
+    const _tlITW=vendor.source==='itw'?vendor:(S.itw||[]).find(v=>v.name===vendor.name);if(_tlITW)(_tlITW._notesLog||[]).forEach(n=>tlEvents.push({ts:new Date(n.ts||n.date||0),type:'itw',icon:'💼',label:'pipeline',text:n.text||'',author:n.user?n.user.split('@')[0]:''}));
     // lastComm
     const lcDate=parseDate(vendor.lastComm);
     if(lcDate) tlEvents.push({ts:lcDate,type:'comm',icon:'📞',label:'last contact',text:'Last communication recorded'});
@@ -16406,7 +16422,7 @@ function renderExpiring(c) {
     const cnt=vendors.filter(b.fn).length;
     if(!cnt) return;
     const chip=el('div',{style:{background:'rgba(255,255,255,.04)',border:'1px solid '+b.color+'55',borderRadius:'4px',padding:'5px 10px',cursor:'pointer',textAlign:'center'},onclick(){
-      S.filter=b.fn; S.filterLabel=b.label.replace(/[🚨🔴🟡🔵✅]\s*/,''); S.view='expiring'; render();
+      S.filter=b.fn; S.filterLabel=b.label.replace(/^[\u{1F000}-\u{1FFFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\uFE00-\uFE0F\u{1F900}-\u{1F9FF}]\s*/u,''); S.view='expiring'; render();
     }});
     chip.appendChild(el('div',{style:{fontSize:'18px',fontWeight:'700',color:b.color}},String(cnt)));
     chip.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},b.label));
@@ -21237,7 +21253,7 @@ function renderSettings(c) {
         const x=el('span',{style:{cursor:'pointer',color:'var(--red)'},onclick(){
           S.settings[key]=S.settings[key].filter(v=>v!==d);
           localStorage.setItem('vcs_'+key,JSON.stringify(S.settings[key]));
-          logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:'Calendar',action:`Removed ${label.replace(/[🏢✈️] /,'')}: ${d}`});
+          logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:'Calendar',action:`Removed ${label.replace(/^[\u{1F000}-\u{1FFFF}\u{2600}-\u{26FF}\uFE00-\uFE0F] /u,'')}: ${d}`});
           renderDayLists();
           if(S.view==='calendar') render();
         }},'×');
@@ -21254,8 +21270,8 @@ function renderSettings(c) {
           S.settings[key].push(dateIn.value);
           S.settings[key].sort();
           localStorage.setItem('vcs_'+key,JSON.stringify(S.settings[key]));
-          logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:'Calendar',action:`Added ${label.replace(/[🏢✈️] /,'')}: ${dateIn.value}`});
-          toast(`📅 ${dateIn.value} marked as ${label.replace(/[🏢✈️] /,'')}`);
+          logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:'Calendar',action:`Added ${label.replace(/^[\u{1F000}-\u{1FFFF}\u{2600}-\u{26FF}\uFE00-\uFE0F] /u,'')}: ${dateIn.value}`});
+          toast(`📅 ${dateIn.value} marked as ${label.replace(/^[\u{1F000}-\u{1FFFF}\u{2600}-\u{26FF}\uFE00-\uFE0F] /u,'')}`);
         }
         dateIn.value='';
         renderDayLists();
