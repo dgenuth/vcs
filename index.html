@@ -4067,7 +4067,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
   // Renzo lives inside the Email modal — not as a standalone action bar button
 
-  // ── Contract Files section — collapsible ──
+  // ── Contract Files section — restricted to procurement/admin/manager/cro ──
+  if(!hasPermission('editContract')) {} else {
   if(!S._cfsOpen) S._cfsOpen = {};
   const cfsVendorKey = vendor.name;
   if(!S._cfsOpen) S._cfsOpen = {};
@@ -4405,6 +4406,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
   // ── Contract Files from Drive ──
   body.appendChild(contractFilesSection);
+  } // end hasPermission('editContract')
 
   // ── Linked Aliases (vendors pointing to this record) ──
   if (vendor.source === 'psd') {
@@ -8604,13 +8606,15 @@ async function generateMeetingTalkingPoints(vendor) {
     vendor.notes?'Vendor notes: '+vendor.notes.slice(0,600):'',
     sfCtx
   ].filter(Boolean).join('\n');
-  const sysP='You are a GPO vendor relationship assistant for Prime Source Expense Experts, a healthcare GPO. Generate 6-8 concise, actionable meeting talking points tailored to this specific vendor\'s situation. Focus on: contract status/renewal urgency, fee reconciliation needs, relationship health, open issues, and strategic priorities. Return ONLY a JSON array of strings, no preamble, no markdown. Each item under 18 words. Example: ["Confirm renewal intent - contract expires in 45 days", "Review Q2 admin fee reconciliation - variance noted"]';
+  const sysP='You are a GPO vendor relationship assistant for Prime Source Expense Experts, a healthcare GPO. Generate 5-8 concise, actionable meeting talking points tailored to this specific vendor\'s situation. Focus on: contract status/renewal urgency, fee reconciliation needs, relationship health, open issues, and strategic priorities. Return ONLY a JSON array of strings, no preamble, no markdown. Each item under 18 words. Example: ["Confirm renewal intent - contract expires in 45 days", "Review Q2 admin fee reconciliation - variance noted"]';
+  console.log('[VCS MeetingMode] Generating talking points for:',vendor.name,'context length:',ctx.length);
   const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'text/plain','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:700,system:sysP,messages:[{role:'user',content:'Generate meeting talking points for:\n\n'+ctx}]})});
   if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+resp.status);}
   const data=await resp.json();
   const raw=(data.content?.find(b=>b.type==='text')?.text||'[]').replace(/```json/g,'').replace(/```/g,'').trim();
-  try{const pts=JSON.parse(raw);if(!Array.isArray(pts))throw new Error('not array');return pts.map(p=>({text:String(p)}));}
-  catch(e){return raw.split('\n').filter(l=>l.trim()).map(l=>({text:l.replace(/^[\d\-\.\*•]+\s*/,'').trim()})).filter(t=>t.text);}
+  console.log('[VCS MeetingMode] Raw response length:',raw.length,'first 100 chars:',raw.slice(0,100));
+  try{const pts=JSON.parse(raw);if(!Array.isArray(pts))throw new Error('not array');console.log('[VCS MeetingMode] Parsed',pts.length,'talking points');return pts.map(p=>({text:String(p)}));}
+  catch(e){const fallback=raw.split('\n').filter(l=>l.trim()).map(l=>({text:l.replace(/^[\d\-\.\*•]+\s*/,'').trim()})).filter(t=>t.text);console.log('[VCS MeetingMode] JSON parse failed, fallback lines:',fallback.length);return fallback;}
 }
 
 // ─── Meeting Mode Modal — Talking Points ──────────────────────────────────────
@@ -11008,140 +11012,8 @@ function openApplyContractModal(vendor, extracted, onApplied) {
       if(onApplied) onApplied(changed);
       refreshDetailIfOpen(vendor);
     }},'✓ Apply Selected'));
-    // If no vendor was selected — offer to add to In The Works
-    if(!vendor || !vendor.name || vendor.name.startsWith('Contract:')) {
-      btns.appendChild(el('button',{class:'btn-secondary',
-        style:{background:'rgba(79,124,255,.15)',borderColor:'rgba(79,124,255,.4)',color:'var(--blue)'},
-        onclick:function(){
-          // Create ITW entry from extracted data
-          const itwEntry = {
-            vendorName: extracted.vendorName||vendor.name,
-            status: 'Under Review',
-            notes: 'Contract analyzed. Key terms: '+
-              (extracted.effectiveDate?'Effective: '+extracted.effectiveDate+'. ':'') +
-              (extracted.expirationDate?'Expires: '+extracted.expirationDate+'. ':'') +
-              (extracted.adminFee&&extracted.adminFee.percentage?'Fee: '+extracted.adminFee.percentage+'%. ':''),
-            contractFileName: vendor._contractFileName||'',
-            addedDate: isoDate(new Date()),
-            _fromContractExtraction: true
-          };
-          if(!S.itw) S.itw=[];
-          S.itw.push(itwEntry);
-          markDirty({name:itwEntry.vendorName},'status','','Under Review');
-          closeModal();
-          toast('Added to In The Works: '+itwEntry.vendorName,'#22c55e');
-          if(S.view!=='itw'){S.view='itw';render();}
-        }},'📋 Add to In The Works'));
-    }
     btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
     body.appendChild(btns);
-
-    // ── AI Contract Conversation Panel ──────────────────────────────────────
-    const aiPanelWrap = el('div',{style:{marginTop:'16px',borderTop:'1px solid var(--border)',paddingTop:'12px'}});
-    aiPanelWrap.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',marginBottom:'6px',display:'flex',alignItems:'center',gap:'6px'}},
-      '🤖 Ask About This Contract'));
-    aiPanelWrap.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'8px',marginTop:'0'}},
-      'Ask any question about the contract. Pin answers to save them to contract notes.'));
-
-    // Conversation history for this session
-    const _contractConvo = [];
-    const contractText = typeof extracted._rawText === 'string' ? extracted._rawText : JSON.stringify(extracted);
-
-    const chatMsgs = el('div',{style:{maxHeight:'200px',overflowY:'auto',marginBottom:'8px',
-      background:'var(--bg)',borderRadius:'4px',border:'1px solid var(--border)',padding:'8px'}});
-    chatMsgs.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',textAlign:'center'}},'Ask a question to start the conversation'));
-
-    const chatInput = el('input',{type:'text',class:'detail-edit-field',
-      placeholder:'e.g. "Is there a most favored nation clause?" or "Summarize termination rights"',
-      style:{width:'100%',marginBottom:'6px',fontSize:'10px'}});
-    const chatRow = el('div',{style:{display:'flex',gap:'6px'}});
-    const chatSendBtn = el('button',{class:'btn-primary',style:{fontSize:'10px',whiteSpace:'nowrap'},
-      onclick:async function(){
-        const q = chatInput.value.trim();
-        if(!q) return;
-        chatInput.value='';
-        chatSendBtn.disabled=true; chatSendBtn.textContent='⏳';
-
-        // Add user message
-        const userMsg = el('div',{style:{marginBottom:'8px'}});
-        userMsg.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--blue)',marginBottom:'2px'}},'You:'));
-        userMsg.appendChild(el('div',{style:{fontSize:'10px'}},q));
-        chatMsgs.appendChild(userMsg);
-
-        _contractConvo.push({role:'user',content:q});
-
-        // Build messages for Claude
-        const sysPrompt = 'You are a contract analysis assistant. You have been given the extracted data and text from a vendor contract for '+
-          (extracted.vendorName||'a vendor')+'. Answer questions about it accurately and concisely. '+
-          'If you are uncertain, say so. Contract data: '+contractText.slice(0,8000);
-
-        try {
-          const apiKey = S.settings?.apiKey||localStorage.getItem('vcs_api_key')||'';
-          if(!apiKey) throw new Error('No API key configured');
-          const resp = await fetch('https://api.anthropic.com/v1/messages',{
-            method:'POST',
-            headers:{'Content-Type':'application/json','x-api-key':apiKey,
-              'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-            body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:800,
-              system:sysPrompt, messages:_contractConvo})
-          });
-          const data = await resp.json();
-          const answer = data.content&&data.content[0]&&data.content[0].text||'No response';
-          _contractConvo.push({role:'assistant',content:answer});
-
-          const aiMsg = el('div',{style:{marginBottom:'8px',background:'rgba(79,124,255,.05)',borderRadius:'4px',padding:'6px'}});
-          const aiHeader = el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'2px'}});
-          aiHeader.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)'}},'AI:'));
-          const pinBtn = el('button',{style:{fontSize:'8px',padding:'1px 6px',border:'1px solid var(--border)',
-            background:'none',borderRadius:'3px',cursor:'pointer',color:'var(--muted)'}},
-            '📌 Pin');
-          pinBtn.onclick = function(){
-            // Pin = save to vendor notes
-            const noteText = '[Contract Q&A - '+new Date().toLocaleDateString()+']\nQ: '+q+'\nA: '+answer;
-            const v = S.vendors.find(function(x){return x.name===extracted.vendorName;});
-            if(v){
-              v.notes = (v.notes||'') + '\n\n' + noteText;
-              markDirty(v,'notes','',v.notes);
-              pinBtn.textContent='📌 Pinned ✓';
-              pinBtn.style.color='var(--green)';
-              toast('Saved to '+v.name+' notes','#22c55e');
-            } else {
-              // No vendor yet — save to a pending notes store
-              if(!S._pendingContractNotes) S._pendingContractNotes={};
-              const key=extracted.vendorName||'unknown';
-              S._pendingContractNotes[key]=(S._pendingContractNotes[key]||'')+'\n\n'+noteText;
-              pinBtn.textContent='📌 Pinned ✓';
-              toast('Saved to pending notes (will attach when vendor is created)','#4f7cff');
-            }
-          };
-          aiHeader.appendChild(pinBtn);
-          aiMsg.appendChild(aiHeader);
-          aiMsg.appendChild(el('div',{style:{fontSize:'10px',lineHeight:'1.5'}},answer));
-          chatMsgs.appendChild(aiMsg);
-          chatMsgs.scrollTop = chatMsgs.scrollHeight;
-        } catch(err){
-          chatMsgs.appendChild(el('div',{style:{color:'var(--red)',fontSize:'9px'}},'Error: '+err.message));
-        }
-        chatSendBtn.disabled=false; chatSendBtn.textContent='Ask';
-      }},'Ask');
-
-    chatRow.appendChild(chatInput);
-    chatRow.appendChild(chatSendBtn);
-    aiPanelWrap.appendChild(chatMsgs);
-    aiPanelWrap.appendChild(chatRow);
-
-    // Quick question chips
-    const quickRow = el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginTop:'4px'}});
-    ['Summarize key terms','Any concerning clauses?','What are termination rights?',
-     'Is there a most favored nation clause?','What volume commitments are required?'].forEach(function(q){
-      const chip = el('button',{style:{fontSize:'8px',padding:'2px 8px',borderRadius:'8px',cursor:'pointer',
-        border:'1px solid var(--border)',background:'var(--bg)',color:'var(--muted)'},
-        onclick:function(){chatInput.value=q;}},q);
-      quickRow.appendChild(chip);
-    });
-    aiPanelWrap.appendChild(quickRow);
-    body.appendChild(aiPanelWrap);
-
   }, true); // lockDismiss=true for safety
 }
 
@@ -11403,7 +11275,8 @@ function renderChecklist(c) {
       const accRes=await sfQuery("SELECT Id,Name FROM Account WHERE Name LIKE '%"+_sfFacEsc+"%' LIMIT 3");
       const accId=accRes?.records?.[0]?.Id;
       const goWithLines=Object.entries(S._clGoWith||{}).filter(([,v])=>v).map(([k,v])=>'  • '+k+': '+v).join('\n');
-      const desc='Facility: '+_sfFac+'\nRep: '+(S._checklistRep||USER.name||'')+'\n\nVendor Alignments:\n'+(goWithLines||'  (none entered)');
+      const answerLines=Object.entries(S._clAnswers||{}).filter(([k,v])=>v&&k.startsWith(_sfFac+'_ans_')).map(([k,v])=>'  '+k.replace(_sfFac+'_ans_','')+':\n    '+v).join('\n');
+      const desc='Facility: '+_sfFac+'\nRep: '+(S._checklistRep||USER.name||'')+'\n\nVendor Alignments:\n'+(goWithLines||'  (none entered)')+(answerLines?'\n\nConsultant Answers:\n'+answerLines:'');
       const taskObj={Subject:'Vendor Coverage Review — '+_sfFac,Description:desc,Status:'Completed',ActivityDate:new Date().toISOString().slice(0,10)};
       if(accId)taskObj.WhatId=accId;
       try{
@@ -11480,27 +11353,25 @@ function renderChecklist(c) {
     wrap.appendChild(histBar);
   }
 
-  // Vendor lookup map by keyword — must be declared before coveredItems uses findVendors
-  const catVendorMap={};
-  [...(S.vendors||[]),...(S.channelVendors||[])].forEach(v=>{
-    const terms=[v.category,v.subCategory,v.product,v.about].filter(Boolean);
-    terms.forEach(t=>{
-      const k=t.toLowerCase();
-      if(!catVendorMap[k]) catVendorMap[k]=[];
-      if(!catVendorMap[k].includes(v)) catVendorMap[k].push(v);
-    });
-  });
-  function findVendors(label) {
+  // Vendor scoring engine — weights: exact category/subCategory +4, partial +2, product/about exact +2, partial +1
+  const _allCheckVendors=[...(S.vendors||[]),...(S.channelVendors||[])];
+  function scoreVendors(label){
     const q=label.toLowerCase();
-    const words=q.split(/[\s\-\/,]+/).filter(w=>w.length>3);
-    const found=new Set();
-    Object.entries(catVendorMap).forEach(([key,vList])=>{
-      if(words.some(w=>key.includes(w)||w.includes(key.slice(0,8)))){
-        vList.forEach(v=>found.add(v));
-      }
-    });
-    return [...found].slice(0,4);
+    const words=q.split(/[\s\-\/,]+/).filter(w=>w.length>2);
+    const scored=_allCheckVendors.map(v=>{
+      let score=0;
+      const catFields=[v.category,v.subCategory].filter(Boolean).map(s=>s.toLowerCase());
+      const textFields=[v.product,v.about,v.name].filter(Boolean).map(s=>s.toLowerCase());
+      words.forEach(w=>{
+        catFields.forEach(f=>{if(f===w)score+=4;else if(f.includes(w)||w.includes(f.slice(0,Math.min(f.length,8))))score+=2;});
+        textFields.forEach(f=>{if(f===w)score+=2;else if(f.includes(w)||w.includes(f.slice(0,Math.min(f.length,8))))score+=1;});
+      });
+      return {v,score};
+    }).filter(r=>r.score>0);
+    scored.sort((a,b)=>b.score-a.score);
+    return scored.slice(0,4);
   }
+  function findVendors(label){return scoreVendors(label).map(r=>r.v);}
 
   // Overall coverage summary — two bars: Available (DB vendors) + Selected (GoWith choices)
   const allItems=PSX_CHECKLIST.flatMap(s=>s.items);
@@ -11541,26 +11412,69 @@ function renderChecklist(c) {
     if(isOpen){
       const body=el('div',{style:{background:'var(--card)'}});
       section.items.forEach(item=>{
-        const matchV=findVendors(item.label);
+        const matchVScored=scoreVendors(item.label);
+        const matchV=matchVScored.map(r=>r.v);
         const hasMatch=matchV.length>0;
         const row=el('div',{style:{padding:'5px 12px',borderBottom:'1px solid rgba(128,128,128,.07)',display:'grid',gap:'8px',alignItems:'flex-start',fontSize:'9px',
           gridTemplateColumns:isConsultant?'190px 1fr':'190px 1fr 120px'}});
         row.appendChild(el('div',{style:{fontWeight:'600',color:'var(--text)',paddingTop:'2px',lineHeight:'1.3'}},item.label));
         if(isConsultant){
           const guideCol=el('div',{style:{lineHeight:'1.5'}});
-          if(item.q) guideCol.appendChild(el('div',{style:{color:'var(--text)',marginBottom:'2px'}},'❓ '+item.q.slice(0,150)+(item.q.length>150?'…':'')));
+          if(item.q){
+            guideCol.appendChild(el('div',{style:{color:'var(--text)',marginBottom:'2px'}},'❓ '+item.q.slice(0,150)+(item.q.length>150?'…':'')));
+            const ansKey=custIn.value+'_ans_'+item.label;
+            const ansInput=el('textarea',{placeholder:'Answer / notes…',rows:'2',
+              style:{width:'100%',fontSize:'8px',padding:'3px 5px',border:'1px solid var(--border)',borderRadius:'3px',
+                background:'var(--bg)',color:'var(--text)',resize:'vertical',marginBottom:'3px',boxSizing:'border-box',lineHeight:'1.4'}});
+            ansInput.value=(S._clAnswers||{})[ansKey]||'';
+            ansInput.addEventListener('change',e=>{if(!S._clAnswers)S._clAnswers={};S._clAnswers[ansKey]=e.target.value.trim();_clSave(custIn.value);});
+            guideCol.appendChild(ansInput);
+          }
           if(item.r) guideCol.appendChild(el('div',{style:{color:'var(--red)',marginBottom:'2px'}},'🚩 '+item.r.slice(0,150)+(item.r.length>150?'…':'')));
           if(item.t) guideCol.appendChild(el('div',{style:{color:'var(--green)'}},          '💬 '+item.t.slice(0,150)+(item.t.length>150?'…':'')));
           row.appendChild(guideCol);
         } else {
           const vendorCol=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',alignItems:'flex-start'}});
           if(hasMatch){
-            matchV.forEach(v=>{
-              const chip=el('div',{style:{display:'inline-block',background:'rgba(34,197,94,.1)',border:'1px solid rgba(34,197,94,.3)',borderRadius:'3px',padding:'1px 6px',color:'var(--green)',cursor:'pointer',fontWeight:'500',fontSize:'8px'},onclick(){openDetail(v);}},v.name.slice(0,22)+(v.name.length>22?'…':''));
+            matchVScored.forEach(({v})=>{
+              const isDirect=v.source==='psd';
+              const chip=el('div',{style:{display:'inline-flex',alignItems:'center',gap:'3px',background:isDirect?'rgba(79,124,255,.12)':'rgba(34,197,94,.1)',border:'1px solid '+(isDirect?'rgba(79,124,255,.35)':'rgba(34,197,94,.3)'),borderRadius:'3px',padding:'1px 5px',color:isDirect?'var(--blue)':'var(--green)',cursor:'pointer',fontWeight:'500',fontSize:'8px'},onclick(){openDetail(v);}});
+              chip.appendChild(document.createTextNode(v.name.slice(0,20)+(v.name.length>20?'…':'')));
+              chip.appendChild(el('span',{style:{fontSize:'7px',background:isDirect?'var(--blue)':'rgba(168,85,247,.3)',color:isDirect?'#fff':'var(--muted)',borderRadius:'2px',padding:'0 3px',marginLeft:'1px'}},isDirect?'Direct':'GPO'));
               vendorCol.appendChild(chip);
             });
           } else {
-            vendorCol.appendChild(el('span',{style:{color:'var(--amber)',fontStyle:'italic'}},'No vendor mapped'));
+            const _aiKey=custIn.value+'_ai_'+item.label;
+            if(S._clAiSugged&&S._clAiSugged[_aiKey]){
+              S._clAiSugged[_aiKey].forEach(name=>{
+                const av=_allCheckVendors.find(v2=>v2.name===name);
+                const aiChip=el('div',{style:{display:'inline-flex',alignItems:'center',gap:'3px',background:'rgba(245,158,11,.12)',border:'1px solid rgba(245,158,11,.4)',borderRadius:'3px',padding:'1px 5px',color:'var(--amber)',cursor:av?'pointer':'default',fontWeight:'500',fontSize:'8px'},onclick:av?()=>openDetail(av):null});
+                aiChip.appendChild(document.createTextNode(name.slice(0,20)));
+                aiChip.appendChild(el('span',{style:{fontSize:'7px',background:'rgba(245,158,11,.25)',borderRadius:'2px',padding:'0 3px',marginLeft:'1px'}},'AI'));
+                vendorCol.appendChild(aiChip);
+              });
+            } else {
+              const aiBtn=el('button',{class:'btn-ghost',style:{fontSize:'8px',padding:'2px 5px',height:'18px'}});
+              aiBtn.textContent='🤖 AI Suggest';
+              aiBtn.onclick=async(e)=>{
+                e.stopPropagation();aiBtn.textContent='⏳';aiBtn.disabled=true;
+                try{
+                  const vNames=_allCheckVendors.slice(0,40).map(v=>v.name).join(', ');
+                  const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+                    headers:{'x-api-key':S._anthropicKey||'','anthropic-version':'2023-06-01','Content-Type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
+                    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:150,
+                      messages:[{role:'user',content:'Vendors: '+vNames+'\n\nWhich 1-3 best match "'+item.label+'"? Comma-separated names only.'}]})
+                  });
+                  const data=await resp.json();
+                  const text=(data.content&&data.content[0]&&data.content[0].text)||'';
+                  const names=text.split(',').map(n=>n.trim()).filter(Boolean);
+                  if(!S._clAiSugged) S._clAiSugged={};
+                  S._clAiSugged[_aiKey]=names.length?names:['No suggestion'];
+                  const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}
+                }catch(err){aiBtn.textContent='🤖 AI Suggest';aiBtn.disabled=false;}
+              };
+              vendorCol.appendChild(aiBtn);
+            }
           }
           // Current vendor field (free text — for vendors not in DB)
           const currV=el('input',{type:'text',placeholder:'Current vendor…',
@@ -11985,6 +11899,10 @@ async function generateContractDataSheet(vendor, ex, fileName) {
 
 function renderContracts(c) {
   c.innerHTML='';
+  if(!hasPermission('editContract')){
+    c.appendChild(el('div',{style:{padding:'24px',textAlign:'center',color:'var(--muted)',fontSize:'11px'}},'Contract access is restricted to procurement and admin users. Contact your administrator.'));
+    return;
+  }
   // Ensure contract store is initialized
   if(!window.S_contractStore) window.S_contractStore={};
   const wrap=el('div',{style:{maxWidth:'1000px',margin:'0 auto',padding:'12px 0'}});
@@ -12041,7 +11959,7 @@ function renderContracts(c) {
       opt.onclick=()=>{
         comboInput.value=v.name; selectedVendorName=v.name;
         comboDropdown.style.display='none';
-        // extractBtn is always enabled — vendor name is optional
+        if(extractBtn){extractBtn.disabled=false;extractBtn.style.opacity='1';}
       };
       comboDropdown.appendChild(opt);
     });
@@ -12182,19 +12100,17 @@ function renderContracts(c) {
   uploadSec.appendChild(statusEl);
 
   const btnRow=el('div',{style:{display:'flex',gap:'8px'}});
-  const extractBtn=el('button',{class:'btn-primary',onclick:async()=>{
+  const extractBtn=el('button',{class:'btn-primary',disabled:true,style:{opacity:'0.5'},onclick:async()=>{
     const vName=selectedVendorName||comboInput.value.trim();
-    // Vendor name is optional — can extract without one and decide later
-    // vName may be empty; that's OK
+    if(!vName){toast('Select a vendor first','#f59e0b');return;}
     if(!selectedFileText){toast('Upload a file first','#f59e0b');return;}
     extractBtn.disabled=true; extractBtn.textContent='⏳ Extracting...';
     statusEl.style.color='var(--muted)'; statusEl.textContent='Claude is reading the contract... (~15 seconds)';
     try {
       const fileText = typeof selectedFileText==='string'?selectedFileText:selectedFileText;
       const extracted = await extractContractWithClaude(fileText, selectedFile.name, vName);
-      const vNameFinal = vName || ('Contract: '+(selectedFile.name.replace(/\.\w+$/,'')));
       const record = {
-        vendorName: vNameFinal, fileName: selectedFile.name,
+        vendorName: vName, fileName: selectedFile.name,
         uploadDate: isoDate(new Date()), uploadTime: new Date().toLocaleTimeString(),
         extractedData: extracted, rawTextLength: typeof fileText==='string'?fileText.length:0,
         confidence: extracted.extractionConfidence||'MEDIUM',
@@ -12649,6 +12565,62 @@ function renderSpendTable(wrap) {
 }
 
 
+function renderSpendByCustomer(wrap) {
+  const opps=S._sfBoardData?.opps||[];
+  const isRep=(USER.role==='sales_rep'||USER.role==='rep');
+  // Filter to rep's accounts if they're a sales rep
+  const myOpps=isRep?opps.filter(o=>o._ownerName===USER.name):opps;
+  if(!myOpps.length){
+    wrap.appendChild(el('div',{style:{textAlign:'center',padding:'30px',color:'var(--muted)',fontSize:'10px'}},'No Salesforce opportunity data loaded. Load SF data from the SF Board tab first.'));
+    return;
+  }
+  // Aggregate by account
+  const accMap=new Map();
+  myOpps.forEach(o=>{
+    const acc=(o._accountName||'Unknown').trim();
+    if(!accMap.has(acc)) accMap.set(acc,{name:acc,rep:o._ownerName||'',opps:[],wonAmt:0,pipelineAmt:0,vendors:new Set()});
+    const a=accMap.get(acc);
+    a.opps.push(o);
+    const amt=parseFloat(o.Amount)||0;
+    if(o.StageName==='Closed Won') a.wonAmt+=amt; else a.pipelineAmt+=amt;
+    if(o._accountName) a.vendors.add((o.Name||'').split(' ')[0]);
+  });
+  const rows=[...accMap.values()].sort((a,b)=>(b.wonAmt+b.pipelineAmt)-(a.wonAmt+a.pipelineAmt));
+  // KPI bar
+  const totWon=rows.reduce((s,r)=>s+r.wonAmt,0);
+  const totPipe=rows.reduce((s,r)=>s+r.pipelineAmt,0);
+  const kRow=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'8px',marginBottom:'12px'}});
+  [{label:'Customers',val:rows.length,color:'var(--blue)'},{label:'Won YTD',val:'$'+Math.round(totWon).toLocaleString(),color:'var(--green)'},{label:'Open Pipeline',val:'$'+Math.round(totPipe).toLocaleString(),color:'var(--amber)'},{label:'Total Opps',val:myOpps.length,color:'var(--muted)'}].forEach(k=>{
+    const card=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'10px',textAlign:'center'}});
+    card.appendChild(el('div',{style:{fontSize:'18px',fontWeight:'700',color:k.color}},String(k.val)));
+    card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px'}},k.label));
+    kRow.appendChild(card);
+  });
+  wrap.appendChild(kRow);
+  const tblWrap=el('div',{class:'tbl-wrap'});
+  const tbl=el('table',{class:'data-table'});
+  const thead=el('tr');
+  ['Customer','Rep','Open Opps','Won YTD','Pipeline',''].forEach(h=>thead.appendChild(el('th',{style:{fontSize:'9px'}},h)));
+  tbl.appendChild(el('thead',{},thead));
+  const tbody=el('tbody');
+  rows.forEach(r=>{
+    const tr=el('tr',{style:{cursor:'pointer'}});
+    tr.appendChild(el('td',{style:{fontWeight:'600',fontSize:'10px'}},r.name));
+    tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},r.rep||'—'));
+    tr.appendChild(el('td',{style:{fontSize:'10px',textAlign:'center'}},r.opps.length+''));
+    tr.appendChild(el('td',{style:{color:'var(--green)',fontWeight:'600',fontSize:'10px'}},r.wonAmt?'$'+Math.round(r.wonAmt).toLocaleString():'—'));
+    tr.appendChild(el('td',{style:{color:'var(--amber)',fontSize:'10px'}},r.pipelineAmt?'$'+Math.round(r.pipelineAmt).toLocaleString():'—'));
+    const actCell=el('td');
+    actCell.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(){
+      S.view='sfboard'; S._sfBoardFilter=r.name; render();
+    }},'→ SF Board'));
+    tr.appendChild(actCell);
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody); tblWrap.appendChild(tbl);
+  wrap.appendChild(tblWrap);
+}
+
 function renderSpend(c) {
   c.innerHTML='';
   const wrap=el('div',{style:{maxWidth:'1100px',margin:'0 auto',padding:'12px 0'}});
@@ -12658,7 +12630,21 @@ function renderSpend(c) {
   // h2 removed per no-duplicate-titles spec — title not repeated in #content
   // description <p> below provides tool context without duplicating the page heading
   hdr.appendChild(el('p',{style:{margin:'0',fontSize:'10px',color:'var(--muted)'}},'Live spend data from Salesforce. Compare actual spend against contract admin fees to identify commission gaps.'));
+  // View mode toggle: By Vendor | By Customer
+  if(!S._spendView) S._spendView='vendor';
+  const modeTabs=el('div',{style:{display:'flex',gap:'4px',marginTop:'8px'}});
+  ['vendor','customer'].forEach(mode=>{
+    const label=mode==='vendor'?'📦 By Vendor':'🏢 By Customer';
+    modeTabs.appendChild(el('button',{class:'filter-tab'+(S._spendView===mode?' active':''),onclick(){S._spendView=mode;renderSpend(c);}},label));
+  });
+  hdr.appendChild(modeTabs);
   wrap.appendChild(hdr);
+  // Customer view — show immediately without SF token requirement
+  if(S._spendView==='customer'){
+    renderSpendByCustomer(wrap);
+    c.appendChild(wrap);
+    return;
+  }
 
   if(!USER.sfToken){
     const banner=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'6px',padding:'20px',textAlign:'center'}});
@@ -13098,7 +13084,7 @@ ${typeof CMP.docBText === 'string' ? smartChunkContract(CMP.docBText, 40000) : '
         'anthropic-dangerous-direct-browser-access':'true'
       },
       body: JSON.stringify({
-        model:'claude-opus-4-6',
+        model:'claude-sonnet-4-6',
         max_tokens:16000,
         system: systemPrompt,
         messages,
@@ -13788,45 +13774,63 @@ function renderNetworkIntel(c) {
   const _catStats=Object.values(_catMap).filter(c=>c.fees.length>0).map(c=>{const avg=c.fees.reduce((a,b)=>a+b)/c.fees.length,mn=Math.min(...c.fees),mx=Math.max(...c.fees);return{cat:c.cat,n:c.n,wf:c.fees.length,avg,mn,mx};}).sort((a,b)=>b.wf-a.wf);
   const benchSec=el('div',{class:'summary-section'});
   benchSec.appendChild(el('h3',{},'📊 Category Fee Benchmarks'));
-  benchSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'Fee statistics by category across all '+_bAllV.length+' vendors. "Negotiate To" = 1% above avg, rounded to nearest 0.5%.'));
+  benchSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},'Fee statistics by category across all '+_bAllV.length+' vendors. "Negotiate To" = avg + 30% toward max. Click any row to expand vendor list.'));
   if(_catStats.length){
-    const _bTbl=el('table',{class:'data-table',style:{width:'100%'}});
-    const _bThead=el('thead'); const _bTrh=el('tr');
-    ['Category','Vendors','Avg Fee','Low','High','Negotiate To'].forEach(h=>_bTrh.appendChild(el('th',{},h)));
-    _bThead.appendChild(_bTrh); _bTbl.appendChild(_bThead);
-    const _bTbody=el('tbody');
-    _catStats.forEach(r=>{
-      const tgt=Math.ceil((r.avg+1)*2)/2;
-      const tr=el('tr',{style:{cursor:'pointer'},title:'Click to expand vendor list'});
-      [r.cat,r.n+(r.wf<r.n?' ('+r.wf+' w/fee)':''),el('span',{style:{fontWeight:'600',color:'var(--blue)'}},r.avg.toFixed(1)+'%'),r.mn.toFixed(1)+'%',r.mx.toFixed(1)+'%',el('span',{style:{fontWeight:'600',color:'var(--green)'}},tgt.toFixed(1)+'%')].forEach(cell=>{
-        const td=el('td'); if(cell instanceof Node)td.appendChild(cell); else td.textContent=String(cell??''); tr.appendChild(td);
-      });
-      const expRow=el('tr',{style:{display:'none'}});
-      const expTd=el('td',{colSpan:'6',style:{padding:'6px 12px',background:'var(--bg)'}});
-      let expBuilt=false;
-      tr.addEventListener('click',()=>{
-        const isOpen=expRow.style.display!=='none';
-        expRow.style.display=isOpen?'none':'';
-        tr.style.background=isOpen?'':'rgba(79,124,255,.06)';
-        if(!isOpen&&!expBuilt){
-          expBuilt=true;
-          const catVs=_bAllV.filter(v=>(v.category||'Other')===r.cat&&parseFee(v.adminFee)!==null).sort((a,b)=>(parseFee(b.adminFee)||0)-(parseFee(a.adminFee)||0));
-          if(!catVs.length){expTd.textContent='No vendors with fee data in this category.';return;}
-          const inner=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px'}});
-          catVs.forEach(v=>{
-            const chip=el('div',{style:{display:'inline-flex',alignItems:'center',gap:'4px',padding:'3px 8px',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'12px',fontSize:'9px',cursor:'pointer'},onclick(e){e.stopPropagation();openDetail(v);}});
-            chip.appendChild(document.createTextNode(v.name));
-            chip.appendChild(el('span',{style:{color:'var(--green)',fontWeight:'600',marginLeft:'3px'}},parseFee(v.adminFee)+'%'));
-            inner.appendChild(chip);
+    const _bRowFn=r=>{
+      const tgt=Math.round((r.avg+(r.mx-r.avg)*0.3)*10)/10;
+      return [
+        r.cat,
+        r.n+(r.wf<r.n?' ('+r.wf+' w/fee)':''),
+        el('span',{style:{fontWeight:'600',color:'var(--blue)'}},r.avg.toFixed(1)+'%'),
+        r.mn.toFixed(1)+'%',
+        r.mx.toFixed(1)+'%',
+        el('span',{style:{fontWeight:'600',color:'var(--green)'}},tgt.toFixed(1)+'%'),
+      ];
+    };
+    const _bWrap=buildSortableTable(['Category','Vendors','Avg Fee','Low','High','Negotiate To'],_catStats,_bRowFn);
+    // Add expandable sub-table on row click
+    if(_bWrap instanceof Element){
+      const _bTbl=_bWrap.querySelector('table');
+      if(_bTbl){
+        const rows=Array.from(_bTbl.querySelectorAll('tbody tr'));
+        rows.forEach((tr,i)=>{
+          const r=_catStats[i];
+          if(!r) return;
+          tr.style.cursor='pointer';
+          let expRow=null;
+          tr.addEventListener('click',()=>{
+            if(expRow&&expRow.parentNode){
+              expRow.remove(); expRow=null;
+              tr.style.background='';
+              return;
+            }
+            expRow=el('tr');
+            const expTd=el('td',{colSpan:'6',style:{padding:'6px 12px',background:'rgba(79,124,255,.04)',borderBottom:'1px solid var(--border)'}});
+            const catVs=_bAllV.filter(v=>(v.category||'Other')===r.cat&&parseFee(v.adminFee)!==null).sort((a,b)=>(parseFee(b.adminFee)||0)-(parseFee(a.adminFee)||0));
+            if(!catVs.length){expTd.textContent='No vendors with fee data.';expRow.appendChild(expTd);tr.after(expRow);return;}
+            const subTbl=el('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:'9px'}});
+            const sth=el('tr',{style:{borderBottom:'1px solid var(--border)'}});
+            ['Vendor','Fee','Contract Status',''].forEach(h=>sth.appendChild(el('th',{style:{padding:'3px 6px',textAlign:'left',color:'var(--muted)',fontWeight:'600'}},h)));
+            subTbl.appendChild(sth);
+            catVs.forEach(v=>{
+              const str=el('tr',{style:{cursor:'pointer',borderBottom:'1px solid rgba(255,255,255,.04)'},onclick(e){e.stopPropagation();openDetail(v);}});
+              str.addEventListener('mouseenter',()=>str.style.background='rgba(79,124,255,.08)');
+              str.addEventListener('mouseleave',()=>str.style.background='');
+              [v.name,parseFee(v.adminFee)+'%',v.status||'—',el('span',{style:{color:'var(--blue)',fontSize:'8px'}},'→ Open')].forEach(cell=>{
+                const td=el('td',{style:{padding:'3px 6px'}});
+                if(cell instanceof Node)td.appendChild(cell); else td.textContent=String(cell);
+                str.appendChild(td);
+              });
+              subTbl.appendChild(str);
+            });
+            expTd.appendChild(subTbl);
+            expRow.appendChild(expTd);
+            tr.after(expRow);
+            tr.style.background='rgba(79,124,255,.06)';
           });
-          expTd.appendChild(inner);
-        }
-      });
-      expRow.appendChild(expTd);
-      _bTbody.appendChild(tr); _bTbody.appendChild(expRow);
-    });
-    _bTbl.appendChild(_bTbody);
-    const _bWrap=el('div',{class:'tbl-wrap'}); _bWrap.appendChild(_bTbl);
+        });
+      }
+    }
     benchSec.appendChild(_bWrap);
   } else {benchSec.appendChild(el('p',{class:'muted'},'No admin fee data found across vendors.'));}
   c.appendChild(benchSec);
@@ -14447,74 +14451,110 @@ function renderContractEconomics(c) {
 
   // ── Admin Fee Calculator / Reverse Engineering ──
   const calcSec=el('div',{class:'summary-section'});
-  calcSec.appendChild(el('h3',{},'🔢 Admin Fee Reverse Engineering Calculator'));
-  calcSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.5'}},'Enter what you know → calculate the full fee picture including whether you were underpaid.'));
-  const calcForm=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:'10px',marginBottom:'12px'}});
-  const fields=[
-    ['Total Customer Spend ($)','calcSpend','number','100000'],
-    ['Amount Received by Prime Source ($)','calcReceived','number','3000'],
-    ['Your Split % with Channel Partner','calcSplit','number','50'],
-    ['Agreed Vendor → Channel Partner Fee %','calcAgreedFee','number','6'],
-    ['Partner Name (optional)','calcPartner','text','e.g. WellLink'],
-    ['Vendor Name (optional)','calcVendor','text','e.g. HD Supply'],
+  calcSec.appendChild(el('h3',{},'🔢 Admin Fee Calculator'));
+  // Mode toggle
+  const _calcMode={v:S._econCalcMode||'verify'};
+  const modeBar=el('div',{style:{display:'flex',gap:'6px',marginBottom:'10px'}});
+  const _modeBtn=(label,mode,desc)=>{
+    const btn=el('button',{class:_calcMode.v===mode?'btn-primary':'btn-ghost',style:{fontSize:'9px',padding:'4px 10px'},
+      onclick(){_calcMode.v=mode;S._econCalcMode=mode;_runCalc();}},label);
+    btn.title=desc; return btn;
+  };
+  modeBar.appendChild(_modeBtn('🔎 Verify Payment','verify','Forward: enter spend + received → check if you were paid correctly'));
+  modeBar.appendChild(_modeBtn('📐 Project Revenue','project','Reverse: enter rates → calculate what you should receive'));
+  calcSec.appendChild(modeBar);
+
+  const calcForm=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(185px,1fr))',gap:'10px',marginBottom:'12px'}});
+  const _allFields=[
+    ['Total Customer Spend ($)','calcSpend','number','100000','both'],
+    ['Amount Received by Prime Source ($)','calcReceived','number','3000','verify'],
+    ['Your Split % with Channel Partner','calcSplit','number','50','both'],
+    ['Agreed Vendor → Channel Partner Fee %','calcAgreedFee','number','6','both'],
+    ['Partner Name (optional)','calcPartner','text','e.g. WellLink','both'],
+    ['Vendor Name (optional)','calcVendor','text','e.g. HD Supply','both'],
   ];
   const inputs={};
-  fields.forEach(([label,id,type,placeholder])=>{
-    const wrap=el('div',{}); wrap.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'3px'}},label));
-    const inp=el('input',{type,class:'modal-input',placeholder,style:{marginBottom:'0'}}); inputs[id]=inp; wrap.appendChild(inp); calcForm.appendChild(wrap);
+  _allFields.forEach(([label,id,type,placeholder,modes])=>{
+    const wrap=el('div',{dataset:{fieldId:id}});
+    wrap.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'3px'}},label));
+    const inp=el('input',{type,class:'modal-input',placeholder,style:{marginBottom:'0'}});
+    inputs[id]=inp; wrap.appendChild(inp);
+    if(modes!=='both') wrap.dataset.mode=modes;
+    calcForm.appendChild(wrap);
   });
   calcSec.appendChild(calcForm);
-  const resultBox=el('div',{style:{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'5px',padding:'12px',minHeight:'80px'}});
-  resultBox.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'Enter values above and click Calculate →'));
+  const resultBox=el('div',{style:{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'5px',padding:'12px',minHeight:'60px'}});
+  resultBox.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'Enter values above — results update automatically.'));
   calcSec.appendChild(resultBox);
-  const calcBtn=el('button',{class:'btn-primary',style:{marginTop:'8px'},onclick(){
+
+  function _runCalc(){
+    // Update mode button styles
+    modeBar.querySelectorAll('button').forEach(b=>{b.className=b.textContent.includes('Verify')?(_calcMode.v==='verify'?'btn-primary':'btn-ghost'):(_calcMode.v==='project'?'btn-primary':'btn-ghost');});
+    // Show/hide received field based on mode
+    Array.from(calcForm.children).forEach(wrap=>{
+      if(wrap.dataset.mode==='verify') wrap.style.display=_calcMode.v==='verify'?'':'none';
+    });
     const spend=parseFloat(inputs.calcSpend.value)||0;
     const received=parseFloat(inputs.calcReceived.value)||0;
     const split=parseFloat(inputs.calcSplit.value)||50;
     const agreedFee=parseFloat(inputs.calcAgreedFee.value)||0;
     const partner=inputs.calcPartner.value||'Channel Partner';
     const vendor=inputs.calcVendor.value||'Vendor';
-    if(!spend||!received){toast('Enter spend and amount received','#f59e0b');return;}
-    const yourYield=(received/spend)*100;
-    const fullFee=split>0?(received/spend)*(100/split)*100:0;
-    const agreedYield=agreedFee*(split/100);
-    const agreedReceived=spend*(agreedYield/100);
-    const discrepancy=received-agreedReceived;
-    const discrepancyPct=agreedReceived>0?((discrepancy/agreedReceived)*100):0;
-    const status=Math.abs(discrepancyPct)<2?'✅ On track':discrepancy<0?'🚨 Possible underpayment':'ℹ️ Overpayment (verify)';
-    const statusColor=Math.abs(discrepancyPct)<2?'var(--green)':discrepancy<0?'var(--red)':'var(--amber)';
-    resultBox.innerHTML='';
-    const rows=[
-      ['Total spend routed',`$${spend.toLocaleString()}`,''],
-      ['Amount received by Prime Source',`$${received.toLocaleString()}`,''],
-      ['Your effective yield %',`${yourYield.toFixed(3)}%`,yourYield>=2?'var(--green)':'var(--amber)'],
-      ['─────────────────','',''],
-      [`${partner}'s full fee from ${vendor}`,agreedFee?`${agreedFee.toFixed(1)}% (agreed)`:`${fullFee.toFixed(3)}% (calculated)`,'var(--blue)'],
-      ['Your split',`${split}%`,'var(--muted)'],
-      ['─────────────────','',''],
-    ];
-    if(agreedFee>0){
-      rows.push(['Expected to receive (based on agreement)',`$${agreedReceived.toFixed(2)}`,'']);
-      rows.push(['Actually received',`$${received.toFixed(2)}`,'']);
-      rows.push(['Variance',`${discrepancy>=0?'+':''}$${discrepancy.toFixed(2)} (${discrepancyPct>=0?'+':''}${discrepancyPct.toFixed(1)}%)`,statusColor]);
-      rows.push(['Status',status,statusColor]);
+    if(!spend||((_calcMode.v==='verify'&&!received)||(_calcMode.v==='project'&&!agreedFee))){
+      resultBox.innerHTML='<p style="font-size:10px;color:var(--muted)">Enter '+(spend?'':'spend and ')+(_calcMode.v==='verify'?'amount received':'agreed fee %')+'…</p>';
+      return;
     }
+    resultBox.innerHTML='';
     const grid=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'3px 12px',fontSize:'10px'}});
-    rows.forEach(([label,val,color])=>{
-      grid.appendChild(el('span',{style:{color:'var(--muted)'}},label));
-      grid.appendChild(el('span',{style:{fontWeight:'600',color:color||'var(--text)'}},val));
-    });
-    resultBox.appendChild(grid);
-    // Offer to save as record
-    const saveBtn=el('button',{class:'btn-xs btn-green',style:{marginTop:'8px'},onclick(){
-      S.feeRecords.push({vendor:inputs.calcVendor.value||'Unknown',partner,period:isoDate(new Date()),totalSpend:spend,amountReceived:received,splitPct:split,agreedFeePct:agreedFee,yourYield,fullFee,discrepancy,status:status.split(' ').slice(1).join(' ')});
-      toast('✓ Record saved to Fee History');render();
-    }});
-    saveBtn.textContent='+ Save to Fee History';
-    resultBox.appendChild(saveBtn);
-  }});
-  calcBtn.textContent = '🔢 Calculate';
-  calcSec.appendChild(calcBtn);
+    const row=(label,val,color)=>{grid.appendChild(el('span',{style:{color:'var(--muted)'}},label));grid.appendChild(el('span',{style:{fontWeight:'600',color:color||'var(--text)'}},val));};
+    if(_calcMode.v==='verify'){
+      const yourYield=(received/spend)*100;
+      const fullFee=split>0?(received/spend)*(100/split)*100:0;
+      const agreedYield=agreedFee*(split/100);
+      const agreedReceived=spend*(agreedYield/100);
+      const discrepancy=received-agreedReceived;
+      const discrepancyPct=agreedReceived>0?((discrepancy/agreedReceived)*100):0;
+      const status=Math.abs(discrepancyPct)<2?'✅ On track':discrepancy<0?'🚨 Possible underpayment':'ℹ️ Overpayment (verify)';
+      const statusColor=Math.abs(discrepancyPct)<2?'var(--green)':discrepancy<0?'var(--red)':'var(--amber)';
+      row('Total spend routed','$'+spend.toLocaleString());
+      row('Amount received','$'+received.toLocaleString());
+      row('Your effective yield %',yourYield.toFixed(3)+'%',yourYield>=2?'var(--green)':'var(--amber)');
+      row(partner+' full fee',agreedFee?agreedFee.toFixed(1)+'% (agreed)':fullFee.toFixed(3)+'% (calculated)','var(--blue)');
+      row('Your split',split+'%','var(--muted)');
+      if(agreedFee>0){
+        row('Expected to receive','$'+agreedReceived.toFixed(2));
+        row('Actually received','$'+received.toFixed(2));
+        row('Variance',(discrepancy>=0?'+':'')+'$'+discrepancy.toFixed(2)+' ('+(discrepancyPct>=0?'+':'')+discrepancyPct.toFixed(1)+'%)',statusColor);
+        row('Status',status,statusColor);
+      }
+      resultBox.appendChild(grid);
+      const saveBtn=el('button',{class:'btn-xs btn-green',style:{marginTop:'8px'},onclick(){
+        S.feeRecords.push({vendor:inputs.calcVendor.value||'Unknown',partner,period:isoDate(new Date()),totalSpend:spend,amountReceived:received,splitPct:split,agreedFeePct:agreedFee,yourYield,fullFee,discrepancy,status:status.split(' ').slice(1).join(' ')});
+        toast('✓ Record saved to Fee History');render();
+      }},'+ Save to Fee History');
+      resultBox.appendChild(saveBtn);
+    } else {
+      // Project Revenue (reverse) mode — given rates, compute expected amount
+      const grossFee=agreedFee;
+      const yourYield=grossFee*(split/100);
+      const expectedReceived=spend*(yourYield/100);
+      const annualizedSpend=spend*12;
+      const annualizedReceived=annualizedSpend*(yourYield/100);
+      row('Gross fee ('+vendor+' pays '+partner+')',grossFee.toFixed(2)+'%','var(--blue)');
+      row('Your split',split+'%','var(--muted)');
+      row('Your effective yield',yourYield.toFixed(3)+'%','var(--blue)');
+      row('─────────────────','','');
+      row('Monthly spend entered','$'+spend.toLocaleString());
+      row('Expected monthly revenue','$'+expectedReceived.toFixed(2),'var(--green)');
+      row('Annual projection (÷÷÷12×)','','');
+      row('Annual spend projection','$'+annualizedSpend.toLocaleString());
+      row('Annual revenue projection','$'+annualizedReceived.toFixed(2),'var(--green)');
+      resultBox.appendChild(grid);
+    }
+  }
+  // Auto-calc on any input change
+  Object.values(inputs).forEach(inp=>inp.addEventListener('input',_runCalc));
+  _runCalc();
   c.appendChild(calcSec);
 
   // ── Fee History ──
@@ -14770,9 +14810,9 @@ function renderTierTracker(c) {
           const match=l.match(/\$?([\d,]+(?:\.\d+)?[KkMm]?)\s*[-–]?\s*(?:([\d.]+)%|\$([\d,]+(?:\.\d+)?))/);
           const threshold=match?parseFloat((match[1]||'0').replace(/[$,KkMm]/g,''))*(/[Kk]/.test(match[1])?1000:/[Mm]/.test(match[1])?1000000:1):(i+1)*500000;
           const fee=match?parseFloat(match[2]||match[3]||'0'):parseFloat(v.fee)||0;
-          return {name:'Tier '+(i+1),threshold,fee};
+          return {name:'Tier '+(i+1),threshold,feePct:fee,fee};
         });
-        if(!tiers.length) tiers.push({name:'Tier 1',threshold:500000,fee:parseFloat(v.fee)||0});
+        if(!tiers.length) tiers.push({name:'Tier 1',threshold:500000,feePct:parseFloat(v.fee)||0,fee:parseFloat(v.fee)||0});
         S.tierData.push({vendorName:v.name,tiers,period:'annual',currentSpend:0,_autoAdded:true});
         trackedNames.add(v.name.toLowerCase());
         added++;
@@ -14893,26 +14933,28 @@ function renderTierTracker(c) {
       btn.disabled=false; btn.textContent='🔄 Load & Sync SF';
     }},'🔄 Load & Sync SF'));
     }
+    const aiPanel=el('div',{style:{display:'none',margin:'6px 0 4px 0',padding:'8px 10px',background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'4px',fontSize:'10px',lineHeight:'1.6',color:'var(--text)',whiteSpace:'pre-wrap'}});
+    let _aiPanelLoaded=false;
     const aiExpBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'}},'🤖 AI Explain');
     aiExpBtn.addEventListener('click',async function(){
-      const orig=aiExpBtn.textContent; aiExpBtn.textContent='⏳...'; aiExpBtn.disabled=true;
+      const isOpen=aiPanel.style.display!=='none';
+      if(isOpen){aiPanel.style.display='none';aiExpBtn.textContent='🤖 AI Explain';return;}
+      aiPanel.style.display='';
+      if(_aiPanelLoaded) return;
+      aiExpBtn.textContent='⏳ Generating...'; aiExpBtn.disabled=true;
+      aiPanel.textContent='Analyzing tier progress...';
       try{
+        if(!td.tiers||!td.tiers.length){aiPanel.textContent='No tier data available for this vendor.';_aiPanelLoaded=true;return;}
         const explanation=await explainTierProgress(td);
-        openModal(mb=>{
-          mb.appendChild(el('h3',{},'🤖 Tier Analysis: '+td.vendorName));
-          const txt=el('p',{style:{whiteSpace:'pre-wrap',lineHeight:'1.7',fontSize:'11px',margin:'10px 0'}});
-          txt.textContent=explanation;
-          mb.appendChild(txt);
-          const mbtns=el('div',{class:'modal-btns'});
-          mbtns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));
-          mb.appendChild(mbtns);
-        });
-      }catch(e){toast('AI error: '+e.message,'#ef4444');}
-      finally{aiExpBtn.textContent=orig; aiExpBtn.disabled=false;}
+        aiPanel.textContent=explanation||'No explanation available.';
+        _aiPanelLoaded=true;
+      }catch(e){aiPanel.textContent='AI error: '+e.message;toast('AI error: '+e.message,'#ef4444');}
+      finally{aiExpBtn.textContent='🤖 AI Explain ▲'; aiExpBtn.disabled=false;}
     });
     hdrBtns.appendChild(aiExpBtn);
     hdrBtns.appendChild(el('button',{class:'btn-xs btn-danger',onclick(){if(confirm('Remove '+td.vendorName+'?')){const _ri=S.tierData.indexOf(td);if(_ri>-1)S.tierData.splice(_ri,1);render();}}}, '✕'));
     hdr.appendChild(hdrBtns); card.appendChild(hdr);
+    card.appendChild(aiPanel);
     card.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginBottom:'6px'}},'Period: '+_tierPeriodLabel+(td._sfSynced?' · SF synced':'· manual spend')));
 
     if (td.tiers && td.tiers.length) {
@@ -14924,7 +14966,8 @@ function renderTierTracker(c) {
         const isNext=!isHit&&(ti===0||td.currentSpend>=(td.tiers[ti-1]?.threshold||0));
         const tierWrap=el('div',{style:{marginBottom:'10px'}});
         const tierHdr=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'4px'}});
-        tierHdr.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'600',color:isHit?'var(--green)':isNext?'var(--blue)':'var(--muted)'}},`${tier.label||'Tier '+(ti+1)}: $${tier.threshold.toLocaleString()} → ${tier.feePct}% fee`));
+        const _tFee=tier.feePct||tier.fee||0;
+        tierHdr.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'600',color:isHit?'var(--green)':isNext?'var(--blue)':'var(--muted)'}},`${tier.label||'Tier '+(ti+1)}: $${tier.threshold.toLocaleString()} → ${_tFee}% fee`));
         tierHdr.appendChild(el('span',{style:{fontSize:'10px',color:isHit?'var(--green)':'var(--text)'}},isHit?'✅ ACHIEVED':isNext?`$${remaining.toLocaleString()} to go`:''));
         tierWrap.appendChild(tierHdr);
         const barBg=el('div',{style:{background:'var(--border)',borderRadius:'4px',height:'10px',overflow:'hidden'}});
@@ -14934,9 +14977,9 @@ function renderTierTracker(c) {
         barLabel.appendChild(el('span',{},'$'+td.currentSpend.toLocaleString()+' current'));
         barLabel.appendChild(el('span',{},progress.toFixed(1)+'%'));
         tierWrap.appendChild(barLabel);
-        if (isNext && tier.feePct && td.currentSpend>0) {
-          const prevFeePct=td.tiers[Math.max(0,ti-1)]?.feePct||0;
-          const incrementalValue=(tier.threshold*(tier.feePct/100))-(td.currentSpend*(prevFeePct/100));
+        if (isNext && _tFee && td.currentSpend>0) {
+          const prevFeePct=td.tiers[Math.max(0,ti-1)]?.feePct||td.tiers[Math.max(0,ti-1)]?.fee||0;
+          const incrementalValue=(tier.threshold*(_tFee/100))-(td.currentSpend*(prevFeePct/100));
           const velRow=el('div',{style:{fontSize:'9px',marginTop:'4px',display:'flex',flexWrap:'wrap',gap:'10px',alignItems:'center'}});
           velRow.appendChild(el('span',{style:{color:'var(--green)'}},'💰 Hit this tier = ~$'+Math.max(0,incrementalValue).toLocaleString()+' incremental annual yield'));
           // Velocity: days to hit if spend rate known
@@ -14950,11 +14993,25 @@ function renderTierTracker(c) {
           tierWrap.appendChild(velRow);
           // Dollars-needed callout
           const needsRow=el('div',{style:{background:'rgba(79,124,255,.08)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'3px',padding:'4px 8px',marginTop:'4px',fontSize:'9px',color:'var(--blue)'}});
-          needsRow.textContent='Need $'+remaining.toLocaleString()+' more spend to unlock '+tier.feePct+'% fee on all $'+tier.threshold.toLocaleString()+' → earns $'+Math.round(tier.threshold*(tier.feePct/100)).toLocaleString()+'/yr';
+          needsRow.textContent='Need $'+remaining.toLocaleString()+' more spend to unlock '+_tFee+'% fee on all $'+tier.threshold.toLocaleString()+' → earns $'+Math.round(tier.threshold*(_tFee/100)).toLocaleString()+'/yr';
           tierWrap.appendChild(needsRow);
         }
         card.appendChild(tierWrap);
       });
+    }
+    // Current yield earned summary
+    if(td.tiers&&td.tiers.length&&td.currentSpend>0){
+      const _currTierObj=td.tiers.slice().reverse().find(t=>td.currentSpend>=t.threshold);
+      const _currFee=_currTierObj?((_currTierObj.feePct||_currTierObj.fee||0)):0;
+      const _currEarned=Math.round(td.currentSpend*(_currFee/100));
+      const yieldRow=el('div',{style:{display:'flex',gap:'12px',padding:'6px 10px',background:'rgba(34,197,94,.07)',border:'1px solid rgba(34,197,94,.2)',borderRadius:'4px',marginBottom:'8px',fontSize:'10px',flexWrap:'wrap',alignItems:'center'}});
+      yieldRow.appendChild(el('span',{style:{color:'var(--muted)'}},'Current tier:'));
+      yieldRow.appendChild(el('span',{style:{fontWeight:'700',color:'var(--green)'}},_currTierObj?(_currTierObj.label||_currTierObj.name||'Active'):'Below Tier 1'));
+      yieldRow.appendChild(el('span',{style:{color:'var(--muted)'}},'Effective rate:'));
+      yieldRow.appendChild(el('span',{style:{fontWeight:'700',color:'var(--blue)'}},_currFee+'%'));
+      yieldRow.appendChild(el('span',{style:{color:'var(--muted)'}},'Annual yield at current spend:'));
+      yieldRow.appendChild(el('span',{style:{fontWeight:'700',color:'var(--green)'}},'$'+_currEarned.toLocaleString()));
+      card.appendChild(yieldRow);
     }
     // Current spend + monthly rate inputs
     const spendRow=el('div',{style:{display:'flex',gap:'10px',alignItems:'center',marginTop:'8px',paddingTop:'8px',borderTop:'1px solid var(--border)',flexWrap:'wrap'}});
@@ -14984,8 +15041,20 @@ function openAddTierModal(existingVendor) {
     body.appendChild(spendIn);
     body.appendChild(el('label',{style:{marginTop:'6px',display:'block'}},'Tier structure (add rows):'));
     const tiersDiv=el('div',{style:{border:'1px solid var(--border)',borderRadius:'4px',padding:'8px'}});
-    const tiers=existingVendor?.tiers?[{threshold:500000,feePct:3,label:'Silver'},{threshold:1000000,feePct:4,label:'Gold'},{threshold:2000000,feePct:5,label:'Platinum'}]:[];
-    let tierRows=tiers.map(t=>({...t}));
+    // Parse existing tier data from vendor tiers string or use existing tracked structure
+    const _existTd=S.tierData?.find(td=>td.vendorName===existingVendor?.name);
+    const _parsedTiers=(()=>{
+      if(_existTd?.tiers?.length) return _existTd.tiers.map(t=>({threshold:t.threshold||0,feePct:t.feePct||t.fee||0,label:t.name||t.label||''}));
+      const raw=String(existingVendor?.tiers||'').trim();
+      if(!raw||raw.toLowerCase()==='n/a') return [];
+      return raw.split(/[;\n,]/).filter(l=>l.trim()).map((l,i)=>{
+        const m=l.match(/\$?([\d,.KkMm]+)\s*[-–=@→]?\s*([\d.]+)%/);
+        const thresh=m?parseFloat(m[1].replace(/[$,]/g,''))*(/[Kk]/.test(m[1])?1000:/[Mm]/.test(m[1])?1000000:1):(i+1)*500000;
+        const fee=m?parseFloat(m[2]):0;
+        return {threshold:thresh,feePct:fee,label:'Tier '+(i+1)};
+      });
+    })();
+    let tierRows=_parsedTiers.length?_parsedTiers.map(t=>({...t})):[];
     function renderTierRows(){
       tiersDiv.innerHTML='';
       tierRows.forEach((tr,i)=>{
@@ -15902,11 +15971,13 @@ function renderToday(c) {
     sfSec.appendChild(sfSecHdr);
     if(_sfbOpen){
 
-    // My open opps closing this month
+    // Filter SF data to active employees only (exclude inactive/terminated SF licenses)
+    const _activeNames=new Set(EMPLOYEE_DIRECTORY.map(e=>e.name.toLowerCase()));
     const now=new Date();
     const myOpps=(sb.opps||[]).filter(o=>{
       const isMe=o._ownerName===USER.name||o._ownerName===USER.email;
       if(!isMe&&USER.role!=='admin'&&USER.role!=='manager') return false;
+      if(!_activeNames.has((o._ownerName||'').toLowerCase())) return false;
       if(!o.CloseDate) return false;
       const d=new Date(o.CloseDate);
       return d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth();
@@ -15929,6 +16000,7 @@ function renderToday(c) {
     // My open cases - high priority
     const myCases=(sb.cases||[]).filter(c2=>{
       const isMe=c2._ownerName===USER.name||c2._ownerName===USER.email;
+      if(!_activeNames.has((c2._ownerName||'').toLowerCase())) return false;
       return (isMe||USER.role==='admin'||USER.role==='manager')&&c2.Priority==='High';
     });
     if(myCases.length){
@@ -15948,7 +16020,9 @@ function renderToday(c) {
     // Tasks due today
     const todayStr=isoDate(now);
     const myTasks=(sb.tasks||[]).filter(t=>{
-      const isMe=(t.Owner&&t.Owner.Name)===USER.name;
+      const ownerName=(t.Owner&&t.Owner.Name)||t._ownerName||'';
+      const isMe=ownerName===USER.name;
+      if(!_activeNames.has(ownerName.toLowerCase())) return false;
       return isMe&&t.ActivityDate===todayStr&&t.Status!=='Completed';
     });
     if(myTasks.length){
@@ -19570,7 +19644,7 @@ function renderVCSHealth(c) {
       const r=await fetch('https://api.anthropic.com/v1/messages',{
         method:'POST',
         headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json'},
-        body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:10,messages:[{role:'user',content:'ping'}]})
+        body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:10,messages:[{role:'user',content:'ping'}]})
       });
       if(r.status===401) throw new Error('Invalid API key (401)');
       if(r.status===429) return 'Rate limited but key is valid';
