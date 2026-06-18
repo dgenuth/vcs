@@ -10382,14 +10382,28 @@ function renderSFSalesView(wrap, opps, cases, tasks) {
   const overdueTasks=tasks.filter(t=>t.ActivityDate&&new Date(t.ActivityDate)<new Date()&&t.Status!=='Completed');
   if(overdueTasks.length){
     const taskSec=el('div',{style:{background:'rgba(245,158,11,.05)',border:'1px solid rgba(245,158,11,.3)',borderRadius:'6px',padding:'12px'}});
-    taskSec.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',color:'var(--amber)',marginBottom:'8px'}},'⚠ Overdue Tasks ('+overdueTasks.length+')'));
-    overdueTasks.slice(0,10).forEach(t=>{
-      const r=el('div',{style:{display:'flex',gap:'8px',padding:'5px 0',borderBottom:'1px solid rgba(245,158,11,.15)',fontSize:'10px'}});
-      r.appendChild(el('span',{style:{flex:'1',fontWeight:'600'}},t.Subject||'Task'));
-      if(t['Owner']?.Name||t.Owner_Name) r.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px'}},t['Owner']?.Name||t.Owner_Name));
-      if(t.ActivityDate) r.appendChild(el('span',{style:{color:'var(--red)',fontSize:'9px'}},new Date(t.ActivityDate).toLocaleDateString('en-US',{month:'short',day:'numeric'})));
+    // G1: header is clickable — opens popup with full overdue task list
+    const _odHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'8px',cursor:'pointer'},
+      onclick(){
+        const rows=overdueTasks.map(t=>{
+          const daysOver=t.ActivityDate?Math.floor((new Date()-new Date(t.ActivityDate))/(86400000)):0;
+          return [t.Subject||'Task',t['Owner']?.Name||t.Owner_Name||'—',t.ActivityDate?new Date(t.ActivityDate).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—',daysOver>0?daysOver+'d over':'—',t.Status||'—'];
+        });
+        const tbl=buildSortableTable(['Task','Owner','Due','Overdue By','Status'],rows,r=>r);
+        openModal('⚠ Overdue Tasks ('+overdueTasks.length+')',tbl);
+      }});
+    _odHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',color:'var(--amber)'}},'⚠ Overdue Tasks'));
+    _odHdr.appendChild(el('span',{style:{background:'rgba(245,158,11,.2)',color:'var(--amber)',borderRadius:'9px',padding:'1px 7px',fontSize:'10px',fontWeight:'700'}},String(overdueTasks.length)));
+    _odHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'auto'}},'click to expand ▼'));
+    taskSec.appendChild(_odHdr);
+    overdueTasks.slice(0,5).forEach(t=>{
+      const r=el('div',{style:{display:'flex',gap:'8px',padding:'4px 0',borderBottom:'1px solid rgba(245,158,11,.15)',fontSize:'10px'}});
+      r.appendChild(el('span',{style:{flex:'1',fontWeight:'600',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},t.Subject||'Task'));
+      if(t['Owner']?.Name||t.Owner_Name) r.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px',flexShrink:'0'}},t['Owner']?.Name||t.Owner_Name));
+      if(t.ActivityDate) r.appendChild(el('span',{style:{color:'var(--red)',fontSize:'9px',flexShrink:'0'}},new Date(t.ActivityDate).toLocaleDateString('en-US',{month:'short',day:'numeric'})));
       taskSec.appendChild(r);
     });
+    if(overdueTasks.length>5)taskSec.appendChild(el('div',{style:{fontSize:'9px',color:'var(--amber)',paddingTop:'4px',cursor:'pointer'},onclick(){const rows=overdueTasks.map(t=>[t.Subject||'Task',t['Owner']?.Name||'—',t.ActivityDate?new Date(t.ActivityDate).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—',t.Status||'—']);openModal('⚠ Overdue Tasks ('+overdueTasks.length+')',buildSortableTable(['Task','Owner','Due','Status'],rows,r=>r));}},'+ '+(overdueTasks.length-5)+' more — click to see all'));
     wrap.appendChild(taskSec);
   }
 }
@@ -17920,12 +17934,12 @@ function renderAnalytics(c) {
     S._analyticsDtTo=dtTo.value;
     const c2=$('content');if(c2){c2.innerHTML='';renderAnalytics(c2);}
   }},'Apply'));
-  c.appendChild(customRow);
-  // Date range active indicator
+  // G2: tabBar first, then date-range label, then custom date inputs
+  c.appendChild(tabBar);
   const drLabel=el('div',{style:{fontSize:'9px',color:'var(--muted)',padding:'3px 4px',textAlign:'right',fontStyle:'italic',borderBottom:'1px solid var(--border)',marginBottom:'4px'}},
     '📅 Showing: '+getDateRangeLabel());
   c.appendChild(drLabel);
-  c.appendChild(tabBar);
+  c.appendChild(customRow);
 
   // ── CONTRACT HEALTH TAB ──
   // ── Trends Tab ────────────────────────────────────────────────────────────
@@ -18034,6 +18048,30 @@ function renderAnalytics(c) {
       ));
     }
     trendWrap.appendChild(tierSec);
+
+    // G3: Score Distribution chart
+    const scoreSec=el('div',{class:'summary-section',style:{marginBottom:'16px'}});
+    scoreSec.appendChild(el('h3',{style:{marginBottom:'4px'}},'🎯 Vendor Score Distribution'));
+    scoreSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px'}},'Count of vendors in each score bracket — '+_trLabel+'.'));
+    const _sBuckets={'0-2':0,'2-4':0,'4-6':0,'6-8':0,'8-10':0};
+    S.vendors.filter(isVisible).filter(v=>_trInRange(parseDate(v.effectiveDate||v.contractStart||v.lastComm))).forEach(v=>{
+      const sc=Number(v.score)||0;
+      if(sc<2) _sBuckets['0-2']++;
+      else if(sc<4) _sBuckets['2-4']++;
+      else if(sc<6) _sBuckets['4-6']++;
+      else if(sc<8) _sBuckets['6-8']++;
+      else _sBuckets['8-10']++;
+    });
+    const _sBTotal=Object.values(_sBuckets).reduce((a,b)=>a+b,0);
+    if(_sBTotal===0){
+      scoreSec.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'10px',textAlign:'center',padding:'20px'}},'No vendors with scores in this date range.'));
+    } else {
+      scoreSec.appendChild(renderBarChart(
+        Object.keys(_sBuckets),Object.values(_sBuckets),'Vendors','',
+        ['#ef4444','#f59e0b','#eab308','#22c55e','#4f7cff']
+      ));
+    }
+    trendWrap.appendChild(scoreSec);
 
     c.appendChild(trendWrap);
     return;
