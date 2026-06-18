@@ -2148,8 +2148,7 @@ function upsertComment(commentsXml, ref, newNoteText, authorName) {
   // Escape the new note text for XML
   // Escape all XML special characters + strip any control characters
   const escapedNote = (newNoteText||'')
-    .replace(/[ -
--]/g, '') // remove control chars
+    .replace(/[\x00-\x08\x0b\x0e-\x1f\x7f]/g, '') // remove control chars
     .replace(/&/g, '&amp;')  // & must be first
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -15607,8 +15606,8 @@ function renderToday(c) {
     {key:'PRIO',label:'⭐ Priority',fn:v=>isPriority(v),tip:'Priority vendors flagged for weekly ops meeting brief — populated from green highlights in Excel'},
   ];
   fDefs.forEach(fd=>{
-    const isActive=fd.fn?(S.filterLabel===fd.label.replace(/^[🔴🟡🔵]\s*/,'')):!S.filterLabel;
-    const btn=el('button',{class:'filter-tab'+(isActive?' active':''),title:fd.tip||'',onclick(){S.filter=fd.fn;S.filterLabel=fd.fn?fd.label.replace(/^[🔴🟡🔵]\s*/,''):'';render();}},fd.label);
+    const isActive=fd.fn?(S.filterLabel===fd.label.replace(/^[\u{1F534}\u{1F7E1}\u{1F535}]\s*/u,'')):!S.filterLabel;
+    const btn=el('button',{class:'filter-tab'+(isActive?' active':''),title:fd.tip||'',onclick(){S.filter=fd.fn;S.filterLabel=fd.fn?fd.label.replace(/^[\u{1F534}\u{1F7E1}\u{1F535}]\s*/u,''):'';render();}},fd.label);
     tabs.appendChild(btn);
   });
   const dimLabel=el('label',{class:'show-dismissed-wrap'});
