@@ -14089,7 +14089,8 @@ function renderNetworkIntel(c) {
     'Financial':     ['technology','compliance','staffing','consulting'],
   };
 
-  const ALL=S.vendors.filter(isVisible); // Only use direct vendors with real relationships
+  // Use ALL vendors regardless of current search/filter state (isVisible would give empty results if DB is filtered)
+  const ALL=(S.vendors||[]).filter(v=>v.name&&v.category); // Only vendors with name AND category
   // Build scored pair list — deduplicate A↔B = B↔A
   const seenPairs=new Set();
   const scoredPairs=[];
