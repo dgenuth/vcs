@@ -7587,6 +7587,30 @@ function addSortToTable(table, rows, rowFn) {
   });
 }
 
+// I3: shared right-click context menu helper
+function showRCMenu(x, y, menuItems) {
+  const existing=document.getElementById('_rc-menu');
+  if(existing) existing.remove();
+  const menu=el('div',{id:'_rc-menu',style:{position:'fixed',zIndex:'9999',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',boxShadow:'0 4px 16px rgba(0,0,0,.4)',padding:'4px 0',minWidth:'160px',fontSize:'11px'}});
+  menu.style.left=Math.min(x,window.innerWidth-170)+'px';
+  menu.style.top=Math.min(y,window.innerHeight-120)+'px';
+  menuItems.forEach(item=>{
+    if(item==='-'){
+      menu.appendChild(el('div',{style:{height:'1px',background:'var(--border)',margin:'3px 0'}},''));
+      return;
+    }
+    const btn=el('div',{style:{padding:'5px 14px',cursor:'pointer',color:'var(--text)',borderRadius:'3px',display:'flex',gap:'8px',alignItems:'center'},
+      onmouseenter(e){e.target.style.background='var(--hover)';},
+      onmouseleave(e){e.target.style.background='';},
+      onclick(){item.fn();menu.remove();}},item.label);
+    menu.appendChild(btn);
+  });
+  document.body.appendChild(menu);
+  const dismiss=()=>{menu.remove();document.removeEventListener('click',dismiss,true);document.removeEventListener('contextmenu',dismiss,true);};
+  setTimeout(()=>document.addEventListener('click',dismiss,true),0);
+  setTimeout(()=>document.addEventListener('contextmenu',dismiss,true),0);
+}
+
 function buildSortableTable(headers, rows, rowFn, opts) {
   const wrap=buildTable(headers,rows,rowFn,opts);
   if(wrap instanceof Element){const tbl=wrap.querySelector('table');if(tbl)addSortToTable(tbl,rows,rowFn);}
@@ -8679,7 +8703,7 @@ async function generateMeetingTalkingPoints(vendor) {
   ].filter(Boolean).join('\n');
   const sysP='You are a GPO vendor relationship assistant for Prime Source Expense Experts, a healthcare GPO. Generate 5-8 concise, actionable meeting talking points tailored to this specific vendor\'s situation. Focus on: contract status/renewal urgency, fee reconciliation needs, relationship health, open issues, and strategic priorities. Return ONLY a JSON array of strings, no preamble, no markdown. Each item under 18 words. Example: ["Confirm renewal intent - contract expires in 45 days", "Review Q2 admin fee reconciliation - variance noted"]';
   console.log('[VCS MeetingMode] Generating talking points for:',vendor.name,'context length:',ctx.length);
-  const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'text/plain','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:700,system:sysP,messages:[{role:'user',content:'Generate meeting talking points for:\n\n'+ctx}]})});
+  const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:700,system:sysP,messages:[{role:'user',content:'Generate meeting talking points for:\n\n'+ctx}]})});
   if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+resp.status);}
   const data=await resp.json();
   const raw=(data.content?.find(b=>b.type==='text')?.text||'[]').replace(/```json/g,'').replace(/```/g,'').trim();
@@ -14902,7 +14926,7 @@ async function explainTierProgress(td) {
     td.notes?'Notes: '+td.notes:''
   ].filter(Boolean).join('\n');
   const sysP='You are a GPO vendor analyst for Prime Source Expense Experts. Write a concise 3-5 sentence plain-English explanation of this vendor\'s tier progress situation. Include: where they stand now, how close they are to the next tier, the financial upside if they hit it, and one specific recommendation for accelerating spend (e.g., timing orders, consolidating purchases). Be concrete and data-driven. No bullet points — flowing sentences.';
-  const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'text/plain','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:400,system:sysP,messages:[{role:'user',content:'Explain this vendor\'s tier status:\n\n'+ctx}]})});
+  const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:400,system:sysP,messages:[{role:'user',content:'Explain this vendor\'s tier status:\n\n'+ctx}]})});
   if(!resp.ok){const e=await resp.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+resp.status);}
   const data=await resp.json();
   return data.content?.find(b=>b.type==='text')?.text||'No explanation available.';
@@ -16571,6 +16595,20 @@ function renderITW(c) {
         title:ind?ind.label:'',onclick(){openDetail(psdMatch||v);}},v.name);
       // Show a small "In DB" badge if PSD match exists
       if(psdMatch) link.appendChild(el('span',{style:{fontSize:'7px',background:'rgba(34,197,94,.15)',color:'var(--green)',padding:'0 3px',borderRadius:'2px',marginLeft:'4px',verticalAlign:'middle'}},'DB'));
+      // I3: right-click context menu on ITW vendor name
+      link.addEventListener('contextmenu',e=>{
+        e.preventDefault();e.stopPropagation();
+        const _rcTarget=psdMatch||v;
+        showRCMenu(e.clientX,e.clientY,[
+          {label:'Open Detail',fn(){openDetail(_rcTarget);}},
+          psdMatch?{label:'Open PSD Record',fn(){openDetail(psdMatch);}}:null,
+          '-',
+          {label:'Send Email',fn(){openEmailModal(_rcTarget);}},
+          {label:'Add Note',fn(){openNoteModal(v);}},
+          '-',
+          {label:'Move Section',fn(){moveBtn.click();}},
+        ].filter(Boolean));
+      });
 
       // Indicator badge
       const indBadge=ind?el('span',{style:{fontSize:'8px',padding:'1px 5px',borderRadius:'3px',background:ind.bg,color:ind.dot,fontWeight:'600'}},autoStatus):el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'—');
@@ -22199,7 +22237,7 @@ async function sendAIMessage(userMsg) {
     } else {
       resp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST', signal: _aiAbortController.signal,
-        headers: {'Content-Type':'text/plain','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+        headers: {'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
         body: JSON.stringify({model:'claude-sonnet-4-6', max_tokens:1000, system:systemPrompt,
           messages: aiHistory.map(m=>({role:m.role,content:m.content}))})
       });
