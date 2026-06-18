@@ -20074,7 +20074,7 @@ function renderSettings(c) {
       }});
     const _rdChev=el('span',{style:{fontSize:'12px',color:'var(--muted)'}},_rdCollapsed?'▶':'▼');
     _rdHdr.appendChild(_rdChev);
-    _rdHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'12px'}},'🎭 Role Tab Defaults'));
+    _rdHdr.appendChild(el('h3',{style:{margin:'0'}},'🎭 Role Tab Defaults'));
     // Expand/Collapse all role rows
     const rdBtnRow=el('div',{style:{display:'flex',gap:'4px',marginLeft:'auto'},onclick(e){e.stopPropagation();}});
     rdBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){
@@ -20128,10 +20128,14 @@ function renderSettings(c) {
       const _roleChev=el('span',{style:{fontSize:'10px',color:'var(--muted)'}},_rColl?'▶':'▼');
       roleSectionHdr.appendChild(_roleChev);
       roleSectionHdr.appendChild(el('span',{style:{textTransform:'capitalize',color:'var(--blue)'}},role));
-      // Show tab count enabled
+      // Show tab count enabled + hidden field count
       const _savedRT=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
       const _rtabs=_savedRT[role]||(ROLE_PERMS[role]||{}).tabs||[];
-      roleSectionHdr.appendChild(el('span',{style:{marginLeft:'auto',fontSize:'9px',color:'var(--muted)',fontWeight:'400'}},_rtabs.length+' tabs on'));
+      const _rhidden=typeof getDefaultHiddenFields==='function'?getDefaultHiddenFields(role):[];
+      const _roleInfoWrap=el('div',{style:{marginLeft:'auto',display:'flex',gap:'8px',alignItems:'center',fontWeight:'400'}});
+      _roleInfoWrap.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_rtabs.length+' tabs on'));
+      if(_rhidden.length>0)_roleInfoWrap.appendChild(el('span',{style:{fontSize:'9px',color:'var(--amber)',background:'rgba(245,158,11,.08)',borderRadius:'9px',padding:'0 5px',border:'1px solid rgba(245,158,11,.2)'}},_rhidden.length+' fields hidden'));
+      roleSectionHdr.appendChild(_roleInfoWrap);
       roleSection.appendChild(roleSectionHdr);
       const _roleBody=el('div',{style:{display:_rColl?'none':'',padding:'8px 10px'}});
       const roleGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px'}});
@@ -20283,7 +20287,7 @@ function renderSettings(c) {
     }});
     const _umChev=el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'6px'}},_umCollapsed?'▶':'▼');
     _umHdr.appendChild(_umChev);
-    _umHdr.appendChild(el('h3',{style:{margin:'0',display:'inline'}},'👥 User Management'));
+    _umHdr.appendChild(el('h3',{style:{margin:'0'}},'👥 User Management'));
     _umHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'8px'}},'(click to expand/collapse)'));
     secUsers.appendChild(_umHdr);
     const _umBody=el('div',{style:{display:_umCollapsed?'none':''}});
@@ -20455,7 +20459,7 @@ function renderSettings(c) {
       row.appendChild(mainLine);
 
       // ── Expanded details: hidden by default ───────────────────────────────
-      const details=el('div',{style:{display:'none',marginTop:'6px',paddingLeft:'16px',borderTop:'1px dashed rgba(255,255,255,.06)',paddingTop:'6px'}});
+      const details=el('div',{style:{display:'none',marginTop:'6px',paddingLeft:'34px',borderTop:'1px dashed rgba(255,255,255,.06)',paddingTop:'6px'}});
 
       // Added date + password in one line
       const detailsMeta=el('div',{style:{display:'flex',gap:'12px',alignItems:'center',marginBottom:'8px',flexWrap:'wrap'}});
