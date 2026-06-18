@@ -15740,46 +15740,53 @@ function renderToday(c) {
           tierTag(v.tier)
         );}},
       {key:'call',icon:'📞',label:'Call Queue',color:'var(--red)',
+        hasHdr:true,hdrs:['Score','Vendor','Category','Contact','Phone','Due'],
         fn:()=>_allV.filter(v=>v.tier==='CALL').sort((a,b)=>b.score-a.score),
         rowFn:v=>{const fu=parseDate(v.followUp);const fuD=fu?dayDiff(today,fu):null;const _ph=v.phone||v.bizPhone||v.contactPhone||v.mobile||'';return el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer'},onclick(){openDetail(v);}},
+          scorePill(v.score),
           el('span',{style:{fontWeight:'700',fontSize:'11px',minWidth:'140px',color:'var(--blue)'}},v.name),
           el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},v.category||''),
           v.procContact?el('span',{style:{fontSize:'9px',color:'var(--text)'}},v.procContact):'',
           _ph?el('a',{href:'tel:'+_ph.replace(/[^+\d]/g,''),style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none'},onclick(e){e.stopPropagation();}},_ph):el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'—'),
-          fuD!==null?el('span',{style:{fontSize:'9px',color:fuD>0?'var(--red)':'var(--muted)',fontWeight:fuD>0?'700':'400'}},(fuD>0?'Overdue '+fuD+'d':'Due '+(-fuD)+'d')):'',
-          scorePill(v.score)
+          fuD!==null?el('span',{style:{fontSize:'9px',color:fuD>0?'var(--red)':'var(--muted)',fontWeight:fuD>0?'700':'400'}},(fuD>0?'Overdue '+fuD+'d':'Due '+(-fuD)+'d')):''
         );}},
       {key:'email',icon:'📧',label:'Email Queue',color:'var(--amber)',
+        hasHdr:true,hdrs:['Score','Vendor','Category','Reason','Email','Due'],
         fn:()=>_allV.filter(v=>v.tier==='EMAIL').sort((a,b)=>b.score-a.score),
         rowFn:v=>{const fu=parseDate(v.followUp);const fuD=fu?dayDiff(today,fu):null;const _lc=parseDate(v.lastComm);const _lcDays=_lc?dayDiff(_lc,today):null;const _reason=_lcDays!==null?'Last contacted '+_lcDays+'d ago'+(v.tier?' ('+v.tier+' tier)':''):(fu?'Follow-up '+(fuD>0?fuD+'d overdue':'due '+fmtDate(fu)):'EMAIL tier vendor');return el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer'},onclick(){openDetail(v);}},
+          scorePill(v.score),
           el('span',{style:{fontWeight:'700',fontSize:'11px',minWidth:'140px',color:'var(--blue)'}},v.name),
           el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},v.category||''),
           el('span',{style:{fontSize:'8px',color:'var(--amber)',fontStyle:'italic',flex:'1'},title:_reason},_reason),
           v.email?el('a',{href:'mailto:'+v.email,style:{fontSize:'9px',color:'var(--blue)'},onclick(e){e.stopPropagation();}},v.email):'',
-          fuD!==null?el('span',{style:{fontSize:'9px',color:fuD>0?'var(--amber)':'var(--muted)',fontWeight:fuD>0?'700':'400'}},(fuD>0?'Overdue '+fuD+'d':'Due '+(-fuD)+'d')):'',
-          scorePill(v.score)
+          fuD!==null?el('span',{style:{fontSize:'9px',color:fuD>0?'var(--amber)':'var(--muted)',fontWeight:fuD>0?'700':'400'}},(fuD>0?'Overdue '+fuD+'d':'Due '+(-fuD)+'d')):''
         );}},
       {key:'review',icon:'📋',label:'Business Reviews Due',color:'var(--blue)',
         fn:()=>_allV.filter(v=>{const fu=parseDate(v.followUp);return v.tier==='REVIEW'&&fu&&dayDiff(today,fu)>=0;}).sort((a,b)=>b.score-a.score),
         rowFn:v=>{const fu=parseDate(v.followUp);const _lc=parseDate(v.lastComm);const _lcDays=_lc?dayDiff(_lc,today):null;const schedBtn=el('button',{class:'btn-xs btn-blue',style:{fontSize:'8px',flexShrink:'0'},onclick(e){e.stopPropagation();openCalendarEventModal(isoDate(today),v.name);}});schedBtn.textContent='Schedule';return el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer'},onclick(){openDetail(v);}},
+          scorePill(v.score),
           el('span',{style:{fontWeight:'700',fontSize:'11px',minWidth:'140px',color:'var(--blue)'}},v.name),
           el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},v.category||''),
           _lcDays!==null?el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'Last review: '+_lcDays+'d ago'):'',
           fu?el('span',{style:{fontSize:'9px',color:'var(--blue)'}},'Due: '+fmtDate(fu)):'',
-          schedBtn,
-          scorePill(v.score)
+          schedBtn
         );}},
       {key:'pipeline',icon:'💼',label:'Pipeline Opportunities',color:'var(--blue)',
         fn:()=>(S.itw||[]).filter(v=>isVisible(v)),
         rowFn:v=>el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer'},onclick(){openDetail(v);}},
+          scorePill(v.score),
           el('span',{style:{fontWeight:'700',fontSize:'11px',minWidth:'140px',color:'var(--blue)'}},v.name),
           el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},v.category||''),
-          v.tier?tierTag(v.tier):'',
-          scorePill(v.score)
+          v.tier?tierTag(v.tier):''
         )},
       {key:'stats',icon:'📊',label:'Quick Stats',color:'var(--text)',fn:()=>[],isStats:true},
     ];
     const secWrap=el('div',{style:{marginBottom:'8px'}});
+    // D1: Collapse All / Expand All for Today sections
+    const _todayCtrlRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'6px',justifyContent:'flex-end'}});
+    _todayCtrlRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){_todaySections.forEach(s=>{S._todaySecOpen[s.key]=true;});render();}},'▼ Expand All'));
+    _todayCtrlRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){_todaySections.forEach(s=>{S._todaySecOpen[s.key]=false;});render();}},'▶ Collapse All'));
+    secWrap.appendChild(_todayCtrlRow);
     _todaySections.forEach(sec=>{
       const items=sec.isStats?[]:sec.fn();
       const isOpen=S._todaySecOpen[sec.key];
@@ -15792,6 +15799,12 @@ function renderToday(c) {
       secWrap.appendChild(hdrEl);
       if(isOpen){
         const body=el('div',{style:{marginBottom:'6px',padding:'4px 4px',border:'1px solid var(--border)',borderTop:'none',borderRadius:'0 0 4px 4px',background:'var(--bg)'}});
+        // D2: column headers for queue sections
+        if(sec.hasHdr&&sec.hdrs&&items.length>0){
+          const colHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'3px 8px',borderBottom:'1px solid var(--border)',marginBottom:'2px'}});
+          sec.hdrs.forEach((h,i)=>colHdr.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:i===0?'none':(i<=2?'1':'none'),minWidth:i===0?'32px':'auto'}},h)));
+          body.appendChild(colHdr);
+        }
         if(sec.isStats){
           const sGrid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:'6px',padding:'4px'}});
           [['CALL Tier',_allV.filter(v=>v.tier==='CALL').length,'var(--red)'],
