@@ -3523,6 +3523,19 @@ async function generateRenzoOutreach(vendor, trigger) {
   if (data.error) throw new Error(data.error);
   const message = data.draft || data.message || data.text || data.content;
   if (!message) throw new Error('Renzo returned no message content');
+  // Track Renzo credit usage per user (mirrors AI usage tracking)
+  try {
+    const ruk = 'vcs_renzo_usage_' + (USER.email||'unknown').replace(/[^a-z0-9]/gi,'_');
+    const ru = JSON.parse(localStorage.getItem(ruk)||'{}');
+    ru.user = USER.name; ru.email = USER.email;
+    ru.totalCalls = (ru.totalCalls||0) + 1;
+    ru.lastUsed = new Date().toISOString();
+    localStorage.setItem(ruk, JSON.stringify(ru));
+    // Also update the shared aggregate
+    const renzoAll = JSON.parse(localStorage.getItem('vcs_renzo_usage_all')||'{}');
+    renzoAll[USER.email] = {...ru, _savedAt: Date.now()};
+    localStorage.setItem('vcs_renzo_usage_all', JSON.stringify(renzoAll));
+  } catch(_) {}
   return message;
 }
 
@@ -3644,6 +3657,9 @@ function showRenzoModal(vendor, message) {
 // size: 'xs' | 'sm' (default) | 'md'
 // trigger: optional Renzo trigger string override
 function makeRenzoBtn(vendor, _unused, trigger, _unusedLabel, size) {
+  // Renzo feature flag check — admin can always use; others need renzoEnabled
+  const _renzoUser = getApprovedUsers().find(u=>u.email===USER.email);
+  if (USER.role !== 'admin' && _renzoUser?.featureFlags?.renzoEnabled === false) return null;
   const btn = renzoButton('Renzo', size || 'sm');
   btn.title = 'Generate personalized outreach with Renzo AI';
   const labelSpan = btn.querySelector('span');
@@ -6067,9 +6083,9 @@ function setApprovedUsers(u, skipDriveSync){
 
 // Returns restrictive-by-default featureFlags for a given role (applied on user add or role change)
 function getDefaultFeatureFlags(role) {
-  const full={export:true,addVendor:true,showFinancials:true,editContracts:true,aiEnabled:true};
-  const noFin={export:true,addVendor:false,showFinancials:false,editContracts:false,aiEnabled:true};
-  const viewer={export:false,addVendor:false,showFinancials:false,editContracts:false,aiEnabled:false};
+  const full={export:true,addVendor:true,showFinancials:true,editContracts:true,aiEnabled:true,renzoEnabled:true};
+  const noFin={export:true,addVendor:false,showFinancials:false,editContracts:false,aiEnabled:true,renzoEnabled:false};
+  const viewer={export:false,addVendor:false,showFinancials:false,editContracts:false,aiEnabled:false,renzoEnabled:false};
   const map={admin:full,procurement:full,manager:{export:true,addVendor:true,showFinancials:true,editContracts:true,aiEnabled:true},
     cro:noFin,finance_sr:full,finance_jr:{...full,addVendor:false,editContracts:false},
     viewer:viewer,sales:{...noFin,export:false},sales_rep:{...viewer,showFinancials:false},restricted:viewer};
@@ -20104,6 +20120,7 @@ function buildFieldAccess(container, userEmail) {
     // Per-user AI toggle
     const _cuFresh=getApprovedUsers().find(x=>x.email===userEmail);
     const _aiOn=_cuFresh?.featureFlags?.aiEnabled!==false;
+    const _renzoOn=_cuFresh?.featureFlags?.renzoEnabled!==false;
     const aiToggleRow=el('div',{style:{marginTop:'10px',display:'flex',alignItems:'center',gap:'8px',paddingLeft:'8px'}});
     aiToggleRow.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)'}},'🤖 AI Assistant:'));
     const aiBtn=el('button',{
@@ -20124,6 +20141,26 @@ function buildFieldAccess(container, userEmail) {
     aiToggleRow.appendChild(aiBtn);
     aiToggleRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'When disabled, AI calls return a "contact admin" message'));
     container.appendChild(aiToggleRow);
+
+    // Renzo enable/disable toggle
+    const renzoToggleRow=el('div',{style:{marginTop:'6px',display:'flex',alignItems:'center',gap:'8px',paddingLeft:'8px'}});
+    renzoToggleRow.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',minWidth:'90px'}},'Renzo Access:'));
+    const renzoBtn=el('button',{
+      class:'btn-xs btn-ghost',
+      style:{borderColor:_renzoOn?'var(--green)':'var(--muted)',color:_renzoOn?'var(--green)':'var(--muted)'},
+      onclick(e){
+        e.stopPropagation();
+        const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
+        if(!all[i].featureFlags)all[i].featureFlags={};
+        all[i].featureFlags.renzoEnabled=!_renzoOn;
+        localStorage.setItem(AUTH_KEY,JSON.stringify(all));
+        setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+        buildFieldAccess(container,userEmail);
+      }
+    },_renzoOn?'Enabled ✅':'Disabled 🚫');
+    renzoToggleRow.appendChild(renzoBtn);
+    renzoToggleRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'Renzo outreach button visibility per user'));
+    container.appendChild(renzoToggleRow);
   }
 
 function renderSettings(c) {
@@ -21404,7 +21441,7 @@ function renderSettings(c) {
   }
 
   // ── Renzo Integration Settings (Admin only) ──
-  if(['admin','procurement'].includes(USER.role)){
+  if(USER.role==='admin'){
     const renzoSec=el('div',{style:{background:'var(--card)',border:'1px solid rgba(79,124,255,.3)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
     const _rnOpen=!S._settingsOpen||(S._settingsOpen.renzo!==false);
     const _rnHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'10px 14px',cursor:'pointer',background:_rnOpen?'rgba(79,124,255,.06)':'var(--sb)'},onclick(){if(!S._settingsOpen)S._settingsOpen={};S._settingsOpen.renzo=!_rnOpen;render();}});
@@ -21693,17 +21730,61 @@ function out(o){return ContentService.createTextOutput(JSON.stringify(o)).setMim
         btnRow.appendChild(el('button',{class:'btn-xs btn-danger',onclick(){if(confirm('Clear all API usage stats?')){usageKeys.forEach(k=>localStorage.removeItem(k));render();toast('Usage stats cleared');}}},'🗑 Clear All'));
         apiSec.appendChild(btnRow);
       }
+
+      // ── Renzo Usage Sub-section ──
+      const renzoUsageKeys=Object.keys(localStorage).filter(k=>k.startsWith('vcs_renzo_usage_')&&k!=='vcs_renzo_usage_all');
+      const renzoHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginTop:'12px',marginBottom:'6px',paddingTop:'10px',borderTop:'1px solid var(--border)'}});
+      renzoHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'10px',color:'var(--text)',flex:'1'}},'📤 Renzo Outreach Credits Used'));
+      const renzoClearBtn=el('button',{class:'btn-xs btn-ghost',style:{color:'var(--muted)',fontSize:'8px'},onclick(){if(confirm('Clear all Renzo usage stats?')){renzoUsageKeys.forEach(k=>localStorage.removeItem(k));localStorage.removeItem('vcs_renzo_usage_all');render();toast('Renzo usage stats cleared');}}},"🗑 Clear");
+      renzoHdr.appendChild(renzoClearBtn);
+      apiSec.appendChild(renzoHdr);
+      if(!renzoUsageKeys.length){
+        apiSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',paddingLeft:'4px'}},'No Renzo usage recorded yet.'));
+      } else {
+        const rtbl=el('table',{class:'data-table'});
+        const rthead=el('thead');const rhr=el('tr');
+        ['User','Calls Used','Last Used','Access'].forEach(h=>rhr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+        rthead.appendChild(rhr);rtbl.appendChild(rthead);
+        const rtbody=el('tbody');
+        renzoUsageKeys.forEach(k=>{
+          try{
+            const rd=JSON.parse(localStorage.getItem(k)||'{}');
+            const rEmail=rd.email||k.replace('vcs_renzo_usage_','').replace(/_/g,'@');
+            const rUser=getApprovedUsers().find(u=>u.email===rEmail);
+            const rOn=rUser?.featureFlags?.renzoEnabled!==false;
+            const rtr=el('tr');
+            rtr.appendChild(el('td',{style:{fontSize:'10px',fontWeight:'600'}},rd.user||rEmail));
+            rtr.appendChild(el('td',{style:{fontSize:'10px',textAlign:'center',fontWeight:'700',color:'var(--blue)'}},String(rd.totalCalls||0)));
+            rtr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},rd.lastUsed?rd.lastUsed.slice(0,10):'—'));
+            const rTogTd=el('td',{style:{textAlign:'center'}});
+            const rTogLbl=el('label',{style:{display:'flex',alignItems:'center',justifyContent:'center',gap:'4px',cursor:'pointer',fontSize:'9px'}});
+            const rTogCb=el('input',{type:'checkbox'});
+            rTogCb.checked=rOn;
+            rTogCb.addEventListener('change',()=>{
+              const all2=getApprovedUsers();const ui=all2.findIndex(u=>u.email===rEmail);
+              if(ui>=0){if(!all2[ui].featureFlags)all2[ui].featureFlags={};all2[ui].featureFlags.renzoEnabled=rTogCb.checked;setApprovedUsers(all2);toast('✓ Renzo '+(rTogCb.checked?'enabled':'disabled')+' for '+rEmail);}
+            });
+            rTogLbl.appendChild(rTogCb);rTogLbl.appendChild(el('span',{},rOn?'On':'Off'));
+            rTogTd.appendChild(rTogLbl);rtr.appendChild(rTogTd);
+            rtbody.appendChild(rtr);
+          }catch(_){}
+        });
+        rtbl.appendChild(rtbody);
+        apiSec.appendChild(rtbl);
+      }
     }
     c.appendChild(apiSec);
   }
 
-  // ── Session Handover Generator — bottom of settings, collapsed by default ──
+  // ── Session Handover Generator — Admin only ──
+  if(USER.role==='admin'){
   settingsCard(c,'Session Handover Generator','📋','handover',false,body=>{
     body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Generate a complete handover document for the next Claude session. Captures current VCS state, recent changes, and pending work. Paste into a new chat to continue seamlessly.'));
     body.appendChild(el('button',{class:'btn-primary',onclick(){generateHandoverDoc();}},'📋 Generate Handover Document'));
     const handoverOut=el('div',{id:'vcs-handover-out',style:{display:'none',marginTop:'10px'}});
     body.appendChild(handoverOut);
   });
+  } // end admin-only handover
 }
 
 
