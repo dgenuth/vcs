@@ -1,0 +1,111 @@
+VCS SESSION 7 — OVERNIGHT BUILD RESULTS
+Generated: 2026-06-18
+Verify: 46/46
+Final line count: 23,682
+Final commit: 8f66176 (main)
+
+=================================================================
+ADDENDUM 1-9: DONE (commit 3dad452)
+=================================================================
+ADDENDUM 1: Checklist findVendors() rewrite — scoring system, Direct/GPO badges, AI fallback — DONE
+ADDENDUM 2: Consultant view — answer textarea per question, SF Task includes answers — DONE
+ADDENDUM 3: All AI calls use 'claude-sonnet-4-6' — DONE
+ADDENDUM 4: Today tab exclude inactive SF licenses — DONE
+ADDENDUM 5: Network Intel benchmarks — Negotiate To avg+(max-avg)*0.3, sortable, expandable — DONE
+ADDENDUM 6: Contract Economics auto-calc on input, Project Revenue reverse mode toggle — DONE
+ADDENDUM 7: Drive contract access restricted from sales reps — DONE
+ADDENDUM 8: Tier Tracker rebuild — fee/feePct normalization, better modal parsing, current yield — DONE
+ADDENDUM 9: Spend by customer view — renderSpendByCustomer() + By Vendor/By Customer tab toggle — DONE
+
+=================================================================
+GROUP A: VENDOR PANEL & SETTINGS — DONE (commit 09f16f1)
+=================================================================
+A1: Notes button shows green dot when vendor.notes exists — DONE
+A2/A3: Settings sticky bar z-index 30 + box-shadow; Ctrl+Shift+E/C keyboard shortcuts — DONE
+A4: VCS Health role-aware (reps see subset); H1-H4 CORS/Renzo/watcher checks + Fix It buttons — DONE
+A5: ITW nav renamed to Pipeline — DONE
+A6: Inline per-entry note editing in _buildNoteCard — DONE
+
+=================================================================
+GROUP B: MEDIA/MEETINGS PER-USER + CONTRACT PRESET — DONE (commit 0435e70)
+=================================================================
+B2: Fathom Meetings filtered per-user (non-admin sees own links only) — DONE
+B3: Media add stores _addedBy:USER.email; list shows attribution; reps can only delete own — DONE
+B4: Contract preset (_contractsPresetVendor) auto-triggers Drive button click via setTimeout — DONE
+Tests: test_group_b_s7.spec.js
+
+=================================================================
+GROUP C: SETTINGS HEADER AUDIT — DONE (commit ce0d222)
+=================================================================
+C1: Role Tab Defaults and User Management h3 headers normalized (no overriding CSS) — DONE
+C2: Role Tab Defaults shows hidden field count badge per role — DONE
+C3: User Management details paddingLeft:34px (past checkbox+expand icon) — DONE
+Tests: test_group_c_s7.spec.js
+
+=================================================================
+GROUP D: TODAY TAB COLLAPSE + QUEUE LAYOUT — DONE (commit aae7825)
+=================================================================
+D1: Collapse All / Expand All buttons for Today tab sections — DONE
+D2: Column headers added to Call Queue and Email Queue sections — DONE
+D3: Score pill moved to first position in all queue row renders — DONE
+Tests: test_group_d_s7.spec.js
+
+=================================================================
+GROUP E: NETWORK INTEL IMPROVEMENTS — DONE (commit 4911cfe)
+=================================================================
+E1: Cross-referral fallback ensures minimum 3 pairs when too few vendors — DONE
+E2: Benchmark rows have click-to-expand tooltip; Browse in Vendor DB button in sub-table — DONE
+E3: What-If calculator auto-fills spend from SF board opps; Calculate button added — DONE
+Tests: test_group_e_s7.spec.js
+
+=================================================================
+GROUP F: COVERAGE BAR + EMAIL MODAL + SECTION PROGRESS — DONE (commit 3b215e0)
+=================================================================
+F1: Checklist coverage bar uses facility-prefixed GoWith key (was always 0%) — DONE
+F2: Email Queue rows use openEmailModal instead of bare mailto: — DONE
+F4: Checklist section headers show mini progress bar + GoWith selected count — DONE
+Tests: test_group_f_s7.spec.js
+
+=================================================================
+GROUP G: SF OVERDUE POPUP + ANALYTICS DATE ORDER + TRENDS CHART — DONE (commit cd80ed3)
+=================================================================
+G1: SF Board overdue tasks header clickable — opens buildSortableTable modal with Overdue By days — DONE
+G2: Analytics tab renders tabBar before customRow (date selector was above tabs) — DONE
+G3: Score Distribution bar chart added to Trends tab (0-2, 2-4, 4-6, 6-8, 8-10 buckets) — DONE
+Tests: test_group_g_s7.spec.js
+
+=================================================================
+GROUP H: ALREADY DONE AS PART OF GROUP A
+=================================================================
+H1-H4: VCS Health checks (CORS, Renzo, watcher, SF) with Fix It buttons (done in A4) — DONE
+
+=================================================================
+GROUP I: CONTENT-TYPE FIX + ITW RIGHT-CLICK MENU — DONE (commit 8f66176)
+=================================================================
+I1: Model strings 'claude-sonnet-4-6' (done in prior session) — DONE
+I2: Fixed all 3 Anthropic API fetch calls from Content-Type text/plain to application/json — DONE
+I3: showRCMenu() helper added; ITW vendor names have right-click context menu (Open Detail, Send Email, Add Note, Move Section) — DONE
+Tests: test_group_i_s7.spec.js
+
+=================================================================
+FINAL STATUS
+=================================================================
+verify_vcs.py: 46/46
+Line count: 23,682 (was 23,236 at session start)
+Functions: 326
+
+GitHub commits pushed:
+  3dad452 ADDENDUM 1-9
+  09f16f1 Group A
+  0435e70 Group B
+  ce0d222 Group C
+  aae7825 Group D
+  4911cfe Group E
+  3b215e0 Group F
+  cd80ed3 Group G
+  8f66176 Group I
+
+GitHub: https://github.com/dgenuth/vcs
+App: https://dgenuth.github.io/vcs/
+
+All groups: DONE
