@@ -4631,24 +4631,42 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     }
   }
 
-  // ── Fathom Meetings Stub ──
+  // ── Fathom Meetings (B2: per-user) ──
   if(['admin','procurement','manager','cro'].includes(USER.role)){
     const _fathomIsOpen=S._fathomOpen?.[vendor.name]===true;
     const fathomSec=el('div',{style:{marginTop:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
+    const _isAdminFathom=['admin','procurement'].includes(USER.role);
+    const _fathomLinks=(vendor._mediaLinks||[]).filter(m=>m.type==='fathom'||(m.url&&(m.url.includes('fathom.video')||m.url.includes('app.fathom.ai'))));
+    const _myFathomLinks=_isAdminFathom?_fathomLinks:_fathomLinks.filter(m=>!m._addedBy||m._addedBy===USER.email);
     const fathomHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'6px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none',borderBottom:_fathomIsOpen?'1px solid var(--border)':'none'},
       onclick(e){e.stopPropagation();if(!S._fathomOpen)S._fathomOpen={};S._fathomOpen[vendor.name]=!S._fathomOpen[vendor.name];refreshDetailIfOpen(vendor);}
       });
     fathomHdr.appendChild(el('span',{style:{fontSize:'11px'}},'📹'));
     fathomHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Meetings'));
+    if(_myFathomLinks.length>0)fathomHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',background:'var(--bg)',borderRadius:'9px',padding:'1px 6px',border:'1px solid var(--border)'}},String(_myFathomLinks.length)));
     fathomHdr.appendChild(el('span',{class:'fathom-lbl',style:{fontSize:'9px',color:'var(--muted)'}},_fathomIsOpen?'▲ collapse':'▼ expand'));
     fathomSec.appendChild(fathomHdr);
-    const fathomBody=el('div',{class:'fathom-body',style:{padding:'14px',display:_fathomIsOpen?'':'none'}});
-    const fathomConfigured=!!(S.settings?.fathomApiKey);
-    if(fathomConfigured){
-      fathomBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',margin:'0 0 8px'}},'Fathom meeting recordings for '+vendor.name+' will appear here.'));
+    const fathomBody=el('div',{class:'fathom-body',style:{padding:'10px',display:_fathomIsOpen?'':'none'}});
+    if(_myFathomLinks.length>0){
+      _myFathomLinks.forEach(m=>{
+        const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'5px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
+        row.appendChild(el('span',{style:{fontSize:'13px',flexShrink:'0'}},'🎥'));
+        const info=el('div',{style:{flex:'1',minWidth:'0'}});
+        info.appendChild(el('div',{style:{fontWeight:'600',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},m.title||m.url));
+        const byName=m._addedBy?(m._addedBy===USER.email?'me':m._addedBy):'';
+        info.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'1px'}},(m.added||'')+(byName?' · by '+byName:'')));
+        row.appendChild(info);
+        row.appendChild(el('a',{href:m.url,target:'_blank',rel:'noopener noreferrer',class:'btn-xs btn-ghost',style:{fontSize:'9px',textDecoration:'none',flexShrink:'0'}},'▶ Recording'));
+        fathomBody.appendChild(row);
+      });
     } else {
-      fathomBody.appendChild(el('p',{style:{fontSize:'11px',color:'var(--text)',marginBottom:'10px'}},'Connect Fathom in Settings to see meeting recordings for this vendor.'));
-      fathomBody.appendChild(el('button',{class:'btn-ghost btn-action',style:{fontSize:'10px'},onclick(){closeDetail();S.view='settings';updateSidebar();render();}},'→ Configure Fathom'));
+      const fathomConfigured=!!(S.settings?.fathomApiKey);
+      if(fathomConfigured){
+        fathomBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',margin:'0'}},'No meeting recordings yet. Add a Fathom link in Media & Links below.'));
+      } else {
+        fathomBody.appendChild(el('p',{style:{fontSize:'11px',color:'var(--text)',marginBottom:'10px'}},'Connect Fathom in Settings to see meeting recordings for this vendor.'));
+        fathomBody.appendChild(el('button',{class:'btn-ghost btn-action',style:{fontSize:'10px'},onclick(){closeDetail();S.view='settings';updateSidebar();render();}},'→ Configure Fathom'));
+      }
     }
     fathomSec.appendChild(fathomBody);
     body.appendChild(fathomSec);
@@ -4685,7 +4703,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       if(!url){urlInp.style.borderColor='var(--red)';return;}
       urlInp.style.borderColor='';
       if(!vendor._mediaLinks)vendor._mediaLinks=[];
-      vendor._mediaLinks.unshift({title:title||url,url,type:typeInp.value,added:new Date().toISOString().slice(0,10)});
+      vendor._mediaLinks.unshift({title:title||url,url,type:typeInp.value,added:new Date().toISOString().slice(0,10),_addedBy:USER.email});
       markDirty(vendor);saveSessionState();
       titleInp.value='';urlInp.value='';typeInp.value='link';
       renderMediaList();
@@ -4697,9 +4715,13 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     let _mOff=0;
     function renderMediaList(){
       listDiv.innerHTML='';
-      const links=vendor._mediaLinks||[];
+      const _isAdminMedia=['admin','procurement','manager','cro'].includes(USER.role);
+      const allLinks=vendor._mediaLinks||[];
+      // reps only see their own links; admins see all
+      const links=_isAdminMedia?allLinks:allLinks.filter(m=>!m._addedBy||m._addedBy===USER.email);
       if(!links.length){listDiv.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'4px 0'}},'No media links yet.'));return;}
       links.slice(0,_mOff+10).forEach((item,i)=>{
+        const realIdx=allLinks.indexOf(item);
         const isFathom=item.type==='fathom'||(item.url&&(item.url.includes('fathom.video')||item.url.includes('app.fathom.ai')));
         const isLogo=item.type==='logo';
         const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'5px 0',borderBottom:'1px solid var(--border)',fontSize:'10px'}});
@@ -4708,12 +4730,15 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
         else{row.appendChild(el('span',{style:{fontSize:'12px',lineHeight:'1',flexShrink:'0'}},'🔗'));}
         const info=el('div',{style:{flex:'1',minWidth:'0'}});
         info.appendChild(el('div',{style:{fontWeight:'600',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},item.title||item.url));
-        const meta=el('div',{style:{color:'var(--muted)',fontSize:'9px',marginTop:'1px'}},item.type+(item.added?' · '+item.added:''));
+        const byLabel=item._addedBy?(item._addedBy===USER.email?'me':item._addedBy):'';
+        const meta=el('div',{style:{color:'var(--muted)',fontSize:'9px',marginTop:'1px'}},item.type+(item.added?' · '+item.added:'')+(byLabel?' · by '+byLabel:''));
         info.appendChild(meta);
         row.appendChild(info);
         row.appendChild(el('a',{href:item.url,target:'_blank',rel:'noopener noreferrer',class:'btn-xs btn-ghost',style:{fontSize:'9px',textDecoration:'none',flexShrink:'0'}},isFathom?'▶ Recording':'Open'));
-        row.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px',color:'var(--red)',padding:'1px 5px',flexShrink:'0'},
-          onclick(){vendor._mediaLinks.splice(i,1);markDirty(vendor);saveSessionState();renderMediaList();}},'✕'));
+        if(_isAdminMedia||item._addedBy===USER.email){
+          row.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px',color:'var(--red)',padding:'1px 5px',flexShrink:'0'},
+            onclick(){vendor._mediaLinks.splice(realIdx,1);markDirty(vendor);saveSessionState();renderMediaList();}},'✕'));
+        }
         listDiv.appendChild(row);
       });
       if(links.length>_mOff+10){
@@ -11974,7 +11999,8 @@ function renderContracts(c) {
 
   const comboInput=el('input',{type:'text',class:'detail-edit-field',style:{width:'100%',height:'30px',paddingRight:'24px'},
     placeholder:'Type or select vendor...'});
-  if(S._contractsPresetVendor){selectedVendorName=S._contractsPresetVendor;comboInput.value=S._contractsPresetVendor;delete S._contractsPresetVendor;}
+  let _contractsHadPreset=false;
+  if(S._contractsPresetVendor){selectedVendorName=S._contractsPresetVendor;comboInput.value=S._contractsPresetVendor;_contractsHadPreset=true;delete S._contractsPresetVendor;}
   const comboArrow=el('span',{style:{position:'absolute',right:'6px',top:'7px',fontSize:'10px',color:'var(--muted)',pointerEvents:'none'}},'▾');
   const comboDropdown=el('div',{style:{
     position:'absolute',top:'32px',left:'0',right:'0',
@@ -12121,6 +12147,7 @@ function renderContracts(c) {
   driveBtn.innerHTML='<span style="font-size:14px">☁</span> Load from Drive';
   driveRow.appendChild(driveBtn);
   driveRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Browse Vendor Contracts & Pricing folder'));
+  if(_contractsHadPreset){setTimeout(()=>driveBtn.click(),200);}
   uploadSec.appendChild(driveRow);
 
   // Inline contract viewer (shown after file loaded)
