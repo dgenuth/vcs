@@ -3963,7 +3963,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     const ph2=vendor.bizPhone||vendor.mobile;
     if(ph2) qBar.appendChild(qBtn('📞','Call '+vendor.procContact,()=>dialPhone(ph2,vendor)));
     if(_canAct2) qBar.appendChild(qBtn('📧','Send email',()=>openEmailModal(vendor),'var(--blue)'));
-    if(hasPermission('editNotes')) qBar.appendChild(qBtn('📝','Add note',()=>openStructuredNoteModal(vendor),'var(--green)'));
+    if(hasPermission('editNotes')){const _nb=qBtn('📝','Add note',()=>openStructuredNoteModal(vendor),'var(--green)');if(vendor.notes&&vendor.notes.trim()){_nb.style.position='relative';const _dot=el('span',{style:{position:'absolute',top:'0',right:'0',width:'7px',height:'7px',borderRadius:'50%',background:'#22c55e',display:'block'}});_nb.appendChild(_dot);}qBar.appendChild(_nb);}
     if(hasPermission('editContract')) qBar.appendChild(qBtn('📄','Edit contract',()=>{S._contractsPresetVendor=vendor.name;S.view='contracts';render();},'var(--amber)'));
     if(USER.sfToken&&vendor.sfAccountId) qBar.appendChild(qBtn('☁','Open in Salesforce',()=>window.open(USER.sfInstance+'/lightning/r/Account/'+vendor.sfAccountId+'/view','_blank'),'#38bdf8'));
     if(USER.sfToken&&vendor.sfAccountId) qBar.appendChild(qBtn('📊','SF Dashboard',()=>window.open(USER.sfInstance+'/lightning/r/Account/'+vendor.sfAccountId+'/view','_blank'),'var(--blue)'));
@@ -7347,7 +7347,7 @@ function addNotesSection(body, vendor, title) {
     sec.appendChild(filterRow);
   }
 
-  const _buildNoteCard=(entry,idx)=>{
+  const _buildNoteCard=(entry,idx,editCtx)=>{
     const isFirst=idx===0;
     const tag=entry.tag||'';
     const card=el('div',{class:'note-card',dataset:{tag},style:{
@@ -7369,12 +7369,58 @@ function addNotesSection(body, vendor, title) {
     const nd=el('div',{class:'notes-area',style:{fontSize:'10px',lineHeight:'1.6'}});
     renderNotesStr(nd,entry.content);
     entryBody.appendChild(nd);
+    // A6: inline edit button — edit this note entry in-place
+    if(hasPermission('editNotes')&&editCtx){
+      const editActRow=el('div',{style:{display:'flex',gap:'4px',marginTop:'5px'}});
+      const editBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'}});
+      editBtn.textContent='✏ Edit';
+      editBtn.onclick=(e)=>{
+        e.stopPropagation();
+        // Toggle inline editor
+        const existing=entryBody.querySelector('.note-inline-editor');
+        if(existing){existing.remove();editBtn.textContent='✏ Edit';return;}
+        editBtn.textContent='✕ Cancel';
+        const editor=el('div',{class:'note-inline-editor',style:{marginTop:'6px',borderTop:'1px solid var(--border)',paddingTop:'6px'}});
+        const ta=el('textarea',{rows:'4',style:{width:'100%',fontSize:'10px',padding:'4px 6px',border:'1px solid var(--border)',borderRadius:'3px',background:'var(--bg)',color:'var(--text)',resize:'vertical',boxSizing:'border-box'}});
+        ta.value=entry.content;
+        editor.appendChild(ta);
+        const saveBtnEl=el('button',{class:'btn-xs btn-primary',style:{marginTop:'4px',fontSize:'8px'}});
+        saveBtnEl.textContent='💾 Save';
+        saveBtnEl.onclick=(e2)=>{
+          e2.stopPropagation();
+          const newContent=ta.value.trim();
+          if(!newContent){toast('Note cannot be empty','#f59e0b');return;}
+          // Rebuild the notes string for this vendor/key
+          const src=editCtx.vendor;
+          const key=editCtx.key;
+          const rawNotes=src[key]||'';
+          const parts=rawNotes.split(/\n---\n/).map(p=>p.trim()).filter(Boolean);
+          if(parts[idx]!==undefined){
+            // Reconstruct header from entry metadata
+            const header=(entry.date||'')+((entry.tag)?' ['+entry.tag+']':'')+(entry.author?' '+entry.author+':':'');
+            parts[idx]=(header?header+' ':'')+newContent;
+            src[key]=parts.join('\n---\n');
+          } else {
+            src[key]=rawNotes+(rawNotes?'\n---\n':'')+newContent;
+          }
+          markDirty(src);
+          editor.remove();editBtn.textContent='✏ Edit';
+          nd.innerHTML='';renderNotesStr(nd,newContent);
+          toast('✓ Note updated');
+        };
+        editor.appendChild(saveBtnEl);
+        entryBody.appendChild(editor);
+      };
+      editActRow.appendChild(editBtn);
+      entryBody.appendChild(editActRow);
+    }
     entryHdr.onclick=()=>{const open=entryBody.style.display!=='none';entryBody.style.display=open?'none':'block';chevron.textContent=open?'▶':'▼';};
     card.appendChild(entryHdr);card.appendChild(entryBody);
     return card;
   };
 
-  allEntries.forEach((entry,idx)=>list.appendChild(_buildNoteCard(entry,idx)));
+  const _noteEditCtx=logEntries.length?null:{vendor,key:'notes'};
+  allEntries.forEach((entry,idx)=>list.appendChild(_buildNoteCard(entry,idx,_noteEditCtx)));
 
   if(allEntries.length>3){
     const showBtn=el('button',{class:'btn-xs btn-ghost',style:{width:'100%',marginTop:'2px',fontSize:'9px'},onclick(){
@@ -7399,7 +7445,7 @@ function addNotesSection(body, vendor, title) {
     legHdr.appendChild(el('span',{style:{flex:'1'}},'Legacy Notes ('+textEntries.length+' entries — pre-structured format)'));
     legWrap.appendChild(legHdr);
     const legBody=el('div',{class:'leg-body',style:{display:'none',padding:'6px 8px'}});
-    textEntries.forEach((entry,idx)=>legBody.appendChild(_buildNoteCard(entry,idx)));
+    textEntries.forEach((entry,idx)=>legBody.appendChild(_buildNoteCard(entry,idx,{vendor,key:'notes'})));
     legWrap.appendChild(legBody);
     sec.appendChild(legWrap);
   }
@@ -19569,26 +19615,49 @@ function renderVCSHealth(c) {
   const wrap=el('div',{style:{maxWidth:'900px',margin:'0 auto',padding:'12px 0'}});
   wrap.appendChild(el('h2',{style:{margin:'0 0 12px',fontSize:'16px',fontWeight:'700'}},'⚡ System Status'));
 
+  // A4: Role-aware checks — admin/procurement see all; reps/consultants see subset
+  const _isAdminRole=['admin','procurement','manager','cro'].includes(USER.role);
   const checks=[
-    {label:'Google Drive Connection',icon:'☁',test:()=>!!S.settings?.driveFileId,pass:'Drive File ID configured',fail:'No Drive File ID — go to Settings → Integrations'},
-    {label:'Salesforce Connection',icon:'☁',test:()=>!!USER.sfToken,pass:'Connected as '+USER.email,fail:'Not connected — go to Settings to connect SF'},
-    {label:'GAS Proxy',icon:'🔗',test:()=>!!VCS_PROXY_URL,pass:VCS_PROXY_URL.slice(0,40)+'…',fail:'No proxy URL configured — check Settings → Integrations'},
-    {label:'Claude API Key',icon:'🤖',test:()=>!!(S.settings?.apiKey||localStorage.getItem('vcs_api_key')),pass:'API key configured (contract OCR + AI chat enabled)',fail:'No API key — set in Settings → AI Configuration to enable contract extraction & AI chat'},
-    {label:'Vendors Loaded',icon:'🗂',test:()=>S.vendors?.length>0,pass:(S.vendors?.length||0)+' direct vendors + '+(S.channelVendors?.length||0)+' channel = '+(((S.vendors?.length||0)+(S.channelVendors?.length||0)))+' total',fail:'No vendors loaded — upload a vendor file'},
-    {label:'Channel Partners',icon:'🤝',test:()=>(S.channelVendors?.length||0)>0,pass:(S.channelVendors?.length||0)+' channel partner vendors across GPOs',fail:'No channel vendor data — load channel partners in Settings'},
-    {label:'User Session',icon:'👤',test:()=>!!USER.email,pass:USER.email+' ('+USER.role+')',fail:'No user session — reload the page'},
-    {label:'Renzo API Key',icon:'✉',test:()=>!!(S.settings?.renzoApiKey||S.settings?.renzoOutreachKey),pass:'Renzo outreach key configured',fail:'No Renzo key — set in Settings → Renzo to enable AI outreach'},
-    {label:'No Smart Quotes in JS',icon:'🔤',test:()=>{const _ss=document.querySelectorAll('script:not([src])');let _f=0;_ss.forEach(s=>{for(let i=0;i<s.textContent.length;i++){const c=s.textContent.charCodeAt(i);if(c===0x2018||c===0x2019||c===0x201c||c===0x201d){_f++;break;}}});return _f===0;},pass:'Clean — no curly/smart quotes in script tags',fail:'Smart quotes found in JS! Run fix_smart_quotes.py immediately'},
+    {label:'Google Drive Connection',icon:'☁',roles:'admin',test:()=>!!S.settings?.driveFileId,pass:'Drive File ID configured',fail:'No Drive File ID — go to Settings → Integrations',fix:()=>{S.view='settings';render();}},
+    {label:'Salesforce Connection',icon:'☁',roles:'all',test:()=>!!USER.sfToken,pass:'Connected as '+USER.email,fail:'Not connected — go to Settings to connect SF',fix:()=>{if(!S.settings?.sfClientId){S.view='settings';render();}else{sfConnect();}}},
+    {label:'GAS Proxy',icon:'🔗',roles:'admin',test:()=>!!VCS_PROXY_URL,pass:VCS_PROXY_URL.slice(0,40)+'…',fail:'No proxy URL configured — check Settings → Integrations',fix:()=>{S.view='settings';render();}},
+    {label:'Claude API Key',icon:'🤖',roles:'admin',test:()=>!!(S.settings?.apiKey||localStorage.getItem('vcs_api_key')),pass:'API key configured',fail:'No API key — set in Settings → AI Configuration',fix:()=>{S.view='settings';render();}},
+    {label:'Vendors Loaded',icon:'🗂',roles:'all',test:()=>(S.vendors?.length||0)>0,pass:(S.vendors?.length||0)+' direct + '+(S.channelVendors?.length||0)+' channel vendors',fail:'No vendors loaded — upload a vendor file',fix:null},
+    {label:'Channel Partners',icon:'🤝',roles:'procurement',test:()=>(S.channelVendors?.length||0)>0,pass:(S.channelVendors?.length||0)+' channel vendors across GPOs',fail:'No channel vendor data',fix:()=>{S.view='settings';render();}},
+    {label:'User Session',icon:'👤',roles:'all',test:()=>!!USER.email,pass:USER.email+' ('+USER.role+')',fail:'No user session — reload the page',fix:()=>location.reload()},
+    {label:'Renzo API Key',icon:'✉',roles:'admin',test:()=>!!(S.settings?.renzoApiKey||S.settings?.renzoOutreachKey),pass:'Renzo outreach key configured',fail:'No Renzo key — set in Settings → Renzo',fix:()=>{S.view='settings';render();}},
+    {label:'No Smart Quotes in JS',icon:'🔤',roles:'admin',test:()=>{const _ss=document.querySelectorAll('script:not([src])');let _f=0;_ss.forEach(s=>{for(let i=0;i<s.textContent.length;i++){const c2=s.textContent.charCodeAt(i);if(c2===0x2018||c2===0x2019||c2===0x201c||c2===0x201d){_f++;break;}}});return _f===0;},pass:'Clean — no curly/smart quotes in script tags',fail:'Smart quotes found in JS! Run fix_smart_quotes.py immediately',fix:null},
+    // H1: Claude CORS status
+    {label:'Claude API (CORS)',icon:'🌐',roles:'admin',test:()=>!!(S.settings?.apiKey||localStorage.getItem('vcs_api_key')),pass:'API key present — CORS allowed via anthropic-dangerous-direct-browser-access header',fail:'No API key or CORS header missing — AI features disabled',fix:()=>{S.view='settings';render();}},
+    // H2: Renzo key validation
+    {label:'Renzo Key Valid',icon:'✉',roles:'admin',test:()=>!!(S.settings?.renzoApiKey&&S.settings.renzoApiKey.length>10),pass:'Renzo key is '+S.settings?.renzoApiKey?.length+' chars — appears valid',fail:'Renzo key missing or too short',fix:()=>{S.view='settings';render();}},
+    // H3: Data watcher status
+    {label:'Data Watcher',icon:'👁',roles:'admin',test:()=>!!(S.settings?.driveFileId&&window.GDriveToken),pass:'Watcher active — Drive connected, file ID set',fail:'Watcher inactive — connect Drive and configure file ID to enable auto-reload',fix:()=>{S.view='settings';render();}},
   ];
 
+  const _visibleChecks=checks.filter(chk=>{
+    if(chk.roles==='all') return true;
+    if(chk.roles==='admin') return _isAdminRole;
+    if(chk.roles==='procurement') return ['admin','procurement','manager','cro'].includes(USER.role);
+    return _isAdminRole;
+  });
+  // Deduplicate by label (Renzo appears twice — keep last)
+  const _seenLabels=new Set();
+  const _dedupChecks=_visibleChecks.filter(chk=>{if(_seenLabels.has(chk.label))return false;_seenLabels.add(chk.label);return true;});
+
   const grid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:'8px',marginBottom:'16px'}});
-  checks.forEach(chk=>{
+  _dedupChecks.forEach(chk=>{
     const ok=chk.test();
     const card=el('div',{style:{background:'var(--card)',border:'1px solid '+(ok?'rgba(34,197,94,.3)':'rgba(239,68,68,.3)'),borderRadius:'6px',padding:'10px 12px',display:'flex',gap:'8px',alignItems:'flex-start'}});
     card.appendChild(el('span',{style:{fontSize:'16px',flexShrink:'0'}},ok?'✅':'❌'));
     const info=el('div',{style:{flex:'1',minWidth:'0'}});
     info.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',color:ok?'var(--green)':'var(--red)',marginBottom:'2px'}},chk.label));
-    info.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},ok?chk.pass:chk.fail));
+    info.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:'3px'}},ok?chk.pass:chk.fail));
+    // H4: Fix It button for failed checks that have a fix action
+    if(!ok&&chk.fix){
+      const fixBtn=el('button',{class:'btn-xs btn-primary',style:{fontSize:'8px',marginTop:'2px'},onclick(){chk.fix();}},'🔧 Fix It');
+      info.appendChild(fixBtn);
+    }
     card.appendChild(info);
     grid.appendChild(card);
   });
@@ -19873,10 +19942,11 @@ function renderSettings(c) {
   c.innerHTML = ''; // CRITICAL: clear before re-rendering
   // ── Global Sync Status Banner ──────────────────────────────────────────
   const syncSec=el('div',{style:{
-    background:'rgba(79,124,255,.05)',border:'1px solid rgba(79,124,255,.15)',
+    background:'var(--card)',border:'1px solid rgba(79,124,255,.2)',
     borderRadius:'6px',padding:'10px 14px',marginBottom:'12px',
     display:'flex',gap:'12px',alignItems:'center',flexWrap:'wrap',
-    position:'sticky',top:'0',zIndex:'10',backdropFilter:'blur(4px)'
+    position:'sticky',top:'0',zIndex:'30',
+    boxShadow:'0 2px 8px rgba(0,0,0,.18)',width:'100%',boxSizing:'border-box'
   }});
   const driveConnected=!!(window.GDriveToken && Date.now()<window.GDriveTokenExpiry-5000);
   const lastSync=localStorage.getItem('vcs_last_drive_sync');
@@ -19903,8 +19973,15 @@ function renderSettings(c) {
   syncSec.appendChild(syncAllBtn);
   // D3: Expand/Collapse ALL known settings keys
   const _allSettingsKeys=['emailSig','fileInfo','dataActions','handover','themeFont','startup','calendarAvail','displayPrefs','sfSettings','driveSettings','msSettings','renzoSettings','dialerSettings','apiConfig','userMgmt','roleTabDefaults','apiUsage','quickSetup','renzo'];
-  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){S._settingsExpandAll=true;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=true);render();}},'▼ Expand All'));
-  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){S._settingsExpandAll=false;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=false);render();}},'▶ Collapse All'));
+  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},title:'Expand All (Ctrl+Shift+E)',onclick(){S._settingsExpandAll=true;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=true);render();}},'▼ Expand All'));
+  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},title:'Collapse All (Ctrl+Shift+C)',onclick(){S._settingsExpandAll=false;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=false);render();}},'▶ Collapse All'));
+  // A3: Keyboard shortcuts for expand/collapse all settings sections
+  const _settingsKbHandler=(e)=>{
+    if(e.ctrlKey&&e.shiftKey&&e.key==='E'){e.preventDefault();if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=true);render();}
+    if(e.ctrlKey&&e.shiftKey&&e.key==='C'){e.preventDefault();if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=false);render();}
+  };
+  document.addEventListener('keydown',_settingsKbHandler);
+  c.addEventListener('DOMNodeRemovedFromDocument',()=>document.removeEventListener('keydown',_settingsKbHandler),{once:true});
   if(USER.role==='admin'){
     syncSec.appendChild(el('p',{style:{width:'100%',fontSize:'8px',color:'var(--muted)',margin:'4px 0 0'}},
       '⚙ Admin tip: Global keys (API keys, SF credentials, Renzo key) sync for all users. Personal config (theme, dialer URL) syncs per device. Use "Sync All" after making changes you want other users to pick up.'));
@@ -22523,7 +22600,7 @@ function render() {
   content.innerHTML='';
   const titles={
     today:'📋 Today',callsheet:'📞 Call Sheet',expiring:'⏰ Expiring',
-    vendordb:'🗂 Vendor Database',network:'🔗 Network Intel',itw:'🔧 In The Works',
+    vendordb:'🗂 Vendor Database',network:'🔗 Network Intel',itw:'💼 Pipeline',
     reviews:'📝 Reviews',calendar:'📅 Calendar',forecast:'📆 Forecast',
     analytics:'📊 Analytics',economics:'💰 Contract Economics',tiers:'📶 Tier Tracker',
     reports:'📑 Reports',summary:'📈 Summary',history:'🕐 History',
