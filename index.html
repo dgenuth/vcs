@@ -4372,6 +4372,88 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
   // PSD vendor — full contract detail
 
+  // ── Vendor Info Section — category, subcategory, product, markets, etc. ──
+  if (vendor.source === 'psd') {
+    const viSec = el('div', {class:'detail-section'});
+    viSec.appendChild(el('h4', {class:'detail-sec-title'}, '🏷 Vendor Information'));
+    const viGrid = el('div', {class:'detail-grid'});
+    const _viFields = [
+      ['GPO', vendor.gpo],
+      ['Category', vendor.category],
+      ['Sub-Category', vendor.subCategory],
+      ['Product / Description', vendor.product || vendor.about],
+      ['Class of Trade', vendor.classOfTrade],
+      ['Markets Serviced', vendor.markets],
+      ['Status', vendor.status],
+      ['Tier', vendor.tier],
+      ['Score', vendor.score ? vendor.score.toFixed(1) : null],
+      ['Admin Fee', vendor.adminFee ? (parseFee(vendor.adminFee) ? parseFee(vendor.adminFee)+'%' : vendor.adminFee) : null],
+      ['Perpetuity', vendor.perpetuity],
+      ['Added Value', vendor.addedValue],
+      ['Website', vendor.website],
+      ['Previously Named / AKA', vendor.aka],
+      ['About / Notes', vendor.comments],
+    ];
+    _viFields.forEach(([label, val]) => {
+      if (!val && val !== 0) return;
+      const row = el('div', {class:'detail-field'});
+      row.appendChild(el('span', {class:'detail-label'}, label));
+      if (label === 'Website' && val) {
+        row.appendChild(el('a', {href:val, target:'_blank', class:'detail-value', style:{color:'var(--blue)', wordBreak:'break-all'}}, val.replace(/^https?:\/\//, '').slice(0,50)));
+      } else if (label === 'Tier' && val) {
+        row.appendChild(el('span', {class:'tier-badge detail-value', style:{background:({CALL:'#ef4444',EMAIL:'#f59e0b',REVIEW:'#4f7cff',MONITOR:'#6b7280'}[val]||'#6b7280')}}, val));
+      } else if (label === 'Admin Fee' && val) {
+        const fee = parseFee(vendor.adminFee);
+        row.appendChild(el('span', {class:'detail-value', style:{color: fee>=5?'var(--green)':fee>=3?'var(--amber)':'var(--red)', fontWeight:'600'}}, val));
+      } else {
+        row.appendChild(el('span', {class:'detail-value'}, String(val)));
+      }
+      viGrid.appendChild(row);
+    });
+    viSec.appendChild(viGrid);
+
+    // Editable fields for admin/procurement/manager
+    if (hasPermission('editAll') || ['admin','procurement','manager'].includes(USER.role)) {
+      const editVIBtn = el('button', {class:'btn-xs btn-ghost', style:{marginTop:'6px', fontSize:'9px'}, onclick() {
+        openModal(mbody => {
+          mbody.appendChild(el('h3', {style:{marginTop:'0', fontSize:'13px'}}, '✏️ Edit Vendor Info — '+vendor.name));
+          const editFields = [
+            ['GPO','gpo'],['Category','category'],['Sub-Category','subCategory'],
+            ['Product / Description','product'],['Class of Trade','classOfTrade'],
+            ['Markets Serviced','markets'],['Status','status'],
+            ['Added Value','addedValue'],['About','about'],['AKA','aka'],['Comments','comments'],
+          ];
+          const fg = el('div', {style:{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'12px'}});
+          const inputs = {};
+          editFields.forEach(([lbl, field]) => {
+            const wrap = el('div', {style:{display:'flex',flexDirection:'column',gap:'2px'}});
+            wrap.appendChild(el('label', {style:{fontSize:'9px',color:'var(--muted)',fontWeight:'600'}}, lbl));
+            const inp = el('input', {type:'text', class:'detail-edit-field', value:vendor[field]||'', placeholder:lbl, style:{fontSize:'10px'}});
+            inputs[field] = inp;
+            wrap.appendChild(inp);
+            fg.appendChild(wrap);
+          });
+          mbody.appendChild(fg);
+          const btns = el('div', {class:'modal-btns'});
+          btns.appendChild(el('button', {class:'btn-primary', onclick() {
+            editFields.forEach(([,field]) => {
+              const v = inputs[field].value.trim();
+              if (v !== (vendor[field]||'')) { vendor[field] = v; markDirty(vendor); }
+            });
+            saveSessionState();
+            closeModal();
+            toast('✓ Vendor info updated');
+            refreshDetailIfOpen(vendor);
+          }}, '💾 Save'));
+          btns.appendChild(el('button', {class:'btn-secondary', onclick:closeModal}, 'Cancel'));
+          mbody.appendChild(btns);
+        });
+      }}, '✏️ Edit Vendor Info');
+      viSec.appendChild(editVIBtn);
+    }
+    body.appendChild(viSec);
+  }
+
   // ── Contract Period Progress Bar — only for roles with contract visibility ──
   const _canSeeContract = ['admin','procurement','manager','cro','finance_sr','finance_jr','director_ops','ops_qc'].includes(USER.role);
   const today2=new Date();
@@ -4448,6 +4530,38 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   // ── Contract Files from Drive ──
   body.appendChild(contractFilesSection);
   } // end hasPermission('editContract')
+
+  // ── Drive Folder Alias — show if this vendor has a saved Drive folder alias ──
+  if (vendor.source === 'psd') {
+    const _ownAliasKey = normName(vendor.name);
+    const _ownAliasTarget = (S.vendorAliases || {})[_ownAliasKey];
+    // Only show if the alias target is NOT a vendor in the DB (i.e., it's a folder name alias)
+    const _isVendorLink = _ownAliasTarget && S.vendors.some(v => vendorNamesMatch(v.name, _ownAliasTarget));
+    if (_ownAliasTarget && !_isVendorLink) {
+      const daSec = el('div', {style:{
+        marginBottom:'8px', borderRadius:'5px', padding:'7px 10px',
+        background:'rgba(34,197,94,.05)', border:'1px solid rgba(34,197,94,.2)',
+        display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap'
+      }});
+      daSec.appendChild(el('span', {style:{fontSize:'10px', color:'var(--green)', fontWeight:'700', flexShrink:'0'}}, '📁 Drive Folder Alias'));
+      daSec.appendChild(el('span', {style:{fontSize:'10px', fontWeight:'600', flex:'1', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}, _ownAliasTarget));
+      daSec.appendChild(el('span', {style:{fontSize:'8px', color:'var(--muted)', flexShrink:'0'}}, 'Contract files use this folder name'));
+      if (_canAct) {
+        daSec.appendChild(el('button', {class:'btn-xs btn-ghost', style:{color:'var(--muted)', fontSize:'8px', flexShrink:'0'},
+          onclick() {
+            if (!confirm('Remove Drive folder alias "' + _ownAliasTarget + '" from "' + vendor.name + '"?')) return;
+            if (S.vendorAliases) delete S.vendorAliases[_ownAliasKey];
+            try { const ls=JSON.parse(localStorage.getItem('vcs_user_settings_v2')||'{}'); if(ls.vendorAliases) delete ls.vendorAliases[_ownAliasKey]; localStorage.setItem('vcs_user_settings_v2',JSON.stringify(ls)); } catch(e){}
+            try { const cfg=JSON.parse(localStorage.getItem('vcs_config')||'{}'); if(cfg.vendorAliases) delete cfg.vendorAliases[_ownAliasKey]; localStorage.setItem('vcs_config',JSON.stringify(cfg)); setTimeout(async()=>{ try{ await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'saveConfig',config:JSON.stringify(cfg)})}); }catch(e){} },300); } catch(e){}
+            saveSessionState();
+            toast('Drive folder alias removed');
+            refreshDetailIfOpen(vendor);
+          }
+        }, '✕ Remove'));
+      }
+      body.appendChild(daSec);
+    }
+  }
 
   // ── Linked Aliases (vendors pointing to this record) ──
   if (vendor.source === 'psd') {
@@ -8230,7 +8344,7 @@ function openVendorAliasModal(vendor) {
 function renderVendorDB(c) {
   if (!S.loaded) { c.appendChild(el('p',{class:'muted',style:{padding:'16px'}},'Load a file first — upload your XLSM to see all contracts here.')); return; }
   if (!S.dbFilters) S.dbFilters = {};
-  if (!S.dbSort) S.dbSort = {col:'Expiry', dir:1};
+  if (!S.dbSort) S.dbSort = {col:'Vendor', dir:1};
   if (!S.dbSource) S.dbSource = 'direct';
   if (!S.channelVendors) S.channelVendors = [];
   if (!S.allVendors || !S.allVendors.length) S.allVendors = [...S.vendors, ...S.channelVendors];
@@ -8728,16 +8842,18 @@ function renderVendorDB(c) {
         cbTd.appendChild(cb); tr.appendChild(cbTd);
         // Quick Note (📝) — second column, visible without scrolling
         const noteTd=document.createElement('td');
-        noteTd.style.cssText='padding:3px 4px;text-align:center;';
-        noteTd.style.cssText='padding:3px 4px;text-align:center;display:flex;align-items:center;justify-content:center;gap:2px;';
+        noteTd.style.cssText='padding:3px 4px;text-align:center;vertical-align:middle;';
         noteTd.addEventListener('click',e=>e.stopPropagation());
+        // Inner wrapper handles layout so td stays a normal table cell
+        const _noteWrap=document.createElement('div');
+        _noteWrap.style.cssText='display:flex;align-items:center;justify-content:center;gap:3px;';
         const noteBtn=document.createElement('button');
         noteBtn.className='btn-xs btn-ghost';
-        noteBtn.style.cssText='padding:2px 5px;font-size:11px;width:24px;flex-shrink:0;';
+        noteBtn.style.cssText='padding:2px 4px;font-size:11px;width:22px;height:20px;line-height:1;flex-shrink:0;';
         noteBtn.title='Quick note';
-        // Green dot is a SIBLING of noteBtn — outside it, so button stays uniform width
+        // Green dot indicator — sibling of noteBtn inside wrapper
         const _noteDot=document.createElement('span');
-        _noteDot.style.cssText='display:none;width:6px;height:6px;border-radius:50%;background:#22c55e;flex-shrink:0;pointer-events:none;';
+        _noteDot.style.cssText='display:none;width:6px;height:6px;border-radius:50%;background:#22c55e;flex-shrink:0;pointer-events:none;margin-top:1px;';
         _noteDot.title='Has existing notes';
         const _setNoteBtn2=(hasNotes,open)=>{
           noteBtn.textContent=open?'📝▼':'📝';
@@ -8787,7 +8903,7 @@ function renderVendorDB(c) {
           ta.focus();
           _setNoteBtn2(!!v.notes,true);
         });
-        noteTd.appendChild(noteBtn);noteTd.appendChild(_noteDot);tr.appendChild(noteTd);
+        _noteWrap.appendChild(noteBtn);_noteWrap.appendChild(_noteDot);noteTd.appendChild(_noteWrap);tr.appendChild(noteTd);
         VISIBLE_COLS.forEach(col=>{
           const td=document.createElement('td');
           try {
@@ -20114,7 +20230,8 @@ function renderVCSHealth(c) {
     // H2: Renzo key validation
     {label:'Renzo Key Valid',icon:'✉',roles:'admin',test:()=>!!(S.settings?.renzoApiKey&&S.settings.renzoApiKey.length>10),pass:'Renzo key is '+S.settings?.renzoApiKey?.length+' chars — appears valid',fail:'Renzo key missing or too short',fix:()=>{S.view='settings';render();}},
     // H3: Data watcher status
-    {label:'Data Watcher',icon:'👁',roles:'admin',test:()=>!!(S.settings?.driveFileId&&window.GDriveToken),pass:'Watcher active — Drive connected, file ID set',fail:'Watcher inactive — connect Drive and configure file ID to enable auto-reload',fix:()=>{S.view='settings';render();}},
+    {label:'Data Watcher',icon:'👁',roles:'admin',test:()=>!!(S.settings?.driveFileId&&window.GDriveToken),pass:'Watcher active — Drive connected, file ID set',fail:'Watcher inactive — connect Drive and configure file ID to enable auto-reload',fixLabel:'🔧 Fix Watcher',fix:()=>{openModal(body=>{body.appendChild(el('h3',{style:{marginTop:'0',fontSize:'13px'}},'🔧 Data Watcher Setup'));body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginTop:'0'}},'The Watcher needs two things: a Google Drive File ID (the Vendor Catalogue) and a connected Drive account.'));const steps=el('div',{style:{display:'flex',flexDirection:'column',gap:'8px',marginBottom:'12px'}});[['1. Connect Google Drive','Connect your Drive account in Settings → Integrations so VCS can read the file.',()=>{closeModal();S.view='settings';S._settingsTab='integrations';render();},'Connect Drive'],['2. Set Drive File ID','Enter the Google Sheet/XLSM file ID for your Vendor Catalogue.',()=>{closeModal();S.view='settings';S._settingsTab='integrations';render();},'Go to Settings'],['3. Check Watcher Script','The VCS Watcher PS1 script must be running on the server and writing the lock file to Drive.',null,null]].forEach(([title,desc,fn,btnLabel])=>{const s=el('div',{style:{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'5px',padding:'8px 10px'}});s.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',marginBottom:'3px'}},title));s.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom: fn?'6px':'0'}},desc));if(fn) s.appendChild(el('button',{class:'btn-xs btn-primary',onclick:fn},btnLabel));steps.appendChild(s);});body.appendChild(steps);const closeBtns=el('div',{class:'modal-btns'});closeBtns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(closeBtns);});}}
+,
   ];
 
   const _visibleChecks=checks.filter(chk=>{
@@ -20194,7 +20311,7 @@ function renderVCSHealth(c) {
       if(!key) throw new Error('No API key configured — go to Settings → AI');
       const r=await fetch('https://api.anthropic.com/v1/messages',{
         method:'POST',
-        headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json'},
+        headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
         body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:10,messages:[{role:'user',content:'ping'}]})
       });
       if(r.status===401) throw new Error('Invalid API key (401)');
