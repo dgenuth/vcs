@@ -3021,6 +3021,16 @@ function prependStructuredNote(vendor, content, tag) {
   const entry = formatNewNoteEntry(content, tag, author);
   const sep = vendor.notes && vendor.notes.trim() ? '\n---\n' : '';
   vendor.notes = entry + sep + (vendor.notes || '');
+  // Also add to _notesLog for structured display
+  if (!vendor._notesLog) vendor._notesLog = [];
+  vendor._notesLog.unshift({
+    ts: new Date().toISOString(),
+    date: isoDate(new Date()),
+    user: USER.email || USER.name || '',
+    type: tag || 'general',
+    text: content.trim()
+  });
+  if (vendor._notesLog.length > 500) vendor._notesLog.length = 500;
 }
 
 // ─── Original note functions (updated to use structured format) ───────────────
@@ -4381,6 +4391,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       body.appendChild(cSec);
       if (hasPermission('editNotes') || ['admin','procurement','manager','cro'].includes(USER.role)) addNotesSection(body, psdVendor, '📝 Contract Notes (Prime Source Direct)');
     }
+    // ── Communications Intelligence — shown for all vendor types including ITW ──
+    renderCommPanel(body, vendor);
     showDetailPanel(); return;
   }
 
@@ -5188,162 +5200,165 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   // (appended in the right position below)
 
   // ── Block 6: Communications Intelligence ──────────────────────────────────────
-  {
-    if(!S._commPanelOpen) S._commPanelOpen={};
-    if(!S._commCache) S._commCache={};
-    if(!S._commTab) S._commTab={};
-    const _cpKey=vendor.name;
-    const _cpOpen=S._commPanelOpen[_cpKey]===true;
-    const commSec=el('div',{style:{marginTop:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
-    const commHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'6px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none',borderBottom:_cpOpen?'1px solid var(--border)':'none'},
-      onclick(e){e.stopPropagation();S._commPanelOpen[_cpKey]=!_cpOpen;refreshDetailIfOpen(vendor);}});
-    commHdr.appendChild(el('span',{style:{fontSize:'11px'}},'📬'));
-    commHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Communications'));
-    commHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'collapsed — click to expand'));
-    commHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_cpOpen?'▲':'▼'));
-    commSec.appendChild(commHdr);
-    if(_cpOpen){
-      const _cpTab=S._commTab[_cpKey]||'emails';
-      const tabBar=el('div',{style:{display:'flex',gap:'2px',padding:'6px 10px 0',background:'var(--card)',borderBottom:'1px solid var(--border)'}});
-      ['emails','calls','notes'].forEach(t=>{
-        const lbl={emails:'Emails',calls:'Calls',notes:'Notes & Texts'}[t];
-        const active=_cpTab===t;
-        tabBar.appendChild(el('button',{style:{padding:'3px 10px',fontSize:'9px',fontWeight:'600',border:'none',cursor:'pointer',borderRadius:'3px 3px 0 0',background:active?'var(--blue)':'transparent',color:active?'white':'var(--muted)'},
-          onclick(e){e.stopPropagation();S._commTab[_cpKey]=t;refreshDetailIfOpen(vendor);}},lbl));
-      });
-      commSec.appendChild(tabBar);
-      const commBody=el('div',{style:{padding:'10px',maxHeight:'280px',overflowY:'auto'}});
-      if(_cpTab==='emails'){
-        const msToken=getMSToken();
-        const msExpiry=getMSTokenExp();
-        const msValid=msToken&&Date.now()<msExpiry-10000;
-        if(!msValid){
-          commBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'8px 0'}},
-            'Connect Microsoft 365 in Settings to see email history.'));
-          const connBtn=el('button',{class:'btn-xs btn-blue',style:{marginTop:'6px'},
-            onclick(e){e.stopPropagation();S.view='settings';render();}});
-          connBtn.textContent='⚙ Settings → Microsoft 365';
-          commBody.appendChild(connBtn);
-        } else if(S._commCache[_cpKey]){
-          const msgs=S._commCache[_cpKey];
-          if(!msgs.length){
-            commBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'No emails found for "'+vendor.name+'".'));
-            if(vendor.email) commBody.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)'}},'Also searched by domain: '+vendor.email.split('@')[1]));
-            const retryBtn=el('button',{class:'btn-xs btn-ghost',style:{marginTop:'4px'},onclick(e){e.stopPropagation();delete S._commCache[_cpKey];refreshDetailIfOpen(vendor);}},'🔄 Retry Search');
-            commBody.appendChild(retryBtn);
-          } else if(msgs[0]?._error) {
-            commBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--red)',padding:'6px 0',fontWeight:'600'}},'⚠ Email fetch error:'));
-            commBody.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'8px'}},msgs[0]._error));
-            const retryBtn=el('button',{class:'btn-xs btn-primary',onclick(e){e.stopPropagation();delete S._commCache[_cpKey];refreshDetailIfOpen(vendor);}},'🔄 Retry');
-            commBody.appendChild(retryBtn);
-          } else {
-            const countHdr=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'6px',display:'flex',justifyContent:'space-between',alignItems:'center'}});
-            countHdr.appendChild(el('span',{},msgs.length+' email'+(msgs.length!==1?'s':'')+' found'));
-            const rfBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){e.stopPropagation();delete S._commCache[_cpKey];refreshDetailIfOpen(vendor);}}, '🔄 Refresh');
-            countHdr.appendChild(rfBtn);
-            commBody.appendChild(countHdr);
-            msgs.forEach(m=>{
-              const row=el('div',{style:{padding:'6px 0',borderBottom:'1px solid var(--border)',fontSize:'9px'}});
-              row.appendChild(el('div',{style:{fontWeight:'600',color:'var(--text)',marginBottom:'2px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},m.subject||'(no subject)'));
-              const meta=el('div',{style:{color:'var(--muted)',marginBottom:'2px',display:'flex',gap:'8px',flexWrap:'wrap'}});
-              meta.appendChild(el('span',{},m.from||''));
-              meta.appendChild(el('span',{style:{marginLeft:'auto'}},m.date||''));
-              row.appendChild(meta);
-              if(m.preview)row.appendChild(el('div',{style:{color:'var(--muted)',fontStyle:'italic',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},m.preview));
-              commBody.appendChild(row);
-            });
-          }
-        } else {
-          const spinner=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'8px 0'}},'⏳ Loading emails...');
-          commBody.appendChild(spinner);
-          (async()=>{
-            try{
-              // Graph API: $search and $orderby cannot be combined — use $search only
-              // Search by vendor name in subject/body; also try vendor email domain as fallback
-              const nameQ = encodeURIComponent('"'+vendor.name+'"');
-              const url = 'https://graph.microsoft.com/v1.0/me/messages'
-                + '?$search='+nameQ
-                + '&$top=25'
-                + '&$select=subject,from,receivedDateTime,bodyPreview,toRecipients';
-              const resp = await fetch(url, {
-                headers:{Authorization:'Bearer '+msToken, ConsistencyLevel:'eventual'}
-              });
-              if (!resp.ok) {
-                const errData = await resp.json().catch(()=>({}));
-                throw new Error('Graph API error ' + resp.status + ': ' + (errData?.error?.message || resp.statusText));
-              }
-              const d = await resp.json();
-              let msgs = (d.value||[]).map(m=>({
-                subject: m.subject,
-                from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || '',
-                fromAddr: m.from?.emailAddress?.address || '',
-                date: m.receivedDateTime ? new Date(m.receivedDateTime).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '',
-                dateRaw: m.receivedDateTime || '',
-                preview: (m.bodyPreview||'').slice(0,120)
-              }));
-              // Sort by date descending (Graph doesn't allow $orderby with $search)
-              msgs.sort((a,b) => (b.dateRaw||'').localeCompare(a.dateRaw||''));
-              // If vendor has an email address on file, also search by sender domain
-              if (!msgs.length && vendor.email) {
-                const domain = (vendor.email.split('@')[1]||'').toLowerCase();
-                if (domain && domain.length > 3) {
-                  const domainQ = encodeURIComponent('"@'+domain+'"');
-                  const resp2 = await fetch('https://graph.microsoft.com/v1.0/me/messages'
-                    + '?$search='+domainQ+'&$top=15&$select=subject,from,receivedDateTime,bodyPreview',
-                    {headers:{Authorization:'Bearer '+msToken, ConsistencyLevel:'eventual'}});
-                  if (resp2.ok) {
-                    const d2 = await resp2.json();
-                    msgs = (d2.value||[]).map(m=>({
-                      subject: m.subject,
-                      from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || '',
-                      fromAddr: m.from?.emailAddress?.address || '',
-                      date: m.receivedDateTime ? new Date(m.receivedDateTime).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '',
-                      dateRaw: m.receivedDateTime || '',
-                      preview: (m.bodyPreview||'').slice(0,120)
-                    })).sort((a,b)=>(b.dateRaw||'').localeCompare(a.dateRaw||''));
-                  }
-                }
-              }
-              S._commCache[_cpKey] = msgs;
-            } catch(e) {
-              console.warn('[VCS] Comm email fetch error:', e.message);
-              // Store error message so UI can display it instead of silent empty
-              S._commCache[_cpKey] = [{_error: e.message}];
-            }
-            refreshDetailIfOpen(vendor);
-          })();
-        }
-      } else if(_cpTab==='calls'){
-        commBody.appendChild(el('div',{style:{textAlign:'center',padding:'20px',color:'var(--muted)',fontSize:'10px'}},'📞 Fathom call transcripts — coming soon'));
-        commBody.appendChild(el('div',{style:{textAlign:'center',fontSize:'9px',color:'var(--muted)',marginTop:'4px'}},'When Fathom integration is available, call transcripts will appear here'));
-      } else {
-        // Notes & Texts timeline
-        if(!vendor.notes||!vendor.notes.trim()){commBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'No notes recorded for this vendor.'));}
-        else{
-          const notesWrap=el('div',{class:'notes-area'});renderNotesStr(notesWrap,vendor.notes);commBody.appendChild(notesWrap);
-        }
-        const notesLog=vendor._notesLog||[];
-        if(notesLog.length){
-          commBody.appendChild(el('div',{style:{fontWeight:'600',fontSize:'9px',color:'var(--muted)',marginTop:'8px',marginBottom:'4px'}},'Structured note log:'));
-          notesLog.slice().reverse().forEach(n=>{
-            const row=el('div',{style:{padding:'4px 0',borderBottom:'1px solid var(--border)',fontSize:'9px'}});
-            const meta=el('div',{style:{color:'var(--muted)',marginBottom:'2px',display:'flex',gap:'8px'}});
-            meta.appendChild(el('span',{style:{fontWeight:'600',color:'var(--blue)'}},n.type||'note'));
-            meta.appendChild(el('span',{},(n.ts||n.date)?new Date(n.ts||n.date).toLocaleDateString('en-US',{month:'short',day:'numeric'}):''));
-            meta.appendChild(el('span',{},(n.user||'').split('@')[0]));
-            row.appendChild(meta);
-            row.appendChild(el('div',{style:{color:'var(--text)'}},n.text||''));
-            commBody.appendChild(row);
-          });
-        }
-      }
-      commSec.appendChild(commBody);
-    }
-    body.appendChild(commSec);
-  }
+  renderCommPanel(body, vendor);
 
   showDetailPanel();
 }
+
+function renderCommPanel(body, vendor) {
+  if(!S._commPanelOpen) S._commPanelOpen={};
+  if(!S._commCache) S._commCache={};
+  if(!S._commTab) S._commTab={};
+  const _cpKey=vendor.name;
+  const _cpOpen=S._commPanelOpen[_cpKey]===true;
+  const commSec=el('div',{style:{marginTop:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
+  const commHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'6px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none',borderBottom:_cpOpen?'1px solid var(--border)':'none'},
+    onclick(e){e.stopPropagation();S._commPanelOpen[_cpKey]=!_cpOpen;refreshDetailIfOpen(vendor);}});
+  commHdr.appendChild(el('span',{style:{fontSize:'11px'}},'📬'));
+  commHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Communications'));
+  commHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'collapsed — click to expand'));
+  commHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_cpOpen?'▲':'▼'));
+  commSec.appendChild(commHdr);
+  if(_cpOpen){
+    const _cpTab=S._commTab[_cpKey]||'emails';
+    const tabBar=el('div',{style:{display:'flex',gap:'2px',padding:'6px 10px 0',background:'var(--card)',borderBottom:'1px solid var(--border)'}});
+    ['emails','calls','notes'].forEach(t=>{
+      const lbl={emails:'Emails',calls:'Calls',notes:'Notes & Texts'}[t];
+      const active=_cpTab===t;
+      tabBar.appendChild(el('button',{style:{padding:'3px 10px',fontSize:'9px',fontWeight:'600',border:'none',cursor:'pointer',borderRadius:'3px 3px 0 0',background:active?'var(--blue)':'transparent',color:active?'white':'var(--muted)'},
+        onclick(e){e.stopPropagation();S._commTab[_cpKey]=t;refreshDetailIfOpen(vendor);}},lbl));
+    });
+    commSec.appendChild(tabBar);
+    const commBody=el('div',{style:{padding:'10px',maxHeight:'280px',overflowY:'auto'}});
+    if(_cpTab==='emails'){
+      const msToken=getMSToken();
+      const msExpiry=getMSTokenExp();
+      const msValid=msToken&&Date.now()<msExpiry-10000;
+      if(!msValid){
+        commBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'8px 0'}},
+          'Connect Microsoft 365 in Settings to see email history.'));
+        const connBtn=el('button',{class:'btn-xs btn-blue',style:{marginTop:'6px'},
+          onclick(e){e.stopPropagation();S.view='settings';render();}});
+        connBtn.textContent='⚙ Settings → Microsoft 365';
+        commBody.appendChild(connBtn);
+      } else if(S._commCache[_cpKey]){
+        const msgs=S._commCache[_cpKey];
+        if(!msgs.length){
+          commBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'No emails found for "'+vendor.name+'".'));
+          if(vendor.email) commBody.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)'}},'Also searched by domain: '+vendor.email.split('@')[1]));
+          const retryBtn=el('button',{class:'btn-xs btn-ghost',style:{marginTop:'4px'},onclick(e){e.stopPropagation();delete S._commCache[_cpKey];refreshDetailIfOpen(vendor);}},'🔄 Retry Search');
+          commBody.appendChild(retryBtn);
+        } else if(msgs[0]?._error) {
+          commBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--red)',padding:'6px 0',fontWeight:'600'}},'⚠ Email fetch error:'));
+          commBody.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'8px'}},msgs[0]._error));
+          const retryBtn=el('button',{class:'btn-xs btn-primary',onclick(e){e.stopPropagation();delete S._commCache[_cpKey];refreshDetailIfOpen(vendor);}},'🔄 Retry');
+          commBody.appendChild(retryBtn);
+        } else {
+          const countHdr=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'6px',display:'flex',justifyContent:'space-between',alignItems:'center'}});
+          countHdr.appendChild(el('span',{},msgs.length+' email'+(msgs.length!==1?'s':'')+' found'));
+          const rfBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){e.stopPropagation();delete S._commCache[_cpKey];refreshDetailIfOpen(vendor);}}, '🔄 Refresh');
+          countHdr.appendChild(rfBtn);
+          commBody.appendChild(countHdr);
+          msgs.forEach(m=>{
+            const row=el('div',{style:{padding:'6px 0',borderBottom:'1px solid var(--border)',fontSize:'9px'}});
+            row.appendChild(el('div',{style:{fontWeight:'600',color:'var(--text)',marginBottom:'2px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},m.subject||'(no subject)'));
+            const meta=el('div',{style:{color:'var(--muted)',marginBottom:'2px',display:'flex',gap:'8px',flexWrap:'wrap'}});
+            meta.appendChild(el('span',{},m.from||''));
+            meta.appendChild(el('span',{style:{marginLeft:'auto'}},m.date||''));
+            row.appendChild(meta);
+            if(m.preview)row.appendChild(el('div',{style:{color:'var(--muted)',fontStyle:'italic',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},m.preview));
+            commBody.appendChild(row);
+          });
+        }
+      } else {
+        const spinner=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'8px 0'}},'⏳ Loading emails...');
+        commBody.appendChild(spinner);
+        (async()=>{
+          try{
+            // Graph API: $search and $orderby cannot be combined — use $search only
+            // Search by vendor name in subject/body; also try vendor email domain as fallback
+            const nameQ = encodeURIComponent('"'+vendor.name+'"');
+            const url = 'https://graph.microsoft.com/v1.0/me/messages'
+              + '?$search='+nameQ
+              + '&$top=25'
+              + '&$select=subject,from,receivedDateTime,bodyPreview,toRecipients';
+            const resp = await fetch(url, {
+              headers:{Authorization:'Bearer '+msToken, ConsistencyLevel:'eventual'}
+            });
+            if (!resp.ok) {
+              const errData = await resp.json().catch(()=>({}));
+              throw new Error('Graph API error ' + resp.status + ': ' + (errData?.error?.message || resp.statusText));
+            }
+            const d = await resp.json();
+            let msgs = (d.value||[]).map(m=>({
+              subject: m.subject,
+              from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || '',
+              fromAddr: m.from?.emailAddress?.address || '',
+              date: m.receivedDateTime ? new Date(m.receivedDateTime).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '',
+              dateRaw: m.receivedDateTime || '',
+              preview: (m.bodyPreview||'').slice(0,120)
+            }));
+            // Sort by date descending (Graph doesn't allow $orderby with $search)
+            msgs.sort((a,b) => (b.dateRaw||'').localeCompare(a.dateRaw||''));
+            // If vendor has an email address on file, also search by sender domain
+            if (!msgs.length && vendor.email) {
+              const domain = (vendor.email.split('@')[1]||'').toLowerCase();
+              if (domain && domain.length > 3) {
+                const domainQ = encodeURIComponent('"@'+domain+'"');
+                const resp2 = await fetch('https://graph.microsoft.com/v1.0/me/messages'
+                  + '?$search='+domainQ+'&$top=15&$select=subject,from,receivedDateTime,bodyPreview',
+                  {headers:{Authorization:'Bearer '+msToken, ConsistencyLevel:'eventual'}});
+                if (resp2.ok) {
+                  const d2 = await resp2.json();
+                  msgs = (d2.value||[]).map(m=>({
+                    subject: m.subject,
+                    from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || '',
+                    fromAddr: m.from?.emailAddress?.address || '',
+                    date: m.receivedDateTime ? new Date(m.receivedDateTime).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '',
+                    dateRaw: m.receivedDateTime || '',
+                    preview: (m.bodyPreview||'').slice(0,120)
+                  })).sort((a,b)=>(b.dateRaw||'').localeCompare(a.dateRaw||''));
+                }
+              }
+            }
+            S._commCache[_cpKey] = msgs;
+          } catch(e) {
+            console.warn('[VCS] Comm email fetch error:', e.message);
+            // Store error message so UI can display it instead of silent empty
+            S._commCache[_cpKey] = [{_error: e.message}];
+          }
+          refreshDetailIfOpen(vendor);
+        })();
+      }
+    } else if(_cpTab==='calls'){
+      commBody.appendChild(el('div',{style:{textAlign:'center',padding:'20px',color:'var(--muted)',fontSize:'10px'}},'📞 Fathom call transcripts — coming soon'));
+      commBody.appendChild(el('div',{style:{textAlign:'center',fontSize:'9px',color:'var(--muted)',marginTop:'4px'}},'When Fathom integration is available, call transcripts will appear here'));
+    } else {
+      // Notes & Texts timeline
+      if(!vendor.notes||!vendor.notes.trim()){commBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'No notes recorded for this vendor.'));}
+      else{
+        const notesWrap=el('div',{class:'notes-area'});renderNotesStr(notesWrap,vendor.notes);commBody.appendChild(notesWrap);
+      }
+      const notesLog=vendor._notesLog||[];
+      if(notesLog.length){
+        commBody.appendChild(el('div',{style:{fontWeight:'600',fontSize:'9px',color:'var(--muted)',marginTop:'8px',marginBottom:'4px'}},'Structured note log:'));
+        notesLog.slice().reverse().forEach(n=>{
+          const row=el('div',{style:{padding:'4px 0',borderBottom:'1px solid var(--border)',fontSize:'9px'}});
+          const meta=el('div',{style:{color:'var(--muted)',marginBottom:'2px',display:'flex',gap:'8px'}});
+          meta.appendChild(el('span',{style:{fontWeight:'600',color:'var(--blue)'}},n.type||'note'));
+          meta.appendChild(el('span',{},(n.ts||n.date)?new Date(n.ts||n.date).toLocaleDateString('en-US',{month:'short',day:'numeric'}):''));
+          meta.appendChild(el('span',{},(n.user||'').split('@')[0]));
+          row.appendChild(meta);
+          row.appendChild(el('div',{style:{color:'var(--text)'}},n.text||''));
+          commBody.appendChild(row);
+        });
+      }
+    }
+    commSec.appendChild(commBody);
+  }
+  body.appendChild(commSec);
+}
+
 
 // ─── Google Drive Integration ─────────────────────────────────────────────────
 // ─── Google Drive OAuth (GIS) ────────────────────────────────────────────────
@@ -5831,6 +5846,8 @@ function saveSettings() {
     if (S.settings.googleClientId) sessionStorage.setItem('vcs_gClientId_bk', S.settings.googleClientId);
     // Save dbHiddenCols from S (not S.settings) — it lives on the main state
     if (S.dbHiddenCols instanceof Set) toSave.dbHiddenCols = [...S.dbHiddenCols];
+    // Save vendorAliases from S (not S.settings) — global but needs localStorage backup
+    if (S.vendorAliases && Object.keys(S.vendorAliases).length) toSave.vendorAliases = S.vendorAliases;
     localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(toSave));
     // Auto-sync to Drive 3s after any settings change (debounced)
     debouncedDriveSync();
@@ -8928,8 +8945,12 @@ function renderVendorDB(c) {
         _noteDot.title='Has existing notes';
         const _setNoteBtn2=(hasNotes,open)=>{
           noteBtn.textContent=open?'📝▼':'📝';
-          noteBtn.style.width='24px';
-          _noteDot.style.display=hasNotes&&!open?'inline-block':'none';
+          noteBtn.style.width='22px';
+          // Indicate has-notes via button background tint — no external dot, no layout shift
+          noteBtn.style.background = hasNotes && !open ? 'rgba(79,124,255,.15)' : '';
+          noteBtn.style.borderColor = hasNotes && !open ? 'rgba(79,124,255,.4)' : '';
+          noteBtn.title = hasNotes ? 'Has notes — click to view/add' : 'Quick note';
+          _noteDot.style.display = 'none'; // dot hidden — using button color instead
         };
         _setNoteBtn2(!!v.notes,false);
         noteBtn.addEventListener('click',e=>{
@@ -20266,6 +20287,54 @@ function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
   c.appendChild(card);
 }
 
+function openWatcherFixModal() {
+  openModal(function(body) {
+    body.appendChild(el('h3',{style:{marginTop:'0',fontSize:'13px'}},'🔧 Data Watcher Setup'));
+    body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginTop:'0',marginBottom:'10px'}},
+      'The Watcher needs a connected Google Drive account and a Drive File ID. Follow the steps below.'));
+    var steps = el('div',{style:{display:'flex',flexDirection:'column',gap:'8px',marginBottom:'12px'}});
+    var stepData = [
+      ['1. Connect Google Drive','Grant VCS access to your Google Drive so it can read the vendor file.','Connect Drive',function(){
+        closeModal(); localStorage.setItem('vcs_s_drive','0'); S.view='settings'; render();
+      }],
+      ['2. Set Drive File ID','Paste your Vendor Catalogue file ID (from the Drive URL) in Google Drive settings.','Go to Settings',function(){
+        closeModal(); localStorage.setItem('vcs_s_drive','0'); S.view='settings'; render();
+      }],
+      ['3. VCS Watcher Script','The PS1 watcher script must be running on your Windows server. Use the prompt below for help.',null,null]
+    ];
+    stepData.forEach(function(item, idx) {
+      var title=item[0], desc=item[1], btnLabel=item[2], fn=item[3];
+      var s = el('div',{style:{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'5px',padding:'8px 10px'}});
+      var hRow = el('div',{style:{display:'flex',gap:'8px',alignItems:'flex-start',marginBottom:'4px'}});
+      hRow.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',flex:'1'}},title));
+      if (fn) hRow.appendChild(el('button',{class:'btn-xs btn-primary',onclick:fn},btnLabel));
+      s.appendChild(hRow);
+      s.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:idx===2?'6px':'0'}},desc));
+      if (idx === 2) {
+        var promptText = 'Help me check if the VCS Watcher PowerShell script is running on my Windows server. ' +
+          'The script watches a Google Drive folder and syncs files to \\\\\\\\CareTechGroup.info\\\\Shares\\\\GPOSecure. ' +
+          'It is scheduled via Task Scheduler. Tell me how to verify it is running, check its logs, and restart it if needed.';
+        var promptBox = el('div',{style:{background:'rgba(79,124,255,.05)',border:'1px solid rgba(79,124,255,.2)',
+          borderRadius:'3px',padding:'6px 8px',fontSize:'8px',color:'var(--muted)',fontFamily:'monospace',
+          lineHeight:'1.5',marginBottom:'4px',userSelect:'all'}}, promptText);
+        s.appendChild(promptBox);
+        s.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick:function(){
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(promptBox.textContent)
+              .then(function(){toast('Prompt copied — paste it into a new Claude chat','#22c55e');})
+              .catch(function(){toast('Copy the text above manually','#f59e0b');});
+          } else { toast('Copy the text above manually','#f59e0b'); }
+        }},'📋 Copy Prompt for Claude'));
+      }
+      steps.appendChild(s);
+    });
+    body.appendChild(steps);
+    var closeBtns = el('div',{class:'modal-btns'});
+    closeBtns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));
+    body.appendChild(closeBtns);
+  });
+}
+
 function renderVCSHealth(c) {
   c.innerHTML='';
   const wrap=el('div',{style:{maxWidth:'900px',margin:'0 auto',padding:'12px 0'}});
@@ -20301,7 +20370,7 @@ function renderVCSHealth(c) {
     // H2: Renzo key validation
     {label:'Renzo Key Valid',icon:'✉',roles:'admin',test:()=>!!(S.settings?.renzoApiKey&&S.settings.renzoApiKey.length>10),pass:'Renzo key is '+S.settings?.renzoApiKey?.length+' chars — appears valid',fail:'Renzo key missing or too short',fix:()=>{S.view='settings';render();}},
     // H3: Data watcher status
-    {label:'Data Watcher',icon:'👁',roles:'admin',test:()=>!!(S.settings?.driveFileId&&window.GDriveToken),pass:'Watcher active — Drive connected, file ID set',fail:'Watcher inactive — connect Drive and configure file ID to enable auto-reload',fixLabel:'🔧 Fix Watcher',fix:()=>{openModal(body=>{body.appendChild(el('h3',{style:{marginTop:'0',fontSize:'13px'}},'🔧 Data Watcher Setup'));body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginTop:'0'}},'The Watcher needs two things: a Google Drive File ID (the Vendor Catalogue) and a connected Drive account.'));const steps=el('div',{style:{display:'flex',flexDirection:'column',gap:'8px',marginBottom:'12px'}});[['1. Connect Google Drive','Connect your Drive account in Settings → Integrations so VCS can read the file.',()=>{closeModal();S.view='settings';S._settingsTab='integrations';render();},'Connect Drive'],['2. Set Drive File ID','Enter the Google Sheet/XLSM file ID for your Vendor Catalogue.',()=>{closeModal();S.view='settings';S._settingsTab='integrations';render();},'Go to Settings'],['3. Check Watcher Script','The VCS Watcher PS1 script must be running on the server and writing the lock file to Drive.',null,null]].forEach(([title,desc,fn,btnLabel])=>{const s=el('div',{style:{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'5px',padding:'8px 10px'}});s.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',marginBottom:'3px'}},title));s.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom: fn?'6px':'0'}},desc));if(fn) s.appendChild(el('button',{class:'btn-xs btn-primary',onclick:fn},btnLabel));steps.appendChild(s);});body.appendChild(steps);const closeBtns=el('div',{class:'modal-btns'});closeBtns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(closeBtns);});}}
+    {label:'Data Watcher',icon:'👁',roles:'admin',test:()=>!!(S.settings?.driveFileId&&window.GDriveToken),pass:'Watcher active — Drive connected, file ID set',fail:'Watcher inactive — connect Drive and configure file ID to enable auto-reload',fixLabel:'🔧 Fix Watcher',fix:()=>openWatcherFixModal()}
 ,
   ];
 
@@ -21860,7 +21929,7 @@ function renderSettings(c) {
     const tenantId = S.settings.msGraphTenantId || tidIn.value.trim();
     if (!clientId || !tenantId) { toast('Enter Client ID and Tenant ID first','#f59e0b'); return; }
     const redirectUri = encodeURIComponent(window.location.origin + window.location.pathname);
-    const scope = encodeURIComponent('Calendars.ReadWrite offline_access openid profile');
+    const scope = encodeURIComponent('Calendars.ReadWrite Mail.Read Mail.ReadWrite offline_access openid profile');
     const state = btoa(JSON.stringify({ ts: Date.now() }));
     localStorage.setItem('vcs_ms_oauth_state', state);
     localStorage.setItem('vcs_ms_clientid_temp', clientId);
@@ -23405,7 +23474,9 @@ async function saveVendorDriveAlias(vendorName, aliasFolder, container) {
   const key = normName(vendorName);
   S.vendorAliases[key] = aliasFolder;
   toast('✓ Alias saved — "' + vendorName + '" → "' + aliasFolder + '"');
-  // Persist to Drive config
+  // Persist to localStorage immediately (survives reload even without Drive)
+  saveSettings();
+  // Also persist to Drive config
   try {
     await saveConfigToDrive();
   } catch(e) {
@@ -23415,6 +23486,9 @@ async function saveVendorDriveAlias(vendorName, aliasFolder, container) {
   container._cachedFiles = null;
   container._responseData = null;
   await loadVendorContractFiles(vendorName, container);
+  // Refresh the full vendor panel so Drive folder alias banner appears
+  const _vendorObj = (S.vendors || []).find(v => normName(v.name) === normName(vendorName));
+  if (_vendorObj) refreshDetailIfOpen(_vendorObj);
 }
 
 async function renderFuzzyAliasFinder(container, vendorName, lastResult) {
@@ -24795,7 +24869,7 @@ async function ensureMSToken() {
       'https://login.microsoftonline.com/' + tenantId + '/oauth2/v2.0/token',
       { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
         body: new URLSearchParams({ client_id:clientId, grant_type:'refresh_token',
-          refresh_token:refresh, scope:'Calendars.ReadWrite offline_access openid profile' }) }
+          refresh_token:refresh, scope:'Calendars.ReadWrite Mail.Read Mail.ReadWrite offline_access openid profile' }) }
     );
     const td = await resp.json();
     if (td.access_token) {
@@ -24827,7 +24901,7 @@ async function ensureMSToken() {
       'https://login.microsoftonline.com/' + tenantId + '/oauth2/v2.0/token',
       { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
         body: new URLSearchParams({client_id:clientId, grant_type:'authorization_code',
-          code, redirect_uri:redirectUri, scope:'Calendars.ReadWrite offline_access openid profile',
+          code, redirect_uri:redirectUri, scope:'Calendars.ReadWrite Mail.Read Mail.ReadWrite offline_access openid profile',
           code_verifier: localStorage.getItem('vcs_ms_code_verifier') || ''}) }
     );
     localStorage.removeItem('vcs_ms_code_verifier');
