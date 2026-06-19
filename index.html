@@ -11791,7 +11791,7 @@ function renderChecklist(c) {
     toast('✓ Checklist saved','var(--green)');
     const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}
   }},'💾 Save'));
-  // SF Task log button — shown after save if SF is connected
+  // SF Log button — shown after save if SF is connected
   if(USER.sfToken&&S._clSavedFacility&&S._clSavedFacility===S._clLastFacility){
     const sfLogBtn=el('button',{class:'btn-xs btn-ghost',style:{color:'var(--blue)',borderColor:'rgba(79,124,255,.3)'},onclick:async function(){
       this.disabled=true;this.textContent='⏳ Logging...';
@@ -11799,19 +11799,51 @@ function renderChecklist(c) {
       const _sfFacEsc=_sfFac.replace(/'/g,"\\'").slice(0,60);
       const accRes=await sfQuery("SELECT Id,Name FROM Account WHERE Name LIKE '%"+_sfFacEsc+"%' LIMIT 3");
       const accId=accRes?.records?.[0]?.Id;
-      const goWithLines=Object.entries(S._clGoWith||{}).filter(([,v])=>v).map(([k,v])=>'  • '+k+': '+v).join('\n');
-      const answerLines=Object.entries(S._clAnswers||{}).filter(([k,v])=>v&&k.startsWith(_sfFac+'_ans_')).map(([k,v])=>'  '+k.replace(_sfFac+'_ans_','')+':\n    '+v).join('\n');
-      const desc='Facility: '+_sfFac+'\nRep: '+(S._checklistRep||USER.name||'')+'\n\nVendor Alignments:\n'+(goWithLines||'  (none entered)')+(answerLines?'\n\nConsultant Answers:\n'+answerLines:'');
-      const taskObj={Subject:'Vendor Coverage Review — '+_sfFac,Description:desc,Status:'Completed',ActivityDate:new Date().toISOString().slice(0,10)};
-      if(accId)taskObj.WhatId=accId;
+      // Build full checklist payload
+      const goWithLines=Object.entries(S._clGoWith||{}).filter(([,v])=>v).map(([k,v])=>'  • '+k.replace(_sfFac+'_','')+': '+v).join('\n');
+      const answerLines=Object.entries(S._clAnswers||{}).filter(([k,v])=>v&&k.startsWith(_sfFac+'_ans_')).map(([k,v])=>'  Q: '+k.replace(_sfFac+'_ans_','').replace(/_/g,' ')+'\n  A: '+v).join('\n');
+      const statusLines=Object.entries(S._clStatus||{}).filter(([k,v])=>v&&k.startsWith(_sfFac+'_')).map(([k,v])=>'  '+k.replace(_sfFac+'_','')+': '+v).join('\n');
+      const desc='Facility: '+_sfFac+'\nRep: '+(S._checklistRep||USER.name||'')+'\nDate: '+new Date().toLocaleDateString()+'\n\n'
+        +'=== VENDOR ALIGNMENTS ===\n'+(goWithLines||'  (none selected)')+'\n\n'
+        +'=== STATUS BY CATEGORY ===\n'+(statusLines||'  (none set)')+'\n\n'
+        +'=== QUESTIONS & ANSWERS ===\n'+(answerLines||'  (none answered)');
+      const taskObj={Subject:'Vendor Coverage Review — '+_sfFac,Description:desc,Status:'Completed',
+        ActivityDate:new Date().toISOString().slice(0,10),Priority:'Normal'};
+      if(accId) taskObj.WhatId=accId;
       try{
-        const r=await fetch(USER.sfInstance+'/services/data/v59.0/sobjects/Task/',{method:'POST',headers:{'Authorization':'Bearer '+USER.sfToken,'Content-Type':'application/json'},body:JSON.stringify(taskObj)});
-        if(r.ok){const j=await r.json();if(j.success||j.id){toast('✓ SF Task logged'+(accId?' on account':' (no account linked)'),'var(--green)');this.textContent='✅ Logged';}else{toast('SF error: '+(j[0]?.message||'unknown'),'var(--red)');this.disabled=false;this.textContent='📎 Log in Salesforce';}}
-        else{toast('SF error ('+r.status+')','var(--red)');this.disabled=false;this.textContent='📎 Log in Salesforce';}
+        // 1. Log a Task
+        const r=await fetch(USER.sfInstance+'/services/data/v59.0/sobjects/Task/',
+          {method:'POST',headers:{'Authorization':'Bearer '+USER.sfToken,'Content-Type':'application/json'},body:JSON.stringify(taskObj)});
+        const j=await r.json();
+        // 2. If Account found, also save checklist JSON as a ContentNote linked to Account
+        if(accId){
+          const noteTitle='VCS Checklist — '+_sfFac+' — '+new Date().toLocaleDateString();
+          const noteContent=btoa(unescape(encodeURIComponent(JSON.stringify({
+            facility:_sfFac, rep:S._checklistRep||USER.name||'', date:new Date().toISOString(),
+            goWith:S._clGoWith||{}, status:S._clStatus||{}, answers:S._clAnswers||{}
+          },null,2))));
+          try{
+            const noteResp=await fetch(USER.sfInstance+'/services/data/v59.0/sobjects/ContentNote/',
+              {method:'POST',headers:{'Authorization':'Bearer '+USER.sfToken,'Content-Type':'application/json'},
+               body:JSON.stringify({Title:noteTitle,Content:noteContent})});
+            const noteJ=await noteResp.json();
+            if(noteJ.id){
+              // Link ContentNote to Account
+              await fetch(USER.sfInstance+'/services/data/v59.0/sobjects/ContentDocumentLink/',
+                {method:'POST',headers:{'Authorization':'Bearer '+USER.sfToken,'Content-Type':'application/json'},
+                 body:JSON.stringify({ContentDocumentId:noteJ.id,LinkedEntityId:accId,ShareType:'V',Visibility:'AllUsers'})});
+            }
+          }catch(_noteErr){console.warn('[VCS] SF ContentNote save failed:',_noteErr.message);}
+        }
+        if(r.ok&&(j.success||j.id)){
+          toast('✓ SF Task logged'+(accId?' + checklist saved on account':''),'#22c55e');
+          this.textContent='✓ Logged in SF';
+        } else {
+          toast('SF error ('+r.status+')','var(--red)');this.disabled=false;this.textContent='📎 Log in Salesforce';
+        }
       }catch(e2){toast('SF error: '+e2.message,'var(--red)');this.disabled=false;this.textContent='📎 Log in Salesforce';}
     }},'📎 Log in Salesforce');
     custRow.appendChild(sfLogBtn);
-  }
   // SF account autocomplete for facility input
   const sfAccountObjs=(S._sfBoardData?.accounts||SPEND_STATE?.data?.accounts||[]);
   const sfAccounts=sfAccountObjs.map(a=>({name:a.Name||a.name||'',city:a.BillingCity||a.billingCity||'',state:a.BillingState||a.billingState||''})).filter(a=>a.name);
@@ -11989,10 +12021,28 @@ function renderChecklist(c) {
       });
       return {v,score,catScore};
     }).filter(r=>r.score>0);
-    // Boost Direct vendors over GPO vendors (Direct = higher admin fee for Prime Source)
-    scored.forEach(r => { if(r.v.source==='ps'||r.v.gpo==='Direct'||!r.v.gpo) r.score += 8; });
-    scored.sort((a,b)=>b.score-a.score);
-    return scored.slice(0,5);
+    // Rank by Prime Source value: admin fee % (primary), tier (secondary), Direct vs GPO (tertiary)
+    scored.forEach(r => {
+      const v = r.v;
+      // Admin fee boost — higher fee = more valuable to PS
+      const fee = parseFee ? parseFee(v.adminFee) : 0;
+      if (fee >= 5) r.score += 12;
+      else if (fee >= 3) r.score += 8;
+      else if (fee >= 1) r.score += 4;
+      // Direct / PS Direct contract = priority
+      if (v.source === 'psd' || v.gpo === 'Direct' || !v.gpo) r.score += 8;
+      // Tier boost
+      const tier = (v.tier || '').toUpperCase();
+      if (tier === 'CALL') r.score += 6;
+      else if (tier === 'EMAIL') r.score += 4;
+      else if (tier === 'REVIEW') r.score += 2;
+      // Store ranking signals for tooltip
+      r._fee = fee;
+      r._tier = tier;
+      r._isDirect = (v.source === 'psd' || v.gpo === 'Direct' || !v.gpo);
+    });
+    scored.sort((a,b) => b.score - a.score);
+    return scored.slice(0, 5);
   }
   function findVendors(label){return scoreVendors(label).map(r=>r.v);}
 
@@ -12024,9 +12074,33 @@ function renderChecklist(c) {
   PSX_CHECKLIST.forEach(section=>{
     const secDiv=el('div',{style:'margin-bottom:6px;border:1px solid var(--border);border-radius:5px;overflow:hidden'});
     const isOpen=S['_clOpen_'+section.label]!==false;
-    const secHdr=el('div',{style:{background:'var(--card)',padding:'7px 12px',display:'flex',alignItems:'center',gap:'8px',cursor:'pointer',borderBottom:isOpen?'1px solid var(--border)':'none'},onclick(){S['_clOpen_'+section.label]=!isOpen;const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}}});
-    secHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'2px'}},isOpen?'▼':'▶'));
-    secHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1',color:'var(--blue)'}},section.label));
+
+    // A2: Color-coded status badge — computed from _clStatus values for this section's items
+    const _sStatuses=section.items.map(it=>(S._clStatus||{})[_gwFac+'_'+it.label]||'');
+    const _sDone=_sStatuses.filter(s=>s==='Done').length;
+    const _sInProg=_sStatuses.filter(s=>s==='In Progress').length;
+    const _sTotal=section.items.length;
+    const _sMA=_sStatuses.filter(s=>s==='N/A').length;
+    let _statusBadge='', _statusColor='';
+    if(_sDone+_sMA===_sTotal && _sTotal>0){_statusBadge='✓ Done';_statusColor='var(--green)';}
+    else if(_sInProg>0||_sDone>0){_statusBadge='⟳ In Progress';_statusColor='var(--amber)';}
+    else if(_sStatuses.some(s=>s==='')||_sTotal===0){_statusBadge='○ Not Started';_statusColor='var(--muted)';}
+    if(_statusBadge){
+      secHdr.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'600',color:_statusColor,
+        background:_statusColor==='var(--green)'?'rgba(34,197,94,.1)':_statusColor==='var(--amber)'?'rgba(245,158,11,.1)':'rgba(100,116,139,.08)',
+        border:'1px solid '+(_statusColor==='var(--green)'?'rgba(34,197,94,.3)':_statusColor==='var(--amber)'?'rgba(245,158,11,.3)':'rgba(100,116,139,.2)'),
+        borderRadius:'10px',padding:'1px 7px',whiteSpace:'nowrap'}},_statusBadge));
+    }
+
+    // A3: Question-answered indicator — show if any answers exist for this section
+    const _sAnsKeys=section.items.filter(it=>it.q).map(it=>_gwFac+'_ans_'+it.label);
+    const _sAnsCount=_sAnsKeys.filter(k=>(S._clAnswers||{})[k]&&(S._clAnswers||{})[k].trim()).length;
+    if(_sAnsCount>0){
+      secHdr.appendChild(el('span',{title:_sAnsCount+' question'+(+_sAnsCount!==1?'s':'')+' answered in this section',
+        style:{fontSize:'8px',fontWeight:'600',color:'var(--blue)',background:'rgba(79,124,255,.1)',
+          border:'1px solid rgba(79,124,255,.25)',borderRadius:'10px',padding:'1px 7px',whiteSpace:'nowrap'}},
+        '💬 '+_sAnsCount+' answered'));
+    }
     // Coverage indicator: how many items have matching vendors + GoWith selections
     const matchCount=section.items.filter(it=>findVendors(it.label).length>0).length;
     const gwCount=section.items.filter(it=>S._clGoWith&&(S._clGoWith[_gwFac+'_'+it.label]||S._clGoWith[it.label])).length;
@@ -12068,12 +12142,23 @@ function renderChecklist(c) {
         } else {
           const vendorCol=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',alignItems:'flex-start'}});
           if(hasMatch){
-            matchVScored.forEach(({v})=>{
+            matchVScored.forEach(({v,_fee,_tier,_isDirect,score},rankIdx)=>{
               const isDirect=v.source==='psd';
-              const chip=el('div',{style:{display:'inline-flex',alignItems:'center',gap:'3px',background:isDirect?'rgba(79,124,255,.12)':'rgba(34,197,94,.1)',border:'1px solid '+(isDirect?'rgba(79,124,255,.35)':'rgba(34,197,94,.3)'),borderRadius:'3px',padding:'1px 5px',color:isDirect?'var(--blue)':'var(--green)',cursor:'pointer',fontWeight:'500',fontSize:'8px'},onclick(){openDetail(v);}});
+              const _rankNum=rankIdx+1;
+              const _tip=['#'+_rankNum+' ranked'];
+              if(_fee>0)_tip.push('Fee: '+_fee+'%');
+              if(_isDirect)_tip.push('Direct PS contract');
+              if(_tier)_tip.push('Tier: '+_tier);
+              const chip=el('div',{title:_tip.join(' | '),
+                style:{display:'inline-flex',alignItems:'center',gap:'2px',background:isDirect?'rgba(79,124,255,.12)':'rgba(34,197,94,.1)',
+                  border:'1px solid '+(isDirect?'rgba(79,124,255,.35)':'rgba(34,197,94,.3)'),
+                  borderRadius:'3px',padding:'1px 5px',color:isDirect?'var(--blue)':'var(--green)',
+                  cursor:'pointer',fontWeight:'500',fontSize:'8px'},onclick(){openDetail(v);}});
+              chip.appendChild(el('span',{style:{fontSize:'7px',color:'var(--muted)',fontWeight:'700'}},'#'+_rankNum+' '));
               const _chipName=v.name||'';
               chip.appendChild(document.createTextNode(_chipName.slice(0,20)+(_chipName.length>20?'…':'')));
-              chip.appendChild(el('span',{style:{fontSize:'7px',background:isDirect?'var(--blue)':'rgba(168,85,247,.3)',color:isDirect?'#fff':'var(--muted)',borderRadius:'2px',padding:'0 3px',marginLeft:'1px'}},isDirect?'Direct':'GPO'));
+              const _badgeLabel=isDirect?'Direct'+(_fee>0?' '+_fee+'%':''):'GPO';
+              chip.appendChild(el('span',{style:{fontSize:'7px',background:isDirect?'var(--blue)':'rgba(168,85,247,.3)',color:isDirect?'#fff':'var(--muted)',borderRadius:'2px',padding:'0 3px',marginLeft:'1px'}},_badgeLabel));
               vendorCol.appendChild(chip);
             });
           } else {
@@ -12149,7 +12234,8 @@ function renderChecklist(c) {
       secDiv.appendChild(body);
     }
     wrap.appendChild(secDiv);
-  });
+  }); // end PSX_CHECKLIST.forEach
+  }
   } catch(err) {
     c.innerHTML='';
     const _errDiv=el('div',{style:{padding:'20px',color:'var(--red)'}});
