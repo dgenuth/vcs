@@ -11572,14 +11572,104 @@ function renderChecklist(c) {
 
   // Vendor scoring engine — weights: exact category/subCategory +4, partial +2, product/about exact +2, partial +1
   const _allCheckVendors=[...(S.vendors||[]),...(S.channelVendors||[])];
+  // Category keyword map: checklist label → required category keywords.
+  // If a label is mapped here, a vendor MUST match at least one keyword in its
+  // category/subCategory/product/name to be eligible as a suggestion.
+  // This prevents wrong-category vendors from polluting results.
+  const _CKLCAT = {
+    'therapy – in-house or outsourced?': ['rehab','therapy','physical','occupational','speech'],
+    'rehab supplies':    ['rehab','medical','nursing','supply','supplies','disposable','clinical'],
+    'drugs & prescriptions': ['pharma','drug','prescription','rx','medication','dispensing'],
+    'otcs':              ['pharma','drug','otc','vitamin','health','wellness','supplement'],
+    'pharmacy monthly auditing': ['pharma','audit','drug','rx','billing','consulting'],
+    'flu vaccines':      ['pharma','vaccine','flu','immuniz','health'],
+    'raw food':          ['food','dietary','grocery','produce','meat','protein','frozen','distribution'],
+    'bakery':            ['bakery','food','bread','dietary','pastry','baked'],
+    'dairy':             ['dairy','food','milk','dietary','cheese'],
+    'produce':           ['produce','food','fruit','vegetable','dietary'],
+    'juice machines':    ['equipment','machine','food','juice','dietary','vending','appliance'],
+    'coffee / tea machines': ['equipment','machine','food','coffee','dietary','vending','appliance'],
+    'ice machine':       ['equipment','machine','ice','refriger','appliance'],
+    'freezer':           ['equipment','refriger','freeze','cold','appliance'],
+    'smallwares':        ['smallware','kitchen','food','dietary','equipment','utensil','cookware'],
+    'disposables':       ['disposable','food','dietary','paper','packaging','tray','serviceware'],
+    'nutritionals and thickeners': ['nutrition','thicken','dietary','supplement','food','clinical'],
+    'general nursing supplies': ['nursing','medical','supply','disposable','clinical','healthcare'],
+    'gloves':            ['glove','medical','nursing','disposable','supply','ppe','protective'],
+    'advanced wound care': ['wound','medical','nursing','disposable','clinical','bandage','dressing'],
+    'incontinence':      ['incontinence','medical','nursing','disposable','briefs','pads','clinical'],
+    'primary housekeeping': ['housekeep','janitorial','evs','cleaning','environmental','facility'],
+    'hand hygiene – soap & sanitizer': ['hygiene','soap','sanitizer','cleaning','janitorial','evs','hand'],
+    'paper supply – multifold & tissue': ['paper','tissue','janitorial','evs','cleaning'],
+    'can liners':        ['liner','can','janitorial','evs','cleaning','trash','waste','bag'],
+    'linens & textiles': ['linen','textile','laundry','fabric','uniform','housekeep','rental'],
+    'janitorial supplies & disinfectants': ['janitorial','cleaning','disinfect','evs','housekeep','chemical','sanitiz'],
+    'dispensers':        ['dispenser','janitorial','cleaning','soap','hygiene','supply'],
+    'dietary chemicals': ['chemical','dietary','dish','warewash','food','cleaner','degreaser'],
+    'laundry chemicals': ['chemical','laundry','linen','cleaning','wash','detergent'],
+    'housekeeping chemicals': ['chemical','housekeep','janitorial','cleaning','disinfect','evs'],
+    'dish machine – manual or automatic?': ['equipment','dish','warewash','machine','dietary','chemical'],
+    'high temp machine': ['equipment','machine','warewash','steriliz','dish'],
+    'dme (durable medical equipment)': ['dme','medical','equipment','rental','wheelchair','bed','mobility'],
+    'respiratory – oxygen': ['respiratory','oxygen','medical','dme','clinical','gas'],
+    'respiratory – cpap / bipap': ['respiratory','cpap','bipap','medical','dme','sleep'],
+    'ventilators – facility owned or rental?': ['ventilator','respiratory','medical','dme','equipment'],
+    'wound vacs':        ['wound','vac','medical','dme','nursing','negative pressure'],
+    'outs – ostomy & urology': ['ostomy','urology','medical','nursing','disposable','clinical'],
+    'outs – tracheostomy': ['tracheostomy','medical','nursing','respiratory','clinical'],
+    'outs – supplements': ['supplement','nutrition','medical','pharmacy','clinical'],
+    'wound care':        ['wound','medical','nursing','disposable','clinical','bandage','dressing'],
+    'part b audit':      ['audit','billing','pharmacy','part b','medicare','clinical','b audit'],
+    'dialysis supplies': ['dialysis','medical','nursing','clinical','renal','kidney'],
+    'dialysis program – in-house or managed?': ['dialysis','medical','clinical','managed','renal'],
+    'dietician':         ['dietician','dietary','nutrition','clinical','consulting','service'],
+    'maintenance supplies & equipment': ['maintenance','facility','supply','equipment','building','hardware','repair'],
+    'building supplies & lighting': ['building','lighting','facility','maintenance','supply','electrical','hardware'],
+    'paint':             ['paint','facility','maintenance','building','coating'],
+    'elevator maintenance': ['elevator','facility','maintenance','building','service','lift'],
+    'fire safety':       ['fire','safety','facility','maintenance','building','suppression','extinguisher'],
+    'vending machines':  ['vending','machine','equipment','facility','food','snack'],
+    'landscaping':       ['landscaping','facility','grounds','exterior','lawn','garden'],
+    'snow removal':      ['snow','facility','exterior','grounds','maintenance','plowing'],
+    'waste removal':     ['waste','shred','facility','disposal','service','environmental','removal'],
+    'shredding & bio-waste': ['shred','waste','bio','facility','disposal','medical','hazardous'],
+    'promotional items': ['promotional','marketing','print','advertis','branded','promo'],
+    'digital marketing': ['marketing','digital','social','advertis','media','seo','web'],
+    'uniforms':          ['uniform','apparel','clothing','linen','textile','workwear'],
+    'recruitment agency': ['recruit','staffing','hr','employee','agency','talent'],
+    'hr & payroll':      ['hr','payroll','human resource','staffing','employ','benefits'],
+    'time clock':        ['time','clock','hr','payroll','scheduling','software','timekeeping'],
+    'health insurance & workers comp': ['insurance','benefit','workers comp','health plan'],
+    'benefit enrollments': ['benefit','hr','enroll','insurance','employee','voluntary'],
+    'background checks': ['background','screening','hr','employ','service','check','verification'],
+    'credit card processing': ['payment','credit card','processing','merchant','financial','pos'],
+    'employee perks':    ['benefit','hr','employee','perk','wellness','discount'],
+    'pest control':      ['pest','facility','service','extermination','maintenance','insect'],
+    'internet':          ['internet','broadband','network','it','connectivity','telecom','isp'],
+    'phone / voip':      ['phone','voip','telecom','communication','it','pbx'],
+    'tv / cable':        ['cable','tv','telecom','communication','entertainment','satellite'],
+    'resident security / call systems': ['security','call system','it','resident','safety','alert'],
+    'cell phone carrier': ['cell','mobile','phone','telecom','carrier','wireless'],
+    'procurement platform': ['procurement','software','platform','purchasing','technology','it','gpo'],
+    'payroll auditing':  ['payroll','audit','hr','financial','service','compliance'],
+    'mds optimization':  ['mds','clinical','software','billing','medicare','emr','coding'],
+    'admissions':        ['admissions','software','platform','it','clinical','emr','crm'],
+    'check-in kiosk':    ['kiosk','it','technology','software','reception','visitor'],
+    'dietary menu system': ['dietary','menu','software','it','technology','planning'],
+  };
+
   function scoreVendors(label){
     const q=label.toLowerCase();
-    const words=q.split(/[\s\-\/,]+/).filter(w=>w.length>2);
+    const words=q.split(/[\s\-\/,&]+/).filter(w=>w.length>2);
+    const requiredKws=_CKLCAT[q]||null;
     const scored=_allCheckVendors.map(v=>{
-      let score=0;
-      let catScore=0; // track category-specific score separately
       const catFields=[v.category,v.subCategory].filter(Boolean).map(s=>s.toLowerCase());
       const textFields=[v.product,v.about,v.name].filter(Boolean).map(s=>s.toLowerCase());
+      const allText=(catFields.concat(textFields)).join(' ');
+      // If a required-keyword map exists for this label, vendor must match at least one
+      if(requiredKws && !requiredKws.some(kw=>allText.includes(kw))) return {v,score:0,catScore:0};
+      let score=0;
+      let catScore=0;
       words.forEach(w=>{
         catFields.forEach(f=>{
           if(f===w){score+=4;catScore+=4;}
@@ -11588,10 +11678,9 @@ function renderChecklist(c) {
         textFields.forEach(f=>{if(f===w)score+=2;else if(f.includes(w)||w.includes(f.slice(0,Math.min(f.length,8))))score+=1;});
       });
       return {v,score,catScore};
-    // Require at least a category match (catScore>0) OR a high text score (>=3) to filter wrong-category vendors
-    }).filter(r=>r.catScore>0||r.score>=3);
+    }).filter(r=>r.score>0);
     scored.sort((a,b)=>b.score-a.score);
-    return scored.slice(0,4);
+    return scored.slice(0,5);
   }
   function findVendors(label){return scoreVendors(label).map(r=>r.v);}
 
@@ -21573,7 +21662,7 @@ function renderSettings(c) {
           console.log('[Renzo Test] Routing through VCS proxy...');
           const r=await fetch(VCS_PROXY_URL, {
             method:'POST',
-            headers:{'Content-Type':'application/json'},
+            headers:{'Content-Type':'text/plain'},
             body:JSON.stringify({
               action:'renzoProxy',
               renzoUrl:url,
