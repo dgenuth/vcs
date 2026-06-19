@@ -22716,6 +22716,210 @@ function updateClock() {
   }
 }
 
+
+// ─── Fuzzy Drive Alias Finder ────────────────────────────────────────────────
+// Called when listVendorFiles finds no folder for a vendor name.
+// 1. Fetches all folder names from Drive via listAllVendorFolders
+// 2. Scores them against the vendor name using fuzzy matching
+// 3. Shows top suggestions with "Use as Alias" button
+// 4. Also offers a manual text input for typing an alias
+// 5. Saving an alias stores it in S.vendorAliases and syncs to Drive config
+
+function normalizeFuzzy(s) {
+  return (s || '').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
+
+function scoreFolderMatch(vendorName, folderName) {
+  const q = normalizeFuzzy(vendorName);
+  const f = normalizeFuzzy(folderName);
+  const qWords = q.split(' ').filter(w => w.length > 2);
+  const fWords = f.split(' ').filter(w => w.length > 2);
+  if (!qWords.length || !fWords.length) return 0;
+  let score = 0;
+  // Word overlap
+  const matches = qWords.filter(w => f.includes(w)).length;
+  score += matches / Math.max(qWords.length, 1) * 60;
+  // First word match boost
+  if (qWords[0] && fWords[0] && qWords[0] === fWords[0]) score += 25;
+  // Containment boost
+  if (q.includes(f) || f.includes(q)) score += 30;
+  // Starts-with boost
+  if (f.startsWith(qWords[0] || '') || q.startsWith(fWords[0] || '')) score += 10;
+  // Penalize very different lengths
+  const lenRatio = Math.min(q.length, f.length) / Math.max(q.length, f.length);
+  score *= (0.5 + lenRatio * 0.5);
+  return Math.round(score);
+}
+
+async function saveVendorDriveAlias(vendorName, aliasFolder, container) {
+  if (!S.vendorAliases) S.vendorAliases = {};
+  const key = normName(vendorName);
+  S.vendorAliases[key] = aliasFolder;
+  toast('✓ Alias saved — "' + vendorName + '" → "' + aliasFolder + '"');
+  // Persist to Drive config
+  try {
+    await saveConfigToDrive();
+  } catch(e) {
+    console.warn('[VCS] Alias save to Drive failed:', e.message);
+  }
+  // Reload contract files with the new alias
+  container._cachedFiles = null;
+  container._responseData = null;
+  await loadVendorContractFiles(vendorName, container);
+}
+
+async function renderFuzzyAliasFinder(container, vendorName, lastResult) {
+  container.innerHTML = '';
+
+  // Header
+  const hdr = el('div', {style:{marginBottom:'8px'}});
+  hdr.appendChild(el('div', {style:{fontSize:'9px',fontWeight:'700',color:'var(--amber)',marginBottom:'2px'}},
+    '📁 No Drive folder found for "' + vendorName + '"'));
+  hdr.appendChild(el('div', {style:{fontSize:'8px',color:'var(--muted)'}},
+    'The vendor\u2019s contracts folder may be named differently in Drive. Choose a match below or enter the exact folder name.'));
+  container.appendChild(hdr);
+
+  // Fetch all folder names from Drive
+  const loadingMsg = el('div', {style:{fontSize:'8px',color:'var(--muted)',padding:'6px 0'}}, '🔍 Searching Drive folders...');
+  container.appendChild(loadingMsg);
+
+  let allFolders = [];
+  try {
+    const resp = await fetch(VCS_PROXY_URL, {
+      method: 'POST',
+      headers: {'Content-Type': 'text/plain'},
+      body: JSON.stringify({action: 'listAllVendorFolders'})
+    });
+    const data = await resp.json();
+    if (data.status === 'ok' && data.folders) {
+      allFolders = data.folders; // [{name, id}]
+    }
+  } catch(e) {
+    loadingMsg.textContent = '⚠ Could not fetch Drive folder list: ' + e.message;
+  }
+
+  container.removeChild(loadingMsg);
+
+  // Score all folders against vendor name
+  const scored = allFolders
+    .map(f => ({...f, score: scoreFolderMatch(vendorName, f.name)}))
+    .filter(f => f.score >= 20)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 6);
+
+  // Suggestions section
+  if (scored.length > 0) {
+    const sugHdr = el('div', {style:{fontSize:'8px',fontWeight:'700',color:'var(--text)',marginBottom:'4px',marginTop:'4px'}},
+      '💡 Possible matches in Drive:');
+    container.appendChild(sugHdr);
+
+    const list = el('div', {style:{display:'flex',flexDirection:'column',gap:'4px',marginBottom:'10px'}});
+    scored.forEach(folder => {
+      const row = el('div', {style:{
+        display:'flex',alignItems:'center',gap:'6px',
+        background:'var(--bg)',border:'1px solid var(--border)',
+        borderRadius:'4px',padding:'4px 8px'
+      }});
+      const nameSpan = el('span', {style:{fontSize:'9px',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
+        folder.name);
+      const confSpan = el('span', {style:{fontSize:'8px',color:'var(--muted)',flexShrink:'0'}},
+        Math.min(folder.score, 99) + '% match');
+      const useBtn = el('button', {
+        class: 'btn-xs btn-primary',
+        style: {fontSize:'8px',flexShrink:'0'},
+        onclick: async function() {
+          useBtn.textContent = 'Saving...';
+          useBtn.disabled = true;
+          await saveVendorDriveAlias(vendorName, folder.name, container);
+        }
+      }, '↔ Use as Alias');
+      row.appendChild(nameSpan);
+      row.appendChild(confSpan);
+      row.appendChild(useBtn);
+      list.appendChild(row);
+    });
+    container.appendChild(list);
+  } else {
+    container.appendChild(el('div', {style:{fontSize:'8px',color:'var(--muted)',marginBottom:'8px',padding:'4px 0'}},
+      'No close matches found in Drive. Enter the exact folder name below.'));
+  }
+
+  // Manual alias entry
+  const manualHdr = el('div', {style:{fontSize:'8px',fontWeight:'700',color:'var(--text)',marginBottom:'4px'}},
+    '✏️ Enter folder name manually:');
+  container.appendChild(manualHdr);
+
+  const inputRow = el('div', {style:{display:'flex',gap:'4px',alignItems:'center'}});
+  const inp = el('input', {
+    type:'text',
+    class:'search-input',
+    placeholder:'Exact Drive folder name...',
+    style:{flex:'1',fontSize:'9px',height:'24px',padding:'0 6px'}
+  });
+  // Autocomplete from folder list as user types
+  inp.addEventListener('input', () => {
+    const q = inp.value.trim().toLowerCase();
+    if (q.length < 2) { dropdown.innerHTML=''; dropdown.style.display='none'; return; }
+    const matches = allFolders.filter(f => f.name.toLowerCase().includes(q)).slice(0, 8);
+    dropdown.innerHTML = '';
+    if (!matches.length) { dropdown.style.display='none'; return; }
+    matches.forEach(f => {
+      const opt = el('div', {
+        style:{padding:'3px 8px',fontSize:'9px',cursor:'pointer',borderBottom:'1px solid var(--border)'},
+        onclick() { inp.value = f.name; dropdown.style.display='none'; }
+      }, f.name);
+      opt.addEventListener('mouseenter', () => opt.style.background='var(--sidebar)');
+      opt.addEventListener('mouseleave', () => opt.style.background='');
+      dropdown.appendChild(opt);
+    });
+    dropdown.style.display = 'block';
+  });
+
+  const dropdown = el('div', {style:{
+    position:'absolute',zIndex:'200',background:'var(--card)',
+    border:'1px solid var(--border)',borderRadius:'4px',
+    maxHeight:'150px',overflowY:'auto',display:'none',
+    boxShadow:'0 4px 12px rgba(0,0,0,.15)',minWidth:'200px'
+  }});
+
+  const wrapper = el('div', {style:{position:'relative',flex:'1'}});
+  wrapper.appendChild(inp);
+  wrapper.appendChild(dropdown);
+  document.addEventListener('click', e => { if(!wrapper.contains(e.target)) dropdown.style.display='none'; }, {once:true});
+
+  const saveBtn = el('button', {
+    class:'btn-xs btn-primary',
+    style:{fontSize:'8px',height:'24px',flexShrink:'0'},
+    onclick: async function() {
+      const alias = inp.value.trim();
+      if (!alias) { toast('Enter a folder name first', '#f59e0b'); return; }
+      saveBtn.textContent = 'Saving...';
+      saveBtn.disabled = true;
+      await saveVendorDriveAlias(vendorName, alias, container);
+    }
+  }, '💾 Save Alias');
+
+  inputRow.appendChild(wrapper);
+  inputRow.appendChild(saveBtn);
+  container.appendChild(inputRow);
+
+  // Skip alias option
+  const skipRow = el('div', {style:{marginTop:'6px'}});
+  skipRow.appendChild(el('span', {style:{fontSize:'8px',color:'var(--muted)'}},
+    'No contract files in Drive for this vendor? '));
+  skipRow.appendChild(el('button', {
+    class:'btn-xs btn-ghost',
+    style:{fontSize:'8px',color:'var(--muted)'},
+    onclick() {
+      container.innerHTML = '<span style="color:var(--muted);font-size:9px">No contract folder linked. Use ↔ Alias to connect one later.</span>';
+    }
+  }, 'Skip'));
+  container.appendChild(skipRow);
+}
+
 // ─── Vendor Contract Files Loader ────────────────────────────────────────────
 async function loadVendorContractFiles(vendorName, container) {
   if (!vendorName) return;
@@ -22763,7 +22967,8 @@ async function loadVendorContractFiles(vendorName, container) {
       return;
     }
     if (!d.folderFound) {
-      container.innerHTML = '<span style="color:var(--muted);font-size:9px">No Drive folder found for this vendor.</span>';
+      // Show fuzzy match suggestions + manual alias entry instead of dead-end message
+      await renderFuzzyAliasFinder(container, vendorName, d);
       return;
     }
     if (!d.files || !d.files.length) {
@@ -24009,6 +24214,12 @@ try {
   errDiv.textContent = '⚠ Startup error: ' + initErr.message + ' — Try refreshing or clearing localStorage.';
   document.body.appendChild(errDiv);
 }
-</script>
-</body>
-</html>
+
+// ─── Global Note Input Sanitizer ────────────────────────────────────────────
+// Prevents characters that corrupt the Excel XML comment format.
+// < and > are the primary culprits (treated as XML tags by Excel).
+// Control chars are also stripped. This is a UI-layer warning on top of
+// the escapedNote() backstop in the save path.
+(function() {
+  const DANGEROUS_PATTERN = /[<>]/;
+  const STRIP_PATTERN     = /[<>
