@@ -1951,6 +1951,20 @@ async function loadFile(file) {
     toast(`Loaded ${S.vendors.length} direct + ${gpCount} channel partner vendors, ${S.itw.length} pipeline, ${S.reviews.length} reviews`);
     startAutoSave();
 
+    // B4: Silently refresh MS token on load if we have a refresh token
+    // This prevents the "will refresh on next use" state — token is ready immediately
+    setTimeout(async () => {
+      try {
+        const hasRefresh = !!getMSRefresh();
+        const tokenValid = getMSToken() && Date.now() < getMSTokenExp() - 60000;
+        if (hasRefresh && !tokenValid) {
+          console.log('[VCS] Auto-refreshing MS token on load...');
+          const newTok = await ensureMSToken();
+          if (newTok) console.log('[VCS] MS token refreshed successfully on load');
+        }
+      } catch(e) { console.warn('[VCS] MS token auto-refresh on load failed:', e.message); }
+    }, 2000); // 2s delay — let the app finish rendering first
+
     // Offer to restore unsaved session — AFTER file loads so we can actually apply changes
     // NOTE: clearSessionState() intentionally NOT called here — modal handles it after user decides
     setTimeout(()=>{
@@ -5212,33 +5226,90 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
           commBody.appendChild(connBtn);
         } else if(S._commCache[_cpKey]){
           const msgs=S._commCache[_cpKey];
-          if(!msgs.length){commBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'No emails found for this vendor.'));}
-          else msgs.forEach(m=>{
-            const row=el('div',{style:{padding:'6px 0',borderBottom:'1px solid var(--border)',fontSize:'9px'}});
-            row.appendChild(el('div',{style:{fontWeight:'600',color:'var(--text)',marginBottom:'2px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},m.subject||'(no subject)'));
-            const meta=el('div',{style:{color:'var(--muted)',marginBottom:'2px',display:'flex',gap:'8px',flexWrap:'wrap'}});
-            meta.appendChild(el('span',{},m.from||''));
-            meta.appendChild(el('span',{},m.date||''));
-            row.appendChild(meta);
-            if(m.preview)row.appendChild(el('div',{style:{color:'var(--muted)',fontStyle:'italic',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},m.preview));
-            commBody.appendChild(row);
-          });
+          if(!msgs.length){
+            commBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'No emails found for "'+vendor.name+'".'));
+            if(vendor.email) commBody.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)'}},'Also searched by domain: '+vendor.email.split('@')[1]));
+            const retryBtn=el('button',{class:'btn-xs btn-ghost',style:{marginTop:'4px'},onclick(e){e.stopPropagation();delete S._commCache[_cpKey];refreshDetailIfOpen(vendor);}},'🔄 Retry Search');
+            commBody.appendChild(retryBtn);
+          } else if(msgs[0]?._error) {
+            commBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--red)',padding:'6px 0',fontWeight:'600'}},'⚠ Email fetch error:'));
+            commBody.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'8px'}},msgs[0]._error));
+            const retryBtn=el('button',{class:'btn-xs btn-primary',onclick(e){e.stopPropagation();delete S._commCache[_cpKey];refreshDetailIfOpen(vendor);}},'🔄 Retry');
+            commBody.appendChild(retryBtn);
+          } else {
+            const countHdr=el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'6px',display:'flex',justifyContent:'space-between',alignItems:'center'}});
+            countHdr.appendChild(el('span',{},msgs.length+' email'+(msgs.length!==1?'s':'')+' found'));
+            const rfBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){e.stopPropagation();delete S._commCache[_cpKey];refreshDetailIfOpen(vendor);}}, '🔄 Refresh');
+            countHdr.appendChild(rfBtn);
+            commBody.appendChild(countHdr);
+            msgs.forEach(m=>{
+              const row=el('div',{style:{padding:'6px 0',borderBottom:'1px solid var(--border)',fontSize:'9px'}});
+              row.appendChild(el('div',{style:{fontWeight:'600',color:'var(--text)',marginBottom:'2px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},m.subject||'(no subject)'));
+              const meta=el('div',{style:{color:'var(--muted)',marginBottom:'2px',display:'flex',gap:'8px',flexWrap:'wrap'}});
+              meta.appendChild(el('span',{},m.from||''));
+              meta.appendChild(el('span',{style:{marginLeft:'auto'}},m.date||''));
+              row.appendChild(meta);
+              if(m.preview)row.appendChild(el('div',{style:{color:'var(--muted)',fontStyle:'italic',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},m.preview));
+              commBody.appendChild(row);
+            });
+          }
         } else {
           const spinner=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'8px 0'}},'⏳ Loading emails...');
           commBody.appendChild(spinner);
           (async()=>{
             try{
-              const q=encodeURIComponent('"'+vendor.name+'"');
-              const resp=await fetch('https://graph.microsoft.com/v1.0/me/messages?$search='+q+'&$top=20&$orderby=receivedDateTime+desc&$select=subject,from,receivedDateTime,bodyPreview',
-                {headers:{Authorization:'Bearer '+msToken,ConsistencyLevel:'eventual'}});
-              const d=await resp.json();
-              S._commCache[_cpKey]=(d.value||[]).map(m=>({
-                subject:m.subject,
-                from:m.from?.emailAddress?.name||m.from?.emailAddress?.address||'',
-                date:m.receivedDateTime?new Date(m.receivedDateTime).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'',
-                preview:(m.bodyPreview||'').slice(0,120)
+              // Graph API: $search and $orderby cannot be combined — use $search only
+              // Search by vendor name in subject/body; also try vendor email domain as fallback
+              const nameQ = encodeURIComponent('"'+vendor.name+'"');
+              const url = 'https://graph.microsoft.com/v1.0/me/messages'
+                + '?$search='+nameQ
+                + '&$top=25'
+                + '&$select=subject,from,receivedDateTime,bodyPreview,toRecipients';
+              const resp = await fetch(url, {
+                headers:{Authorization:'Bearer '+msToken, ConsistencyLevel:'eventual'}
+              });
+              if (!resp.ok) {
+                const errData = await resp.json().catch(()=>({}));
+                throw new Error('Graph API error ' + resp.status + ': ' + (errData?.error?.message || resp.statusText));
+              }
+              const d = await resp.json();
+              let msgs = (d.value||[]).map(m=>({
+                subject: m.subject,
+                from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || '',
+                fromAddr: m.from?.emailAddress?.address || '',
+                date: m.receivedDateTime ? new Date(m.receivedDateTime).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '',
+                dateRaw: m.receivedDateTime || '',
+                preview: (m.bodyPreview||'').slice(0,120)
               }));
-            }catch(e){S._commCache[_cpKey]=[];}
+              // Sort by date descending (Graph doesn't allow $orderby with $search)
+              msgs.sort((a,b) => (b.dateRaw||'').localeCompare(a.dateRaw||''));
+              // If vendor has an email address on file, also search by sender domain
+              if (!msgs.length && vendor.email) {
+                const domain = (vendor.email.split('@')[1]||'').toLowerCase();
+                if (domain && domain.length > 3) {
+                  const domainQ = encodeURIComponent('"@'+domain+'"');
+                  const resp2 = await fetch('https://graph.microsoft.com/v1.0/me/messages'
+                    + '?$search='+domainQ+'&$top=15&$select=subject,from,receivedDateTime,bodyPreview',
+                    {headers:{Authorization:'Bearer '+msToken, ConsistencyLevel:'eventual'}});
+                  if (resp2.ok) {
+                    const d2 = await resp2.json();
+                    msgs = (d2.value||[]).map(m=>({
+                      subject: m.subject,
+                      from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || '',
+                      fromAddr: m.from?.emailAddress?.address || '',
+                      date: m.receivedDateTime ? new Date(m.receivedDateTime).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '',
+                      dateRaw: m.receivedDateTime || '',
+                      preview: (m.bodyPreview||'').slice(0,120)
+                    })).sort((a,b)=>(b.dateRaw||'').localeCompare(a.dateRaw||''));
+                  }
+                }
+              }
+              S._commCache[_cpKey] = msgs;
+            } catch(e) {
+              console.warn('[VCS] Comm email fetch error:', e.message);
+              // Store error message so UI can display it instead of silent empty
+              S._commCache[_cpKey] = [{_error: e.message}];
+            }
             refreshDetailIfOpen(vendor);
           })();
         }
@@ -21737,7 +21808,26 @@ function renderSettings(c) {
       msStatus.textContent = '✅ Connected' + (name ? ' as ' + name : '') + (hasRefresh ? ' — auto-renews' : '');
       msStatus.style.color = 'var(--green)';
     } else if (hasRefresh) {
-      msStatus.textContent = '🔄 Will auto-refresh on next use' + (name ? ' (' + name + ')' : '');
+      msStatus.innerHTML = '';
+      const refreshMsg = document.createElement('span');
+      refreshMsg.textContent = '🔄 Token expired — has refresh credentials' + (name ? ' (' + name + ')' : '');
+      refreshMsg.style.color = 'var(--amber)';
+      msStatus.appendChild(refreshMsg);
+      const refreshNowBtn = document.createElement('button');
+      refreshNowBtn.className = 'btn-xs btn-primary';
+      refreshNowBtn.style.cssText = 'margin-left:8px;font-size:8px;';
+      refreshNowBtn.textContent = '⚡ Refresh Now';
+      refreshNowBtn.onclick = async (e) => {
+        e.stopPropagation();
+        refreshNowBtn.textContent = '⏳ Refreshing...';
+        refreshNowBtn.disabled = true;
+        try {
+          const newTok = await ensureMSToken();
+          if (newTok) { toast('Microsoft 365 reconnected!', '#22c55e'); updateMSStatus(); }
+          else { toast('Refresh failed — try reconnecting', '#f59e0b'); updateMSStatus(); }
+        } catch(err) { toast('Refresh error: ' + err.message, '#ef4444'); updateMSStatus(); }
+      };
+      msStatus.appendChild(refreshNowBtn);
       msStatus.style.color = 'var(--amber)';
     } else {
       msStatus.textContent = '⚫ Not connected — click Connect to sign in with Microsoft';
