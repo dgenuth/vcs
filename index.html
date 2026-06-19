@@ -19998,8 +19998,33 @@ function renderVCSHealth(c) {
     {label:'Claude API (CORS)',icon:'🌐',roles:'admin',test:()=>!!(S.settings?.apiKey||localStorage.getItem('vcs_api_key')),pass:'API key present (CORS allowed via anthropic-dangerous-direct-browser-access header)',fail:'No API key or CORS header missing — AI features disabled',fix:()=>{S.view='settings';S._settingsJumpTo='apiConfig';render();}},
     // H2: Renzo key validation
     {label:'Renzo Key Valid',icon:'✉',roles:'admin',test:()=>!!(S.settings?.renzoApiKey&&S.settings.renzoApiKey.length>10),pass:(S.settings?.renzoApiKey?.length||0)+' chars — appears valid',fail:'Renzo key missing or too short',fix:()=>{S.view='settings';S._settingsJumpTo='renzoSection';render();}},
-    // H3: Data watcher status
-    {label:'Data Watcher',icon:'👁',roles:'admin',test:()=>!!(S.settings?.driveFileId&&USER.driveToken),pass:'Watcher active — Drive connected, file ID set',fail:'Watcher inactive — connect Drive and configure file ID to enable auto-reload',fix:()=>{S.view='settings';S._settingsJumpTo='driveSection';render();}},
+    // H3: Data watcher status — checks live GAS watcher log
+    {label:'Data Watcher',icon:'👁',roles:'admin',
+     test:()=>S._watcherHealthy===true,
+     pass:'Watcher active — last run '+(S._watcherLastRun||'recently'),
+     fail:S._watcherHealthy===false?'Watcher offline — last run '+(S._watcherLastRun||'unknown')+' (>15 min ago)':'Watcher status unknown — run Live Tests to check',
+     fix:()=>{
+       openModal(body=>{
+         body.appendChild(el('h3',{style:{marginTop:'0',fontSize:'13px'}},'🔧 Data Watcher — Fix It'));
+         body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--muted)',marginBottom:'8px'}},
+           'The VCS Watcher is a PowerShell script (VCS_Watcher.ps1) running on your office computer via Windows Task Scheduler. It syncs contract files between your network server and Google Drive every 10 seconds.'));
+         body.appendChild(el('p',{style:{fontSize:'11px',fontWeight:'700',marginBottom:'4px'}},'If the watcher stopped, re-register it with Task Scheduler:'));
+         const cmd = el('pre',{style:{background:'var(--sidebar)',padding:'10px',borderRadius:'4px',fontSize:'10px',overflowX:'auto',userSelect:'all',cursor:'text',marginBottom:'8px'}},
+           'schtasks /create /tn "VCS Watcher" /tr "powershell.exe -WindowStyle Hidden -File \"D:\\My Drive\\Vendor Catalog Scheduler - Live\\VCS_Watcher.ps1\"" /sc ONLOGON /ru SYSTEM /f');
+         body.appendChild(cmd);
+         const copyBtn=el('button',{class:'btn-xs btn-primary',onclick(){
+           navigator.clipboard.writeText(cmd.textContent).then(()=>toast('✓ Command copied — paste into PowerShell as admin'));
+         }},'📋 Copy Command');
+         body.appendChild(copyBtn);
+         body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginTop:'8px'}},
+           'After running: open Task Scheduler → verify "VCS Watcher" task is listed with status "Ready". The watcher log in Drive should update within 30 seconds.'));
+         const checkBtn=el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'8px'},onclick(){
+           S.view='health';render();
+           setTimeout(()=>{const rb=document.querySelector('[data-ping-btn]');if(rb)rb.click();},500);
+         }},'🔄 Re-run Health Check');
+         body.appendChild(checkBtn);
+       });
+     }},
   ];
 
   const _visibleChecks=checks.filter(chk=>{
@@ -20083,15 +20108,18 @@ function renderVCSHealth(c) {
     });
     await runPing('Salesforce',async()=>{
       if(!USER.sfToken) throw new Error('Not connected');
-      const r=await sfQuery('SELECT Id FROM User WHERE Id=\''+USER.userId+'\' LIMIT 1');
-      return r.totalSize+' user record found';
+      const r=await sfQuery("SELECT Id,Name,Username FROM User WHERE Username='"+USER.email+"' LIMIT 1");
+      if(r.totalSize>0) return 'Connected as '+r.records[0].Name;
+      // Fallback: just confirm org is accessible
+      const r2=await sfQuery('SELECT Id FROM Organization LIMIT 1');
+      return 'Connected to SF org (user record not found — check SF username)';
     });
     await runPing('Claude AI API',async()=>{
       const key=S.settings?.apiKey||localStorage.getItem('vcs_api_key')||'';
       if(!key) throw new Error('No API key configured — go to Settings → AI');
       const r=await fetch('https://api.anthropic.com/v1/messages',{
         method:'POST',
-        headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json'},
+        headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
         body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:10,messages:[{role:'user',content:'ping'}]})
       });
       if(r.status===401) throw new Error('Invalid API key (401)');
@@ -20103,26 +20131,28 @@ function renderVCSHealth(c) {
       const key=S.settings?.renzoApiKey||'';
       if(!key) throw new Error('No Renzo API key — set in Settings → Renzo');
       const r=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
-        body:JSON.stringify({action:'renzoTest'})});
+        body:JSON.stringify({action:'renzoPing'})});
       const d=await r.json();
-      if(d.status==='ok') return 'Connected';
+      if(d.status==='ok') return 'Connected — '+d.message;
       if(d.status==='error'&&d.message?.includes('401')) throw new Error('Invalid Renzo key (401)');
+      if(d.status==='error'&&d.message?.includes('Unauthorized')) throw new Error('Unauthorized — check Renzo API key');
       return d.message||'Connected';
     });
     await runPing('Watcher Status',async()=>{
       try{
-        const r=await fetch(VCS_PROXY_URL+'?action=watcherStatus',{method:'GET'});
+        const r=await fetch(VCS_PROXY_URL+'?action=getWatcherStatus',{method:'GET'});
         if(!r.ok) throw new Error('HTTP '+r.status);
         const d=await r.json();
         if(!d||d.error) throw new Error(d?.error||'No watcher data');
-        if(!d.found&&!d.lastRunAt) return {text:'No watcher log found — is Watcher running?',color:'var(--amber)'};
+        if(!d.found&&!d.lastRunAt){S._watcherHealthy=false;S._watcherLastRun='never';return {text:'No watcher log found — is Watcher running?',color:'var(--amber)'};}
         const lastRun=new Date(d.lastRunAt||d.lastRun||d.timestamp);
         const mins=Math.round((Date.now()-lastRun)/60000);
         const h=mins/60;
         const label=mins<60?mins+'m ago':Math.round(h)+'h ago';
-        if(h>24) return {text:'Last sync: '+label+' — watcher may be offline',color:'var(--red)'};
-        if(h>2) return {text:'Last sync: '+label+' — check watcher health',color:'var(--amber)'};
-        return {text:'Last sync: '+label+' — healthy',color:'var(--green)'};
+        S._watcherLastRun=label;
+        if(h>24){S._watcherHealthy=false;return {text:'Last sync: '+label+' — watcher may be offline',color:'var(--red)'};}
+        if(h>2){S._watcherHealthy=false;return {text:'Last sync: '+label+' — check watcher health',color:'var(--amber)'};}
+        S._watcherHealthy=true;return {text:'Last sync: '+label+' — healthy',color:'var(--green)'};
       }catch(e){
         if(e.message.includes('404')||e.message.includes('not supported')||e.message.includes('HTTP 4')){
           return {text:'Proxy does not support watcherStatus (update GAS script to enable)',color:'var(--amber)'};
