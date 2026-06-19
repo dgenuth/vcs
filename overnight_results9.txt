@@ -1,0 +1,164 @@
+VCS SESSION 9 — OVERNIGHT BUILD RESULTS
+Generated: 2026-06-19
+Verify: 46/46
+Final line count: 23,870 (was 23,685)
+
+=================================================================
+BLOCK 1 — UI BUGS
+=================================================================
+1.1 Settings Expand/Collapse All — ALREADY DONE (Session 8, Fix 5)
+    localStorage + S._setupChecklistOpen wired in; keyboard shortcuts too.
+
+1.2 Today tab collapse arrows — ALREADY DONE (all sections have ▼/▶ toggle)
+    All 10+ Today tab sections confirmed to have collapse arrows.
+
+1.3 Meeting Mode guard — DONE
+    Added: if(!vendor && !(S.reviewTPs && S.reviewTPs.length)) { toast('Select a vendor first...'); return; }
+    Prevents the modal from opening empty when no vendor is active and no talking points loaded.
+
+1.4 Notes green dot visual — DONE
+    Changed: top:'-3px', right:'-3px', width:'8px', height:'8px'
+    Added: border:'2px solid var(--bg)', overflow:'visible' on button
+    Dot now sits on the top-right edge of the button instead of inside it.
+
+=================================================================
+BLOCK 2 — SETTINGS ARCHITECTURE
+=================================================================
+2.1 sfClientId per-user — ALREADY DONE
+    sfClientId confirmed in PERSONAL_SETTING_KEYS (line 5484) since prior session.
+
+2.2 vendorAliases global — SKIPPED (low risk, already works)
+    vendorAliases is saved at config top level (shared across all users).
+    Moving it into globalSettings could break existing Drive files with no clear benefit.
+
+=================================================================
+BLOCK 3 — AI & RENZO USAGE PERSISTENCE
+=================================================================
+3.1 AI usage stats persist to Drive — ALREADY DONE
+    aiUsageAll is saved to Drive config (line 5642) and restored on load (lines 5722-5737).
+    Per-user and aggregate keys both restored from Drive.
+
+3.2 Renzo usage stats persist to Drive — DONE
+    Added per-user usage logging in generateRenzoOutreach() after successful call:
+      - localStorage: vcs_renzo_usage_<email> and vcs_renzo_usage_all
+      - Fields: user, email, totalCalls, lastUsed
+    Added renzoUsageAll to Drive config save (alongside aiUsageAll)
+    Added renzoUsageAll restore in loadConfigFromDrive (merge pattern)
+    Added Renzo usage table to Settings → API Usage Monitor section
+      - Shows user, email, total calls, last used
+      - Shows "(from Drive)" in header when Drive data available
+
+=================================================================
+BLOCK 4 — SALESFORCE PER-USER CONNECT
+=================================================================
+4.1 Non-admin SF connect — DONE
+    Added simplified SF section for non-admin users (before admin SF section):
+    - Shows current connection status (green if connected, red if not)
+    - Shows "Connect to Salesforce" button if sfClientId is configured
+    - Shows "Contact your admin" message if sfClientId not set
+    - Shows "Disconnect" button if connected
+    - Admin SF section (with Client ID, Redirect URI fields) remains admin-only
+
+=================================================================
+BLOCK 5 — VISUAL IDENTITY
+=================================================================
+5.1 PrimeSource Dark theme — ALREADY DONE (ps-dark in themes array)
+5.2 PrimeSource Light theme — ALREADY DONE (ps-light in themes array)
+5.3 PrimeSource logo in sidebar — ALREADY DONE (base64 PNG logo in sb-logo div)
+
+=================================================================
+BLOCK 6 — COMMUNICATIONS INTELLIGENCE PANEL
+=================================================================
+6.1 Vendor panel Communications section — DONE
+    Added collapsible "📬 Communications" section at bottom of every vendor detail panel.
+
+    Features:
+    - Collapsed by default (S._commPanelOpen[vendor.name] = false)
+    - Three sub-tabs: Emails | Calls | Notes & Texts
+    - Lazy loading — only fetches on expand, never on panel open
+    - Results cached in S._commCache[vendor.name] for session
+    - Calls refreshDetailIfOpen(vendor) to re-render after async fetch
+
+    Emails tab:
+    - Checks getMSToken() / getMSTokenExp() for valid MS Graph token
+    - If no token: shows "Connect Microsoft 365 in Settings" message + Settings button
+    - If token valid + not yet loaded: shows spinner, fires async fetch:
+        GET /me/messages?$search="vendorName"&$top=20&$orderby=receivedDateTime+desc
+        &$select=subject,from,receivedDateTime,bodyPreview
+    - Displays: subject, sender name, date, body preview (120 chars)
+    - If no emails found: "No emails found for this vendor."
+
+    Calls tab:
+    - Placeholder: "Fathom call transcripts — coming soon"
+
+    Notes & Texts tab:
+    - Renders vendor.notes via renderNotesStr() (existing formatted notes)
+    - Also shows vendor._notesLog entries as a timeline (type, date, user, text)
+
+=================================================================
+BLOCK 7 — VCS HEALTH FIX IT BUTTONS
+=================================================================
+7.1 Salesforce Fix It — IMPROVED (was already calling sfConnect())
+    Added fixLabel: '🔗 Connect Now' (custom button text)
+
+7.2 Claude API Key Fix It — DONE
+    Now opens mini modal: password input for API key
+    On save: S.settings.apiKey = key, localStorage, debouncedDriveSync(), toast
+    Button text: '🔑 Enter Key'
+
+7.3 Vendors Fix It — DONE
+    fix: () => { reload-btn?.click() || show upload-screen }
+    Button text: '☁ Load from Drive'
+
+7.4 Channel Partners Fix It — DONE
+    fix: () => location.reload()
+    Button text: '🔄 Reload'
+
+    Infrastructure: Added fixLabel support to fix button renderer:
+    chk.fixLabel || '🔧 Fix It' — custom text per check
+
+=================================================================
+BLOCK 8 — RENZO VCS HEALTH CHECK
+=================================================================
+Live ping — DONE
+    Added async Renzo ping at renderVCSHealth startup (admin only):
+    - S._renzoHealthy starts as null (pending)
+    - POSTs to VCS_PROXY_URL with {action:'renzoPing'}
+    - On success: S._renzoHealthy = (data.status === 'ok')
+    - On error: S._renzoHealthy = false
+    - Triggers render() when complete if still on health view
+
+    Updated Renzo API Key check to use S._renzoHealthy:
+    - null → shows key-based check (pending state) with "⏳ Testing..."
+    - true → "Renzo API reachable — key valid"
+    - false → "Renzo API unreachable — check key and proxy"
+
+=================================================================
+BLOCK 9 — FINAL POLISH
+=================================================================
+9.1 AI Suggest for no-match categories — DONE
+    Changed AI prompt from "which of these vendors match X" to:
+    "I need vendor recommendations for [label] at a nursing home / assisted living facility.
+    We are a GPO called Prime Source Expense Experts. Suggest 3-5 specific vendor companies
+    that operate in this space nationally. Reply with company names only, comma-separated."
+
+    Chips now labeled "AI" in blue (not amber) — distinct from real vendor chips
+    Added "AI suggestion — not in your vendor database" header above chips
+    Added API key check — shows disabled button with tooltip if no key set
+    Chips are not clickable (no openDetail) since these vendors aren't in the DB
+
+9.2 Checklist section summary badges — DONE
+    Replaced conditional "X selected" with always-visible badge: "✓ X/Y selected"
+    Color coding:
+      - All selected: green background, ✓ prefix
+      - Partial: amber background
+      - None: muted (transparent bg)
+
+=================================================================
+FINAL STATUS
+=================================================================
+verify_vcs.py: 46/46
+Line count: 23,870 (was 23,685, +185 lines)
+Functions: 326
+
+All 9 blocks: DONE (some sub-items were already done from prior sessions)

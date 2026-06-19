@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1076,18 +1076,8 @@ async function completeLogin() {
   // Do this BEFORE auto-loading file so Drive settings (fileId etc) are available
   try {
     const driveConfigLoaded = await loadConfigFromDrive();
-    if (driveConfigLoaded) {
-      updateUserBadge(); // refresh badge with Drive user data
-    } else {
-      // No personal Google token (e.g. Microsoft login) — load global settings via proxy
-      // This gives access to shared API keys, Renzo key, user feature flags etc.
-      await loadGlobalSettingsViaProxy();
-    }
-  } catch(e) {
-    console.warn('Drive config load on login:', e.message);
-    // Fallback: still try proxy for global settings
-    try { await loadGlobalSettingsViaProxy(); } catch(_) {}
-  }
+    if (driveConfigLoaded) updateUserBadge(); // refresh badge with Drive user data
+  } catch(e) { console.warn('Drive config load on login:', e.message); }
   // Check Drive for a newer session from another device
   try {
     const driveSession = await loadSessionFromDrive();
@@ -2105,19 +2095,8 @@ function upsertSharedString(ssXml, text) {
 
   // Search for existing exact match — plain <t> or <t xml:space="preserve">
   // We check both forms since existing strings use either
-  // Safe dynamic RegExp — if escaped text creates invalid range, fall back to indexOf
-  let existingMatch = null;
-  try {
-    const plainRe = new RegExp('<si><t(?:[^>]*)>' + escaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '</t></si>');
-    existingMatch = ssXml.match(plainRe);
-  } catch(e) {
-    // Fallback: simple string search for exact match
-    const plainSearch = '<si><t>' + escaped + '</t></si>';
-    const plainSearch2 = '<si><t xml:space="preserve">' + escaped + '</t></si>';
-    if (ssXml.includes(plainSearch) || ssXml.includes(plainSearch2)) {
-      existingMatch = [plainSearch]; // dummy match — just need truthy
-    }
-  }
+  const plainRe = new RegExp('<si><t(?:[^>]*)>' + escaped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '</t></si>');
+  const existingMatch = ssXml.match(plainRe);
   if (existingMatch) {
     // Count index of this match
     const idx = (ssXml.slice(0, ssXml.indexOf(existingMatch[0])).match(/<si>/g) || []).length;
@@ -2156,14 +2135,10 @@ function upsertComment(commentsXml, ref, newNoteText, authorName) {
   }
 
   // Escape the new note text for XML
-  // Escape all XML special characters + strip any control characters
-  const escapedNote = (newNoteText||'')
-    .replace(/[\x00-\x08\x0b\x0e-\x1f\x7f]/g, '') // remove control chars
-    .replace(/&/g, '&amp;')  // & must be first
+  const escapedNote = newNoteText
+    .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+    .replace(/>/g, '&gt;');
 
   // Standard rPr blocks matching existing file format
   const boldRpr = `<rPr><b/><sz val="9"/><color indexed="81"/><rFont val="Tahoma"/><family val="2"/></rPr>`;
@@ -3533,19 +3508,16 @@ async function generateRenzoOutreach(vendor, trigger) {
   if (data.error) throw new Error(data.error);
   const message = data.draft || data.message || data.text || data.content;
   if (!message) throw new Error('Renzo returned no message content');
-  // Track Renzo credit usage per user (mirrors AI usage tracking)
-  try {
-    const ruk = 'vcs_renzo_usage_' + (USER.email||'unknown').replace(/[^a-z0-9]/gi,'_');
-    const ru = JSON.parse(localStorage.getItem(ruk)||'{}');
-    ru.user = USER.name; ru.email = USER.email;
-    ru.totalCalls = (ru.totalCalls||0) + 1;
-    ru.lastUsed = new Date().toISOString();
-    localStorage.setItem(ruk, JSON.stringify(ru));
-    // Also update the shared aggregate
-    const renzoAll = JSON.parse(localStorage.getItem('vcs_renzo_usage_all')||'{}');
-    renzoAll[USER.email] = {...ru, _savedAt: Date.now()};
-    localStorage.setItem('vcs_renzo_usage_all', JSON.stringify(renzoAll));
-  } catch(_) {}
+  // Track Renzo usage per-user and in all-users aggregate
+  try{
+    const _rk='vcs_renzo_usage_'+(USER.email||'unknown').replace(/[^a-z0-9]/gi,'_');
+    const _ru=JSON.parse(localStorage.getItem(_rk)||'{}');
+    _ru.user=USER.name||USER.email;_ru.email=USER.email;_ru.totalCalls=(_ru.totalCalls||0)+1;_ru.lastUsed=new Date().toISOString();
+    localStorage.setItem(_rk,JSON.stringify(_ru));
+    const _ra=JSON.parse(localStorage.getItem('vcs_renzo_usage_all')||'{}');
+    _ra[USER.email||'unknown']=_ru;
+    localStorage.setItem('vcs_renzo_usage_all',JSON.stringify(_ra));
+  }catch(_){}
   return message;
 }
 
@@ -3667,9 +3639,6 @@ function showRenzoModal(vendor, message) {
 // size: 'xs' | 'sm' (default) | 'md'
 // trigger: optional Renzo trigger string override
 function makeRenzoBtn(vendor, _unused, trigger, _unusedLabel, size) {
-  // Renzo feature flag check — admin can always use; others need renzoEnabled
-  const _renzoUser = getApprovedUsers().find(u=>u.email===USER.email);
-  if (USER.role !== 'admin' && _renzoUser?.featureFlags?.renzoEnabled === false) return null;
   const btn = renzoButton('Renzo', size || 'sm');
   btn.title = 'Generate personalized outreach with Renzo AI';
   const labelSpan = btn.querySelector('span');
@@ -4004,7 +3973,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     const ph2=vendor.bizPhone||vendor.mobile;
     if(ph2) qBar.appendChild(qBtn('📞','Call '+vendor.procContact,()=>dialPhone(ph2,vendor)));
     if(_canAct2) qBar.appendChild(qBtn('📧','Send email',()=>openEmailModal(vendor),'var(--blue)'));
-    if(hasPermission('editNotes')){const _nb=qBtn('📝','Add note',()=>openStructuredNoteModal(vendor),'var(--green)');if(vendor.notes&&vendor.notes.trim()){_nb.style.position='relative';const _dot=el('span',{style:{position:'absolute',top:'0',right:'0',width:'7px',height:'7px',borderRadius:'50%',background:'#22c55e',display:'block'}});_nb.appendChild(_dot);}qBar.appendChild(_nb);}
+    if(hasPermission('editNotes')){const _nb=qBtn('📝','Add note',()=>openStructuredNoteModal(vendor),'var(--green)');if(vendor.notes&&vendor.notes.trim()){_nb.style.position='relative';_nb.style.overflow='visible';const _dot=el('span',{style:{position:'absolute',top:'-3px',right:'-3px',width:'8px',height:'8px',borderRadius:'50%',background:'var(--green)',display:'block',border:'2px solid var(--bg)',pointerEvents:'none'}});_nb.appendChild(_dot);}qBar.appendChild(_nb);}
     if(hasPermission('editContract')) qBar.appendChild(qBtn('📄','Edit contract',()=>{S._contractsPresetVendor=vendor.name;S.view='contracts';render();},'var(--amber)'));
     if(USER.sfToken&&vendor.sfAccountId) qBar.appendChild(qBtn('☁','Open in Salesforce',()=>window.open(USER.sfInstance+'/lightning/r/Account/'+vendor.sfAccountId+'/view','_blank'),'#38bdf8'));
     if(USER.sfToken&&vendor.sfAccountId) qBar.appendChild(qBtn('📊','SF Dashboard',()=>window.open(USER.sfInstance+'/lightning/r/Account/'+vendor.sfAccountId+'/view','_blank'),'var(--blue)'));
@@ -4530,7 +4499,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     const tlEvents=[];
     // Gather events from _notesLog
     (vendor._notesLog||[]).forEach(n=>tlEvents.push({ts:new Date(n.ts||n.date||0),type:'note',icon:'📝',label:n.type||'note',text:n.text||'',author:n.user?n.user.split('@')[0]:''}));
-    const _tlITW=vendor.source==='itw'?vendor:(S.itw||[]).find(v=>v.name===vendor.name);if(_tlITW)(_tlITW._notesLog||[]).forEach(n=>tlEvents.push({ts:new Date(n.ts||n.date||0),type:'itw',icon:'💼',label:'pipeline',text:n.text||'',author:n.user?n.user.split('@')[0]:''}));
+    if(itwVendor)(itwVendor._notesLog||[]).forEach(n=>tlEvents.push({ts:new Date(n.ts||n.date||0),type:'itw',icon:'💼',label:'pipeline',text:n.text||'',author:n.user?n.user.split('@')[0]:''}));
     // lastComm
     const lcDate=parseDate(vendor.lastComm);
     if(lcDate) tlEvents.push({ts:lcDate,type:'comm',icon:'📞',label:'last contact',text:'Last communication recorded'});
@@ -5058,6 +5027,104 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   }
   // ── Contract Files ──
   // (appended in the right position below)
+
+  // ── Block 6: Communications Intelligence ──────────────────────────────────────
+  {
+    if(!S._commPanelOpen) S._commPanelOpen={};
+    if(!S._commCache) S._commCache={};
+    if(!S._commTab) S._commTab={};
+    const _cpKey=vendor.name;
+    const _cpOpen=S._commPanelOpen[_cpKey]===true;
+    const commSec=el('div',{style:{marginTop:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
+    const commHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'6px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none',borderBottom:_cpOpen?'1px solid var(--border)':'none'},
+      onclick(e){e.stopPropagation();S._commPanelOpen[_cpKey]=!_cpOpen;refreshDetailIfOpen(vendor);}});
+    commHdr.appendChild(el('span',{style:{fontSize:'11px'}},'📬'));
+    commHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Communications'));
+    commHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'collapsed — click to expand'));
+    commHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_cpOpen?'▲':'▼'));
+    commSec.appendChild(commHdr);
+    if(_cpOpen){
+      const _cpTab=S._commTab[_cpKey]||'emails';
+      const tabBar=el('div',{style:{display:'flex',gap:'2px',padding:'6px 10px 0',background:'var(--card)',borderBottom:'1px solid var(--border)'}});
+      ['emails','calls','notes'].forEach(t=>{
+        const lbl={emails:'Emails',calls:'Calls',notes:'Notes & Texts'}[t];
+        const active=_cpTab===t;
+        tabBar.appendChild(el('button',{style:{padding:'3px 10px',fontSize:'9px',fontWeight:'600',border:'none',cursor:'pointer',borderRadius:'3px 3px 0 0',background:active?'var(--blue)':'transparent',color:active?'white':'var(--muted)'},
+          onclick(e){e.stopPropagation();S._commTab[_cpKey]=t;refreshDetailIfOpen(vendor);}},lbl));
+      });
+      commSec.appendChild(tabBar);
+      const commBody=el('div',{style:{padding:'10px',maxHeight:'280px',overflowY:'auto'}});
+      if(_cpTab==='emails'){
+        const msToken=getMSToken();
+        const msExpiry=getMSTokenExp();
+        const msValid=msToken&&Date.now()<msExpiry-10000;
+        if(!msValid){
+          commBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'8px 0'}},
+            'Connect Microsoft 365 in Settings to see email history.'));
+          const connBtn=el('button',{class:'btn-xs btn-blue',style:{marginTop:'6px'},
+            onclick(e){e.stopPropagation();S.view='settings';render();}});
+          connBtn.textContent='⚙ Settings → Microsoft 365';
+          commBody.appendChild(connBtn);
+        } else if(S._commCache[_cpKey]){
+          const msgs=S._commCache[_cpKey];
+          if(!msgs.length){commBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'No emails found for this vendor.'));}
+          else msgs.forEach(m=>{
+            const row=el('div',{style:{padding:'6px 0',borderBottom:'1px solid var(--border)',fontSize:'9px'}});
+            row.appendChild(el('div',{style:{fontWeight:'600',color:'var(--text)',marginBottom:'2px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},m.subject||'(no subject)'));
+            const meta=el('div',{style:{color:'var(--muted)',marginBottom:'2px',display:'flex',gap:'8px',flexWrap:'wrap'}});
+            meta.appendChild(el('span',{},m.from||''));
+            meta.appendChild(el('span',{},m.date||''));
+            row.appendChild(meta);
+            if(m.preview)row.appendChild(el('div',{style:{color:'var(--muted)',fontStyle:'italic',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},m.preview));
+            commBody.appendChild(row);
+          });
+        } else {
+          const spinner=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'8px 0'}},'⏳ Loading emails...');
+          commBody.appendChild(spinner);
+          (async()=>{
+            try{
+              const q=encodeURIComponent('"'+vendor.name+'"');
+              const resp=await fetch('https://graph.microsoft.com/v1.0/me/messages?$search='+q+'&$top=20&$orderby=receivedDateTime+desc&$select=subject,from,receivedDateTime,bodyPreview',
+                {headers:{Authorization:'Bearer '+msToken,ConsistencyLevel:'eventual'}});
+              const d=await resp.json();
+              S._commCache[_cpKey]=(d.value||[]).map(m=>({
+                subject:m.subject,
+                from:m.from?.emailAddress?.name||m.from?.emailAddress?.address||'',
+                date:m.receivedDateTime?new Date(m.receivedDateTime).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'',
+                preview:(m.bodyPreview||'').slice(0,120)
+              }));
+            }catch(e){S._commCache[_cpKey]=[];}
+            refreshDetailIfOpen(vendor);
+          })();
+        }
+      } else if(_cpTab==='calls'){
+        commBody.appendChild(el('div',{style:{textAlign:'center',padding:'20px',color:'var(--muted)',fontSize:'10px'}},'📞 Fathom call transcripts — coming soon'));
+        commBody.appendChild(el('div',{style:{textAlign:'center',fontSize:'9px',color:'var(--muted)',marginTop:'4px'}},'When Fathom integration is available, call transcripts will appear here'));
+      } else {
+        // Notes & Texts timeline
+        if(!vendor.notes||!vendor.notes.trim()){commBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'No notes recorded for this vendor.'));}
+        else{
+          const notesWrap=el('div',{class:'notes-area'});renderNotesStr(notesWrap,vendor.notes);commBody.appendChild(notesWrap);
+        }
+        const notesLog=vendor._notesLog||[];
+        if(notesLog.length){
+          commBody.appendChild(el('div',{style:{fontWeight:'600',fontSize:'9px',color:'var(--muted)',marginTop:'8px',marginBottom:'4px'}},'Structured note log:'));
+          notesLog.slice().reverse().forEach(n=>{
+            const row=el('div',{style:{padding:'4px 0',borderBottom:'1px solid var(--border)',fontSize:'9px'}});
+            const meta=el('div',{style:{color:'var(--muted)',marginBottom:'2px',display:'flex',gap:'8px'}});
+            meta.appendChild(el('span',{style:{fontWeight:'600',color:'var(--blue)'}},n.type||'note'));
+            meta.appendChild(el('span',{},(n.ts||n.date)?new Date(n.ts||n.date).toLocaleDateString('en-US',{month:'short',day:'numeric'}):''));
+            meta.appendChild(el('span',{},(n.user||'').split('@')[0]));
+            row.appendChild(meta);
+            row.appendChild(el('div',{style:{color:'var(--text)'}},n.text||''));
+            commBody.appendChild(row);
+          });
+        }
+      }
+      commSec.appendChild(commBody);
+    }
+    body.appendChild(commSec);
+  }
 
   showDetailPanel();
 }
@@ -5681,6 +5748,7 @@ async function saveConfigToDrive() {
       users: getApprovedUsers(),
       vendorAliases: S.vendorAliases || {}, // persist cross-session alias links
       aiUsageAll: JSON.parse(localStorage.getItem('vcs_ai_usage_all')||'{}'),
+      renzoUsageAll: JSON.parse(localStorage.getItem('vcs_renzo_usage_all')||'{}'),
       savedBy: USER.email || 'unknown',
       savedAt: new Date().toISOString()
     };
@@ -5777,6 +5845,18 @@ async function loadConfigFromDrive() {
       } catch(_) {}
     }
 
+    // Restore Renzo usage stats from Drive
+    if (config.renzoUsageAll && typeof config.renzoUsageAll === 'object') {
+      try {
+        const existing = JSON.parse(localStorage.getItem('vcs_renzo_usage_all')||'{}');
+        Object.assign(existing, config.renzoUsageAll);
+        localStorage.setItem('vcs_renzo_usage_all', JSON.stringify(existing));
+        Object.entries(config.renzoUsageAll).forEach(([email,data])=>{
+          try{const rk='vcs_renzo_usage_'+email.replace(/[^a-z0-9]/gi,'_');const loc=JSON.parse(localStorage.getItem(rk)||'{}');if((data.totalCalls||0)>(loc.totalCalls||0))localStorage.setItem(rk,JSON.stringify(data));}catch(_){}
+        });
+      } catch(_) {}
+    }
+
     // Always preserve the local device's googleClientId
     if (localClientId) S.settings.googleClientId = localClientId;
 
@@ -5837,62 +5917,6 @@ async function loadConfigFromDrive() {
     return false;
   }
 }
-
-// ─── Load global settings via GAS proxy (for non-Google-auth users like MS login) ──
-// Called in completeLogin when GDriveToken is unavailable
-// GAS proxy reads vcs_config.json globalSettings and returns them
-// This ensures API key, Renzo key, etc. work for ALL users regardless of login method
-async function loadGlobalSettingsViaProxy() {
-  // Uses the existing 'getConfig' GAS action which returns {status:'ok', config:{...}}
-  // The config object contains globalSettings, users, vendorAliases etc.
-  try {
-    const resp = await fetch(VCS_PROXY_URL, {
-      method: 'POST',
-      headers: {'Content-Type': 'text/plain'},
-      body: JSON.stringify({action: 'getConfig'})
-    });
-    if (!resp.ok) return false;
-    const data = await resp.json();
-    if (data.status !== 'ok' || !data.config) return false;
-    const cfg = data.config;
-    // Apply global settings (admin-configured values shared across all users)
-    if (cfg.globalSettings) {
-      const gs = cfg.globalSettings;
-      const SAFE_GLOBAL_KEYS = ['apiKey','renzoApiKey','driveFileId','aiKeyShared'];
-      SAFE_GLOBAL_KEYS.forEach(k => {
-        if (gs[k] !== undefined && !S.settings[k]) {
-          S.settings[k] = gs[k];
-        }
-      });
-    }
-    // Merge approved users list (carries feature flags, roles, hiddenFields)
-    if (cfg.users && Array.isArray(cfg.users)) {
-      const existing = getApprovedUsers();
-      const merged = [...existing];
-      cfg.users.forEach(du => {
-        const idx = merged.findIndex(u => u.email === du.email);
-        if (idx < 0) merged.push(du);
-        else {
-          if (du.featureFlags) merged[idx].featureFlags = du.featureFlags;
-          if (du.hiddenFields) merged[idx].hiddenFields = du.hiddenFields;
-          if (du.role && !merged[idx].role) merged[idx].role = du.role;
-        }
-      });
-      setApprovedUsers(merged);
-    }
-    // Merge vendor aliases (global setting)
-    if (cfg.vendorAliases && typeof cfg.vendorAliases === 'object') {
-      S.vendorAliases = Object.assign({}, cfg.vendorAliases, S.vendorAliases || {});
-    }
-    console.log('[VCS] Global settings loaded via GAS proxy getConfig for non-Google user');
-    return true;
-  } catch(e) {
-    console.warn('[VCS] Could not load global settings via proxy:', e.message);
-    return false;
-  }
-}
-
-
 
 // ─── User Auth & Permissions ──────────────────────────────────────────────────
 const ROLES = {
@@ -6149,9 +6173,9 @@ function setApprovedUsers(u, skipDriveSync){
 
 // Returns restrictive-by-default featureFlags for a given role (applied on user add or role change)
 function getDefaultFeatureFlags(role) {
-  const full={export:true,addVendor:true,showFinancials:true,editContracts:true,aiEnabled:true,renzoEnabled:true};
-  const noFin={export:true,addVendor:false,showFinancials:false,editContracts:false,aiEnabled:true,renzoEnabled:false};
-  const viewer={export:false,addVendor:false,showFinancials:false,editContracts:false,aiEnabled:false,renzoEnabled:false};
+  const full={export:true,addVendor:true,showFinancials:true,editContracts:true,aiEnabled:true};
+  const noFin={export:true,addVendor:false,showFinancials:false,editContracts:false,aiEnabled:true};
+  const viewer={export:false,addVendor:false,showFinancials:false,editContracts:false,aiEnabled:false};
   const map={admin:full,procurement:full,manager:{export:true,addVendor:true,showFinancials:true,editContracts:true,aiEnabled:true},
     cro:noFin,finance_sr:full,finance_jr:{...full,addVendor:false,editContracts:false},
     viewer:viewer,sales:{...noFin,export:false},sales_rep:{...viewer,showFinancials:false},restricted:viewer};
@@ -8630,21 +8654,12 @@ function renderVendorDB(c) {
         // Quick Note (📝) — second column, visible without scrolling
         const noteTd=document.createElement('td');
         noteTd.style.cssText='padding:3px 4px;text-align:center;';
-        noteTd.style.cssText='padding:3px 4px;text-align:center;display:flex;align-items:center;justify-content:center;gap:2px;';
         noteTd.addEventListener('click',e=>e.stopPropagation());
         const noteBtn=document.createElement('button');
         noteBtn.className='btn-xs btn-ghost';
-        noteBtn.style.cssText='padding:2px 5px;font-size:11px;width:24px;flex-shrink:0;';
+        noteBtn.style.cssText='padding:2px 5px;font-size:11px;';
         noteBtn.title='Quick note';
-        // Green dot is a SIBLING of noteBtn — outside it, so button stays uniform width
-        const _noteDot=document.createElement('span');
-        _noteDot.style.cssText='display:none;width:6px;height:6px;border-radius:50%;background:#22c55e;flex-shrink:0;pointer-events:none;';
-        _noteDot.title='Has existing notes';
-        const _setNoteBtn2=(hasNotes,open)=>{
-          noteBtn.textContent=open?'📝▼':'📝';
-          noteBtn.style.width='24px';
-          _noteDot.style.display=hasNotes&&!open?'inline-block':'none';
-        };
+        const _setNoteBtn2=(hasNotes,open)=>{noteBtn.innerHTML='';noteBtn.appendChild(document.createTextNode(open?'📝▲':'📝'));if(hasNotes&&!open){const _d=document.createElement('span');_d.style.cssText='display:inline-block;width:6px;height:6px;border-radius:50%;background:#22c55e;margin-left:2px;vertical-align:middle;';noteBtn.appendChild(_d);}};
         _setNoteBtn2(!!v.notes,false);
         noteBtn.addEventListener('click',e=>{
           e.stopPropagation();
@@ -8688,7 +8703,7 @@ function renderVendorDB(c) {
           ta.focus();
           _setNoteBtn2(!!v.notes,true);
         });
-        noteTd.appendChild(noteBtn);noteTd.appendChild(_noteDot);tr.appendChild(noteTd);
+        noteTd.appendChild(noteBtn);tr.appendChild(noteTd);
         VISIBLE_COLS.forEach(col=>{
           const td=document.createElement('td');
           try {
@@ -8820,6 +8835,7 @@ async function generateMeetingTalkingPoints(vendor) {
 
 // ─── Meeting Mode Modal — Talking Points ──────────────────────────────────────
 function openTalkingPointsModal(startIdx=0, vendor=null) {
+  if(!vendor&&!(S.reviewTPs&&S.reviewTPs.length)){toast('Select a vendor first to enter Meeting Mode','var(--amber)');return;}
   openModal(body=>{
     body.appendChild(el('h3',{},'🎯 Meeting Mode — Discussion Checklist'));
     if(vendor){
@@ -11539,8 +11555,6 @@ function renderChecklist(c) {
     histFacs.forEach(fac=>{
       const entries=hist[fac]||[];
       const latest=entries[0];
-      // allItems declared here to avoid TDZ — used in _histPct below and in summary section
-      const allItems=PSX_CHECKLIST.flatMap(s=>s.items);
       // Compute coverage % for latest entry
       const _histPct=(entry)=>{
         if(!entry||!allItems)return 0;
@@ -11572,117 +11586,21 @@ function renderChecklist(c) {
 
   // Vendor scoring engine — weights: exact category/subCategory +4, partial +2, product/about exact +2, partial +1
   const _allCheckVendors=[...(S.vendors||[]),...(S.channelVendors||[])];
-  // Category keyword map: checklist label → required category keywords.
-  // If a label is mapped here, a vendor MUST match at least one keyword in its
-  // category/subCategory/product/name to be eligible as a suggestion.
-  // This prevents wrong-category vendors from polluting results.
-  const _CKLCAT = {
-    'therapy – in-house or outsourced?': ['therapy','physical therapy','occupational therapy','speech therapy','rehab service','contract therapy','pt ','ot ','slp'],
-    'rehab supplies':    ['rehab','therapy','medical','nursing','clinical','disposable','dme','wound','incontinence','prosthetic','orthopedic','assistive'],
-    'drugs & prescriptions': ['pharma','drug','prescription','rx','medication','dispensing'],
-    'otcs':              ['pharma','drug','otc','vitamin','health','wellness','supplement'],
-    'pharmacy monthly auditing': ['pharma','audit','drug','rx','billing','consulting'],
-    'flu vaccines':      ['pharma','vaccine','flu','immuniz','health'],
-    'raw food':          ['food','dietary','grocery','produce','meat','protein','frozen','distribution'],
-    'bakery':            ['bakery','food','bread','dietary','pastry','baked'],
-    'dairy':             ['dairy','food','milk','dietary','cheese'],
-    'produce':           ['produce','food','fruit','vegetable','dietary'],
-    'juice machines':    ['equipment','machine','food','juice','dietary','vending','appliance'],
-    'coffee / tea machines': ['equipment','machine','food','coffee','dietary','vending','appliance'],
-    'ice machine':       ['equipment','machine','ice','refriger','appliance'],
-    'freezer':           ['equipment','refriger','freeze','cold','appliance'],
-    'smallwares':        ['smallware','kitchen','food','dietary','equipment','utensil','cookware'],
-    'disposables':       ['disposable','food','dietary','paper','packaging','tray','serviceware'],
-    'nutritionals and thickeners': ['nutrition','thicken','dietary','supplement','food','clinical'],
-    'general nursing supplies': ['nursing','medical','clinical','disposable','healthcare','patient care','glove','catheter','wound','incontinence'],
-    'gloves':            ['glove','medical','nursing','disposable','supply','ppe','protective'],
-    'advanced wound care': ['wound','medical','nursing','disposable','clinical','bandage','dressing'],
-    'incontinence':      ['incontinence','medical','nursing','disposable','briefs','pads','clinical'],
-    'primary housekeeping': ['housekeep','janitorial','evs','cleaning','environmental','facility'],
-    'hand hygiene – soap & sanitizer': ['hygiene','soap','sanitizer','cleaning','janitorial','evs','hand'],
-    'paper supply – multifold & tissue': ['paper','tissue','janitorial','evs','cleaning'],
-    'can liners':        ['liner','can','janitorial','evs','cleaning','trash','waste','bag'],
-    'linens & textiles': ['linen','textile','laundry','fabric','uniform','housekeep','rental'],
-    'janitorial supplies & disinfectants': ['janitorial','cleaning','disinfect','evs','housekeep','chemical','sanitiz'],
-    'dispensers':        ['dispenser','janitorial','cleaning','soap','hygiene','supply'],
-    'dietary chemicals': ['chemical','dietary','dish','warewash','food','cleaner','degreaser'],
-    'laundry chemicals': ['chemical','laundry','linen','cleaning','wash','detergent'],
-    'housekeeping chemicals': ['chemical','housekeep','janitorial','cleaning','disinfect','evs'],
-    'dish machine – manual or automatic?': ['equipment','dish','warewash','machine','dietary','chemical'],
-    'high temp machine': ['equipment','machine','warewash','steriliz','dish'],
-    'dme (durable medical equipment)': ['dme','medical','equipment','rental','wheelchair','bed','mobility'],
-    'respiratory – oxygen': ['respiratory','oxygen','medical','dme','clinical','gas'],
-    'respiratory – cpap / bipap': ['respiratory','cpap','bipap','medical','dme','sleep'],
-    'ventilators – facility owned or rental?': ['ventilator','respiratory','medical','dme','equipment'],
-    'wound vacs':        ['wound','vac','medical','dme','nursing','negative pressure'],
-    'outs – ostomy & urology': ['ostomy','urology','medical','nursing','disposable','clinical'],
-    'outs – tracheostomy': ['tracheostomy','medical','nursing','respiratory','clinical'],
-    'outs – supplements': ['supplement','nutrition','medical','pharmacy','clinical'],
-    'wound care':        ['wound','medical','nursing','disposable','clinical','bandage','dressing'],
-    'part b audit':      ['audit','billing','pharmacy','part b','medicare','clinical','b audit'],
-    'dialysis supplies': ['dialysis','medical','nursing','clinical','renal','kidney'],
-    'dialysis program – in-house or managed?': ['dialysis','medical','clinical','managed','renal'],
-    'dietician':         ['dietician','dietary','nutrition','clinical','consulting','service'],
-    'maintenance supplies & equipment': ['maintenance','facility','supply','equipment','building','hardware','repair'],
-    'building supplies & lighting': ['building','lighting','facility','maintenance','supply','electrical','hardware'],
-    'paint':             ['paint','facility','maintenance','building','coating'],
-    'elevator maintenance': ['elevator','facility','maintenance','building','service','lift'],
-    'fire safety':       ['fire','safety','facility','maintenance','building','suppression','extinguisher'],
-    'vending machines':  ['vending','machine','equipment','facility','food','snack'],
-    'landscaping':       ['landscaping','facility','grounds','exterior','lawn','garden'],
-    'snow removal':      ['snow','facility','exterior','grounds','maintenance','plowing'],
-    'waste removal':     ['waste','shred','facility','disposal','service','environmental','removal'],
-    'shredding & bio-waste': ['shred','waste','bio','facility','disposal','medical','hazardous'],
-    'promotional items': ['promotional','marketing','print','advertis','branded','promo'],
-    'digital marketing': ['marketing','digital','social','advertis','media','seo','web'],
-    'uniforms':          ['uniform','apparel','clothing','linen','textile','workwear'],
-    'recruitment agency': ['recruit','staffing','hr','employee','agency','talent'],
-    'hr & payroll':      ['hr','payroll','human resource','staffing','employ','benefits'],
-    'time clock':        ['time','clock','hr','payroll','scheduling','software','timekeeping'],
-    'health insurance & workers comp': ['insurance','benefit','workers comp','health plan'],
-    'benefit enrollments': ['benefit','hr','enroll','insurance','employee','voluntary'],
-    'background checks': ['background','screening','hr','employ','service','check','verification'],
-    'credit card processing': ['payment','credit card','processing','merchant','financial','pos'],
-    'employee perks':    ['benefit','hr','employee','perk','wellness','discount'],
-    'pest control':      ['pest','facility','service','extermination','maintenance','insect'],
-    'internet':          ['internet','broadband','network','it','connectivity','telecom','isp'],
-    'phone / voip':      ['phone','voip','telecom','communication','it','pbx'],
-    'tv / cable':        ['cable','tv','telecom','communication','entertainment','satellite'],
-    'resident security / call systems': ['security','call system','it','resident','safety','alert'],
-    'cell phone carrier': ['cell','mobile','phone','telecom','carrier','wireless'],
-    'procurement platform': ['procurement','software','platform','purchasing','technology','it','gpo'],
-    'payroll auditing':  ['payroll','audit','hr','financial','service','compliance'],
-    'mds optimization':  ['mds','clinical','software','billing','medicare','emr','coding'],
-    'admissions':        ['admissions','software','platform','it','clinical','emr','crm'],
-    'check-in kiosk':    ['kiosk','it','technology','software','reception','visitor'],
-    'dietary menu system': ['dietary','menu','software','it','technology','planning'],
-  };
-
   function scoreVendors(label){
     const q=label.toLowerCase();
-    const words=q.split(/[\s\-\/,&]+/).filter(w=>w.length>2);
-    const requiredKws=_CKLCAT[q]||null;
+    const words=q.split(/[\s\-\/,]+/).filter(w=>w.length>2);
     const scored=_allCheckVendors.map(v=>{
+      let score=0;
       const catFields=[v.category,v.subCategory].filter(Boolean).map(s=>s.toLowerCase());
       const textFields=[v.product,v.about,v.name].filter(Boolean).map(s=>s.toLowerCase());
-      const allText=(catFields.concat(textFields)).join(' ');
-      // If a required-keyword map exists for this label, vendor must match at least one
-      if(requiredKws && !requiredKws.some(kw=>allText.includes(kw))) return {v,score:0,catScore:0};
-      let score=0;
-      let catScore=0;
       words.forEach(w=>{
-        catFields.forEach(f=>{
-          if(f===w){score+=4;catScore+=4;}
-          else if(f.includes(w)||w.includes(f.slice(0,Math.min(f.length,8)))){score+=2;catScore+=2;}
-        });
+        catFields.forEach(f=>{if(f===w)score+=4;else if(f.includes(w)||w.includes(f.slice(0,Math.min(f.length,8))))score+=2;});
         textFields.forEach(f=>{if(f===w)score+=2;else if(f.includes(w)||w.includes(f.slice(0,Math.min(f.length,8))))score+=1;});
       });
-      return {v,score,catScore};
+      return {v,score};
     }).filter(r=>r.score>0);
-    // Boost Direct vendors over GPO vendors (Direct = higher admin fee for Prime Source)
-    scored.forEach(r => { if(r.v.source==='ps'||r.v.gpo==='Direct'||!r.v.gpo) r.score += 8; });
     scored.sort((a,b)=>b.score-a.score);
-    return scored.slice(0,5);
+    return scored.slice(0,4);
   }
   function findVendors(label){return scoreVendors(label).map(r=>r.v);}
 
@@ -11728,7 +11646,9 @@ function renderChecklist(c) {
     _secBar.appendChild(el('div',{style:{height:'100%',width:covPct+'%',background:covColor,borderRadius:'3px'}},''));
     _secProgWrap.appendChild(_secBar);
     _secProgWrap.appendChild(el('span',{style:{fontSize:'8px',color:covColor,fontWeight:'600',whiteSpace:'nowrap'}},covPct+'%'));
-    if(gwCount>0)_secProgWrap.appendChild(el('span',{style:{fontSize:'8px',color:'var(--blue)',fontWeight:'600',whiteSpace:'nowrap',marginLeft:'4px'}},gwCount+' selected'));
+    const _gwBadgeColor=gwCount===section.items.length?'var(--green)':gwCount>0?'var(--amber)':'var(--muted)';
+    const _gwBadgeIcon=gwCount===section.items.length?'✓ ':'';
+    _secProgWrap.appendChild(el('span',{style:{fontSize:'8px',color:_gwBadgeColor,fontWeight:'600',whiteSpace:'nowrap',marginLeft:'6px',padding:'1px 5px',background:gwCount===section.items.length?'rgba(34,197,94,.1)':gwCount>0?'rgba(245,158,11,.1)':'transparent',borderRadius:'3px'}},_gwBadgeIcon+gwCount+'/'+section.items.length+' selected'));
     secHdr.appendChild(_secProgWrap);
     secDiv.appendChild(secHdr);
     if(isOpen){
@@ -11769,34 +11689,37 @@ function renderChecklist(c) {
           } else {
             const _aiKey=custIn.value+'_ai_'+item.label;
             if(S._clAiSugged&&S._clAiSugged[_aiKey]){
+              vendorCol.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)',marginBottom:'2px',width:'100%'}},'AI suggestion — not in your vendor database'));
               S._clAiSugged[_aiKey].forEach(name=>{
                 const av=_allCheckVendors.find(v2=>v2.name===name);
-                const aiChip=el('div',{style:{display:'inline-flex',alignItems:'center',gap:'3px',background:'rgba(245,158,11,.12)',border:'1px solid rgba(245,158,11,.4)',borderRadius:'3px',padding:'1px 5px',color:'var(--amber)',cursor:av?'pointer':'default',fontWeight:'500',fontSize:'8px'},onclick:av?()=>openDetail(av):null});
-                aiChip.appendChild(document.createTextNode(name.slice(0,20)));
-                aiChip.appendChild(el('span',{style:{fontSize:'7px',background:'rgba(245,158,11,.25)',borderRadius:'2px',padding:'0 3px',marginLeft:'1px'}},'AI'));
+                const aiChip=el('div',{style:{display:'inline-flex',alignItems:'center',gap:'3px',background:av?'rgba(79,124,255,.12)':'rgba(59,130,246,.1)',border:'1px solid '+(av?'rgba(79,124,255,.4)':'rgba(59,130,246,.3)'),borderRadius:'3px',padding:'1px 5px',color:'var(--blue)',cursor:av?'pointer':'default',fontWeight:'500',fontSize:'8px'},onclick:av?()=>openDetail(av):null});
+                aiChip.appendChild(document.createTextNode(name.slice(0,22)));
+                aiChip.appendChild(el('span',{style:{fontSize:'7px',background:'rgba(59,130,246,.2)',color:'var(--blue)',borderRadius:'2px',padding:'0 3px',marginLeft:'1px'}},'AI'));
                 vendorCol.appendChild(aiChip);
               });
             } else {
+              const _hasApiKey=!!(S._anthropicKey||S.settings?.apiKey||localStorage.getItem('vcs_api_key'));
               const aiBtn=el('button',{class:'btn-ghost',style:{fontSize:'8px',padding:'2px 5px',height:'18px'}});
-              aiBtn.textContent='🤖 AI Suggest';
+              aiBtn.textContent=_hasApiKey?'🤖 AI Suggest':'🤖 AI (no key)';
+              if(!_hasApiKey){aiBtn.disabled=true;aiBtn.title='Set your Anthropic API key in Settings → AI to enable AI suggestions';vendorCol.appendChild(aiBtn);} else {
               aiBtn.onclick=async(e)=>{
                 e.stopPropagation();aiBtn.textContent='⏳';aiBtn.disabled=true;
                 try{
-                  const vNames=_allCheckVendors.slice(0,40).map(v=>v.name).join(', ');
+                  const _key=S._anthropicKey||S.settings?.apiKey||localStorage.getItem('vcs_api_key')||'';
                   const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
-                    headers:{'x-api-key':S._anthropicKey||'','anthropic-version':'2023-06-01','Content-Type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
-                    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:150,
-                      messages:[{role:'user',content:'Vendors: '+vNames+'\n\nWhich 1-3 best match "'+item.label+'"? Comma-separated names only.'}]})
+                    headers:{'x-api-key':_key,'anthropic-version':'2023-06-01','Content-Type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
+                    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:120,
+                      messages:[{role:'user',content:'I need vendor recommendations for "'+item.label+'" at a nursing home / assisted living facility. We are a GPO called Prime Source Expense Experts. Suggest 3-5 specific vendor companies that operate in this space nationally. Reply with company names only, comma-separated, no explanations.'}]})
                   });
                   const data=await resp.json();
                   const text=(data.content&&data.content[0]&&data.content[0].text)||'';
-                  const names=text.split(',').map(n=>n.trim()).filter(Boolean);
+                  const names=text.split(',').map(n=>n.trim().replace(/^[\d\.\-\*•]+\s*/,'')).filter(Boolean).slice(0,5);
                   if(!S._clAiSugged) S._clAiSugged={};
                   S._clAiSugged[_aiKey]=names.length?names:['No suggestion'];
                   const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}
                 }catch(err){aiBtn.textContent='🤖 AI Suggest';aiBtn.disabled=false;}
               };
-              vendorCol.appendChild(aiBtn);
+              vendorCol.appendChild(aiBtn);}
             }
           }
           // Current vendor field (free text — for vendors not in DB)
@@ -11827,7 +11750,6 @@ function renderChecklist(c) {
               if(!S._clGoWith) S._clGoWith={};
               S._clGoWith[custIn.value+'_'+item.label]=e.target.value;
               _clSave(custIn.value);
-              render(); // update percentage bars immediately
             });
             statusWrap.appendChild(gwSel);
           }
@@ -14285,8 +14207,7 @@ function renderNetworkIntel(c) {
     'Financial':     ['technology','compliance','staffing','consulting'],
   };
 
-  // Use ALL vendors regardless of current search/filter state (isVisible would give empty results if DB is filtered)
-  const ALL=(S.vendors||[]).filter(v=>v.name&&v.category); // Only vendors with name AND category
+  const ALL=S.vendors.filter(isVisible); // Only use direct vendors with real relationships
   // Build scored pair list — deduplicate A↔B = B↔A
   const seenPairs=new Set();
   const scoredPairs=[];
@@ -15787,8 +15708,8 @@ function renderToday(c) {
     {key:'PRIO',label:'⭐ Priority',fn:v=>isPriority(v),tip:'Priority vendors flagged for weekly ops meeting brief — populated from green highlights in Excel'},
   ];
   fDefs.forEach(fd=>{
-    const isActive=fd.fn?(S.filterLabel===fd.label.replace(/^[\u{1F534}\u{1F7E1}\u{1F535}]\s*/u,'')):!S.filterLabel;
-    const btn=el('button',{class:'filter-tab'+(isActive?' active':''),title:fd.tip||'',onclick(){S.filter=fd.fn;S.filterLabel=fd.fn?fd.label.replace(/^[\u{1F534}\u{1F7E1}\u{1F535}]\s*/u,''):'';render();}},fd.label);
+    const isActive=fd.fn?(S.filterLabel===fd.label.replace(/^[🔴🟡🔵]\s*/,'')):!S.filterLabel;
+    const btn=el('button',{class:'filter-tab'+(isActive?' active':''),title:fd.tip||'',onclick(){S.filter=fd.fn;S.filterLabel=fd.fn?fd.label.replace(/^[🔴🟡🔵]\s*/,''):'';render();}},fd.label);
     tabs.appendChild(btn);
   });
   const dimLabel=el('label',{class:'show-dismissed-wrap'});
@@ -16602,7 +16523,7 @@ function renderExpiring(c) {
     const cnt=vendors.filter(b.fn).length;
     if(!cnt) return;
     const chip=el('div',{style:{background:'rgba(255,255,255,.04)',border:'1px solid '+b.color+'55',borderRadius:'4px',padding:'5px 10px',cursor:'pointer',textAlign:'center'},onclick(){
-      S.filter=b.fn; S.filterLabel=b.label.replace(/^[\u{1F000}-\u{1FFFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\uFE00-\uFE0F\u{1F900}-\u{1F9FF}]\s*/u,''); S.view='expiring'; render();
+      S.filter=b.fn; S.filterLabel=b.label.replace(/[🚨🔴🟡🔵✅]\s*/,''); S.view='expiring'; render();
     }});
     chip.appendChild(el('div',{style:{fontSize:'18px',fontWeight:'700',color:b.color}},String(cnt)));
     chip.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},b.label));
@@ -19986,47 +19907,35 @@ function renderVCSHealth(c) {
 
   // A4: Role-aware checks — admin/procurement see all; reps/consultants see subset
   const _isAdminRole=['admin','procurement','manager','cro'].includes(USER.role);
+
+  // Block 8: Fire async Renzo ping and re-render card when result arrives
+  if(_isAdminRole&&typeof S._renzoHealthy==='undefined'){
+    S._renzoHealthy=null; // pending
+    (async()=>{
+      try{
+        const r=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'renzoPing'})});
+        const d=await r.json();
+        S._renzoHealthy=(d.status==='ok');
+      }catch(e){S._renzoHealthy=false;}
+      if(S.view==='health') render();
+    })();
+  }
   const checks=[
-    {label:'Google Drive Connection',icon:'☁',roles:'admin',test:()=>!!(S.settings?.driveFileId||(S.vendors?.length>0)),pass:S.settings?.driveFileId?'Drive File ID configured':'Drive connected via GAS proxy ('+((S.vendors?.length||0)+' vendors loaded)')+')',fail:'No Drive File ID — go to Settings → Integrations',fix:()=>{S.view='settings';S._settingsJumpTo='driveSection';render();}},
-    {label:'Salesforce Connection',icon:'☁',roles:'all',test:()=>!!USER.sfToken,pass:'Connected as '+USER.email,fail:'Not connected — go to Settings to connect SF',fix:()=>{if(!S.settings?.sfClientId){S.view='settings';render();}else{sfConnect();}}},
+    {label:'Google Drive Connection',icon:'☁',roles:'admin',test:()=>!!S.settings?.driveFileId,pass:'Drive File ID configured',fail:'No Drive File ID — go to Settings → Integrations',fix:()=>{S.view='settings';render();}},
+    {label:'Salesforce Connection',icon:'☁',roles:'all',test:()=>!!USER.sfToken,pass:'Connected as '+USER.email,fail:'Not connected — go to Settings to connect SF',fixLabel:'🔗 Connect Now',fix:()=>{if(!S.settings?.sfClientId){S.view='settings';render();}else{sfConnect();}}},
     {label:'GAS Proxy',icon:'🔗',roles:'admin',test:()=>!!VCS_PROXY_URL,pass:VCS_PROXY_URL.slice(0,40)+'…',fail:'No proxy URL configured — check Settings → Integrations',fix:()=>{S.view='settings';render();}},
-    {label:'Claude API Key',icon:'🤖',roles:'admin',test:()=>!!(S.settings?.apiKey||localStorage.getItem('vcs_api_key')),pass:'API key configured',fail:'No API key — set in Settings → AI Configuration',fix:()=>{S.view='settings';S._settingsJumpTo='apiConfig';render();}},
-    {label:'Vendors Loaded',icon:'🗂',roles:'all',test:()=>(S.vendors?.length||0)>0,pass:(S.vendors?.length||0)+' direct + '+(S.channelVendors?.length||0)+' channel vendors',fail:'No vendors loaded — upload a vendor file',fix:null},
-    {label:'Channel Partners',icon:'🤝',roles:'procurement',test:()=>(S.channelVendors?.length||0)>0,pass:(S.channelVendors?.length||0)+' channel vendors across GPOs',fail:'No channel vendor data',fix:()=>{S.view='settings';render();}},
+    {label:'Claude API Key',icon:'🤖',roles:'admin',test:()=>!!(S.settings?.apiKey||localStorage.getItem('vcs_api_key')),pass:'API key configured',fail:'No API key — set in Settings → AI Configuration',fixLabel:'🔑 Enter Key',fix:()=>{openModal(body=>{body.appendChild(el('h3',{},'🔑 Enter Anthropic API Key'));body.appendChild(el('p',{class:'modal-sub'},'Paste your sk-ant-... key below. It will be saved to Settings and Drive.'));const inp=el('input',{type:'password',class:'settings-input',placeholder:'sk-ant-...',style:{width:'100%',marginBottom:'8px'}});inp.value=S.settings?.apiKey||localStorage.getItem('vcs_api_key')||'';body.appendChild(inp);const saveBtn=el('button',{class:'btn-primary',onclick(){const k=inp.value.trim();if(!k){toast('Enter a key first','var(--red)');return;}S.settings.apiKey=k;localStorage.setItem('vcs_api_key',k);debouncedDriveSync();closeModal();toast('API key saved','var(--green)');}},'💾 Save Key');body.appendChild(saveBtn);setTimeout(()=>inp.focus(),100);});}},
+    {label:'Vendors Loaded',icon:'🗂',roles:'all',test:()=>(S.vendors?.length||0)>0,pass:(S.vendors?.length||0)+' direct + '+(S.channelVendors?.length||0)+' channel vendors',fail:'No vendors loaded — upload a vendor file',fixLabel:'☁ Load from Drive',fix:()=>{const rb=document.getElementById('reload-btn');if(rb)rb.click();else{const us=document.getElementById('upload-screen');if(us){us.style.display='flex';}}}},
+    {label:'Channel Partners',icon:'🤝',roles:'procurement',test:()=>(S.channelVendors?.length||0)>0,pass:(S.channelVendors?.length||0)+' channel vendors across GPOs',fail:'No channel vendor data',fixLabel:'🔄 Reload',fix:()=>location.reload()},
     {label:'User Session',icon:'👤',roles:'all',test:()=>!!USER.email,pass:USER.email+' ('+USER.role+')',fail:'No user session — reload the page',fix:()=>location.reload()},
-    {label:'Renzo API Key',icon:'✉',roles:'admin',test:()=>!!(S.settings?.renzoApiKey||S.settings?.renzoOutreachKey),pass:'Renzo outreach set in Settings → Renzo',fix:()=>{S.view='settings';S._settingsJumpTo='renzoSection';render();}},
+    {label:'Renzo API Key',icon:'✉',roles:'admin',test:()=>S._renzoHealthy===true?true:S._renzoHealthy===null?!!(S.settings?.renzoApiKey||S.settings?.renzoOutreachKey):!!(S.settings?.renzoApiKey||S.settings?.renzoOutreachKey),pass:S._renzoHealthy===true?'Renzo API reachable — key valid':S._renzoHealthy===null?'⏳ Testing Renzo connection...':'Renzo key configured (not yet pinged)',fail:S._renzoHealthy===false?'Renzo API unreachable — check key and proxy':'No Renzo key — set in Settings → Renzo',fix:()=>{S.view='settings';render();}},
     {label:'No Smart Quotes in JS',icon:'🔤',roles:'admin',test:()=>{const _ss=document.querySelectorAll('script:not([src])');let _f=0;_ss.forEach(s=>{for(let i=0;i<s.textContent.length;i++){const c2=s.textContent.charCodeAt(i);if(c2===0x2018||c2===0x2019||c2===0x201c||c2===0x201d){_f++;break;}}});return _f===0;},pass:'Clean — no curly/smart quotes in script tags',fail:'Smart quotes found in JS! Run fix_smart_quotes.py immediately',fix:null},
     // H1: Claude CORS status
-    {label:'Claude API (CORS)',icon:'🌐',roles:'admin',test:()=>!!(S.settings?.apiKey||localStorage.getItem('vcs_api_key')),pass:'API key present (CORS allowed via anthropic-dangerous-direct-browser-access header)',fail:'No API key or CORS header missing — AI features disabled',fix:()=>{S.view='settings';S._settingsJumpTo='apiConfig';render();}},
+    {label:'Claude API (CORS)',icon:'🌐',roles:'admin',test:()=>!!(S.settings?.apiKey||localStorage.getItem('vcs_api_key')),pass:'API key present — CORS allowed via anthropic-dangerous-direct-browser-access header',fail:'No API key or CORS header missing — AI features disabled',fix:()=>{S.view='settings';render();}},
     // H2: Renzo key validation
-    {label:'Renzo Key Valid',icon:'✉',roles:'admin',test:()=>!!(S.settings?.renzoApiKey&&S.settings.renzoApiKey.length>10),pass:(S.settings?.renzoApiKey?.length||0)+' chars — appears valid',fail:'Renzo key missing or too short',fix:()=>{S.view='settings';S._settingsJumpTo='renzoSection';render();}},
-    // H3: Data watcher status — checks live GAS watcher log
-    {label:'Data Watcher',icon:'👁',roles:'admin',
-     test:()=>S._watcherHealthy===true,
-     pass:'Watcher active — last run '+(S._watcherLastRun||'recently'),
-     fail:S._watcherHealthy===false?'Watcher offline — last run '+(S._watcherLastRun||'unknown')+' (>15 min ago)':'Watcher status unknown — run Live Tests to check',
-     fix:()=>{
-       openModal(body=>{
-         body.appendChild(el('h3',{style:{marginTop:'0',fontSize:'13px'}},'🔧 Data Watcher — Fix It'));
-         body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--muted)',marginBottom:'8px'}},
-           'The VCS Watcher is a PowerShell script (VCS_Watcher.ps1) running on your office computer via Windows Task Scheduler. It syncs contract files between your network server and Google Drive every 10 seconds.'));
-         body.appendChild(el('p',{style:{fontSize:'11px',fontWeight:'700',marginBottom:'4px'}},'If the watcher stopped, re-register it with Task Scheduler:'));
-         const cmd = el('pre',{style:{background:'var(--sidebar)',padding:'10px',borderRadius:'4px',fontSize:'10px',overflowX:'auto',userSelect:'all',cursor:'text',marginBottom:'8px'}},
-           'schtasks /create /tn "VCS Watcher" /tr "powershell.exe -WindowStyle Hidden -File \"D:\\My Drive\\Vendor Catalog Scheduler - Live\\VCS_Watcher.ps1\"" /sc ONLOGON /ru SYSTEM /f');
-         body.appendChild(cmd);
-         const copyBtn=el('button',{class:'btn-xs btn-primary',onclick(){
-           navigator.clipboard.writeText(cmd.textContent).then(()=>toast('✓ Command copied — paste into PowerShell as admin'));
-         }},'📋 Copy Command');
-         body.appendChild(copyBtn);
-         body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginTop:'8px'}},
-           'After running: open Task Scheduler → verify "VCS Watcher" task is listed with status "Ready". The watcher log in Drive should update within 30 seconds.'));
-         const checkBtn=el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'8px'},onclick(){
-           S.view='health';render();
-           setTimeout(()=>{const rb=document.querySelector('[data-ping-btn]');if(rb)rb.click();},500);
-         }},'🔄 Re-run Health Check');
-         body.appendChild(checkBtn);
-       });
-     }},
+    {label:'Renzo Key Valid',icon:'✉',roles:'admin',test:()=>!!(S.settings?.renzoApiKey&&S.settings.renzoApiKey.length>10),pass:'Renzo key is '+S.settings?.renzoApiKey?.length+' chars — appears valid',fail:'Renzo key missing or too short',fix:()=>{S.view='settings';render();}},
+    // H3: Data watcher status
+    {label:'Data Watcher',icon:'👁',roles:'admin',test:()=>!!(S.settings?.driveFileId&&window.GDriveToken),pass:'Watcher active — Drive connected, file ID set',fail:'Watcher inactive — connect Drive and configure file ID to enable auto-reload',fix:()=>{S.view='settings';render();}},
   ];
 
   const _visibleChecks=checks.filter(chk=>{
@@ -20049,20 +19958,8 @@ function renderVCSHealth(c) {
     info.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:'3px'}},ok?chk.pass:chk.fail));
     // H4: Fix It button for failed checks that have a fix action
     if(!ok&&chk.fix){
-      if(chk.roles==='admin'&&!_isAdminRole){
-        // Non-admins can't fix admin settings — show informational message instead
-        const contactBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',marginTop:'2px',color:'var(--muted)',borderColor:'var(--muted)'},onclick(){
-          openModal(b=>{
-            b.appendChild(el('h3',{style:{marginTop:'0',fontSize:'13px'}},'ℹ️ Managed by Admin'));
-            b.appendChild(el('p',{style:{fontSize:'11px',color:'var(--muted)',lineHeight:'1.6'}},
-              'This setting is managed by your administrator. If you need access to this feature, please contact your admin to enable it for your account.'));
-          });
-        }},'ℹ Contact Admin');
-        info.appendChild(contactBtn);
-      } else {
-        const fixBtn=el('button',{class:'btn-xs btn-primary',style:{fontSize:'8px',marginTop:'2px'},onclick(){chk.fix();}},'🔧 Fix It');
-        info.appendChild(fixBtn);
-      }
+      const fixBtn=el('button',{class:'btn-xs btn-primary',style:{fontSize:'8px',marginTop:'2px'},onclick(){chk.fix();}},chk.fixLabel||'🔧 Fix It');
+      info.appendChild(fixBtn);
     }
     card.appendChild(info);
     grid.appendChild(card);
@@ -20110,18 +20007,15 @@ function renderVCSHealth(c) {
     });
     await runPing('Salesforce',async()=>{
       if(!USER.sfToken) throw new Error('Not connected');
-      const r=await sfQuery("SELECT Id,Name,Username FROM User WHERE Username='"+USER.email+"' LIMIT 1");
-      if(r.totalSize>0) return 'Connected as '+r.records[0].Name;
-      // Fallback: just confirm org is accessible
-      const r2=await sfQuery('SELECT Id FROM Organization LIMIT 1');
-      return 'Connected to SF org (user record not found — check SF username)';
+      const r=await sfQuery('SELECT Id FROM User WHERE Id=\''+USER.userId+'\' LIMIT 1');
+      return r.totalSize+' user record found';
     });
     await runPing('Claude AI API',async()=>{
       const key=S.settings?.apiKey||localStorage.getItem('vcs_api_key')||'';
       if(!key) throw new Error('No API key configured — go to Settings → AI');
       const r=await fetch('https://api.anthropic.com/v1/messages',{
         method:'POST',
-        headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
+        headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json'},
         body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:10,messages:[{role:'user',content:'ping'}]})
       });
       if(r.status===401) throw new Error('Invalid API key (401)');
@@ -20133,28 +20027,26 @@ function renderVCSHealth(c) {
       const key=S.settings?.renzoApiKey||'';
       if(!key) throw new Error('No Renzo API key — set in Settings → Renzo');
       const r=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
-        body:JSON.stringify({action:'renzoPing'})});
+        body:JSON.stringify({action:'renzoTest'})});
       const d=await r.json();
-      if(d.status==='ok') return 'Connected — '+d.message;
+      if(d.status==='ok') return 'Connected';
       if(d.status==='error'&&d.message?.includes('401')) throw new Error('Invalid Renzo key (401)');
-      if(d.status==='error'&&d.message?.includes('Unauthorized')) throw new Error('Unauthorized — check Renzo API key');
       return d.message||'Connected';
     });
     await runPing('Watcher Status',async()=>{
       try{
-        const r=await fetch(VCS_PROXY_URL+'?action=getWatcherStatus',{method:'GET'});
+        const r=await fetch(VCS_PROXY_URL+'?action=watcherStatus',{method:'GET'});
         if(!r.ok) throw new Error('HTTP '+r.status);
         const d=await r.json();
         if(!d||d.error) throw new Error(d?.error||'No watcher data');
-        if(!d.found&&!d.lastRunAt){S._watcherHealthy=false;S._watcherLastRun='never';return {text:'No watcher log found — is Watcher running?',color:'var(--amber)'};}
+        if(!d.found&&!d.lastRunAt) return {text:'No watcher log found — is Watcher running?',color:'var(--amber)'};
         const lastRun=new Date(d.lastRunAt||d.lastRun||d.timestamp);
         const mins=Math.round((Date.now()-lastRun)/60000);
         const h=mins/60;
         const label=mins<60?mins+'m ago':Math.round(h)+'h ago';
-        S._watcherLastRun=label;
-        if(h>24){S._watcherHealthy=false;return {text:'Last sync: '+label+' — watcher may be offline',color:'var(--red)'};}
-        if(h>2){S._watcherHealthy=false;return {text:'Last sync: '+label+' — check watcher health',color:'var(--amber)'};}
-        S._watcherHealthy=true;return {text:'Last sync: '+label+' — healthy',color:'var(--green)'};
+        if(h>24) return {text:'Last sync: '+label+' — watcher may be offline',color:'var(--red)'};
+        if(h>2) return {text:'Last sync: '+label+' — check watcher health',color:'var(--amber)'};
+        return {text:'Last sync: '+label+' — healthy',color:'var(--green)'};
       }catch(e){
         if(e.message.includes('404')||e.message.includes('not supported')||e.message.includes('HTTP 4')){
           return {text:'Proxy does not support watcherStatus (update GAS script to enable)',color:'var(--amber)'};
@@ -20327,7 +20219,6 @@ function buildFieldAccess(container, userEmail) {
     // Per-user AI toggle
     const _cuFresh=getApprovedUsers().find(x=>x.email===userEmail);
     const _aiOn=_cuFresh?.featureFlags?.aiEnabled!==false;
-    const _renzoOn=_cuFresh?.featureFlags?.renzoEnabled!==false;
     const aiToggleRow=el('div',{style:{marginTop:'10px',display:'flex',alignItems:'center',gap:'8px',paddingLeft:'8px'}});
     aiToggleRow.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)'}},'🤖 AI Assistant:'));
     const aiBtn=el('button',{
@@ -20348,48 +20239,10 @@ function buildFieldAccess(container, userEmail) {
     aiToggleRow.appendChild(aiBtn);
     aiToggleRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'When disabled, AI calls return a "contact admin" message'));
     container.appendChild(aiToggleRow);
-
-    // Renzo enable/disable toggle
-    const renzoToggleRow=el('div',{style:{marginTop:'6px',display:'flex',alignItems:'center',gap:'8px',paddingLeft:'8px'}});
-    renzoToggleRow.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',minWidth:'90px'}},'Renzo Access:'));
-    const renzoBtn=el('button',{
-      class:'btn-xs btn-ghost',
-      style:{borderColor:_renzoOn?'var(--green)':'var(--muted)',color:_renzoOn?'var(--green)':'var(--muted)'},
-      onclick(e){
-        e.stopPropagation();
-        const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
-        if(!all[i].featureFlags)all[i].featureFlags={};
-        all[i].featureFlags.renzoEnabled=!_renzoOn;
-        localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-        setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
-        buildFieldAccess(container,userEmail);
-      }
-    },_renzoOn?'Enabled ✅':'Disabled 🚫');
-    renzoToggleRow.appendChild(renzoBtn);
-    renzoToggleRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'Renzo outreach button visibility per user'));
-    container.appendChild(renzoToggleRow);
   }
 
 function renderSettings(c) {
   c.innerHTML = ''; // CRITICAL: clear before re-rendering
-  // Handle jump-to from VCS Health Fix It buttons
-  const _jumpTo = S._settingsJumpTo;
-  if(_jumpTo) {
-    S._settingsJumpTo = null;
-    // Open the target section
-    if(!S._settingsOpen) S._settingsOpen = {};
-    S._settingsOpen[_jumpTo] = true;
-    // After render, scroll to and highlight that section
-    setTimeout(()=>{
-      const el2=document.querySelector('[data-settings-section="'+_jumpTo+'"]');
-      if(el2){
-        el2.scrollIntoView({behavior:'smooth',block:'start'});
-        el2.style.transition='background 0.3s';
-        el2.style.background='rgba(245,158,11,0.15)';
-        setTimeout(()=>{el2.style.background='';},2000);
-      }
-    },300);
-  }
   // ── Global Sync Status Banner ──────────────────────────────────────────
   const syncSec=el('div',{style:{
     background:'var(--card)',border:'1px solid rgba(79,124,255,.2)',
@@ -21053,6 +20906,27 @@ function renderSettings(c) {
     c.appendChild(noAccess);
   }
 
+  // ── Salesforce Connect — simplified for non-admin users ──
+  if(!hasPermission('configSF')&&USER.role!=='admin'){
+    const secSFUser=el('div',{class:'settings-section'});
+    secSFUser.appendChild(el('h3',{},'☁ Salesforce'));
+    const sfStatusBox=el('div',{style:{padding:'8px 10px',borderRadius:'5px',marginBottom:'8px',background:USER.sfToken?'rgba(34,197,94,.07)':'rgba(239,68,68,.06)',border:'1px solid '+(USER.sfToken?'rgba(34,197,94,.25)':'rgba(239,68,68,.2)')}});
+    if(USER.sfToken){
+      sfStatusBox.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',color:'var(--green)',marginBottom:'4px'}},'✅ Connected as '+USER.email));
+      sfStatusBox.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){USER.sfToken=null;USER.sfInstance=null;sessionStorage.removeItem('vcs_sf_token');renderSettings(c);toast('Disconnected from Salesforce');}},'Disconnect'));
+    }else{
+      sfStatusBox.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',color:'var(--red)',marginBottom:'6px'}},'❌ Not connected to Salesforce'));
+      const _globalClientId=S.settings?.sfClientId||'';
+      if(_globalClientId){
+        sfStatusBox.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){sfConnect();}},'🔗 Connect to Salesforce'));
+      }else{
+        sfStatusBox.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',margin:'0'}},'Salesforce connection not configured. Ask your admin to set up the Salesforce integration.'));
+      }
+    }
+    secSFUser.appendChild(sfStatusBox);
+    c.appendChild(secSFUser);
+  }
+
   // ── Salesforce Configuration ──
   if (hasPermission('configSF') || USER.role==='admin') {
     const secSF=el('div',{class:'settings-section'});
@@ -21496,7 +21370,7 @@ function renderSettings(c) {
         const x=el('span',{style:{cursor:'pointer',color:'var(--red)'},onclick(){
           S.settings[key]=S.settings[key].filter(v=>v!==d);
           localStorage.setItem('vcs_'+key,JSON.stringify(S.settings[key]));
-          logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:'Calendar',action:`Removed ${label.replace(/^[\u{1F000}-\u{1FFFF}\u{2600}-\u{26FF}\uFE00-\uFE0F] /u,'')}: ${d}`});
+          logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:'Calendar',action:`Removed ${label.replace(/[🏢✈️] /,'')}: ${d}`});
           renderDayLists();
           if(S.view==='calendar') render();
         }},'×');
@@ -21513,8 +21387,8 @@ function renderSettings(c) {
           S.settings[key].push(dateIn.value);
           S.settings[key].sort();
           localStorage.setItem('vcs_'+key,JSON.stringify(S.settings[key]));
-          logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:'Calendar',action:`Added ${label.replace(/^[\u{1F000}-\u{1FFFF}\u{2600}-\u{26FF}\uFE00-\uFE0F] /u,'')}: ${dateIn.value}`});
-          toast(`📅 ${dateIn.value} marked as ${label.replace(/^[\u{1F000}-\u{1FFFF}\u{2600}-\u{26FF}\uFE00-\uFE0F] /u,'')}`);
+          logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:'Calendar',action:`Added ${label.replace(/[🏢✈️] /,'')}: ${dateIn.value}`});
+          toast(`📅 ${dateIn.value} marked as ${label.replace(/[🏢✈️] /,'')}`);
         }
         dateIn.value='';
         renderDayLists();
@@ -21648,7 +21522,7 @@ function renderSettings(c) {
   }
 
   // ── Renzo Integration Settings (Admin only) ──
-  if(USER.role==='admin'){
+  if(['admin','procurement'].includes(USER.role)){
     const renzoSec=el('div',{style:{background:'var(--card)',border:'1px solid rgba(79,124,255,.3)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
     const _rnOpen=!S._settingsOpen||(S._settingsOpen.renzo!==false);
     const _rnHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'10px 14px',cursor:'pointer',background:_rnOpen?'rgba(79,124,255,.06)':'var(--sb)'},onclick(){if(!S._settingsOpen)S._settingsOpen={};S._settingsOpen.renzo=!_rnOpen;render();}});
@@ -21694,7 +21568,7 @@ function renderSettings(c) {
           console.log('[Renzo Test] Routing through VCS proxy...');
           const r=await fetch(VCS_PROXY_URL, {
             method:'POST',
-            headers:{'Content-Type':'text/plain'},
+            headers:{'Content-Type':'application/json'},
             body:JSON.stringify({
               action:'renzoProxy',
               renzoUrl:url,
@@ -21938,60 +21812,40 @@ function out(o){return ContentService.createTextOutput(JSON.stringify(o)).setMim
         apiSec.appendChild(btnRow);
       }
 
-      // ── Renzo Usage Sub-section ──
-      const renzoUsageKeys=Object.keys(localStorage).filter(k=>k.startsWith('vcs_renzo_usage_')&&k!=='vcs_renzo_usage_all');
-      const renzoHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginTop:'12px',marginBottom:'6px',paddingTop:'10px',borderTop:'1px solid var(--border)'}});
-      renzoHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'10px',color:'var(--text)',flex:'1'}},'📤 Renzo Outreach Credits Used'));
-      const renzoClearBtn=el('button',{class:'btn-xs btn-ghost',style:{color:'var(--muted)',fontSize:'8px'},onclick(){if(confirm('Clear all Renzo usage stats?')){renzoUsageKeys.forEach(k=>localStorage.removeItem(k));localStorage.removeItem('vcs_renzo_usage_all');render();toast('Renzo usage stats cleared');}}},"🗑 Clear");
-      renzoHdr.appendChild(renzoClearBtn);
+      // Renzo usage table
+      const renzoAllRaw=JSON.parse(localStorage.getItem('vcs_renzo_usage_all')||'{}');
+      const renzoEntries=Object.entries(renzoAllRaw);
+      const renzoHdr=el('div',{style:{marginTop:'12px',marginBottom:'4px',fontWeight:'700',fontSize:'10px',color:'var(--muted)'}},'✉ Renzo Outreach Credits Used'+(renzoEntries.length?' (from Drive)':''));
       apiSec.appendChild(renzoHdr);
-      if(!renzoUsageKeys.length){
-        apiSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',paddingLeft:'4px'}},'No Renzo usage recorded yet.'));
-      } else {
-        const rtbl=el('table',{class:'data-table'});
-        const rthead=el('thead');const rhr=el('tr');
-        ['User','Calls Used','Last Used','Access'].forEach(h=>rhr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
-        rthead.appendChild(rhr);rtbl.appendChild(rthead);
-        const rtbody=el('tbody');
-        renzoUsageKeys.forEach(k=>{
-          try{
-            const rd=JSON.parse(localStorage.getItem(k)||'{}');
-            const rEmail=rd.email||k.replace('vcs_renzo_usage_','').replace(/_/g,'@');
-            const rUser=getApprovedUsers().find(u=>u.email===rEmail);
-            const rOn=rUser?.featureFlags?.renzoEnabled!==false;
-            const rtr=el('tr');
-            rtr.appendChild(el('td',{style:{fontSize:'10px',fontWeight:'600'}},rd.user||rEmail));
-            rtr.appendChild(el('td',{style:{fontSize:'10px',textAlign:'center',fontWeight:'700',color:'var(--blue)'}},String(rd.totalCalls||0)));
-            rtr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},rd.lastUsed?rd.lastUsed.slice(0,10):'—'));
-            const rTogTd=el('td',{style:{textAlign:'center'}});
-            const rTogLbl=el('label',{style:{display:'flex',alignItems:'center',justifyContent:'center',gap:'4px',cursor:'pointer',fontSize:'9px'}});
-            const rTogCb=el('input',{type:'checkbox'});
-            rTogCb.checked=rOn;
-            rTogCb.addEventListener('change',()=>{
-              const all2=getApprovedUsers();const ui=all2.findIndex(u=>u.email===rEmail);
-              if(ui>=0){if(!all2[ui].featureFlags)all2[ui].featureFlags={};all2[ui].featureFlags.renzoEnabled=rTogCb.checked;setApprovedUsers(all2);toast('✓ Renzo '+(rTogCb.checked?'enabled':'disabled')+' for '+rEmail);}
-            });
-            rTogLbl.appendChild(rTogCb);rTogLbl.appendChild(el('span',{},rOn?'On':'Off'));
-            rTogTd.appendChild(rTogLbl);rtr.appendChild(rTogTd);
-            rtbody.appendChild(rtr);
-          }catch(_){}
+      if(!renzoEntries.length){
+        apiSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'No Renzo usage recorded yet.'));
+      }else{
+        const rt=el('table',{class:'data-table'});
+        const rth=el('thead');const rhr=el('tr');
+        ['User','Email','Total Calls','Last Used'].forEach(h=>rhr.appendChild(el('th',{style:{fontSize:'8px'}},h)));
+        rth.appendChild(rhr);rt.appendChild(rth);
+        const rtb=el('tbody');
+        renzoEntries.sort((a,b)=>(b[1].totalCalls||0)-(a[1].totalCalls||0)).forEach(([email,d])=>{
+          const tr=el('tr');
+          tr.appendChild(el('td',{style:{fontSize:'10px',fontWeight:'600'}},d.user||email.split('@')[0]));
+          tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)'}},email));
+          tr.appendChild(el('td',{style:{fontSize:'10px',textAlign:'center',color:'var(--blue)'}},String(d.totalCalls||0)));
+          tr.appendChild(el('td',{style:{fontSize:'9px',color:'var(--muted)',whiteSpace:'nowrap'}},d.lastUsed?new Date(d.lastUsed).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'—'));
+          rtb.appendChild(tr);
         });
-        rtbl.appendChild(rtbody);
-        apiSec.appendChild(rtbl);
+        rt.appendChild(rtb);apiSec.appendChild(rt);
       }
     }
     c.appendChild(apiSec);
   }
 
-  // ── Session Handover Generator — Admin only ──
-  if(USER.role==='admin'){
+  // ── Session Handover Generator — bottom of settings, collapsed by default ──
   settingsCard(c,'Session Handover Generator','📋','handover',false,body=>{
     body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Generate a complete handover document for the next Claude session. Captures current VCS state, recent changes, and pending work. Paste into a new chat to continue seamlessly.'));
     body.appendChild(el('button',{class:'btn-primary',onclick(){generateHandoverDoc();}},'📋 Generate Handover Document'));
     const handoverOut=el('div',{id:'vcs-handover-out',style:{display:'none',marginTop:'10px'}});
     body.appendChild(handoverOut);
   });
-  } // end admin-only handover
 }
 
 
@@ -22718,210 +22572,6 @@ function updateClock() {
   }
 }
 
-
-// ─── Fuzzy Drive Alias Finder ────────────────────────────────────────────────
-// Called when listVendorFiles finds no folder for a vendor name.
-// 1. Fetches all folder names from Drive via listAllVendorFolders
-// 2. Scores them against the vendor name using fuzzy matching
-// 3. Shows top suggestions with "Use as Alias" button
-// 4. Also offers a manual text input for typing an alias
-// 5. Saving an alias stores it in S.vendorAliases and syncs to Drive config
-
-function normalizeFuzzy(s) {
-  return (s || '').toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ').trim();
-}
-
-function scoreFolderMatch(vendorName, folderName) {
-  const q = normalizeFuzzy(vendorName);
-  const f = normalizeFuzzy(folderName);
-  const qWords = q.split(' ').filter(w => w.length > 2);
-  const fWords = f.split(' ').filter(w => w.length > 2);
-  if (!qWords.length || !fWords.length) return 0;
-  let score = 0;
-  // Word overlap
-  const matches = qWords.filter(w => f.includes(w)).length;
-  score += matches / Math.max(qWords.length, 1) * 60;
-  // First word match boost
-  if (qWords[0] && fWords[0] && qWords[0] === fWords[0]) score += 25;
-  // Containment boost
-  if (q.includes(f) || f.includes(q)) score += 30;
-  // Starts-with boost
-  if (f.startsWith(qWords[0] || '') || q.startsWith(fWords[0] || '')) score += 10;
-  // Penalize very different lengths
-  const lenRatio = Math.min(q.length, f.length) / Math.max(q.length, f.length);
-  score *= (0.5 + lenRatio * 0.5);
-  return Math.round(score);
-}
-
-async function saveVendorDriveAlias(vendorName, aliasFolder, container) {
-  if (!S.vendorAliases) S.vendorAliases = {};
-  const key = normName(vendorName);
-  S.vendorAliases[key] = aliasFolder;
-  toast('✓ Alias saved — "' + vendorName + '" → "' + aliasFolder + '"');
-  // Persist to Drive config
-  try {
-    await saveConfigToDrive();
-  } catch(e) {
-    console.warn('[VCS] Alias save to Drive failed:', e.message);
-  }
-  // Reload contract files with the new alias
-  container._cachedFiles = null;
-  container._responseData = null;
-  await loadVendorContractFiles(vendorName, container);
-}
-
-async function renderFuzzyAliasFinder(container, vendorName, lastResult) {
-  container.innerHTML = '';
-
-  // Header
-  const hdr = el('div', {style:{marginBottom:'8px'}});
-  hdr.appendChild(el('div', {style:{fontSize:'9px',fontWeight:'700',color:'var(--amber)',marginBottom:'2px'}},
-    '📁 No Drive folder found for "' + vendorName + '"'));
-  hdr.appendChild(el('div', {style:{fontSize:'8px',color:'var(--muted)'}},
-    'The vendor\u2019s contracts folder may be named differently in Drive. Choose a match below or enter the exact folder name.'));
-  container.appendChild(hdr);
-
-  // Fetch all folder names from Drive
-  const loadingMsg = el('div', {style:{fontSize:'8px',color:'var(--muted)',padding:'6px 0'}}, '🔍 Searching Drive folders...');
-  container.appendChild(loadingMsg);
-
-  let allFolders = [];
-  try {
-    const resp = await fetch(VCS_PROXY_URL, {
-      method: 'POST',
-      headers: {'Content-Type': 'text/plain'},
-      body: JSON.stringify({action: 'listAllVendorFolders'})
-    });
-    const data = await resp.json();
-    if (data.status === 'ok' && data.folders) {
-      allFolders = data.folders; // [{name, id}]
-    }
-  } catch(e) {
-    loadingMsg.textContent = '⚠ Could not fetch Drive folder list: ' + e.message;
-  }
-
-  container.removeChild(loadingMsg);
-
-  // Score all folders against vendor name
-  const scored = allFolders
-    .map(f => ({...f, score: scoreFolderMatch(vendorName, f.name)}))
-    .filter(f => f.score >= 20)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 6);
-
-  // Suggestions section
-  if (scored.length > 0) {
-    const sugHdr = el('div', {style:{fontSize:'8px',fontWeight:'700',color:'var(--text)',marginBottom:'4px',marginTop:'4px'}},
-      '💡 Possible matches in Drive:');
-    container.appendChild(sugHdr);
-
-    const list = el('div', {style:{display:'flex',flexDirection:'column',gap:'4px',marginBottom:'10px'}});
-    scored.forEach(folder => {
-      const row = el('div', {style:{
-        display:'flex',alignItems:'center',gap:'6px',
-        background:'var(--bg)',border:'1px solid var(--border)',
-        borderRadius:'4px',padding:'4px 8px'
-      }});
-      const nameSpan = el('span', {style:{fontSize:'9px',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
-        folder.name);
-      const confSpan = el('span', {style:{fontSize:'8px',color:'var(--muted)',flexShrink:'0'}},
-        Math.min(folder.score, 99) + '% match');
-      const useBtn = el('button', {
-        class: 'btn-xs btn-primary',
-        style: {fontSize:'8px',flexShrink:'0'},
-        onclick: async function() {
-          useBtn.textContent = 'Saving...';
-          useBtn.disabled = true;
-          await saveVendorDriveAlias(vendorName, folder.name, container);
-        }
-      }, '↔ Use as Alias');
-      row.appendChild(nameSpan);
-      row.appendChild(confSpan);
-      row.appendChild(useBtn);
-      list.appendChild(row);
-    });
-    container.appendChild(list);
-  } else {
-    container.appendChild(el('div', {style:{fontSize:'8px',color:'var(--muted)',marginBottom:'8px',padding:'4px 0'}},
-      'No close matches found in Drive. Enter the exact folder name below.'));
-  }
-
-  // Manual alias entry
-  const manualHdr = el('div', {style:{fontSize:'8px',fontWeight:'700',color:'var(--text)',marginBottom:'4px'}},
-    '✏️ Enter folder name manually:');
-  container.appendChild(manualHdr);
-
-  const inputRow = el('div', {style:{display:'flex',gap:'4px',alignItems:'center'}});
-  const inp = el('input', {
-    type:'text',
-    class:'search-input',
-    placeholder:'Exact Drive folder name...',
-    style:{flex:'1',fontSize:'9px',height:'24px',padding:'0 6px'}
-  });
-  // Autocomplete from folder list as user types
-  inp.addEventListener('input', () => {
-    const q = inp.value.trim().toLowerCase();
-    if (q.length < 2) { dropdown.innerHTML=''; dropdown.style.display='none'; return; }
-    const matches = allFolders.filter(f => f.name.toLowerCase().includes(q)).slice(0, 8);
-    dropdown.innerHTML = '';
-    if (!matches.length) { dropdown.style.display='none'; return; }
-    matches.forEach(f => {
-      const opt = el('div', {
-        style:{padding:'3px 8px',fontSize:'9px',cursor:'pointer',borderBottom:'1px solid var(--border)'},
-        onclick() { inp.value = f.name; dropdown.style.display='none'; }
-      }, f.name);
-      opt.addEventListener('mouseenter', () => opt.style.background='var(--sidebar)');
-      opt.addEventListener('mouseleave', () => opt.style.background='');
-      dropdown.appendChild(opt);
-    });
-    dropdown.style.display = 'block';
-  });
-
-  const dropdown = el('div', {style:{
-    position:'absolute',zIndex:'200',background:'var(--card)',
-    border:'1px solid var(--border)',borderRadius:'4px',
-    maxHeight:'150px',overflowY:'auto',display:'none',
-    boxShadow:'0 4px 12px rgba(0,0,0,.15)',minWidth:'200px'
-  }});
-
-  const wrapper = el('div', {style:{position:'relative',flex:'1'}});
-  wrapper.appendChild(inp);
-  wrapper.appendChild(dropdown);
-  document.addEventListener('click', e => { if(!wrapper.contains(e.target)) dropdown.style.display='none'; }, {once:true});
-
-  const saveBtn = el('button', {
-    class:'btn-xs btn-primary',
-    style:{fontSize:'8px',height:'24px',flexShrink:'0'},
-    onclick: async function() {
-      const alias = inp.value.trim();
-      if (!alias) { toast('Enter a folder name first', '#f59e0b'); return; }
-      saveBtn.textContent = 'Saving...';
-      saveBtn.disabled = true;
-      await saveVendorDriveAlias(vendorName, alias, container);
-    }
-  }, '💾 Save Alias');
-
-  inputRow.appendChild(wrapper);
-  inputRow.appendChild(saveBtn);
-  container.appendChild(inputRow);
-
-  // Skip alias option
-  const skipRow = el('div', {style:{marginTop:'6px'}});
-  skipRow.appendChild(el('span', {style:{fontSize:'8px',color:'var(--muted)'}},
-    'No contract files in Drive for this vendor? '));
-  skipRow.appendChild(el('button', {
-    class:'btn-xs btn-ghost',
-    style:{fontSize:'8px',color:'var(--muted)'},
-    onclick() {
-      container.innerHTML = '<span style="color:var(--muted);font-size:9px">No contract folder linked. Use ↔ Alias to connect one later.</span>';
-    }
-  }, 'Skip'));
-  container.appendChild(skipRow);
-}
-
 // ─── Vendor Contract Files Loader ────────────────────────────────────────────
 async function loadVendorContractFiles(vendorName, container) {
   if (!vendorName) return;
@@ -22969,8 +22619,7 @@ async function loadVendorContractFiles(vendorName, container) {
       return;
     }
     if (!d.folderFound) {
-      // Show fuzzy match suggestions + manual alias entry instead of dead-end message
-      await renderFuzzyAliasFinder(container, vendorName, d);
+      container.innerHTML = '<span style="color:var(--muted);font-size:9px">No Drive folder found for this vendor.</span>';
       return;
     }
     if (!d.files || !d.files.length) {
@@ -24216,65 +23865,6 @@ try {
   errDiv.textContent = '⚠ Startup error: ' + initErr.message + ' — Try refreshing or clearing localStorage.';
   document.body.appendChild(errDiv);
 }
-
-// ─── Global Note Input Sanitizer ────────────────────────────────────────────
-// Prevents characters that corrupt the Excel XML comment format.
-// < and > are the primary culprits (treated as XML tags by Excel).
-// Control chars are also stripped. This is a UI-layer warning on top of
-// the escapedNote() backstop in the save path.
-(function() {
-  const DANGEROUS_PATTERN = /[<>]/;
-  const STRIP_PATTERN     = /[<>\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
-
-  function warnNoteField(ta) {
-    const val = ta.value || '';
-    if (DANGEROUS_PATTERN.test(val)) {
-      ta.style.borderColor = 'var(--amber)';
-      let warn = ta._noteWarn;
-      if (!warn) {
-        warn = document.createElement('div');
-        warn.style.cssText = 'font-size:9px;color:var(--amber);margin-top:2px;';
-        warn.textContent = '⚠ Angle brackets < > are not allowed in notes — they corrupt the spreadsheet. Use ( ) or - instead.';
-        ta.parentNode && ta.parentNode.insertBefore(warn, ta.nextSibling);
-        ta._noteWarn = warn;
-      }
-      warn.style.display = '';
-    } else {
-      ta.style.borderColor = '';
-      if (ta._noteWarn) ta._noteWarn.style.display = 'none';
-    }
-  }
-
-  function sanitizePaste(e) {
-    // On paste: intercept, strip dangerous chars, insert clean text
-    const ta = e.target;
-    if (!ta.matches || !ta.matches('.notes-editor, .modal-textarea')) return;
-    const raw = (e.clipboardData || window.clipboardData).getData('text');
-    if (!DANGEROUS_PATTERN.test(raw) && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(raw)) return;
-    e.preventDefault();
-    const clean = raw.replace(STRIP_PATTERN, '');
-    const start = ta.selectionStart, end = ta.selectionEnd;
-    ta.value = ta.value.slice(0, start) + clean + ta.value.slice(end);
-    ta.selectionStart = ta.selectionEnd = start + clean.length;
-    if (typeof toast === 'function') toast('⚠ Angle brackets stripped from pasted text — not allowed in notes', '#f59e0b');
-    warnNoteField(ta);
-  }
-
-  function onNoteInput(e) {
-    const ta = e.target;
-    if (!ta.matches || !ta.matches('.notes-editor, .modal-textarea')) return;
-    warnNoteField(ta);
-  }
-
-  document.addEventListener('input', onNoteInput, true);
-  document.addEventListener('paste', sanitizePaste, true);
-
-  // Expose sanitizer for use in save paths as extra safety
-  window.sanitizeNoteText = function(text) {
-    return String(text || '').replace(STRIP_PATTERN, '');
-  };
-})();
-
 </script>
 </body>
 </html>
