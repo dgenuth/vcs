@@ -1951,19 +1951,20 @@ async function loadFile(file) {
     toast(`Loaded ${S.vendors.length} direct + ${gpCount} channel partner vendors, ${S.itw.length} pipeline, ${S.reviews.length} reviews`);
     startAutoSave();
 
-    // B4: Silently refresh MS token on load if we have a refresh token
-    // This prevents the "will refresh on next use" state — token is ready immediately
-    setTimeout(async () => {
+    // MS token status check on load — note: direct refresh_token calls are CORS-blocked by Microsoft.
+    // Token refresh only works via the popup OAuth flow. We check status here for UI display only.
+    setTimeout(() => {
       try {
-        const hasRefresh = !!getMSRefresh();
-        const tokenValid = getMSToken() && Date.now() < getMSTokenExp() - 60000;
-        if (hasRefresh && !tokenValid) {
-          console.log('[VCS] Auto-refreshing MS token on load...');
-          const newTok = await ensureMSToken();
-          if (newTok) console.log('[VCS] MS token refreshed successfully on load');
+        const tok = getMSToken();
+        const exp = getMSTokenExp();
+        const tokenValid = tok && Date.now() < exp - 60000;
+        if (tokenValid) {
+          console.log('[VCS] MS token is valid on load');
+        } else if (getMSRefresh()) {
+          console.log('[VCS] MS token expired — use Refresh Now in Settings to reconnect silently');
         }
-      } catch(e) { console.warn('[VCS] MS token auto-refresh on load failed:', e.message); }
-    }, 2000); // 2s delay — let the app finish rendering first
+      } catch(e) { console.warn('[VCS] MS token check on load failed:', e.message); }
+    }, 1000);
 
     // Offer to restore unsaved session — AFTER file loads so we can actually apply changes
     // NOTE: clearSessionState() intentionally NOT called here — modal handles it after user decides
@@ -8947,10 +8948,11 @@ function renderVendorDB(c) {
           noteBtn.textContent=open?'📝▼':'📝';
           noteBtn.style.width='22px';
           // Indicate has-notes via button background tint — no external dot, no layout shift
-          noteBtn.style.background = hasNotes && !open ? 'rgba(79,124,255,.15)' : '';
-          noteBtn.style.borderColor = hasNotes && !open ? 'rgba(79,124,255,.4)' : '';
+          noteBtn.style.background = '';
+          noteBtn.style.border = hasNotes && !open ? '1.5px solid rgba(79,124,255,.7)' : '1px solid transparent';
+          noteBtn.style.borderRadius = '4px';
           noteBtn.title = hasNotes ? 'Has notes — click to view/add' : 'Quick note';
-          _noteDot.style.display = 'none'; // dot hidden — using button color instead
+          _noteDot.style.display = 'none'; // dot hidden — using border instead
         };
         _setNoteBtn2(!!v.notes,false);
         noteBtn.addEventListener('click',e=>{
@@ -21879,7 +21881,7 @@ function renderSettings(c) {
     } else if (hasRefresh) {
       msStatus.innerHTML = '';
       const refreshMsg = document.createElement('span');
-      refreshMsg.textContent = '🔄 Token expired — has refresh credentials' + (name ? ' (' + name + ')' : '');
+      refreshMsg.textContent = '🔄 Token expired' + (name ? ' (' + name + ')' : '') + ' — click to reconnect silently';
       refreshMsg.style.color = 'var(--amber)';
       msStatus.appendChild(refreshMsg);
       const refreshNowBtn = document.createElement('button');
@@ -21888,13 +21890,50 @@ function renderSettings(c) {
       refreshNowBtn.textContent = '⚡ Refresh Now';
       refreshNowBtn.onclick = async (e) => {
         e.stopPropagation();
+        // Use silent popup re-auth (prompt=none) — refresh_token direct call is CORS-blocked by MS
+        const clientId = S.settings.msGraphClientId || localStorage.getItem('vcs_ms_clientid_temp') || '';
+        const tenantId = S.settings.msGraphTenantId || localStorage.getItem('vcs_ms_tenantid_temp') || '';
+        if (!clientId || !tenantId) {
+          toast('Enter MS Client ID and Tenant ID in settings first', '#f59e0b');
+          return;
+        }
         refreshNowBtn.textContent = '⏳ Refreshing...';
         refreshNowBtn.disabled = true;
-        try {
-          const newTok = await ensureMSToken();
-          if (newTok) { toast('Microsoft 365 reconnected!', '#22c55e'); updateMSStatus(); }
-          else { toast('Refresh failed — try reconnecting', '#f59e0b'); updateMSStatus(); }
-        } catch(err) { toast('Refresh error: ' + err.message, '#ef4444'); updateMSStatus(); }
+        const redirectUri = encodeURIComponent(window.location.origin + window.location.pathname);
+        const scope = encodeURIComponent('Calendars.ReadWrite Mail.Read Mail.ReadWrite offline_access openid profile');
+        const state = btoa(JSON.stringify({ ts: Date.now() }));
+        localStorage.setItem('vcs_ms_oauth_state', state);
+        localStorage.setItem('vcs_ms_clientid_temp', clientId);
+        localStorage.setItem('vcs_ms_tenantid_temp', tenantId);
+        const arr = crypto.getRandomValues(new Uint8Array(32));
+        const codeVerifier = Array.from(arr).map(b=>b.toString(16).padStart(2,'0')).join('');
+        localStorage.setItem('vcs_ms_code_verifier', codeVerifier);
+        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(codeVerifier));
+        const codeChallenge = btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+        const authUrl = 'https://login.microsoftonline.com/' + tenantId +
+          '/oauth2/v2.0/authorize?client_id=' + clientId +
+          '&response_type=code&redirect_uri=' + redirectUri +
+          '&scope=' + scope + '&state=' + encodeURIComponent(state) +
+          '&code_challenge=' + codeChallenge + '&code_challenge_method=S256&prompt=none';
+        const _prevTok = getMSToken();
+        const _pop = window.open(authUrl, 'ms_silent_refresh', 'width=600,height=700,left=200,top=100');
+        if (!_pop) { toast('Popup blocked — allow popups and try again','#f59e0b'); refreshNowBtn.textContent='⚡ Refresh Now'; refreshNowBtn.disabled=false; return; }
+        const _poll = setInterval(() => {
+          try {
+            if (_pop.closed) {
+              clearInterval(_poll);
+              refreshNowBtn.disabled = false;
+              if (getMSToken() && getMSToken() !== _prevTok) {
+                updateMSStatus();
+                toast('Microsoft 365 reconnected!', '#22c55e');
+                refreshNowBtn.textContent = '✓ Connected';
+              } else {
+                toast('Silent refresh failed — use Connect Microsoft Account below', '#f59e0b');
+                refreshNowBtn.textContent = '⚡ Refresh Now';
+              }
+            }
+          } catch(e) {}
+        }, 500);
       };
       msStatus.appendChild(refreshNowBtn);
       msStatus.style.color = 'var(--amber)';
