@@ -5843,35 +5843,48 @@ async function loadConfigFromDrive() {
 // GAS proxy reads vcs_config.json globalSettings and returns them
 // This ensures API key, Renzo key, etc. work for ALL users regardless of login method
 async function loadGlobalSettingsViaProxy() {
+  // Uses the existing 'getConfig' GAS action which returns {status:'ok', config:{...}}
+  // The config object contains globalSettings, users, vendorAliases etc.
   try {
-    const resp = await fetch(VCS_PROXY_URL + '?action=getGlobalConfig', {method:'GET'});
+    const resp = await fetch(VCS_PROXY_URL, {
+      method: 'POST',
+      headers: {'Content-Type': 'text/plain'},
+      body: JSON.stringify({action: 'getConfig'})
+    });
     if (!resp.ok) return false;
     const data = await resp.json();
-    if (data.status !== 'ok' || !data.globalSettings) return false;
-    // Apply only global settings — never overwrite personal settings
-    const gs = data.globalSettings;
-    const SAFE_GLOBAL_KEYS = ['apiKey','renzoApiKey','driveFileId','aiKeyShared'];
-    SAFE_GLOBAL_KEYS.forEach(k => {
-      if (gs[k] !== undefined && !S.settings[k]) {
-        S.settings[k] = gs[k];
-      }
-    });
-    // Merge approved users list if provided
-    if (data.users && Array.isArray(data.users)) {
+    if (data.status !== 'ok' || !data.config) return false;
+    const cfg = data.config;
+    // Apply global settings (admin-configured values shared across all users)
+    if (cfg.globalSettings) {
+      const gs = cfg.globalSettings;
+      const SAFE_GLOBAL_KEYS = ['apiKey','renzoApiKey','driveFileId','aiKeyShared'];
+      SAFE_GLOBAL_KEYS.forEach(k => {
+        if (gs[k] !== undefined && !S.settings[k]) {
+          S.settings[k] = gs[k];
+        }
+      });
+    }
+    // Merge approved users list (carries feature flags, roles, hiddenFields)
+    if (cfg.users && Array.isArray(cfg.users)) {
       const existing = getApprovedUsers();
       const merged = [...existing];
-      data.users.forEach(du => {
-        if (!merged.find(u => u.email === du.email)) merged.push(du);
+      cfg.users.forEach(du => {
+        const idx = merged.findIndex(u => u.email === du.email);
+        if (idx < 0) merged.push(du);
         else {
-          // Update feature flags for existing user from Drive
-          const idx = merged.findIndex(u => u.email === du.email);
           if (du.featureFlags) merged[idx].featureFlags = du.featureFlags;
+          if (du.hiddenFields) merged[idx].hiddenFields = du.hiddenFields;
           if (du.role && !merged[idx].role) merged[idx].role = du.role;
         }
       });
       setApprovedUsers(merged);
     }
-    console.log('[VCS] Global settings loaded via proxy for non-Google user');
+    // Merge vendor aliases (global setting)
+    if (cfg.vendorAliases && typeof cfg.vendorAliases === 'object') {
+      S.vendorAliases = Object.assign({}, cfg.vendorAliases, S.vendorAliases || {});
+    }
+    console.log('[VCS] Global settings loaded via GAS proxy getConfig for non-Google user');
     return true;
   } catch(e) {
     console.warn('[VCS] Could not load global settings via proxy:', e.message);
