@@ -1076,8 +1076,18 @@ async function completeLogin() {
   // Do this BEFORE auto-loading file so Drive settings (fileId etc) are available
   try {
     const driveConfigLoaded = await loadConfigFromDrive();
-    if (driveConfigLoaded) updateUserBadge(); // refresh badge with Drive user data
-  } catch(e) { console.warn('Drive config load on login:', e.message); }
+    if (driveConfigLoaded) {
+      updateUserBadge(); // refresh badge with Drive user data
+    } else {
+      // No personal Google token (e.g. Microsoft login) — load global settings via proxy
+      // This gives access to shared API keys, Renzo key, user feature flags etc.
+      await loadGlobalSettingsViaProxy();
+    }
+  } catch(e) {
+    console.warn('Drive config load on login:', e.message);
+    // Fallback: still try proxy for global settings
+    try { await loadGlobalSettingsViaProxy(); } catch(_) {}
+  }
   // Check Drive for a newer session from another device
   try {
     const driveSession = await loadSessionFromDrive();
@@ -5827,6 +5837,49 @@ async function loadConfigFromDrive() {
     return false;
   }
 }
+
+// ─── Load global settings via GAS proxy (for non-Google-auth users like MS login) ──
+// Called in completeLogin when GDriveToken is unavailable
+// GAS proxy reads vcs_config.json globalSettings and returns them
+// This ensures API key, Renzo key, etc. work for ALL users regardless of login method
+async function loadGlobalSettingsViaProxy() {
+  try {
+    const resp = await fetch(VCS_PROXY_URL + '?action=getGlobalConfig', {method:'GET'});
+    if (!resp.ok) return false;
+    const data = await resp.json();
+    if (data.status !== 'ok' || !data.globalSettings) return false;
+    // Apply only global settings — never overwrite personal settings
+    const gs = data.globalSettings;
+    const SAFE_GLOBAL_KEYS = ['apiKey','renzoApiKey','driveFileId','aiKeyShared'];
+    SAFE_GLOBAL_KEYS.forEach(k => {
+      if (gs[k] !== undefined && !S.settings[k]) {
+        S.settings[k] = gs[k];
+      }
+    });
+    // Merge approved users list if provided
+    if (data.users && Array.isArray(data.users)) {
+      const existing = getApprovedUsers();
+      const merged = [...existing];
+      data.users.forEach(du => {
+        if (!merged.find(u => u.email === du.email)) merged.push(du);
+        else {
+          // Update feature flags for existing user from Drive
+          const idx = merged.findIndex(u => u.email === du.email);
+          if (du.featureFlags) merged[idx].featureFlags = du.featureFlags;
+          if (du.role && !merged[idx].role) merged[idx].role = du.role;
+        }
+      });
+      setApprovedUsers(merged);
+    }
+    console.log('[VCS] Global settings loaded via proxy for non-Google user');
+    return true;
+  } catch(e) {
+    console.warn('[VCS] Could not load global settings via proxy:', e.message);
+    return false;
+  }
+}
+
+
 
 // ─── User Auth & Permissions ──────────────────────────────────────────────────
 const ROLES = {
@@ -19859,8 +19912,20 @@ function renderVCSHealth(c) {
     info.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:'3px'}},ok?chk.pass:chk.fail));
     // H4: Fix It button for failed checks that have a fix action
     if(!ok&&chk.fix){
-      const fixBtn=el('button',{class:'btn-xs btn-primary',style:{fontSize:'8px',marginTop:'2px'},onclick(){chk.fix();}},'🔧 Fix It');
-      info.appendChild(fixBtn);
+      if(chk.roles==='admin'&&!_isAdminRole){
+        // Non-admins can't fix admin settings — show informational message instead
+        const contactBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',marginTop:'2px',color:'var(--muted)',borderColor:'var(--muted)'},onclick(){
+          openModal(b=>{
+            b.appendChild(el('h3',{style:{marginTop:'0',fontSize:'13px'}},'ℹ️ Managed by Admin'));
+            b.appendChild(el('p',{style:{fontSize:'11px',color:'var(--muted)',lineHeight:'1.6'}},
+              'This setting is managed by your administrator. If you need access to this feature, please contact your admin to enable it for your account.'));
+          });
+        }},'ℹ Contact Admin');
+        info.appendChild(contactBtn);
+      } else {
+        const fixBtn=el('button',{class:'btn-xs btn-primary',style:{fontSize:'8px',marginTop:'2px'},onclick(){chk.fix();}},'🔧 Fix It');
+        info.appendChild(fixBtn);
+      }
     }
     card.appendChild(info);
     grid.appendChild(card);
