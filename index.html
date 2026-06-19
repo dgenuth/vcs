@@ -11577,8 +11577,8 @@ function renderChecklist(c) {
   // category/subCategory/product/name to be eligible as a suggestion.
   // This prevents wrong-category vendors from polluting results.
   const _CKLCAT = {
-    'therapy – in-house or outsourced?': ['rehab','therapy','physical','occupational','speech'],
-    'rehab supplies':    ['rehab','medical','nursing','supply','supplies','disposable','clinical'],
+    'therapy – in-house or outsourced?': ['therapy','physical therapy','occupational therapy','speech therapy','rehab service','contract therapy','pt ','ot ','slp'],
+    'rehab supplies':    ['rehab','therapy','medical','nursing','clinical','disposable','dme','wound','incontinence','prosthetic','orthopedic','assistive'],
     'drugs & prescriptions': ['pharma','drug','prescription','rx','medication','dispensing'],
     'otcs':              ['pharma','drug','otc','vitamin','health','wellness','supplement'],
     'pharmacy monthly auditing': ['pharma','audit','drug','rx','billing','consulting'],
@@ -11594,7 +11594,7 @@ function renderChecklist(c) {
     'smallwares':        ['smallware','kitchen','food','dietary','equipment','utensil','cookware'],
     'disposables':       ['disposable','food','dietary','paper','packaging','tray','serviceware'],
     'nutritionals and thickeners': ['nutrition','thicken','dietary','supplement','food','clinical'],
-    'general nursing supplies': ['nursing','medical','supply','disposable','clinical','healthcare'],
+    'general nursing supplies': ['nursing','medical','clinical','disposable','healthcare','patient care','glove','catheter','wound','incontinence'],
     'gloves':            ['glove','medical','nursing','disposable','supply','ppe','protective'],
     'advanced wound care': ['wound','medical','nursing','disposable','clinical','bandage','dressing'],
     'incontinence':      ['incontinence','medical','nursing','disposable','briefs','pads','clinical'],
@@ -11679,6 +11679,8 @@ function renderChecklist(c) {
       });
       return {v,score,catScore};
     }).filter(r=>r.score>0);
+    // Boost Direct vendors over GPO vendors (Direct = higher admin fee for Prime Source)
+    scored.forEach(r => { if(r.v.source==='ps'||r.v.gpo==='Direct'||!r.v.gpo) r.score += 8; });
     scored.sort((a,b)=>b.score-a.score);
     return scored.slice(0,5);
   }
@@ -24222,4 +24224,57 @@ try {
 // the escapedNote() backstop in the save path.
 (function() {
   const DANGEROUS_PATTERN = /[<>]/;
-  const STRIP_PATTERN     = /[<>
+  const STRIP_PATTERN     = /[<>\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
+
+  function warnNoteField(ta) {
+    const val = ta.value || '';
+    if (DANGEROUS_PATTERN.test(val)) {
+      ta.style.borderColor = 'var(--amber)';
+      let warn = ta._noteWarn;
+      if (!warn) {
+        warn = document.createElement('div');
+        warn.style.cssText = 'font-size:9px;color:var(--amber);margin-top:2px;';
+        warn.textContent = '⚠ Angle brackets < > are not allowed in notes — they corrupt the spreadsheet. Use ( ) or - instead.';
+        ta.parentNode && ta.parentNode.insertBefore(warn, ta.nextSibling);
+        ta._noteWarn = warn;
+      }
+      warn.style.display = '';
+    } else {
+      ta.style.borderColor = '';
+      if (ta._noteWarn) ta._noteWarn.style.display = 'none';
+    }
+  }
+
+  function sanitizePaste(e) {
+    // On paste: intercept, strip dangerous chars, insert clean text
+    const ta = e.target;
+    if (!ta.matches || !ta.matches('.notes-editor, .modal-textarea')) return;
+    const raw = (e.clipboardData || window.clipboardData).getData('text');
+    if (!DANGEROUS_PATTERN.test(raw) && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(raw)) return;
+    e.preventDefault();
+    const clean = raw.replace(STRIP_PATTERN, '');
+    const start = ta.selectionStart, end = ta.selectionEnd;
+    ta.value = ta.value.slice(0, start) + clean + ta.value.slice(end);
+    ta.selectionStart = ta.selectionEnd = start + clean.length;
+    if (typeof toast === 'function') toast('⚠ Angle brackets stripped from pasted text — not allowed in notes', '#f59e0b');
+    warnNoteField(ta);
+  }
+
+  function onNoteInput(e) {
+    const ta = e.target;
+    if (!ta.matches || !ta.matches('.notes-editor, .modal-textarea')) return;
+    warnNoteField(ta);
+  }
+
+  document.addEventListener('input', onNoteInput, true);
+  document.addEventListener('paste', sanitizePaste, true);
+
+  // Expose sanitizer for use in save paths as extra safety
+  window.sanitizeNoteText = function(text) {
+    return String(text || '').replace(STRIP_PATTERN, '');
+  };
+})();
+
+</script>
+</body>
+</html>
