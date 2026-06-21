@@ -5399,6 +5399,7 @@ function renderCommPanel(body, vendor) {
 }
 
 
+}
 // ─── Google Drive Integration ─────────────────────────────────────────────────
 // ─── Google Drive OAuth (GIS) ────────────────────────────────────────────────
 async function getGDriveToken() {
@@ -23692,6 +23693,7 @@ const AI_PRESETS_BY_ROLE = {
   ],
 };
 
+}
 function populateAIPresets() {
   const presetDiv=$('ai-presets');
   if(!presetDiv) return;
@@ -24454,8 +24456,6 @@ function hideSearchDropdown() {
   if (dd) dd.remove();
 }
 
-}
-}
 // ─── Init ─────────────────────────────────────────────────────────────────────
 function init() {
   // ── Attach login handlers FIRST — before anything that could throw ──
