@@ -4400,7 +4400,100 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
   // PSD vendor — full contract detail
 
-  // ── Vendor Info Section — category, subcategory, product, markets, etc. ──
+  // ── Vendor Info Section — polished, grouped, color-coded ──
+  if (vendor.source === 'psd') {
+    const viSec = el('div', {class:'detail-section'});
+    // Header row with title and edit button
+    const viHdr = el('div', {style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'8px'}});
+    viHdr.appendChild(el('h4', {class:'detail-sec-title',style:{margin:'0'}}, '🏷 Vendor Information'));
+    if (hasPermission('editAll') || ['admin','procurement','manager'].includes(USER.role)) {
+      viHdr.appendChild(el('button', {class:'btn-xs btn-ghost', style:{fontSize:'9px'}, onclick() {
+        openModal(mbody => {
+          mbody.appendChild(el('h3',{style:{marginTop:'0',fontSize:'13px'}},'✏️ Edit Vendor Info — '+vendor.name));
+          const fg = el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'12px'}});
+          const _editFields=[['GPO','gpo'],['Category','category'],['Sub-Category','subCategory'],
+            ['Product / Description','product'],['Class of Trade','classOfTrade'],['Markets','markets'],
+            ['Status','status'],['Added Value','addedValue'],['About','about'],['AKA','aka'],['Website','website']];
+          const inputs={};
+          _editFields.forEach(([lbl,field])=>{
+            const w=el('div',{style:{display:'flex',flexDirection:'column',gap:'2px'}});
+            w.appendChild(el('label',{style:{fontSize:'9px',color:'var(--muted)',fontWeight:'600'}},lbl));
+            const inp=el('input',{type:'text',class:'detail-edit-field',value:vendor[field]||'',placeholder:lbl,style:{fontSize:'10px'}});
+            inputs[field]=inp; w.appendChild(inp); fg.appendChild(w);
+          });
+          mbody.appendChild(fg);
+          const btns=el('div',{class:'modal-btns'});
+          btns.appendChild(el('button',{class:'btn-primary',onclick(){
+            _editFields.forEach(([,field])=>{const v=inputs[field].value.trim();if(v!==(vendor[field]||'')){vendor[field]=v;markDirty(vendor);}});
+            saveSessionState(); closeModal(); toast('✓ Vendor info updated'); refreshDetailIfOpen(vendor);
+          }},'💾 Save'));
+          btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
+          mbody.appendChild(btns);
+        });
+      }}, '✏️ Edit'));
+    }
+    viSec.appendChild(viHdr);
+
+    // Group 1: Identity
+    const _fee = parseFee ? parseFee(vendor.adminFee) : null;
+    const _feeColor = _fee>=5?'var(--green)':_fee>=3?'var(--amber)':'var(--red)';
+    const _tierColors = {CALL:'#ef4444',EMAIL:'#f59e0b',REVIEW:'#4f7cff',MONITOR:'#6b7280'};
+
+    const _mkField = (label, value, opts={}) => {
+      if(!value && value !== 0) return null;
+      const row = el('div', {class:'detail-field'});
+      row.appendChild(el('span', {class:'detail-label'}, label));
+      if (opts.color) {
+        row.appendChild(el('span', {class:'detail-value', style:{color:opts.color, fontWeight:'600'}}, String(value)));
+      } else if (opts.badge) {
+        const badge = el('span', {style:{fontSize:'9px',background:opts.badge+'22',color:opts.badge,border:'1px solid '+opts.badge+'44',borderRadius:'10px',padding:'1px 8px',fontWeight:'600'}}, String(value));
+        row.appendChild(badge);
+      } else if (opts.link) {
+        const a = el('a', {href:String(value),target:'_blank',style:{color:'var(--blue)',fontSize:'10px',wordBreak:'break-all'}}, String(value).replace(/^https?:\/\//,'').slice(0,40)+(String(value).length>40?'…':''));
+        row.appendChild(a);
+      } else {
+        row.appendChild(el('span', {class:'detail-value'}, String(value)));
+      }
+      return row;
+    };
+
+    // Row 1: GPO + Category + Sub-Category
+    const grid1 = el('div', {class:'detail-grid', style:{marginBottom:'8px'}});
+    const _g1Fields = [
+      ['GPO', vendor.gpo],
+      ['Category', vendor.category],
+      ['Sub-Category', vendor.subCategory],
+      ['Product', vendor.product || vendor.about],
+      ['Markets', vendor.markets],
+      ['Class of Trade', vendor.classOfTrade],
+    ];
+    _g1Fields.forEach(([l,v])=>{ const r=_mkField(l,v); if(r) grid1.appendChild(r); });
+    if (grid1.children.length) viSec.appendChild(grid1);
+
+    // Row 2: Business metrics — fee, tier, score, status — styled prominently
+    const metricsRow = el('div', {style:{display:'flex',gap:'8px',flexWrap:'wrap',margin:'6px 0',padding:'6px 8px',background:'rgba(79,124,255,.04)',borderRadius:'4px',border:'1px solid rgba(79,124,255,.1)'}});
+    if (_fee) metricsRow.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:_feeColor}}, 'Fee: '+_fee+'%'));
+    if (vendor.tier) metricsRow.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:_tierColors[vendor.tier]||'var(--muted)'}}, '● '+vendor.tier));
+    if (vendor.score) metricsRow.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:'var(--text)'}}, '★ '+vendor.score.toFixed(1)));
+    if (vendor.status) metricsRow.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',marginLeft:'auto'}}, vendor.status));
+    if (vendor.perpetuity) metricsRow.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(139,92,246,.1)',color:'#a78bfa',borderRadius:'10px',padding:'1px 8px'}}, '♾ Perpetuity'));
+    if (metricsRow.children.length) viSec.appendChild(metricsRow);
+
+    // Row 3: Contact info + extras
+    const grid2 = el('div', {class:'detail-grid', style:{marginTop:'4px'}});
+    const _g2Fields = [
+      ['Added Value', vendor.addedValue],
+      ['Website', vendor.website, {link:true}],
+      ['AKA / Previously', vendor.aka],
+      ['About', vendor.comments || vendor.about],
+    ];
+    _g2Fields.forEach(([l,v,opts])=>{ const r=_mkField(l,v,opts||{}); if(r) grid2.appendChild(r); });
+    if (grid2.children.length) viSec.appendChild(grid2);
+
+    body.appendChild(viSec);
+  }
+
+  
   if (vendor.source === 'psd') {
     const viSec = el('div', {class:'detail-section'});
     viSec.appendChild(el('h4', {class:'detail-sec-title'}, '🏷 Vendor Information'));
@@ -6993,9 +7086,14 @@ function addEditableSection(body, title, vendor, fields) {
   const _SCOL={'Contract Basics':'#4f7cff','Relationship':'#4f7cff','Details':'#22c55e','Contacts':'#f59e0b','Contract':'#a855f7'};
   if (title) {
     const _c=_SCOL[title]||'#94a3b8';
-    const hdr=el('h4',{class:'detail-sec-title',style:{background:_c+'18',color:_c,borderLeft:'3px solid '+_c}});
-    hdr.appendChild(document.createTextNode(title));
+    const _sKey='_secOpen_'+(vendor.name||'')+'_'+title;
+    if (!S[_sKey]) S[_sKey] = true; // default open
+    const hdr=el('h4',{class:'detail-sec-title',style:{background:_c+'18',color:_c,borderLeft:'3px solid '+_c,cursor:'pointer',userSelect:'none',display:'flex',alignItems:'center',justifyContent:'space-between'},
+      onclick(){ S[_sKey]=!S[_sKey]; refreshDetailIfOpen(vendor); }});
+    hdr.appendChild(el('span',{},title));
+    hdr.appendChild(el('span',{style:{fontSize:'9px',opacity:'0.6'}},S[_sKey]?'▼':'▶'));
     sec.appendChild(hdr);
+    if (!S[_sKey]) { body.appendChild(sec); return; } // collapsed — skip grid
   }
   const grid=el('div',{class:'detail-grid'});
   for (const [label, field, isDate] of allFields) {
@@ -12026,6 +12124,10 @@ function renderChecklist(c) {
   };
 
   const scoreVendors = function(label){
+    const _normalLabel = label.toLowerCase().trim();
+    // Admin overrides: vendors pinned to this category always surface first
+    const _overrides = (S.settings?._clCategoryOverrides || {})[_normalLabel] || [];
+    const _suppressed = new Set((S.settings?._clCategorySuppressed || {})[_normalLabel] || []);
     const q=label.toLowerCase();
     const words=q.split(/[\s\-\/,&]+/).filter(w=>w.length>2);
     const requiredKws=_CKLCAT[q]||null;
@@ -12066,8 +12168,19 @@ function renderChecklist(c) {
       r._tier = tier;
       r._isDirect = (v.source === 'psd' || v.gpo === 'Direct' || !v.gpo);
     });
-    scored.sort((a,b) => b.score - a.score);
-    return scored.slice(0, 5);
+    // Apply suppressions — remove vendors admin has suppressed for this category
+    const _filteredScored = scored.filter(r => !_suppressed.has(normName(r.v.name)));
+    _filteredScored.sort((a,b) => b.score - a.score);
+    // Apply admin pins — prepend pinned vendors at the front with max score
+    const _pinnedResults = [];
+    _overrides.forEach(pinnedName => {
+      const pv = _allCheckVendors.find(v => normName(v.name) === normName(pinnedName));
+      if (pv && !_pinnedResults.find(r => r.v.name === pv.name)) {
+        _pinnedResults.push({v:pv, score:999, catScore:999, _fee:parseFee?parseFee(pv.adminFee):0, _tier:(pv.tier||'').toUpperCase(), _isDirect:true, _pinned:true});
+      }
+    });
+    const _combined = [..._pinnedResults, ..._filteredScored.filter(r=>!_overrides.includes(r.v.name))];
+    return _combined.slice(0, 5);
   }
   const findVendors = function(label){return scoreVendors(label).map(r=>r.v);};
 
@@ -12192,11 +12305,23 @@ function renderChecklist(c) {
           } else {
             const _aiKey=custIn.value+'_ai_'+item.label;
             if(S._clAiSugged&&S._clAiSugged[_aiKey]){
-              S._clAiSugged[_aiKey].forEach(name=>{
-                const av=_allCheckVendors.find(v2=>v2.name===name);
-                const aiChip=el('div',{style:{display:'inline-flex',alignItems:'center',gap:'3px',background:'rgba(245,158,11,.12)',border:'1px solid rgba(245,158,11,.4)',borderRadius:'3px',padding:'1px 5px',color:'var(--amber)',cursor:av?'pointer':'default',fontWeight:'500',fontSize:'8px'},onclick:av?()=>openDetail(av):null});
+              const _aiResult=S._clAiSugged[_aiKey];
+              // Handle both old format (array) and new format (object with inDB/notInDB)
+              const _inDB=Array.isArray(_aiResult)?_aiResult:(_aiResult.inDB||[]);
+              const _notInDB=Array.isArray(_aiResult)?[]:(_aiResult.notInDB||[]);
+              _inDB.forEach(name=>{
+                const av=_allCheckVendors.find(v2=>normName(v2.name)===normName(name));
+                const aiChip=el('div',{title:'In our database'+(av&&av.adminFee?' — Fee: '+av.adminFee:''),style:{display:'inline-flex',alignItems:'center',gap:'3px',background:'rgba(245,158,11,.12)',border:'1px solid rgba(245,158,11,.3)',borderRadius:'3px',padding:'1px 5px',fontSize:'8px',cursor:av?'pointer':'default'},onclick:av?()=>openDetail(av):null});
                 aiChip.appendChild(document.createTextNode(name.slice(0,20)));
-                aiChip.appendChild(el('span',{style:{fontSize:'7px',background:'rgba(245,158,11,.25)',borderRadius:'2px',padding:'0 3px',marginLeft:'1px'}},'AI'));
+                aiChip.appendChild(el('span',{style:{fontSize:'7px',background:'rgba(245,158,11,.25)',borderRadius:'2px',padding:'0 3px',marginLeft:'2px'}},'DB'));
+                vendorCol.appendChild(aiChip);
+              });
+              _notInDB.forEach(item2=>{
+                const name=item2.name||item2;
+                const aiChip=el('div',{title:'Not in our DB — '+( item2.reason||'AI suggested')+( item2.website?' | '+item2.website:''),style:{display:'inline-flex',alignItems:'center',gap:'3px',background:'rgba(100,116,139,.08)',border:'1px solid rgba(100,116,139,.2)',borderRadius:'3px',padding:'1px 5px',fontSize:'8px',cursor:'default'}});
+                aiChip.appendChild(document.createTextNode(name.slice(0,18)));
+                aiChip.appendChild(el('span',{style:{fontSize:'7px',background:'rgba(100,116,139,.2)',borderRadius:'2px',padding:'0 3px',marginLeft:'2px'}},'Web'));
+                if(item2.website) aiChip.addEventListener('click',()=>window.open(item2.website,'_blank'));
                 vendorCol.appendChild(aiChip);
               });
             } else {
@@ -12206,16 +12331,17 @@ function renderChecklist(c) {
                 e.stopPropagation();aiBtn.textContent='⏳';aiBtn.disabled=true;
                 try{
                   const _key=S._anthropicKey||S.settings?.apiKey||localStorage.getItem('vcs_api_key')||'';
+                  const _dbCtx=(_allCheckVendors||[]).slice(0,200).map(v=>v.name+(v.category?' ('+v.category+')':'')).join(', ');
+                  const _prompt='You are a healthcare GPO procurement advisor.\nCategory: "'+item.label+'" at nursing homes/assisted living/rehab.\nOur vendor database includes: '+_dbCtx+'.\nList up to 3 vendors FROM OUR DATABASE matching this category, then up to 2 national vendors NOT in our database we should pursue.\nReply ONLY with JSON: {"inDB":["name1"],"notInDB":[{"name":"X","reason":"why","website":"url"}]}';
                   const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
                     headers:{'x-api-key':_key,'anthropic-version':'2023-06-01','Content-Type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
-                    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:120,
-                      messages:[{role:'user',content:'I need vendor recommendations for "'+item.label+'" at a nursing home / assisted living facility. We are a GPO called Prime Source Expense Experts. Suggest 3-5 specific vendor companies that operate in this space nationally. Reply with company names only, comma-separated, no explanations.'}]})
-                  });
+                    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:300,messages:[{role:'user',content:_prompt}]})});
                   const data=await resp.json();
                   const text=(data.content&&data.content[0]&&data.content[0].text)||'';
-                  const names=text.split(',').map(n=>n.trim()).filter(Boolean);
+                  let parsed={inDB:[],notInDB:[]};
+                  try{parsed=JSON.parse(text.trim());}catch(_){parsed={inDB:text.split(',').map(n=>n.trim()).filter(Boolean).slice(0,3),notInDB:[]};}
                   if(!S._clAiSugged) S._clAiSugged={};
-                  S._clAiSugged[_aiKey]=names.length?names:['No suggestion'];
+                  S._clAiSugged[_aiKey]={inDB:parsed.inDB||[],notInDB:parsed.notInDB||[]};
                   const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}
                 }catch(err){aiBtn.textContent='🤖 AI Suggest';aiBtn.disabled=false;}
               };
