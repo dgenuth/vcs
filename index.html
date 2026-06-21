@@ -8859,7 +8859,7 @@ function renderVendorDB(c) {
     // Sort label
     const lbl=el('span',{style:{cursor:col.sortable?'pointer':'default',color:isSorted?'var(--blue)':hasFilter?'var(--amber)':'var(--muted)',fontSize:'10px'}},
       col.label+(isSorted?(S.dbSort.dir>0?' ↑':' ↓'):''));
-    if (col.sortable) lbl.addEventListener('click',()=>{ if(S.dbSort.col===col.label)S.dbSort.dir*=-1; else{S.dbSort.col=col.label;S.dbSort.dir=1;} S._dbRenderCount=150; const c2=$('content');if(c2&&S.view==='vendordb'){const _scrollEl=c2.querySelector('#vdb-table,table,tbody');const _sy=_scrollEl?_scrollEl.scrollTop:(c2.scrollTop||0);c2.innerHTML='';renderVendorDB(c2);const _scrollEl2=c2.querySelector('#vdb-table,table,tbody');if(_scrollEl2)_scrollEl2.scrollTop=_sy;}else render(); });
+    if (col.sortable) lbl.addEventListener('click',()=>{ if(S.dbSort.col===col.label)S.dbSort.dir*=-1; else{S.dbSort.col=col.label;S.dbSort.dir=1;} S._dbRenderCount=150; const c2=$('content');if(c2&&S.view==='vendordb'){const _scrollEl=c2.querySelector('#vdb-table-wrap');const _sy=_scrollEl?_scrollEl.scrollTop:0;c2.innerHTML='';renderVendorDB(c2);const _scrollEl2=c2.querySelector('#vdb-table-wrap');if(_scrollEl2&&_sy>0)_scrollEl2.scrollTop=_sy;}else render(); });
     inner.appendChild(lbl);
     // Filter button
     const fBtn=el('span',{title:`Filter by ${col.label}`,style:{cursor:'pointer',opacity:hasFilter?1:0.35,color:hasFilter?'var(--amber)':'var(--muted)',fontSize:'9px'},
@@ -12260,12 +12260,13 @@ function renderChecklist(c) {
   }
   } catch(err) {
     c.innerHTML='';
-    const _errDiv=el('div',{style:{padding:'20px',color:'var(--red)'}});
-    _errDiv.appendChild(el('h3',{},'Checklist Error'));
-    _errDiv.appendChild(el('p',{},err.message));
-    _errDiv.appendChild(el('button',{class:'btn-primary',onclick:function(){render();}}, 'Retry'));
+    const _errDiv=el('div',{style:{padding:'20px',color:'#dc2626',background:'#fef2f2',borderRadius:'6px',margin:'12px',border:'1px solid #fca5a5'}});
+    _errDiv.appendChild(el('h3',{style:{marginTop:'0',fontSize:'13px'}},'⚠ Checklist Error'));
+    _errDiv.appendChild(el('p',{style:{fontSize:'11px',marginBottom:'8px'}},err.message));
+    _errDiv.appendChild(el('pre',{style:{fontSize:'9px',color:'#666',whiteSpace:'pre-wrap',maxHeight:'120px',overflow:'auto',marginBottom:'8px'}},err.stack||'(no stack)'));
+    _errDiv.appendChild(el('button',{class:'btn-primary',onclick:function(){const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}}}, 'Retry'));
     c.appendChild(_errDiv);
-    console.error('[VCS] Checklist crash:', err);
+    console.error('[VCS] Checklist crash:', err.message, err);
   }
 }
 
@@ -16410,11 +16411,11 @@ function renderToday(c) {
             fetch('https://graph.microsoft.com/v1.0/me/calendarView?startDateTime='+_start+'&endDateTime='+_end+'&$top=20&$select=subject,start,end,location&$orderby=start/dateTime',
               {headers:{Authorization:'Bearer '+_tok}})
               .then(r=>r.ok?r.json():null)
-              .then(d=>{if(d&&d.value){S._msCalendarEvents=d.value;const _c2=$('content');if(_c2)renderToday(_c2);}})
+              .then(d=>{if(d&&d.value){S._msCalendarEvents=d.value;const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}})
               .catch(()=>{});
           }
         }
-        const _c2=$('content');if(_c2)renderToday(_c2);
+        const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}
       }});
     calHdr.appendChild(el('span',{style:{fontSize:'13px'}},'📅'));
     calHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Microsoft 365 Calendar'));
@@ -16432,7 +16433,7 @@ function renderToday(c) {
           calBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px'}},'Loading calendar events…'));
         } else {
           calBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px'}},'No Microsoft 365 calendar loaded.'));
-          calBody.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){S.view='settings';const _c2=$('content');if(_c2)renderToday(_c2);}},'→ Connect Microsoft 365'));
+          calBody.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){S.view='settings';const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}},'→ Connect Microsoft 365'));
         }
       } else {
         const upcoming=calEvents.filter(ev=>{const s=new Date(ev.start?.dateTime||ev.start?.date||'');return s>=today;}).sort((a,b)=>new Date(a.start?.dateTime||a.start?.date||'')-new Date(b.start?.dateTime||b.start?.date||''));
@@ -16520,14 +16521,14 @@ function renderToday(c) {
     const secWrap=el('div',{style:{marginBottom:'8px'}});
     // D1: Collapse All / Expand All for Today sections
     const _todayCtrlRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'6px',justifyContent:'flex-end'}});
-    _todayCtrlRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){_todaySections.forEach(s=>{S._todaySecOpen[s.key]=true;});const _c3=$('content');if(_c3)renderToday(_c3);}},'▼ Expand All'));
-    _todayCtrlRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){_todaySections.forEach(s=>{S._todaySecOpen[s.key]=false;});const _c2=$('content');if(_c2)renderToday(_c2);}},'▶ Collapse All'));
+    _todayCtrlRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){_todaySections.forEach(s=>{S._todaySecOpen[s.key]=true;});const _c3=$('content');if(_c3){_c3.innerHTML='';renderToday(_c3);}}},'▼ Expand All'));
+    _todayCtrlRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){_todaySections.forEach(s=>{S._todaySecOpen[s.key]=false;});const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}},'▶ Collapse All'));
     secWrap.appendChild(_todayCtrlRow);
     _todaySections.forEach(sec=>{
       const items=sec.isStats?[]:sec.fn();
       const isOpen=S._todaySecOpen[sec.key];
       const hdrEl=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'5px 8px',background:'var(--card)',borderRadius:'4px',cursor:'pointer',marginBottom:'2px',userSelect:'none',border:'1px solid var(--border)'},
-        onclick(){S._todaySecOpen[sec.key]=!S._todaySecOpen[sec.key];const _c2=$('content');if(_c2)renderToday(_c2);}});
+        onclick(){S._todaySecOpen[sec.key]=!S._todaySecOpen[sec.key];const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}});
       hdrEl.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',flexShrink:'0'}},isOpen?'▼':'▶'));
       hdrEl.appendChild(el('span',{style:{fontSize:'12px'}},sec.icon));
       hdrEl.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},sec.label));
