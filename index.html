@@ -1182,7 +1182,7 @@ S = {
   itwSection: 'All', showDismissed: false, itwShowInactive: false, itwColorFilter: 'All', historyFilter: 'All',
   dirty: new Set(),
   vendorAliases: {}, // { 'aliasName' → 'canonicalVendorName' } — user-created manual links
-  dbSort: {col:'Expiry', dir:1},
+  dbSort: {col:'Vendor', dir:1},
   dbFilters: {},
   dbShowAll: false,
   dbSource: 'direct',
@@ -3250,6 +3250,7 @@ function updateSidebar() {
   const allowedTabs = NAV_DEFS.map(n=>n[0]).filter(tabId => {
     if(tabId.startsWith('_div')) return true; // always include dividers
     if (tabId in _tabOverrides) return _tabOverrides[tabId]; // user override
+    if (USER.role === 'admin' || USER.role === 'manager') return true;
     return _roleBaseTabs.includes(tabId); // role default
   });
   for (const [id,icon,label] of NAV_DEFS) {
@@ -4503,6 +4504,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
           color: _perpYes ? '#a78bfa' : '#ef4444',
           fontSize: '12px', cursor: 'default', flexShrink: '0', marginLeft: '4px', fontWeight: '900'
         }}, _perpYes ? '∞' : '✕');
+      metricsRow.appendChild(_pShield);
+    }
     if (metricsRow.children.length) viSec.appendChild(metricsRow);
 
     // Row 3: Contact info + extras
@@ -5399,7 +5402,6 @@ function renderCommPanel(body, vendor) {
 }
 
 
-}
 // ─── Google Drive Integration ─────────────────────────────────────────────────
 // ─── Google Drive OAuth (GIS) ────────────────────────────────────────────────
 async function getGDriveToken() {
@@ -6270,13 +6272,13 @@ const ROLE_PERMS = {
     editAll:true,manageUsers:true,deleteHistory:true,configAI:true,configDrive:true,configSF:true,
     exportData:true,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,
     viewFees:true,viewContacts:true,viewFinancials:true,canCopy:true,
-    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'compare', 'sfboard', 'contracts', 'checklist', 'spend', 'customers', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings', 'health'],
+    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'compare', 'sfboard', 'contracts', 'checklist', 'discovery', 'spend', 'customers', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings', 'health'],
   },
   procurement: {
     editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,
     exportData:false,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,
     viewFees:true,viewContacts:true,viewFinancials:true,canCopy:false,
-    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'compare', 'sfboard', 'contracts', 'checklist', 'spend', 'customers', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings', 'health'],settingsPersonalOnly:true,
+    tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'compare', 'sfboard', 'contracts', 'checklist', 'discovery', 'spend', 'customers', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings', 'health'],settingsPersonalOnly:true,
   },
   cro: {
     editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,
@@ -6323,7 +6325,7 @@ const ROLE_PERMS = {
   // 'sales' is an alias for 'sales_rep' used in Role Tab Defaults display; must exist so overrides restore correctly on hard refresh
   sales:      {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,viewFees:false,viewContacts:false,viewFinancials:false,canCopy:false,tabs:['vendordb', 'settings'],settingsPersonalOnly:true},
   // Legacy aliases — map to nearest equivalent
-  manager:    {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,viewFees:true,viewContacts:true,viewFinancials:true,canCopy:false,tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'checklist', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings', 'health'],settingsPersonalOnly:true},
+  manager:    {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:true,editNotes:true,editContract:true,editContact:true,save:true,viewFees:true,viewContacts:true,viewFinancials:true,canCopy:false,tabs:['today', 'callsheet', 'expiring', 'vendordb', 'network', 'economics', 'tiers', 'itw', 'reviews', 'checklist', 'discovery', 'calendar', 'forecast', 'analytics', 'reports', 'summary', 'history', 'datacheck', 'settings', 'health'],settingsPersonalOnly:true},
   viewer:     {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,viewFees:true,viewContacts:false,viewFinancials:true,canCopy:false,tabs:['today', 'expiring', 'vendordb', 'network', 'economics', 'analytics', 'reports', 'summary', 'history', 'settings'],settingsPersonalOnly:true},
   restricted: {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,viewFees:false,viewContacts:false,viewFinancials:false,canCopy:false,tabs:['vendordb', 'settings'],settingsPersonalOnly:true},
 };
@@ -8481,7 +8483,7 @@ function renderVendorDB(c) {
   c.style.padding = '0';
   if (!S.loaded) { c.appendChild(el('p',{class:'muted',style:{padding:'16px'}},'Load a file first — upload your XLSM to see all contracts here.')); return; }
   if (!S.dbFilters) S.dbFilters = {};
-  if (!S.dbSort) S.dbSort = {col:'Vendor', dir:1};
+  if (!S.dbSort || !S._dbSortUserSet) S.dbSort = {col:'Vendor', dir:1};
   if (!S.dbSort.col) S.dbSort.col = 'Vendor';
   if (!S.dbSort.dir) S.dbSort.dir = 1;
   if (!S.dbSource) S.dbSource = 'direct';
@@ -8909,7 +8911,7 @@ function renderVendorDB(c) {
     // Sort label
     const lbl=el('span',{style:{cursor:col.sortable?'pointer':'default',color:isSorted?'var(--blue)':hasFilter?'var(--amber)':'var(--muted)',fontSize:'10px'}},
       col.label+(isSorted?(S.dbSort.dir>0?' ↑':' ↓'):''));
-    if (col.sortable) lbl.addEventListener('click',()=>{ if(S.dbSort.col===col.label)S.dbSort.dir*=-1; else{S.dbSort.col=col.label;S.dbSort.dir=1;} S._dbRenderCount=150; const c2=$('content');if(c2&&S.view==='vendordb'){const _scrollEl=c2.querySelector('#vdb-table-wrap');const _sy=_scrollEl?_scrollEl.scrollTop:0;c2.innerHTML='';renderVendorDB(c2);const _scrollEl2=c2.querySelector('#vdb-table-wrap');if(_scrollEl2&&_sy>0)_scrollEl2.scrollTop=_sy;}else render(); });
+    if (col.sortable) lbl.addEventListener('click',()=>{ S._dbSortUserSet=true; if(S.dbSort.col===col.label)S.dbSort.dir*=-1; else{S.dbSort.col=col.label;S.dbSort.dir=1;} S._dbRenderCount=150; const c2=$('content');if(c2&&S.view==='vendordb'){const _scrollEl=c2.querySelector('#vdb-table-wrap');const _sy=_scrollEl?_scrollEl.scrollTop:0;c2.innerHTML='';renderVendorDB(c2);const _scrollEl2=c2.querySelector('#vdb-table-wrap');if(_scrollEl2&&_sy>0)_scrollEl2.scrollTop=_sy;}else render(); });
     inner.appendChild(lbl);
     // Filter button
     const fBtn=el('span',{title:`Filter by ${col.label}`,style:{cursor:'pointer',opacity:hasFilter?1:0.35,color:hasFilter?'var(--amber)':'var(--muted)',fontSize:'9px'},
@@ -16331,13 +16333,13 @@ function renderToday(c) {
   // B5: Spacer so sticky bar never overlaps first content row
   const _todaySpacer=el('div',{style:{height:'0px'}});
   c.appendChild(_todaySpacer);
-  requestAnimationFrame(()=>{const h=stickyHdr.getBoundingClientRect().height;if(h>0)_todaySpacer.style.height=Math.min(h,36)+'px';});
+  requestAnimationFrame(()=>{const h=stickyHdr.getBoundingClientRect().height;if(h>0)_todaySpacer.style.height='0px';});
 
   // ── SF-Powered Signals (if connected) ──────────────────────────────────────
   if(USER.sfToken && S._sfSignals !== false) {
     if(S._sfSignalCollapsed === undefined) S._sfSignalCollapsed=true;
     if(!S._sfFilters) S._sfFilters={};
-    const sigSec=el('div',{style:{marginBottom:'4px'}});
+    const sigSec=el('div',{style:{marginBottom:'4px',marginTop:'0'}});
     const sigHdr=el('div',{style:_SEC_HDR_STYLE,
       onclick(e){if(e.target.tagName==='BUTTON'||e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;S._sfSignalCollapsed=!S._sfSignalCollapsed;const _sr=$('content');if(_sr){_sr.innerHTML='';renderToday(_sr);}}});
     sigHdr.appendChild(el('span',{style:_SEC_CHEVRON_STYLE},(S._sfSignalCollapsed?'▶':'▼')));
@@ -16599,13 +16601,13 @@ function renderToday(c) {
           const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'4px 6px',borderRadius:'3px',cursor:'pointer',background:'rgba(239,68,68,.04)',borderLeft:'3px solid var(--red)'},
             onclick(ev){if(ev.target.tagName==='BUTTON'||ev.target.tagName==='A'||ev.target.closest('button')||ev.target.closest('.action-cell'))return;openDetail(v);}});
           row.appendChild(el('input',{type:'checkbox',style:{flexShrink:'0'},onclick(e){e.stopPropagation();}}));
+          row.appendChild(_todayRowBtns(v));
           if(v.score!=null)row.appendChild(scorePill(v.score));else row.appendChild(el('span',{style:{width:'32px'}},''));
           row.appendChild(el('span',{style:{fontWeight:'700',fontSize:'10px',minWidth:'110px',maxWidth:'110px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--blue)'}},v.name));
           row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},v.category||''));
           if(_ph)row.appendChild(el('a',{href:'tel:'+_ph.replace(/[^+\d]/g,''),style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none',flexShrink:'0'},onclick(e){e.stopPropagation();}},_ph.slice(0,12)));
           if(dExp!==null)row.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'700',color:dExp<=30?'var(--red)':'var(--muted)',flexShrink:'0'}},dExp+'d'));
           if(v.tier)row.appendChild(tierTag(v.tier));
-          row.appendChild(_todayRowBtns(v));
           return row;}},
       {key:'call',icon:'📞',label:'Call Queue',color:'var(--red)',
         hasHdr:true,hdrs:['Score','Vendor','Category','Contact','Phone','Due'],
@@ -16613,26 +16615,28 @@ function renderToday(c) {
         rowFn:v=>{const fu=parseDate(v.followUp);const fuD=fu?dayDiff(today,fu):null;const _ph=v.phone||v.bizPhone||v.contactPhone||v.mobile||'';
           const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'4px 6px',cursor:'pointer'},onclick(ev){if(ev.target.closest('button')||ev.target.tagName==='A')return;openDetail(v);}});
           row.appendChild(el('input',{type:'checkbox',style:{flexShrink:'0'},onclick(e){e.stopPropagation();}}));
+          row.appendChild(_todayRowBtns(v));
           if(v.score!=null)row.appendChild(scorePill(v.score));
           row.appendChild(el('span',{style:{fontWeight:'700',fontSize:'10px',minWidth:'110px',maxWidth:'110px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--blue)'}},v.name));
           row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},v.category||''));
           if(v.procContact)row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--text)',flexShrink:'0'}},v.procContact.split(' ')[0]));
           if(_ph)row.appendChild(el('a',{href:'tel:'+_ph.replace(/[^+\d]/g,''),style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none',flexShrink:'0'},onclick(e){e.stopPropagation();}},_ph.slice(0,12)));
           if(fuD!==null)row.appendChild(el('span',{style:{fontSize:'9px',color:fuD>0?'var(--red)':'var(--muted)',fontWeight:fuD>0?'700':'400',flexShrink:'0'}},(fuD>0?'Overdue':'Due in '+((-fuD)+'d'))));
-          row.appendChild(_todayRowBtns(v));return row;}},
+          return row;}},
       {key:'email',icon:'📧',label:'Email Queue',color:'var(--amber)',
         hasHdr:true,hdrs:['Score','Vendor','Category','Reason','Email','Due'],
         fn:()=>_allV.filter(v=>v.tier==='EMAIL').sort((a,b)=>b.score-a.score),
         rowFn:v=>{const fu=parseDate(v.followUp);const fuD=fu?dayDiff(today,fu):null;const _lc=parseDate(v.lastComm);const _lcDays=_lc?dayDiff(_lc,today):null;const _reason=v.tier==='EMAIL'?(fuD!==null&&fuD>0?'Overdue follow-up':_lcDays!==null?'Last contact: '+_lcDays+'d ago':'Due for outreach'):'';
           const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'4px 6px',cursor:'pointer'},onclick(ev){if(ev.target.closest('button')||ev.target.tagName==='A')return;openDetail(v);}});
           row.appendChild(el('input',{type:'checkbox',style:{flexShrink:'0'},onclick(e){e.stopPropagation();}}));
+          row.appendChild(_todayRowBtns(v));
           if(v.score!=null)row.appendChild(scorePill(v.score));
           row.appendChild(el('span',{style:{fontWeight:'700',fontSize:'10px',minWidth:'110px',maxWidth:'110px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--blue)'}},v.name));
           row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},v.category||''));
           if(_reason)row.appendChild(el('span',{style:{fontSize:'8px',color:'var(--amber)',flexShrink:'0',maxWidth:'100px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},title:_reason},_reason));
-          if(v.email)row.appendChild(el('a',{href:'mailto:'+v.email,style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none',flexShrink:'0'},onclick(e){e.stopPropagation();},title:v.email},'✉'+v.email.split('@')[0].slice(0,10)));
+          if(v.email)row.appendChild(el('a',{href:'mailto:'+v.email,style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none',flexShrink:'0'},onclick(e){e.stopPropagation();},title:v.email},'\u2709'+v.email.split('@')[0].slice(0,10)));
           if(fuD!==null)row.appendChild(el('span',{style:{fontSize:'9px',color:fuD>0?'var(--amber)':'var(--muted)',fontWeight:fuD>0?'700':'400',flexShrink:'0'}},(fuD>0?'Overdue':fuD===0?'Today':'In '+(-fuD)+'d')));
-          row.appendChild(_todayRowBtns(v));return row;}},
+          return row;}},
       {key:'review',icon:'📋',label:'Business Reviews Due',color:'var(--blue)',
         fn:()=>_allV.filter(v=>{const fu=parseDate(v.followUp);return v.tier==='REVIEW'&&fu&&dayDiff(today,fu)>=0;}).sort((a,b)=>b.score-a.score),
         rowFn:v=>{const fu=parseDate(v.followUp);const _lc=parseDate(v.lastComm);const _lcDays=_lc?dayDiff(_lc,today):null;const schedBtn=el('button',{class:'btn-xs btn-blue',style:{fontSize:'8px',flexShrink:'0'},onclick(e){e.stopPropagation();openCalendarEventModal(isoDate(today),v.name);}});schedBtn.textContent='Schedule';return el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer'},onclick(){openDetail(v);}},
@@ -16805,12 +16809,12 @@ function renderToday(c) {
     nameEl.appendChild(vLink(v));
     if (S.dismissed.has(v.name)) nameEl.appendChild(el('span',{class:'dismissed-badge'},'dismissed'));
     const allCells=[
-      cb, scorePill(v.score), nameEl, v.category||'',
+      cb, actionBtns(v), scorePill(v.score), nameEl, v.category||'',
       S.search ? el('span',{},highlightText(v.procContact||'', S.search)) : (v.procContact||''),
       v.bizPhone||v.mobile||'', v.email||'',
       exp?fmtDate(exp):'',
       days!==null?fmtDaysSpan(days):'',
-      arBadge(v), fu?fmtDate(fu):'', tierTag(v.tier), whyCell(v), actionBtns(v),
+      arBadge(v), fu?fmtDate(fu):'', tierTag(v.tier), whyCell(v),
     ];
     return visIdx.map(i=>allCells[i]);
   }));
