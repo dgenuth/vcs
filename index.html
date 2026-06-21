@@ -16230,19 +16230,20 @@ function renderToday(c) {
 
   // ── SF-Powered Signals (if connected) ──────────────────────────────────────
   if(USER.sfToken && S._sfSignals !== false) {
-    if(!S._sfSignalCollapsed) S._sfSignalCollapsed=false;
+    if(S._sfSignalCollapsed === undefined) S._sfSignalCollapsed=false;
     if(!S._sfFilters) S._sfFilters={};
     const sigSec=el('div',{style:{marginBottom:'12px',border:'1px solid var(--border)',borderRadius:'5px',overflow:'hidden'}});
     const sigHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'6px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none'},
-      onclick(e){if(e.target.tagName==='BUTTON'||e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;S._sfSignalCollapsed=!S._sfSignalCollapsed;render();}});
+      onclick(e){if(e.target.tagName==='BUTTON'||e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;S._sfSignalCollapsed=!S._sfSignalCollapsed;const _sr=$('content');if(_sr){_sr.innerHTML='';renderToday(_sr);};}});
+    sigHdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',flexShrink:'0'}},(S._sfSignalCollapsed?'▶':'▼')));
     sigHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',color:'var(--blue)'}},'☁ Salesforce Signals'));
-    sigHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},S._sfSignalData?'('+S._sfSignalData.length+')':''));
+    sigHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},S._sfSignalData?'('+S._sfSignalData.length+')':''));
 
     // My records toggle
     const myToggle=el('label',{style:{fontSize:'9px',color:'var(--muted)',display:'flex',gap:'3px',alignItems:'center',cursor:'pointer'},onclick(e){e.stopPropagation();}});
     const myCb=el('input',{type:'checkbox',style:{cursor:'pointer'}});
     myCb.checked=S._sfSignalMine!==false;
-    myCb.addEventListener('change',()=>{S._sfSignalMine=myCb.checked;render();});
+    myCb.addEventListener('change',()=>{S._sfSignalMine=myCb.checked;const _sr=$('content');if(_sr){_sr.innerHTML='';renderToday(_sr);};});
     myToggle.appendChild(myCb);
     myToggle.appendChild(el('span',{},'Mine only'));
     sigHdr.appendChild(myToggle);
@@ -16251,10 +16252,9 @@ function renderToday(c) {
 
     if(S._sfSignalData){
       sigHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Last: '+(S._sfSignalLastLoaded||'—')));
-      sigHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(e){e.stopPropagation();S._sfSignalData=null;render();loadSFSignals();}},'↻'));
+      sigHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(e){e.stopPropagation();S._sfSignalData=null;const _sr=$('content');if(_sr){_sr.innerHTML='';renderToday(_sr);};loadSFSignals();}},'↻'));
     }
-    sigHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(e){e.stopPropagation();S._sfSignals=false;render();}},'✕'));
-    sigHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},(S._sfSignalCollapsed?'▶':'▼')));
+    sigHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(e){e.stopPropagation();S._sfSignals=false;const _sr=$('content');if(_sr){_sr.innerHTML='';renderToday(_sr);};}},'✕'));
     sigSec.appendChild(sigHdr);
 
     if(S._sfSignalCollapsed){c.appendChild(sigSec);} else {
@@ -16308,7 +16308,7 @@ function renderToday(c) {
           if(col.opts) {
             const sel=el('select',{style:{fontSize:'8px',background:'transparent',border:'none',color:'var(--muted)',cursor:'pointer',maxWidth:'70px'},onclick(e){e.stopPropagation();}});
             col.opts.forEach(o=>{const opt=el('option',{value:o},o);if(o===(S._sfFilters[col.key]||'All'))opt.selected=true;sel.appendChild(opt);});
-            sel.addEventListener('change',e=>{S._sfFilters[col.key]=e.target.value;render();});
+            sel.addEventListener('change',e=>{S._sfFilters[col.key]=e.target.value;const _sr=$('content');if(_sr){_sr.innerHTML='';renderToday(_sr);};});
             th.appendChild(el('span',{},' '));
             th.appendChild(sel);
           }
@@ -16397,7 +16397,7 @@ function renderToday(c) {
     sfMsg.appendChild(el('div',{style:{fontWeight:'600',fontSize:'11px',marginBottom:'2px'}},'Salesforce not connected'));
     sfMsg.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)'}},'Connect Salesforce in Settings to load live Opportunities, Cases, and Signals here.'));
     sfConnectSec.appendChild(sfMsg);
-    sfConnectSec.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){S.view='settings';render();}},'→ Connect Salesforce'));
+    sfConnectSec.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){S.view='settings';const _sr=$('content');if(_sr){_sr.innerHTML='';renderToday(_sr);};}},'→ Connect Salesforce'));
     c.appendChild(sfConnectSec);
   }
 
@@ -16424,12 +16424,12 @@ function renderToday(c) {
         }
         const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}
       }});
+    calHdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',flexShrink:'0'}},(S._calCollapsed?'▶':'▼')));
     calHdr.appendChild(el('span',{style:{fontSize:'13px'}},'📅'));
     calHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Microsoft 365 Calendar'));
-    // Show event count in header when collapsed
+    // Show event count badge on right when events loaded
     const _calEvtCount=S._msCalendarEvents?.length||0;
-    if(_calEvtCount>0)calHdr.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(79,124,255,.1)',color:'var(--blue)',borderRadius:'10px',padding:'1px 7px'}},_calEvtCount+' events'));
-    calHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},(S._calCollapsed?'▶':'▼')));
+    if(_calEvtCount>0)calHdr.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(79,124,255,.1)',color:'var(--blue)',borderRadius:'10px',padding:'1px 7px',flexShrink:'0'}},_calEvtCount+' events'));
     calSec.appendChild(calHdr);
     if(!S._calCollapsed){
       const calBody=el('div',{style:{padding:'8px 12px'}});
@@ -16444,11 +16444,13 @@ function renderToday(c) {
         }
       } else {
         const upcoming=calEvents.filter(ev=>{const s=new Date(ev.start?.dateTime||ev.start?.date||'');return s>=today;}).sort((a,b)=>new Date(a.start?.dateTime||a.start?.date||'')-new Date(b.start?.dateTime||b.start?.date||''));
+        if (!S._calShowAll) S._calShowAll = false;
+        const _showCount = S._calShowAll ? upcoming.length : 8;
         calBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px'}},calEvents.length+' events loaded · next 30 days'));
         if(!upcoming.length){
           calBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--green)'}},'✓ No upcoming events found'));
         } else {
-          upcoming.slice(0,8).forEach(ev=>{
+          upcoming.slice(0, _showCount).forEach(ev=>{
             const s=new Date(ev.start?.dateTime||ev.start?.date||'');
             const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid rgba(128,128,128,.06)'}});
             row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'80px'}},s.toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})));
@@ -16456,7 +16458,13 @@ function renderToday(c) {
             if(ev.location?.displayName)row.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)',maxWidth:'100px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},ev.location.displayName));
             calBody.appendChild(row);
           });
-          if(upcoming.length>8)calBody.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'4px'}},'+' +(upcoming.length-8)+' more events'));
+          if(upcoming.length > _showCount){
+            const moreBtn = el('button',{class:'btn-xs btn-ghost',style:{marginTop:'4px',fontSize:'9px'},onclick(e){e.stopPropagation();S._calShowAll=true;const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}},'▼ Show all '+upcoming.length+' events');
+            calBody.appendChild(moreBtn);
+          } else if(S._calShowAll && upcoming.length > 8){
+            const lessBtn = el('button',{class:'btn-xs btn-ghost',style:{marginTop:'4px',fontSize:'9px'},onclick(e){e.stopPropagation();S._calShowAll=false;const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}},'▲ Show fewer');
+            calBody.appendChild(lessBtn);
+          }
         }
       }
       calSec.appendChild(calBody);
@@ -16518,7 +16526,7 @@ function renderToday(c) {
       {key:'pipeline',icon:'💼',label:'Pipeline Opportunities',color:'var(--blue)',
         fn:()=>(S.itw||[]).filter(v=>isVisible(v)),
         rowFn:v=>el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer'},onclick(){openDetail(v);}},
-          scorePill(v.score),
+          v.score!=null?scorePill(v.score):'',
           el('span',{style:{fontWeight:'700',fontSize:'11px',minWidth:'140px',color:'var(--blue)'}},v.name),
           el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},v.category||''),
           v.tier?tierTag(v.tier):''
@@ -16526,7 +16534,7 @@ function renderToday(c) {
       {key:'stats',icon:'📊',label:'Quick Stats',color:'var(--text)',fn:()=>[],isStats:true},
     ];
     const secWrap=el('div',{style:{marginBottom:'8px'}});
-    _todaySections.forEach(sec=>{
+    try { _todaySections.forEach(sec=>{
       const items=sec.isStats?[]:sec.fn();
       const isOpen=S._todaySecOpen[sec.key];
       const hdrEl=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'5px 8px',background:'var(--card)',borderRadius:'4px',cursor:'pointer',marginBottom:'2px',userSelect:'none',border:'1px solid var(--border)'},
@@ -16567,7 +16575,10 @@ function renderToday(c) {
         }
         secWrap.appendChild(body);
       }
-    });
+    }); } catch(_secErr) {
+      console.error('[VCS Today] Section render error:', _secErr);
+      secWrap.appendChild(el('div',{style:{padding:'8px',fontSize:'10px',color:'var(--red)',background:'rgba(239,68,68,.05)',borderRadius:'4px',margin:'4px'}},'⚠ Section error: '+_secErr.message));
+    }
     c.appendChild(secWrap);
   }
 
@@ -16585,16 +16596,29 @@ function renderToday(c) {
     ['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>S._todayOpen[k]=false);
     S._sfSignalCollapsed=true; S._calCollapsed=true;
     if(S._todaySecOpen) Object.keys(S._todaySecOpen).forEach(k=>S._todaySecOpen[k]=false);
+    S._todayVendorListOpen=false;
     const c2=$('content');if(c2){c2.innerHTML='';renderToday(c2);}
   }},'▶ Collapse All'));
   tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){
     ['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>S._todayOpen[k]=true);
     S._sfSignalCollapsed=false; S._calCollapsed=false;
     if(S._todaySecOpen) Object.keys(S._todaySecOpen).forEach(k=>S._todaySecOpen[k]=true);
+    S._todayVendorListOpen=true;
     const c2=$('content');if(c2){c2.innerHTML='';renderToday(c2);}
   }},'▼ Expand All'));
   stickyHdr.appendChild(tableBar);
 
+  // ── Vendor List — collapsible, labeled ──────────────────────────────────────
+  {
+    if (S._todayVendorListOpen === undefined) S._todayVendorListOpen = true;
+    const vlistHdr = el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'5px 8px',background:'var(--card)',borderRadius:'4px',cursor:'pointer',userSelect:'none',marginBottom: S._todayVendorListOpen?'0':'6px',borderBottom: S._todayVendorListOpen?'1px solid var(--border)':'none'},
+      onclick(){ S._todayVendorListOpen = !S._todayVendorListOpen; const c2=$('content');if(c2){c2.innerHTML='';renderToday(c2);} }});
+    vlistHdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',flexShrink:'0'}}, S._todayVendorListOpen?'▼':'▶'));
+    vlistHdr.appendChild(el('span',{style:{fontSize:'12px'}},'📋'));
+    vlistHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Rated Vendors — Reach Out Today'));
+    vlistHdr.appendChild(el('span',{style:{fontSize:'10px',background:'rgba(79,124,255,.1)',color:'var(--blue)',borderRadius:'10px',padding:'1px 7px'}},vendors.length+' vendors'));
+    c.appendChild(vlistHdr);
+    if (!S._todayVendorListOpen) { /* collapsed — skip table render */ } else {
   // Build column-aware table using settings.cols visibility
   const ALL_HDRS=['','Score','Vendor','Category','Contact','Phone','Email','Current Expiry','Days','AR','Follow-Up','Tier','Why','Actions'];
   const ALL_KEYS=['_cb','score','vendor','category','contact','phone','email','expiry','days','ar','followup','tier','why','actions'];
@@ -16632,7 +16656,8 @@ function renderToday(c) {
     }
   });
   c.appendChild(tblWrap);
-
+    } // end vendor list collapsible
+  }
   // ── Relationship Follow-ups ──────────────────────────────────────────────
   const _fuTw=t=>t==='CALL'?4:t==='EMAIL'?3:t==='REVIEW'?2:1;
   const _fuScore=v=>{const fu=parseDate(v.followUp);const dOvr=fu?Math.max(0,dayDiff(today,fu)):0;return(_fuTw(v.tier)*10)+(dOvr*0.5)+(v.score||0);};
