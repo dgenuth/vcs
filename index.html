@@ -475,9 +475,9 @@ body.ps-light-theme .tbl-wrap .data-table thead th{background:#0078b8!important;
 .detail-section{margin-bottom:10px}
 .detail-sec-title{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;padding:5px 8px 5px 10px;border-radius:3px;display:flex;align-items:center;gap:6px}
 .detail-sec-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px}
-.detail-grid{display:grid;grid-template-columns:110px 1fr;gap:2px 6px}
-.detail-label{color:var(--text);font-size:10px;padding:1px 0;font-weight:600}
-.detail-value{font-size:10px;padding:1px 0;word-break:break-word;white-space:normal;color:var(--muted)}
+.detail-grid{display:grid;grid-template-columns:120px 1fr;gap:4px 8px;align-items:start}
+.detail-label{color:var(--text);font-size:10px;padding:2px 0;font-weight:700;white-space:nowrap;letter-spacing:0.01em}
+.detail-value{font-size:10px;padding:2px 0;word-break:break-word;white-space:normal;color:var(--muted);line-height:1.4}
 .detail-edit-field{background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:10px;padding:2px 4px;border-radius:3px;width:100%;outline:none}
 .detail-edit-field:focus{border-color:var(--blue)}
 .followup-display{font-size:10px;padding:3px 0;color:var(--amber)}
@@ -4492,7 +4492,11 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     if (vendor.tier) metricsRow.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:_tierColors[vendor.tier]||'var(--muted)'}}, '● '+vendor.tier));
     if (vendor.score) metricsRow.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:'var(--text)'}}, '★ '+vendor.score.toFixed(1)));
     if (vendor.status) metricsRow.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',marginLeft:'auto'}}, vendor.status));
-    if (vendor.perpetuity) metricsRow.appendChild(el('span',{title:'Perpetuity contract',style:{fontSize:'14px',color:'#a78bfa'}},'♾'));
+    if (vendor.perpetuity && vendor.perpetuity !== 'No' && vendor.perpetuity !== 'no' && vendor.perpetuity !== 'false') {
+      const _pShield=el('span',{title:'Perpetuity — Protected Business',style:{position:'relative',display:'inline-flex',alignItems:'center',justifyContent:'center',cursor:'default',marginLeft:'4px'}});
+      _pShield.innerHTML='<span style="font-size:16px">🛡️</span><span style="position:absolute;font-size:8px;font-weight:900;color:#fff;line-height:1">∞</span>';
+      metricsRow.appendChild(_pShield);
+    }
     if (metricsRow.children.length) viSec.appendChild(metricsRow);
 
     // Row 3: Contact info + extras
@@ -4506,88 +4510,6 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     _g2Fields.forEach(([l,v,opts])=>{ const r=_mkField(l,v,opts||{}); if(r) grid2.appendChild(r); });
     if (grid2.children.length) viSec.appendChild(grid2);
 
-    body.appendChild(viSec);
-  }
-
-  
-  if (vendor.source === 'psd') {
-    const viSec = el('div', {class:'detail-section'});
-    viSec.appendChild(el('h4', {class:'detail-sec-title'}, '🏷 Vendor Information'));
-    const viGrid = el('div', {class:'detail-grid'});
-    const _viFields = [
-      ['GPO', vendor.gpo],
-      ['Category', vendor.category],
-      ['Sub-Category', vendor.subCategory],
-      ['Product / Description', vendor.product || vendor.about],
-      ['Class of Trade', vendor.classOfTrade],
-      ['Markets Serviced', vendor.markets],
-      ['Status', vendor.status],
-      ['Tier', vendor.tier],
-      ['Score', vendor.score ? vendor.score.toFixed(1) : null],
-      ['Admin Fee', vendor.adminFee ? (parseFee(vendor.adminFee) ? parseFee(vendor.adminFee)+'%' : vendor.adminFee) : null],
-      ['Perpetuity', vendor.perpetuity],
-      ['Added Value', vendor.addedValue],
-      ['Website', vendor.website],
-      ['Previously Named / AKA', vendor.aka],
-      ['About / Notes', vendor.comments],
-    ];
-    _viFields.forEach(([label, val]) => {
-      if (!val && val !== 0) return;
-      const row = el('div', {class:'detail-field'});
-      row.appendChild(el('span', {class:'detail-label'}, label));
-      if (label === 'Website' && val) {
-        row.appendChild(el('a', {href:val, target:'_blank', class:'detail-value', style:{color:'var(--blue)', wordBreak:'break-all'}}, val.replace(/^https?:\/\//, '').slice(0,50)));
-      } else if (label === 'Tier' && val) {
-        row.appendChild(el('span', {class:'tier-badge detail-value', style:{background:({CALL:'#ef4444',EMAIL:'#f59e0b',REVIEW:'#4f7cff',MONITOR:'#6b7280'}[val]||'#6b7280')}}, val));
-      } else if (label === 'Admin Fee' && val) {
-        const fee = parseFee(vendor.adminFee);
-        row.appendChild(el('span', {class:'detail-value', style:{color: fee>=5?'var(--green)':fee>=3?'var(--amber)':'var(--red)', fontWeight:'600'}}, val));
-      } else {
-        row.appendChild(el('span', {class:'detail-value'}, String(val)));
-      }
-      viGrid.appendChild(row);
-    });
-    viSec.appendChild(viGrid);
-
-    // Editable fields for admin/procurement/manager
-    if (hasPermission('editAll') || ['admin','procurement','manager'].includes(USER.role)) {
-      const editVIBtn = el('button', {class:'btn-xs btn-ghost', style:{marginTop:'6px', fontSize:'9px'}, onclick() {
-        openModal(mbody => {
-          mbody.appendChild(el('h3', {style:{marginTop:'0', fontSize:'13px'}}, '✏️ Edit Vendor Info — '+vendor.name));
-          const editFields = [
-            ['GPO','gpo'],['Category','category'],['Sub-Category','subCategory'],
-            ['Product / Description','product'],['Class of Trade','classOfTrade'],
-            ['Markets Serviced','markets'],['Status','status'],
-            ['Added Value','addedValue'],['About','about'],['AKA','aka'],['Comments','comments'],
-          ];
-          const fg = el('div', {style:{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'12px'}});
-          const inputs = {};
-          editFields.forEach(([lbl, field]) => {
-            const wrap = el('div', {style:{display:'flex',flexDirection:'column',gap:'2px'}});
-            wrap.appendChild(el('label', {style:{fontSize:'9px',color:'var(--muted)',fontWeight:'600'}}, lbl));
-            const inp = el('input', {type:'text', class:'detail-edit-field', value:vendor[field]||'', placeholder:lbl, style:{fontSize:'10px'}});
-            inputs[field] = inp;
-            wrap.appendChild(inp);
-            fg.appendChild(wrap);
-          });
-          mbody.appendChild(fg);
-          const btns = el('div', {class:'modal-btns'});
-          btns.appendChild(el('button', {class:'btn-primary', onclick() {
-            editFields.forEach(([,field]) => {
-              const v = inputs[field].value.trim();
-              if (v !== (vendor[field]||'')) { vendor[field] = v; markDirty(vendor); }
-            });
-            saveSessionState();
-            closeModal();
-            toast('✓ Vendor info updated');
-            refreshDetailIfOpen(vendor);
-          }}, '💾 Save'));
-          btns.appendChild(el('button', {class:'btn-secondary', onclick:closeModal}, 'Cancel'));
-          mbody.appendChild(btns);
-        });
-      }}, '✏️ Edit Vendor Info');
-      viSec.appendChild(editVIBtn);
-    }
     body.appendChild(viSec);
   }
 
@@ -16910,12 +16832,12 @@ function renderToday(c) {
   }).sort((a,b)=>_fuScore(b)-_fuScore(a)).slice(0,10);
   if(_fuVendors.length){
     const _fuOpen=S._todayOpen.fu!==false;
-    const fuSec=el('div',{class:'summary-section',style:{marginTop:'12px',marginBottom:'8px'}});
-    const fuHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:_fuOpen?'8px':'0',cursor:'pointer',userSelect:'none'},onclick(){S._todayOpen.fu=!S._todayOpen.fu;render();}});
-    fuHdr.appendChild(el('span',{style:{fontSize:'12px',color:'var(--muted)',minWidth:'16px'}},_fuOpen?'▼':'▶'));
-    fuHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'13px'}},'📞 Relationship Follow-ups'));
-    fuHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Overdue or stale contacts · sorted by priority score'));
-    fuSec.appendChild(fuHdr);
+    const fuSec=el('div',{style:{marginBottom:'4px'}});
+    const fuHdr=el('div',{style:_SEC_HDR_STYLE,onclick(){S._todayOpen.fu=!_fuOpen;const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}});
+    fuHdr.appendChild(el('span',{style:_SEC_CHEVRON_STYLE},_fuOpen?'▼':'▶'));
+    fuHdr.appendChild(el('span',{style:{fontSize:'12px'}},'📞'));
+    fuHdr.appendChild(el('span',{style:{flex:'1'}},'Relationship Follow-ups'));
+    fuHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_fuVendors.length?_fuVendors.length+' vendors':''));
     if(_fuOpen) _fuVendors.forEach(v=>{
       const lc=parseDate(v.lastComm),fu=parseDate(v.followUp);
       const daysSince=lc?dayDiff(today,lc):null,fuDays=fu?dayDiff(today,fu):null;
@@ -16959,12 +16881,12 @@ function renderToday(c) {
   }).slice(0,8);
   if(_revDue.length){
     const _revOpen=S._todayOpen.rev!==false;
-    const revSec=el('div',{class:'summary-section',style:{marginTop:'12px',marginBottom:'8px'}});
-    const revHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:_revOpen?'8px':'0',cursor:'pointer',userSelect:'none'},onclick(){S._todayOpen.rev=!S._todayOpen.rev;render();}});
-    revHdr.appendChild(el('span',{style:{fontSize:'12px',color:'var(--muted)',minWidth:'16px'}},_revOpen?'▼':'▶'));
-    revHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'13px'}},'📊 Business Reviews Due'));
-    revHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'REVIEW tier vendors overdue for a formal review (>90 days)'));
-    revSec.appendChild(revHdr);
+    const revSec=el('div',{style:{marginBottom:'4px'}});
+    const revHdr=el('div',{style:_SEC_HDR_STYLE,onclick(){S._todayOpen.rev=!_revOpen;const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}});
+    revHdr.appendChild(el('span',{style:_SEC_CHEVRON_STYLE},_revOpen?'▼':'▶'));
+    revHdr.appendChild(el('span',{style:{fontSize:'12px'}},'📊'));
+    revHdr.appendChild(el('span',{style:{flex:'1'}},'Business Reviews Due'));
+    revHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_revDue.length?_revDue.length+' vendors':''));
     if(_revOpen) _revDue.forEach(v=>{
       const lr=parseDate(v.lastReview);
       const daysSinceRev=lr?dayDiff(today,lr):null;
@@ -16988,12 +16910,12 @@ function renderToday(c) {
 
   // ── Smart Outreach Intelligence ──
   const _outOpen=S._todayOpen.outreach!==false;
-  const outreachSec=el('div',{class:'summary-section',style:{marginTop:'12px'}});
-  const outHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:_outOpen?'8px':'0',cursor:'pointer',userSelect:'none'},onclick(){S._todayOpen.outreach=!S._todayOpen.outreach;render();}});
-  outHdr.appendChild(el('span',{style:{fontSize:'12px',color:'var(--muted)',minWidth:'16px'}},_outOpen?'▼':'▶'));
-  outHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'13px'}},'🧠 Outreach Intelligence'));
+  const outreachSec=el('div',{style:{marginBottom:'4px'}});
+  const outHdr=el('div',{style:_SEC_HDR_STYLE,onclick(){S._todayOpen.outreach=!_outOpen;const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}});
+  outHdr.appendChild(el('span',{style:_SEC_CHEVRON_STYLE},_outOpen?'▼':'▶'));
+  outHdr.appendChild(el('span',{style:{fontSize:'12px'}},'🧠'));
+  outHdr.appendChild(el('span',{style:{flex:'1'}},'Outreach Intelligence'));
   outHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'AI-ranked relationship priorities'));
-  outreachSec.appendChild(outHdr);
 
   // Build ranked outreach list
   const allV=(S.vendors||[]).filter(isVisible);
