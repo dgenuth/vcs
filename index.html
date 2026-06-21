@@ -8431,6 +8431,12 @@ function openVendorAliasModal(vendor) {
 }
 // ─── Vendor Database — Excel-style multi-select column filters ─────────────────
 function renderVendorDB(c) {
+  // Vendor DB needs tbl-wrap to be the scroll parent for sticky headers to work.
+  // #content has overflow-y:auto by default which breaks sticky thead positioning.
+  // Override it here; restored when navigating away via the main render() switch.
+  c.style.overflowY = 'hidden';
+  c.style.overflowX = 'hidden';
+  c.style.padding = '0';
   if (!S.loaded) { c.appendChild(el('p',{class:'muted',style:{padding:'16px'}},'Load a file first — upload your XLSM to see all contracts here.')); return; }
   if (!S.dbFilters) S.dbFilters = {};
   if (!S.dbSort) S.dbSort = {col:'Vendor', dir:1};
@@ -11740,7 +11746,6 @@ function renderChecklist(c) {
   c.innerHTML='';
   if(!S.loaded){c.appendChild(el('p',{style:{padding:'20px',color:'var(--muted)'}},'Please load a vendor file first.'));return;}
   if(typeof PSX_CHECKLIST==='undefined'||!PSX_CHECKLIST.length){c.appendChild(el('p',{style:{padding:'20px',color:'var(--muted)'}},'Checklist data not found. Reload the page.'));return;}
-  try {
   function _clSave(fac){if(!fac)return;try{localStorage.setItem('vcs_checklist_'+fac,JSON.stringify({currVendor:S._clCurrVendor||{},goWith:S._clGoWith||{},status:S._clStatus||{}}));}catch(e2){}}
   function _clLoad(fac){if(!fac)return;try{const sv=JSON.parse(localStorage.getItem('vcs_checklist_'+fac)||'{}');if(sv.currVendor)S._clCurrVendor=Object.assign({},S._clCurrVendor||{},sv.currVendor);if(sv.goWith)S._clGoWith=Object.assign({},S._clGoWith||{},sv.goWith);if(sv.status)S._clStatus=Object.assign({},S._clStatus||{},sv.status);if(sv.rep)S._checklistRep=sv.rep;}catch(e2){}}
   function _clGetHistory(){try{return JSON.parse(localStorage.getItem('vcs_checklist_history')||'{}');}catch(e){return {};}}
@@ -11763,6 +11768,7 @@ function renderChecklist(c) {
     }catch(e2){toast('Save failed: '+(e2.message||'unknown'),'#ef4444');}
   }
   function _clLoadEntry(entry){if(!entry)return;S._clCurrVendor=Object.assign({},entry.currVendor||{});S._clGoWith=Object.assign({},entry.goWith||{});S._clStatus=Object.assign({},entry.status||{});if(entry.rep)S._checklistRep=entry.rep;}
+  try {
   if(!S._clStatus)S._clStatus={};
   const wrap=el('div',{style:{maxWidth:'1000px',margin:'0 auto',padding:'12px 0'}});
   const hdr=el('div',{style:{marginBottom:'12px'}});
@@ -12018,7 +12024,7 @@ function renderChecklist(c) {
     'dietary menu system': ['dietary','menu','software','it','technology','planning'],
   };
 
-  function scoreVendors(label){
+  const scoreVendors = function(label){
     const q=label.toLowerCase();
     const words=q.split(/[\s\-\/,&]+/).filter(w=>w.length>2);
     const requiredKws=_CKLCAT[q]||null;
@@ -12062,7 +12068,7 @@ function renderChecklist(c) {
     scored.sort((a,b) => b.score - a.score);
     return scored.slice(0, 5);
   }
-  function findVendors(label){return scoreVendors(label).map(r=>r.v);}
+  const findVendors = function(label){return scoreVendors(label).map(r=>r.v);};
 
   // Overall coverage summary — two bars: Available (DB vendors) + Selected (GoWith choices)
   const allItems=PSX_CHECKLIST.flatMap(s=>s.items);
@@ -16579,8 +16585,8 @@ function renderToday(c) {
   }},'✉ Bulk Email '+(S.filter?'(filtered)':'All')));
   tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){exportCSV(vendors,'today_filtered');}}, '⬇ CSV'));
   // B1/B2: Collapse All / Expand All for Today tab sections
-  tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'auto'},onclick(){['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>S._todayOpen[k]=false);S._sfSignalCollapsed=true;const c2=$('content');if(c2)renderToday(c2);}},'▶ Collapse All'));
-  tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>S._todayOpen[k]=true);S._sfSignalCollapsed=false;const c2=$('content');if(c2)renderToday(c2);}},'▼ Expand All'));
+  tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'auto'},onclick(){['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>S._todayOpen[k]=false);S._sfSignalCollapsed=true;const c2=$('content');if(c2){c2.innerHTML='';renderToday(c2);}}},'▶ Collapse All'));
+  tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>S._todayOpen[k]=true);S._sfSignalCollapsed=false;const c2=$('content');if(c2){c2.innerHTML='';renderToday(c2);}}},'▼ Expand All'));
   stickyHdr.appendChild(tableBar);
 
   // Build column-aware table using settings.cols visibility
@@ -24194,6 +24200,10 @@ function render() {
   const search=$('search');
   const hadFocus=document.activeElement===search, curPos=hadFocus?search.selectionStart:0;
   content.innerHTML='';
+  // Reset any view-specific style overrides (e.g. vendorDB sets overflow:hidden for sticky headers)
+  content.style.overflowY = '';
+  content.style.overflowX = '';
+  content.style.padding = '';
   const titles={
     today:'📋 Today',callsheet:'📞 Call Sheet',expiring:'⏰ Expiring',
     vendordb:'🗂 Vendor Database',network:'🔗 Network Intel',itw:'💼 Pipeline',
