@@ -1202,6 +1202,7 @@ S = {
     emailSignature: '',
     sfClientId: '', sfRedirectUri: '', sfLoginUrl: 'https://login.salesforce.com',
     msGraphClientId: '', msGraphTenantId: '', driveFileId: '', driveAutoSync: false,
+    psdSchemaVersion: PSD_SCHEMA_VERSION, // C1: tracks which field map this VCS build expects
     closedDays: JSON.parse(localStorage.getItem('vcs_closed_days')||'[]'),
     oooDays: JSON.parse(localStorage.getItem('vcs_ooo_days')||'[]'),
   },
@@ -1673,6 +1674,161 @@ function findSheet(wb, name) {
 }
 
 // ─── Parsers ──────────────────────────────────────────────────────────────────
+
+// ── C1: Authoritative PSD Column Map (audited 2026-06-21) ──────────────────────
+// Derived from live Excel headers in row 2 of xl/worksheets/sheet7.xml.
+// Both parsePSD (read) and COL_MAP (write) must stay in sync with this.
+// Schema version bumps when columns are added/removed. On load, VCS compares
+// live Excel headers to this map and warns before any write if drift detected.
+// RULE: New fields ALWAYS append to the END of the sheet (after BY), never insert.
+//       Update PSD_FIELD_MAP, bump PSD_SCHEMA_VERSION, add to COL_MAP write path.
+const PSD_SCHEMA_VERSION = '2026-06-21';
+const PSD_FIELD_MAP = {
+  // col: { field: 'jsFieldName', header: 'Excel Header Row 2' }
+  // Columns without a 'field' are Excel-only (not managed by VCS)
+  A:  { field: 'gpo',               header: 'GPO' },
+  B:  { field: null,                 header: '⚠️' },          // warning flag, VCS read-only
+  C:  { field: 'name',              header: 'Vendor' },
+  D:  { field: 'category',          header: 'Category' },
+  E:  { field: 'subCategory',       header: 'Sub-Category' },
+  F:  { field: 'product',           header: 'Product / Description' },
+  G:  { field: 'classOfTrade',      header: 'Class of Trade' },
+  H:  { field: 'markets',           header: 'Markets Serviced' },
+  I:  { field: 'addedValue',        header: 'Added Value' },
+  J:  { field: 'website',           header: 'Website' },
+  K:  { field: 'contractName',      header: 'Contract Agreement Name' },
+  L:  { field: null,                 header: 'Signatory' },
+  M:  { field: 'assignment',        header: 'Assignment (Allowed, Not Allowed)' },
+  N:  { field: null,                 header: 'Assingment Conditions' },
+  O:  { field: 'exclusivity',       header: 'Exclusivity (Y/N)' },
+  P:  { field: null,                 header: 'Termination w/o Cause (Y/N)' },
+  Q:  { field: 'terminationNotice', header: 'Termination Notice (Days)' },
+  R:  { field: null,                 header: 'Pricing Commitment to PS (Best, Competitive, Case by case)' },
+  S:  { field: 'procContact',       header: 'Procurement Contact' },
+  T:  { field: null,                 header: 'Contact Type' },
+  U:  { field: 'title',             header: 'Title' },
+  V:  { field: 'bizPhone',          header: 'Business #' },
+  W:  { field: 'mobile',            header: 'Mobile #' },
+  X:  { field: 'email',             header: 'Email Address' },
+  Y:  { field: 'shared2',           header: 'Shared Contact' },
+  Z:  { field: null,                 header: 'Contact Type (2)' },
+  AA: { field: 'title2',            header: 'Title (2)' },
+  AB: { field: 'mobile2',           header: 'Mobile (#2)' },
+  AC: { field: 'email2',            header: 'Email Address (2)' },
+  AD: { field: 'inContractSince',   header: 'In Contract\nSince (Date)' },
+  AE: { field: 'effectiveDate',     header: 'Latest Contract Effective Date' },
+  AF: { field: 'expiry',            header: 'Latest Contract Expiration Date' },
+  AG: { field: 'autoRenew',         header: 'Auto-renewal' },
+  AH: { field: 'autoRenewType',     header: 'Auto-renewal / By Term or Year' },
+  AI: { field: 'status',            header: 'Status' },
+  AJ: { field: null,                 header: 'Latest Term Effective Date' },
+  AK: { field: null,                 header: 'Latest Term Expiration Date' },
+  AL: { field: null,                 header: 'Vendor Engagement Reminder (Optional)' },
+  AM: { field: 'contractTerm',      header: 'Contract Term' },
+  AN: { field: 'currentTerm',       header: 'Current Term' },
+  AO: { field: null,                 header: 'Termination Notice Received?' },
+  AP: { field: null,                 header: 'Needs LOP' },
+  AQ: { field: null,                 header: 'Cover Sheet' },
+  AR: { field: null,                 header: 'Data Sheet' },
+  AS: { field: null,                 header: 'Have Pricing?' },
+  AT: { field: null,                 header: 'Location of Pricing' },
+  AU: { field: null,                 header: 'Pricing Date' },
+  AV: { field: null,                 header: 'Update Pricing Frequency?' },
+  AW: { field: null,                 header: 'White Papers (Date)' },
+  AX: { field: null,                 header: 'Service Summary (Date)' },
+  AY: { field: null,                 header: 'Video Recording' },
+  AZ: { field: 'adminFee',          header: 'Admin Fee' },
+  BA: { field: 'adminFeeNotes',     header: 'Admin Fee Notes' },
+  BB: { field: 'tiers',             header: 'Tiers' },
+  BC: { field: 'perpetuity',        header: 'Perpetuity' },
+  BD: { field: 'tail',              header: 'Tail (# years)' },
+  BE: { field: null,                 header: 'Min. # yrs per Customer' },
+  BF: { field: 'contractNo',        header: 'Contract No.' },
+  BG: { field: null,                 header: 'Paymeny Distribution Freq.' }, // read-only
+  BH: { field: 'reportFrequency',   header: 'Report Frequency' },            // read-only
+  BI: { field: 'agreementType',     header: 'Agreement Type' },
+  BJ: { field: 'comments',          header: 'Comments' },
+  BK: { field: 'notes',             header: 'Notes' },
+  BL: { field: 'lastComm',          header: 'Latest Communication Date' },
+  BM: { field: 'about',             header: 'About' },
+  BN: { field: 'followUp',          header: 'Scheduled Follow-up Date' },
+  BO: { field: 'aka',               header: 'Previously Named / AKA' },
+  BP: { field: null,                 header: 'Score' },                       // Excel-calc only
+  BQ: { field: null,                 header: 'Short Justification' },
+  BR: { field: null,                 header: 'Change of Control (Y/N & Conditions)' },
+  BS: { field: null,                 header: 'Attachment / Location' },
+  // VCS-appended columns (no header in Excel row 2 — VCS owns these):
+  BT: { field: 'trainualUrl',           header: 'VCS:TrainualUrl' },
+  BU: { field: 'vendorAliasOf',         header: 'VCS:VendorAliasOf' },
+  BV: { field: 'extraContacts',         header: 'VCS:ExtraContacts' },
+  BW: { field: 'vendorRelationships',   header: 'VCS:VendorRelationships' },
+  BX: { field: 'sfAccountId',           header: 'VCS:SfAccountId' },
+  BY: { field: 'vendorAliases',         header: 'VCS:VendorAliases' },
+};
+
+// Build reverse map: field name -> column letter (used by safe write path)
+const PSD_FIELD_TO_COL = {};
+for (const [col, def] of Object.entries(PSD_FIELD_MAP)) {
+  if (def.field) PSD_FIELD_TO_COL[def.field] = col;
+}
+
+// Drift detection: called after loading Excel, warns if live headers don't match FIELD_MAP
+// Runs in the background — never blocks load, only warns before first write
+function checkPsdSchemaDrift(zip) {
+  // Only run if JSZip is available and we have a PSD sheet file
+  if (!zip || !S.psdSheetFile) return;
+  (async () => {
+    try {
+      const sheetXml = await zip.file(S.psdSheetFile).async('text');
+      const ssXml    = await zip.file('xl/sharedStrings.xml').async('text');
+      // Parse shared strings
+      const siBlocks = [...ssXml.matchAll(/<si>([\s\S]*?)<\/si>/g)].map(m => m[1]);
+      const ss = siBlocks.map(b => {
+        const parts = [...b.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map(m => m[1]);
+        return parts.join('').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>');
+      });
+      // Extract row 2 (header row)
+      const row2m = sheetXml.match(/<row r="2"[^>]*>([\s\S]*?)<\/row>/);
+      if (!row2m) return;
+      const cells = [...row2m[1].matchAll(/<c r="([A-Z]+)2"([^>]*)>([\s\S]*?)<\/c>/g)];
+      const liveHeaders = {};
+      for (const [,col,attrs,body] of cells) {
+        const vm = body.match(/<v>([\s\S]*?)<\/v>/);
+        if (!vm) continue;
+        const raw = vm[1].trim();
+        const tm  = attrs.match(/t="([^"]*)"/);
+        liveHeaders[col] = (tm && tm[1]==='s') ? (ss[+raw]||'') : raw;
+      }
+      // Compare to PSD_FIELD_MAP
+      const mismatches = [];
+      for (const [col, def] of Object.entries(PSD_FIELD_MAP)) {
+        if (!def.field) continue; // skip Excel-only columns
+        if (['BT','BU','BV','BW','BX','BY'].includes(col)) continue; // VCS-appended columns have no Excel header
+        const live = liveHeaders[col];
+        if (!live) { mismatches.push(`${col}: expected "${def.header}" but column is missing`); continue; }
+        // Loose header match (trim, normalize whitespace, case-insensitive)
+        const norm = s => s.replace(/\s+/g,' ').trim().toLowerCase();
+        if (norm(live) !== norm(def.header)) {
+          mismatches.push(`${col}: expected "${def.header}", got "${live}" → field "${def.field}" may write to wrong column`);
+        }
+      }
+      if (mismatches.length > 0) {
+        S._psdSchemaDrift = mismatches;
+        console.warn('[VCS C1] PSD schema drift detected:\n' + mismatches.join('\n'));
+        // Surface warning to admin users only — non-blocking
+        if (['admin','manager'].includes(USER.role)) {
+          setTimeout(() => toast('⚠ Excel schema drift detected — check VCS Health before saving', '#f59e0b', 8000), 2000);
+        }
+      } else {
+        S._psdSchemaDrift = null;
+        console.log('[VCS C1] PSD schema OK — all headers match FIELD_MAP ✓ (v' + PSD_SCHEMA_VERSION + ')');
+      }
+    } catch(e) {
+      console.warn('[VCS C1] Schema drift check failed:', e.message);
+    }
+  })();
+}
+
 function parsePSD(sheet, sourceName) {
   const src = sourceName || 'Prime Source Direct';
   const isDirect = src === 'Prime Source Direct';
@@ -1694,10 +1850,11 @@ function parsePSD(sheet, sourceName) {
       autoRenew:r[32], autoRenewType:r[33], status:r[34],
       contractTerm:r[38], currentTerm:r[39],
       adminFee:r[51], adminFeeNotes:r[52], tiers:r[53], perpetuity:r[54],
-      tail:r[55], contractNo:r[57], agreementType:r[59],
-      comments:r[60], notes:r[61], lastComm:r[62], about:r[63],
-      followUp:r[64], aka:r[65],
-      priority: String(r[66]||'').trim(), // Column BO — populated by VBA macro from green highlights
+      tail:r[55], contractNo:r[57], reportFrequency:r[58], agreementType:r[60],
+      comments:r[61], notes:r[62], lastComm:r[63], about:r[64],
+      followUp:r[65], aka:r[66],
+      // Column BO(66)=Previously Named/AKA is now correctly mapped to 'aka' above.
+      // 'priority' has no real Excel column — it is a VCS-internal calculated field only.
       trainualUrl: String(r[71]||'').trim(), // Column BT — Trainual record URL
       vendorAliasOf: String(r[72]||'').trim(), // Column BU — canonical vendor name this is aliased to
       extraContacts: parseExtraContacts(r[73]), // Column BV — JSON array of contacts 3+
@@ -1852,6 +2009,8 @@ async function loadFile(file) {
       }
     } catch(e) { console.warn('JSZip pre-scan failed:', e); S.commentsMap = {}; }
 
+    // C1: Run schema drift check in background after zip is parsed
+    try { checkPsdSchemaDrift(zip); } catch(e) { console.warn('[VCS C1] Drift check error:', e); }
     const data = new Uint8Array(arrayBuf);
     const wb = XLSX.read(data, {type:'array', bookVBA:true, cellFormula:false, sheetStubs:true});
     S.wb = wb; S.fileName = file.name;
@@ -2234,6 +2393,19 @@ function upsertComment(commentsXml, ref, newNoteText, authorName) {
 async function executeSave() {
   if (!S.originalBuffer) return;
 
+  // ── C1: Schema drift gate — warn before writing if headers have drifted ──
+  if (S._psdSchemaDrift && S._psdSchemaDrift.length > 0) {
+    const driftMsg = S._psdSchemaDrift.slice(0,3).join('\n');
+    if (!confirm(
+      '⚠ Excel column map drift detected!\n\n' + driftMsg +
+      (S._psdSchemaDrift.length > 3 ? `\n...and ${S._psdSchemaDrift.length-3} more` : '') +
+      '\n\nSaving now may write data to the WRONG columns.\n\nContact Dave before proceeding.\n\nSave anyway? (not recommended)'
+    )) {
+      toast('Save cancelled — resolve schema drift first', '#f59e0b');
+      return;
+    }
+  }
+
   // ── Lock check FIRST — before any save operations ──
   try {
     console.log('[VCS Save] Checking server lock status...');
@@ -2337,9 +2509,13 @@ async function executeSave() {
       expiry:'AF', autoRenew:'AG', autoRenewType:'AH', status:'AI',
       contractTerm:'AM', currentTerm:'AN', terminationNotice:'AO',
       adminFee:'AZ', adminFeeNotes:'BA', tiers:'BB', perpetuity:'BC',
-      tail:'BD', contractNo:'BF', agreementType:'BH', comments:'BI',
-      notes:'BJ', lastComm:'BK', about:'BL', followUp:'BM', aka:'BN',
-      priority:'BO', trainualUrl:'BT', vendorAliasOf:'BU', extraContacts:'BV', vendorRelationships:'BW', sfAccountId:'BX', vendorAliases:'BY',
+      tail:'BD', contractNo:'BF',
+      // BG=Payment Distribution Freq (read-only), BH=Report Frequency (read-only)
+      // BI=Agreement Type, BJ=Comments, BK=Notes, BL=Latest Comm Date, BM=About, BN=Follow-Up, BO=Previously Named/AKA
+      agreementType:'BI', comments:'BJ',
+      notes:'BK', lastComm:'BL', about:'BM', followUp:'BN', aka:'BO',
+      // priority has no real Excel column — VCS-internal only, never write to Excel
+      trainualUrl:'BT', vendorAliasOf:'BU', extraContacts:'BV', vendorRelationships:'BW', sfAccountId:'BX', vendorAliases:'BY',
     };
 
     // Date fields — must be written as Excel serial numbers, not ISO strings
@@ -2404,8 +2580,11 @@ async function executeSave() {
           expiry:'AF', autoRenew:'AG', autoRenewType:'AH', status:'AI',
           contractTerm:'AM', currentTerm:'AN', terminationNotice:'AO',
           adminFee:'AZ', adminFeeNotes:'BA', tiers:'BB', perpetuity:'BC',
-          tail:'BD', contractNo:'BF', agreementType:'BH', comments:'BI',
-          notes:'BJ', lastComm:'BK', about:'BL', followUp:'BM', aka:'BN',
+          tail:'BD', contractNo:'BF',
+          // BG=Payment Distribution Freq (read-only), BH=Report Frequency (read-only)
+          // BI=Agreement Type, BJ=Comments, BK=Notes, BL=Latest Comm Date, BM=About, BN=Follow-Up, BO=AKA
+          agreementType:'BI', comments:'BJ',
+          notes:'BK', lastComm:'BL', about:'BM', followUp:'BN', aka:'BO',
           trainualUrl:'BT', vendorAliasOf:'BU', extraContacts:'BV', vendorRelationships:'BW', sfAccountId:'BX', vendorAliases:'BY',
         };
 
@@ -20851,6 +21030,44 @@ function renderVCSHealth(c) {
     // H3: Data watcher status
     {label:'Data Watcher',icon:'👁',roles:'admin',test:()=>!!(S.settings?.driveFileId&&window.GDriveToken),pass:'Watcher active — Drive connected, file ID set',fail:'Watcher inactive — connect Drive and configure file ID to enable auto-reload',fixLabel:'🔧 Fix Watcher',fix:()=>openWatcherFixModal()}
 ,
+    // C1: PSD Schema Integrity
+    {label:'PSD Column Map (C1)',icon:'📊',roles:'admin',
+      test:()=>!S._psdSchemaDrift || S._psdSchemaDrift.length===0,
+      pass:'Schema OK — all columns match FIELD_MAP v'+PSD_SCHEMA_VERSION,
+      fail:'Schema drift: '+(S._psdSchemaDrift||[]).length+' column(s) mismatched — saves may corrupt data. Load the Excel file to re-check.',
+      fixLabel:'📋 View Details',
+      fix:()=>{
+        openModal(body=>{
+          body.appendChild(el('h3',{},'📊 PSD Column Map Status'));
+          if(!S.originalBuffer){
+            body.appendChild(el('p',{style:{color:'var(--muted)'}},'Load the Excel file first to run the schema check.'));
+          } else if(!S._psdSchemaDrift || S._psdSchemaDrift.length===0){
+            body.appendChild(el('p',{style:{color:'var(--green)'}},'✅ All columns match FIELD_MAP v'+PSD_SCHEMA_VERSION));
+          } else {
+            body.appendChild(el('p',{style:{color:'var(--red)',fontWeight:'600'}},'⚠ Schema drift detected:'));
+            const ul=el('ul',{style:{paddingLeft:'16px',marginTop:'8px',lineHeight:'1.8',fontSize:'12px',fontFamily:'monospace'}});
+            (S._psdSchemaDrift||[]).forEach(m=>ul.appendChild(el('li',{},m)));
+            body.appendChild(ul);
+            body.appendChild(el('p',{style:{marginTop:'12px',fontSize:'12px',color:'var(--muted)'}},'Contact Dave — the Excel may have had columns added/moved. Do not save until resolved.'));
+          }
+          // Show full FIELD_MAP for reference
+          const details=el('details',{style:{marginTop:'12px'}});
+          details.appendChild(el('summary',{style:{cursor:'pointer',fontSize:'12px',color:'var(--muted)'}},'Show full FIELD_MAP (v'+PSD_SCHEMA_VERSION+')'));
+          const table=el('table',{style:{fontSize:'11px',fontFamily:'monospace',borderCollapse:'collapse',marginTop:'8px',width:'100%'}});
+          const hdr=el('tr',{}); ['Col','Field','Excel Header'].forEach(h=>{const th=el('th',{style:{textAlign:'left',padding:'2px 6px',borderBottom:'1px solid var(--border)'}},h);hdr.appendChild(th);}); table.appendChild(hdr);
+          Object.entries(PSD_FIELD_MAP).forEach(([col,def])=>{
+            const tr=el('tr',{});
+            [col, def.field||'(read-only)', def.header].forEach(t=>{
+              const td=el('td',{style:{padding:'2px 6px',color:def.field?'var(--text)':'var(--muted)',borderBottom:'1px solid var(--border)'}},t);
+              tr.appendChild(td);
+            });
+            table.appendChild(tr);
+          });
+          details.appendChild(table);
+          body.appendChild(details);
+        });
+      }
+    },
   ];
 
   const _visibleChecks=checks.filter(chk=>{
