@@ -8859,7 +8859,7 @@ function renderVendorDB(c) {
     // Sort label
     const lbl=el('span',{style:{cursor:col.sortable?'pointer':'default',color:isSorted?'var(--blue)':hasFilter?'var(--amber)':'var(--muted)',fontSize:'10px'}},
       col.label+(isSorted?(S.dbSort.dir>0?' ↑':' ↓'):''));
-    if (col.sortable) lbl.addEventListener('click',()=>{ if(S.dbSort.col===col.label)S.dbSort.dir*=-1; else{S.dbSort.col=col.label;S.dbSort.dir=1;} S._dbRenderCount=150; const c2=$('content');if(c2&&S.view==='vendordb'){c2.innerHTML='';renderVendorDB(c2);}else render(); });
+    if (col.sortable) lbl.addEventListener('click',()=>{ if(S.dbSort.col===col.label)S.dbSort.dir*=-1; else{S.dbSort.col=col.label;S.dbSort.dir=1;} S._dbRenderCount=150; const c2=$('content');if(c2&&S.view==='vendordb'){const _scrollEl=c2.querySelector('#vdb-table,table,tbody');const _sy=_scrollEl?_scrollEl.scrollTop:(c2.scrollTop||0);c2.innerHTML='';renderVendorDB(c2);const _scrollEl2=c2.querySelector('#vdb-table,table,tbody');if(_scrollEl2)_scrollEl2.scrollTop=_sy;}else render(); });
     inner.appendChild(lbl);
     // Filter button
     const fBtn=el('span',{title:`Filter by ${col.label}`,style:{cursor:'pointer',opacity:hasFilter?1:0.35,color:hasFilter?'var(--amber)':'var(--muted)',fontSize:'9px'},
@@ -8954,30 +8954,48 @@ function renderVendorDB(c) {
           noteBtn.title = hasNotes ? 'Has notes — click to view/add' : 'Quick note';
           _noteDot.style.display = 'none'; // dot hidden — using border instead
         };
-        _setNoteBtn2(!!v.notes,false);
+        const _hasNotes = !!(v.notes && v.notes.trim());
+        _setNoteBtn2(_hasNotes, false);
         noteBtn.addEventListener('click',e=>{
           e.stopPropagation();
           const existing=tbody.querySelector('tr[data-note-for="'+v.name.replace(/"/g,'&quot;')+'"]');
-          if(existing){existing.remove();_setNoteBtn2(!!v.notes,false);return;}
+          if(existing){existing.remove();_setNoteBtn2(!!(v.notes&&v.notes.trim()),false);return;}
           const edRow=document.createElement('tr');
           edRow.dataset.noteFor=v.name;
           edRow.style.background='rgba(79,124,255,.05)';
           const edTd=document.createElement('td');
           edTd.colSpan=(VISIBLE_COLS.length+2);
           edTd.style.cssText='padding:8px 12px;';
+          // Show existing notes above the new-note input
+          if(v.notes && v.notes.trim()){
+            const existingNotesWrap=document.createElement('div');
+            existingNotesWrap.style.cssText='margin-bottom:8px;border:1px solid rgba(79,124,255,.2);border-radius:4px;background:rgba(79,124,255,.04);padding:6px 8px;max-height:120px;overflow-y:auto;';
+            const existingHdr=document.createElement('div');
+            existingHdr.style.cssText='font-size:8px;font-weight:700;color:var(--blue);margin-bottom:4px;';
+            existingHdr.textContent='📝 Existing Notes:';
+            existingNotesWrap.appendChild(existingHdr);
+            const existingText=document.createElement('pre');
+            existingText.style.cssText='font-size:9px;white-space:pre-wrap;word-break:break-word;margin:0;color:var(--text);font-family:inherit;line-height:1.5;';
+            existingText.textContent=v.notes.trim();
+            existingNotesWrap.appendChild(existingText);
+            edTd.appendChild(existingNotesWrap);
+          }
+          const newNoteLabel=document.createElement('div');
+          newNoteLabel.style.cssText='font-size:8px;font-weight:700;color:var(--muted);margin-bottom:3px;';
+          newNoteLabel.textContent='➕ Add New Note:';
+          edTd.appendChild(newNoteLabel);
           const ta=document.createElement('textarea');
           ta.rows=3;
           ta.className='detail-edit-field';
           ta.style.cssText='width:100%;font-size:10px;resize:vertical;margin-bottom:6px;';
-          ta.placeholder='Add a note (prepended with date/time)…';
+          ta.placeholder='Type a note — will be prepended with date/time stamp…';
           const saveNoteBtn=document.createElement('button');
           saveNoteBtn.className='btn-xs btn-primary';
           saveNoteBtn.textContent='💾 Save Note';
           saveNoteBtn.addEventListener('click',()=>{
             const txt=ta.value.trim();
             if(!txt)return;
-            const stamp='['+new Date().toISOString().slice(0,16).replace('T',' ')+'] ';
-            v.notes=(v.notes?v.notes+'\n':'')+stamp+txt;
+            prependStructuredNote(v, txt, 'general');
             markDirty(v);saveSessionState();
             _setNoteBtn2(true,false);
             edRow.remove();
@@ -8995,7 +9013,7 @@ function renderVendorDB(c) {
           edRow.appendChild(edTd);
           tr.insertAdjacentElement('afterend',edRow);
           ta.focus();
-          _setNoteBtn2(!!v.notes,true);
+          _setNoteBtn2(!!(v.notes&&v.notes.trim()),true);
         });
         _noteWrap.appendChild(noteBtn);_noteWrap.appendChild(_noteDot);noteTd.appendChild(_noteWrap);tr.appendChild(noteTd);
         VISIBLE_COLS.forEach(col=>{
@@ -12074,6 +12092,10 @@ function renderChecklist(c) {
   PSX_CHECKLIST.forEach(section=>{
     const secDiv=el('div',{style:'margin-bottom:6px;border:1px solid var(--border);border-radius:5px;overflow:hidden'});
     const isOpen=S['_clOpen_'+section.label]!==false;
+    const secHdr=el('div',{style:{background:'var(--card)',padding:'7px 12px',display:'flex',alignItems:'center',gap:'8px',cursor:'pointer',userSelect:'none',borderBottom:isOpen?'1px solid var(--border)':'none'},
+      onclick(){S['_clOpen_'+section.label]=!isOpen;const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}}});
+    secHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'2px'}},isOpen?'▼':'▶'));
+    secHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1',color:'var(--blue)'}},section.label));
 
     // A2: Color-coded status badge — computed from _clStatus values for this section's items
     const _sStatuses=section.items.map(it=>(S._clStatus||{})[_gwFac+'_'+it.label]||'');
@@ -16373,33 +16395,60 @@ function renderToday(c) {
 
   // ── T2: Calendar Integration Summary ────────────────────────────────────
   {
+    // Default collapsed — doesn't push content down until user wants it
+    if (S._calCollapsed === undefined) S._calCollapsed = true;
     const calSec=el('div',{style:{marginBottom:'10px',border:'1px solid var(--border)',borderRadius:'5px',overflow:'hidden'}});
     const calHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'5px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none'},
-      onclick(e){if(e.target.tagName==='BUTTON')return;S._calCollapsed=!S._calCollapsed;render();}});
+      onclick(e){if(e.target.tagName==='BUTTON')return;
+        S._calCollapsed=!S._calCollapsed;
+        // If expanding and no events loaded yet, try to fetch them now
+        if(!S._calCollapsed&&(!S._msCalendarEvents||!S._msCalendarEvents.length)){
+          const _tok=getMSToken&&getMSToken();
+          if(_tok){
+            const _start=new Date().toISOString();
+            const _end=new Date(Date.now()+30*24*60*60*1000).toISOString();
+            fetch('https://graph.microsoft.com/v1.0/me/calendarView?startDateTime='+_start+'&endDateTime='+_end+'&$top=20&$select=subject,start,end,location&$orderby=start/dateTime',
+              {headers:{Authorization:'Bearer '+_tok}})
+              .then(r=>r.ok?r.json():null)
+              .then(d=>{if(d&&d.value){S._msCalendarEvents=d.value;const _c2=$('content');if(_c2)renderToday(_c2);}})
+              .catch(()=>{});
+          }
+        }
+        const _c2=$('content');if(_c2)renderToday(_c2);
+      }});
     calHdr.appendChild(el('span',{style:{fontSize:'13px'}},'📅'));
     calHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Microsoft 365 Calendar'));
+    // Show event count in header when collapsed
+    const _calEvtCount=S._msCalendarEvents?.length||0;
+    if(_calEvtCount>0)calHdr.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(79,124,255,.1)',color:'var(--blue)',borderRadius:'10px',padding:'1px 7px'}},_calEvtCount+' events'));
     calHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},(S._calCollapsed?'▶':'▼')));
     calSec.appendChild(calHdr);
     if(!S._calCollapsed){
       const calBody=el('div',{style:{padding:'8px 12px'}});
       const calEvents=S._msCalendarEvents;
       if(!calEvents||!calEvents.length){
-        calBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px'}},'No Microsoft 365 calendar loaded.'));
-        calBody.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){S.view='settings';render();}},'→ Connect Microsoft 365'));
+        const _tok=getMSToken&&getMSToken();
+        if(_tok){
+          calBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px'}},'Loading calendar events…'));
+        } else {
+          calBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px'}},'No Microsoft 365 calendar loaded.'));
+          calBody.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){S.view='settings';const _c2=$('content');if(_c2)renderToday(_c2);}},'→ Connect Microsoft 365'));
+        }
       } else {
-        const upcoming=calEvents.filter(ev=>{const s=new Date(ev.start?.dateTime||ev.start?.date||'');return s>=today;}).sort((a,b)=>new Date(a.start?.dateTime||a.start?.date)-new Date(b.start?.dateTime||b.start?.date)).slice(0,5);
-        calBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px'}},calEvents.length+' events loaded · showing next '+upcoming.length));
+        const upcoming=calEvents.filter(ev=>{const s=new Date(ev.start?.dateTime||ev.start?.date||'');return s>=today;}).sort((a,b)=>new Date(a.start?.dateTime||a.start?.date||'')-new Date(b.start?.dateTime||b.start?.date||''));
+        calBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px'}},calEvents.length+' events loaded · next 30 days'));
         if(!upcoming.length){
           calBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--green)'}},'✓ No upcoming events found'));
         } else {
-          upcoming.forEach(ev=>{
+          upcoming.slice(0,8).forEach(ev=>{
             const s=new Date(ev.start?.dateTime||ev.start?.date||'');
-            const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid rgba(128,128,128,.08)'}});
-            row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'80px'}},s.toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})));
-            row.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'600',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},ev.subject||ev.summary||'(No title)'));
+            const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'3px 0',borderBottom:'1px solid rgba(128,128,128,.06)'}});
+            row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'80px'}},s.toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})));
+            row.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'600',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(ev.subject||'(no title)')));
             if(ev.location?.displayName)row.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)',maxWidth:'100px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},ev.location.displayName));
             calBody.appendChild(row);
           });
+          if(upcoming.length>8)calBody.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'4px'}},'+' +(upcoming.length-8)+' more events'));
         }
       }
       calSec.appendChild(calBody);
@@ -16471,14 +16520,14 @@ function renderToday(c) {
     const secWrap=el('div',{style:{marginBottom:'8px'}});
     // D1: Collapse All / Expand All for Today sections
     const _todayCtrlRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'6px',justifyContent:'flex-end'}});
-    _todayCtrlRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){_todaySections.forEach(s=>{S._todaySecOpen[s.key]=true;});render();}},'▼ Expand All'));
-    _todayCtrlRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){_todaySections.forEach(s=>{S._todaySecOpen[s.key]=false;});render();}},'▶ Collapse All'));
+    _todayCtrlRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){_todaySections.forEach(s=>{S._todaySecOpen[s.key]=true;});const _c3=$('content');if(_c3)renderToday(_c3);}},'▼ Expand All'));
+    _todayCtrlRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){_todaySections.forEach(s=>{S._todaySecOpen[s.key]=false;});const _c2=$('content');if(_c2)renderToday(_c2);}},'▶ Collapse All'));
     secWrap.appendChild(_todayCtrlRow);
     _todaySections.forEach(sec=>{
       const items=sec.isStats?[]:sec.fn();
       const isOpen=S._todaySecOpen[sec.key];
       const hdrEl=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'5px 8px',background:'var(--card)',borderRadius:'4px',cursor:'pointer',marginBottom:'2px',userSelect:'none',border:'1px solid var(--border)'},
-        onclick(){S._todaySecOpen[sec.key]=!S._todaySecOpen[sec.key];render();}});
+        onclick(){S._todaySecOpen[sec.key]=!S._todaySecOpen[sec.key];const _c2=$('content');if(_c2)renderToday(_c2);}});
       hdrEl.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',flexShrink:'0'}},isOpen?'▼':'▶'));
       hdrEl.appendChild(el('span',{style:{fontSize:'12px'}},sec.icon));
       hdrEl.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},sec.label));
@@ -16529,8 +16578,8 @@ function renderToday(c) {
   }},'✉ Bulk Email '+(S.filter?'(filtered)':'All')));
   tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){exportCSV(vendors,'today_filtered');}}, '⬇ CSV'));
   // B1/B2: Collapse All / Expand All for Today tab sections
-  tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'auto'},onclick(){['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>S._todayOpen[k]=false);S._sfSignalCollapsed=true;render();}},'▶ Collapse All'));
-  tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>S._todayOpen[k]=true);S._sfSignalCollapsed=false;render();}},'▼ Expand All'));
+  tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'auto'},onclick(){['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>S._todayOpen[k]=false);S._sfSignalCollapsed=true;const c2=$('content');if(c2)renderToday(c2);}},'▶ Collapse All'));
+  tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>S._todayOpen[k]=true);S._sfSignalCollapsed=false;const c2=$('content');if(c2)renderToday(c2);}},'▼ Expand All'));
   stickyHdr.appendChild(tableBar);
 
   // Build column-aware table using settings.cols visibility
