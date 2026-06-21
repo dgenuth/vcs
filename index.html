@@ -7923,7 +7923,7 @@ function openStructuredNoteModal(vendor) {
       if(vendor.source==='itw'){vendor._dirty=true;if(!S.dirtyITW)S.dirtyITW=new Set();S.dirtyITW.add(vendor._row);}
       else{markDirty(vendor);}
       logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendor.name,action:'Note Added ['+selectedTag+']',note:content.slice(0,60)});
-      saveSessionState(); updateSidebar(); refreshDetailIfOpen(vendor); render(); closeModal();
+      saveSessionState(); updateSidebar(); refreshDetailIfOpen(vendor); closeModal();
       toast('📝 '+selectedTag+' note saved');
     }},'Save Note'));
     btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
@@ -8440,6 +8440,8 @@ function renderVendorDB(c) {
   if (!S.loaded) { c.appendChild(el('p',{class:'muted',style:{padding:'16px'}},'Load a file first — upload your XLSM to see all contracts here.')); return; }
   if (!S.dbFilters) S.dbFilters = {};
   if (!S.dbSort) S.dbSort = {col:'Vendor', dir:1};
+  if (!S.dbSort.col) S.dbSort.col = 'Vendor';
+  if (!S.dbSort.dir) S.dbSort.dir = 1;
   if (!S.dbSource) S.dbSource = 'direct';
   if (!S.channelVendors) S.channelVendors = [];
   if (!S.allVendors || !S.allVendors.length) S.allVendors = [...S.vendors, ...S.channelVendors];
@@ -8953,12 +8955,11 @@ function renderVendorDB(c) {
         const _setNoteBtn2=(hasNotes,open)=>{
           noteBtn.textContent=open?'📝▼':'📝';
           noteBtn.style.width='22px';
-          // Indicate has-notes via button background tint — no external dot, no layout shift
-          noteBtn.style.background = '';
-          noteBtn.style.border = hasNotes && !open ? '1.5px solid rgba(79,124,255,.7)' : '1px solid transparent';
+          // Use box-shadow for has-notes indicator — CSS !important on border-color overrides inline border
+          noteBtn.style.boxShadow = hasNotes && !open ? '0 0 0 1.5px rgba(79,124,255,.75)' : '';
           noteBtn.style.borderRadius = '4px';
           noteBtn.title = hasNotes ? 'Has notes — click to view/add' : 'Quick note';
-          _noteDot.style.display = 'none'; // dot hidden — using border instead
+          _noteDot.style.display = 'none';
         };
         const _hasNotes = !!(v.notes && v.notes.trim());
         _setNoteBtn2(_hasNotes, false);
@@ -16525,11 +16526,6 @@ function renderToday(c) {
       {key:'stats',icon:'📊',label:'Quick Stats',color:'var(--text)',fn:()=>[],isStats:true},
     ];
     const secWrap=el('div',{style:{marginBottom:'8px'}});
-    // D1: Collapse All / Expand All for Today sections
-    const _todayCtrlRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'6px',justifyContent:'flex-end'}});
-    _todayCtrlRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){_todaySections.forEach(s=>{S._todaySecOpen[s.key]=true;});const _c3=$('content');if(_c3){_c3.innerHTML='';renderToday(_c3);}}},'▼ Expand All'));
-    _todayCtrlRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(){_todaySections.forEach(s=>{S._todaySecOpen[s.key]=false;});const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}},'▶ Collapse All'));
-    secWrap.appendChild(_todayCtrlRow);
     _todaySections.forEach(sec=>{
       const items=sec.isStats?[]:sec.fn();
       const isOpen=S._todaySecOpen[sec.key];
@@ -16585,8 +16581,18 @@ function renderToday(c) {
   }},'✉ Bulk Email '+(S.filter?'(filtered)':'All')));
   tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){exportCSV(vendors,'today_filtered');}}, '⬇ CSV'));
   // B1/B2: Collapse All / Expand All for Today tab sections
-  tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'auto'},onclick(){['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>S._todayOpen[k]=false);S._sfSignalCollapsed=true;const c2=$('content');if(c2){c2.innerHTML='';renderToday(c2);}}},'▶ Collapse All'));
-  tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>S._todayOpen[k]=true);S._sfSignalCollapsed=false;const c2=$('content');if(c2){c2.innerHTML='';renderToday(c2);}}},'▼ Expand All'));
+  tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'auto'},onclick(){
+    ['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>S._todayOpen[k]=false);
+    S._sfSignalCollapsed=true; S._calCollapsed=true;
+    if(S._todaySecOpen) Object.keys(S._todaySecOpen).forEach(k=>S._todaySecOpen[k]=false);
+    const c2=$('content');if(c2){c2.innerHTML='';renderToday(c2);}
+  }},'▶ Collapse All'));
+  tableBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){
+    ['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>S._todayOpen[k]=true);
+    S._sfSignalCollapsed=false; S._calCollapsed=false;
+    if(S._todaySecOpen) Object.keys(S._todaySecOpen).forEach(k=>S._todaySecOpen[k]=true);
+    const c2=$('content');if(c2){c2.innerHTML='';renderToday(c2);}
+  }},'▼ Expand All'));
   stickyHdr.appendChild(tableBar);
 
   // Build column-aware table using settings.cols visibility
