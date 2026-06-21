@@ -17164,36 +17164,12 @@ function renderDiscovery(c) {
       const b64 = DS.fileData.split(',')[1];
       const mediaType = isPDF ? 'application/pdf' : isCSV ? 'text/plain' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
-      const prompt = `You are analyzing a client spend report for a healthcare facility (nursing home / assisted living / rehab center).
-Extract ALL spend categories and their amounts from this document.
-For each category found, provide:
-1. The category name (standardized to healthcare supply categories)
-2. The period covered (monthly, quarterly, annual)
-3. Total spend for that period
-4. Estimated ANNUAL spend
-5. Top vendors mentioned (if any)
-6. Match to these standard PS categories where possible: Medical Supplies, Pharmacy, Food Service, Environmental Services, Laundry, IT Services, Staffing, Capital Equipment, Office Supplies, Maintenance, Other
-
-Facility: ${DS.facilityName || 'Unknown'}
-
-Respond ONLY with JSON:
-{
-  "facility": "name",
-  "period": "description of data period",
-  "totalAnnualSpend": 0,
-  "categories": [
-    {
-      "name": "category name",
-      "psCategory": "matched PS category",
-      "periodAmount": 0,
-      "periodType": "monthly|quarterly|annual",
-      "annualEstimate": 0,
-      "vendors": ["vendor1", "vendor2"],
-      "notes": "any relevant notes"
-    }
-  ],
-  "summary": "brief 1-2 sentence summary"
-}`;
+      const prompt = 'You are analyzing a client spend report for a healthcare facility (nursing home/assisted living/rehab).'
+        + ' Extract ALL spend categories and their amounts from this document.'
+        + ' For each category, provide: category name, period, total spend, estimated annual spend, top vendors, and match to PS categories'
+        + ' (Medical Supplies, Pharmacy, Food Service, Environmental Services, Laundry, IT Services, Staffing, Capital Equipment, Office Supplies, Maintenance, Other).'
+        + ' Facility: ' + (DS.facilityName || 'Unknown') + '.'
+        + ' Respond ONLY with JSON: {"facility":"name","period":"desc","totalAnnualSpend":0,"categories":[{"name":"cat","psCategory":"PS cat","periodAmount":0,"periodType":"monthly|quarterly|annual","annualEstimate":0,"vendors":["v1"],"notes":"notes"}],"summary":"brief summary"}';
 
       const messages = [{role:'user',content:[
         {type:'document',source:{type:'base64',media_type:mediaType,data:b64}},
