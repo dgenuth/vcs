@@ -8846,7 +8846,7 @@ function renderVendorDB(c) {
     });
   }
 
-  const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap',style:{overflowY:'visible',overflowX:'auto',maxHeight:'none',border:'1px solid var(--border)',borderRadius:'4px'}});
+  const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap',style:{overflowX:'auto',overflowY:'visible',maxHeight:'unset',border:'1px solid var(--border)',borderRadius:'4px',display:'block'}});
   const table=el('table',{class:'data-table',style:{borderCollapse:'collapse'}});
   const thead=el('thead'), trh=el('tr');
 
@@ -16179,7 +16179,7 @@ function openPromoteToVendorDBModal(itwVendor) {
 function renderToday(c) {
   if(!S._todayOpen) S._todayOpen={};
   // Default all sections open
-  ['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>{if(S._todayOpen[k]===undefined)S._todayOpen[k]=true;});
+  ['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>{if(S._todayOpen[k]===undefined)S._todayOpen[k]=false;});
   const today=new Date();
   const allActive=(S.vendors||[]).filter(isVisible);
   const urgent=allActive.filter(v=>v.score>=8).length;
@@ -16487,7 +16487,7 @@ function renderToday(c) {
 
   // ── T1: 6-section Today Summary ──────────────────────────────────────────
   if(!S.filter&&!S.search){
-    if(!S._todaySecOpen)S._todaySecOpen={urgent:true,call:true,email:false,review:false,pipeline:false,stats:false};
+    if(!S._todaySecOpen)S._todaySecOpen={urgent:true,call:false,email:false,review:false,pipeline:false,stats:false};
     const _allV=(S.vendors||[]).filter(isVisible);
     const _todaySections=[
       {key:'urgent',icon:'🚨',label:'Urgent Actions',color:'var(--red)',
@@ -16534,30 +16534,38 @@ function renderToday(c) {
       {key:'pipeline',icon:'💼',label:'Pipeline Opportunities',color:'var(--blue)',
         fn:()=>{
           const _allITW=(S.itw||[]).filter(v=>isVisible(v));
-          // Prioritize: vendors with overdue follow-ups, then recent notes, then by score
           const _now=new Date();
-          const _sorted=_allITW.slice().sort((a,b)=>{
-            const aFu=parseDate(a.followUp); const bFu=parseDate(b.followUp);
-            const aOverdue=aFu&&dayDiff(_now,aFu)>0; const bOverdue=bFu&&dayDiff(_now,bFu)>0;
-            if(aOverdue&&!bOverdue) return -1;
-            if(!aOverdue&&bOverdue) return 1;
-            // Then by tier priority
-            const tierRank={'CALL':0,'EMAIL':1,'REVIEW':2,'MONITOR':3};
-            const aTier=tierRank[a.tier]??4; const bTier=tierRank[b.tier]??4;
-            if(aTier!==bTier) return aTier-bTier;
-            return (b.score||0)-(a.score||0);
+          const tierRank={'CALL':0,'EMAIL':1,'REVIEW':2,'MONITOR':3};
+          const _scored=_allITW.map(v=>{
+            let priority=0;
+            // Overdue follow-up = highest urgency
+            const fu=parseDate(v.followUp);
+            if(fu&&dayDiff(_now,fu)>0) priority+=100;
+            // Tier ranking
+            priority += (10-(tierRank[v.tier]??5))*10;
+            // Recent communication (within 30 days) = more relevant
+            const lc=parseDate(v.lastComm);
+            const daysSince=lc?dayDiff(lc,_now):999;
+            if(daysSince<=7) priority+=30;
+            else if(daysSince<=30) priority+=15;
+            // Score boost
+            priority += (v.score||0);
+            return {v, priority};
           });
-          return _sorted.slice(0,10);
+          return _scored.sort((a,b)=>b.priority-a.priority).slice(0,10).map(r=>r.v);
         },
         rowFn:v=>{
           const _fu=parseDate(v.followUp);
           const _fuOverdue=_fu&&dayDiff(new Date(),_fu)>0;
+          const _lc=parseDate(v.lastComm);
+          const _daysSince=_lc?dayDiff(_lc,new Date()):null;
           return el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer',borderBottom:'1px solid rgba(128,128,128,.06)'},onclick(){openDetail(v);}},
             v.score!=null?scorePill(v.score):el('span',{style:{width:'32px',display:'inline-block'}},''),
-            el('span',{style:{fontWeight:'700',fontSize:'11px',minWidth:'150px',color:'var(--blue)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},v.name),
-            el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},v.category||v.section||'In The Works'),
-            _fuOverdue?el('span',{style:{fontSize:'8px',color:'var(--red)',fontWeight:'600'}},'Follow-up overdue'):'',
-            v.tier?tierTag(v.tier):''
+            el('span',{style:{fontWeight:'700',fontSize:'11px',minWidth:'130px',color:'var(--blue)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},v.name),
+            el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},v.category||v.section||'In The Works'),
+            _fuOverdue?el('span',{style:{fontSize:'8px',color:'var(--red)',fontWeight:'700',flexShrink:'0'}},'⚠ Follow-up')
+              :(_daysSince!==null&&_daysSince<=7)?el('span',{style:{fontSize:'8px',color:'var(--green)',flexShrink:'0'}},'Active')
+              :v.tier?tierTag(v.tier):''
           );
         }},
       {key:'stats',icon:'📊',label:'Quick Stats',color:'var(--text)',fn:()=>[],isStats:true},
@@ -16647,7 +16655,7 @@ function renderToday(c) {
 
   // ── Vendor List — collapsible, labeled ──────────────────────────────────────
   {
-    if (S._todayVendorListOpen === undefined) S._todayVendorListOpen = true;
+    if (S._todayVendorListOpen === undefined) S._todayVendorListOpen = false;
     const vlistHdr = el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'5px 8px',background:'var(--card)',borderRadius:'4px',cursor:'pointer',userSelect:'none',marginBottom: S._todayVendorListOpen?'0':'6px',borderBottom: S._todayVendorListOpen?'1px solid var(--border)':'none'},
       onclick(){ S._todayVendorListOpen = !S._todayVendorListOpen; const c2=$('content');if(c2){c2.innerHTML='';renderToday(c2);} }});
     vlistHdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',flexShrink:'0'}}, S._todayVendorListOpen?'▼':'▶'));
