@@ -476,8 +476,8 @@ body.ps-light-theme .tbl-wrap .data-table thead th{background:#0078b8!important;
 .detail-sec-title{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;padding:5px 8px 5px 10px;border-radius:3px;display:flex;align-items:center;gap:6px}
 .detail-sec-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px}
 .detail-grid{display:grid;grid-template-columns:110px 1fr;gap:2px 6px}
-.detail-label{color:var(--muted);font-size:10px;padding:1px 0}
-.detail-value{font-size:10px;padding:1px 0;word-break:break-word;white-space:normal}
+.detail-label{color:var(--text);font-size:10px;padding:1px 0;font-weight:600}
+.detail-value{font-size:10px;padding:1px 0;word-break:break-word;white-space:normal;color:var(--muted)}
 .detail-edit-field{background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:10px;padding:2px 4px;border-radius:3px;width:100%;outline:none}
 .detail-edit-field:focus{border-color:var(--blue)}
 .followup-display{font-size:10px;padding:3px 0;color:var(--amber)}
@@ -4492,7 +4492,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     if (vendor.tier) metricsRow.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:_tierColors[vendor.tier]||'var(--muted)'}}, '● '+vendor.tier));
     if (vendor.score) metricsRow.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:'var(--text)'}}, '★ '+vendor.score.toFixed(1)));
     if (vendor.status) metricsRow.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',marginLeft:'auto'}}, vendor.status));
-    if (vendor.perpetuity) metricsRow.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(139,92,246,.1)',color:'#a78bfa',borderRadius:'10px',padding:'1px 8px'}}, '♾ Perpetuity'));
+    if (vendor.perpetuity) metricsRow.appendChild(el('span',{title:'Perpetuity contract',style:{fontSize:'14px',color:'#a78bfa'}},'♾'));
     if (metricsRow.children.length) viSec.appendChild(metricsRow);
 
     // Row 3: Contact info + extras
@@ -7103,7 +7103,7 @@ function addEditableSection(body, title, vendor, fields) {
   if (title) {
     const _c=_SCOL[title]||'#94a3b8';
     const _sKey='_secOpen_'+(vendor.name||'')+'_'+title;
-    if (!S[_sKey]) S[_sKey] = true; // default open
+    if (S[_sKey] === undefined) S[_sKey] = true; // default open on first render only
     const hdr=el('h4',{class:'detail-sec-title',style:{background:_c+'18',color:_c,borderLeft:'3px solid '+_c,cursor:'pointer',userSelect:'none',display:'flex',alignItems:'center',justifyContent:'space-between'},
       onclick(){ S[_sKey]=!S[_sKey]; refreshDetailIfOpen(vendor); }});
     hdr.appendChild(el('span',{},title));
@@ -12340,6 +12340,7 @@ function renderChecklist(c) {
                 if(item2.website) aiChip.addEventListener('click',()=>window.open(item2.website,'_blank'));
                 vendorCol.appendChild(aiChip);
               });
+              vendorCol.appendChild(el('button',{class:'btn-ghost',style:{fontSize:'7px',padding:'1px 4px',height:'16px',marginLeft:'2px',color:'var(--muted)'},onclick(e){e.stopPropagation();if(S._clAiSugged)delete S._clAiSugged[_aiKey];const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}}},'↺'));
             } else {
               const aiBtn=el('button',{class:'btn-ghost',style:{fontSize:'8px',padding:'2px 5px',height:'18px'}});
               aiBtn.textContent='🤖 AI Suggest';
@@ -12355,7 +12356,21 @@ function renderChecklist(c) {
                   const data=await resp.json();
                   const text=(data.content&&data.content[0]&&data.content[0].text)||'';
                   let parsed={inDB:[],notInDB:[]};
-                  try{parsed=JSON.parse(text.trim());}catch(_){parsed={inDB:text.split(',').map(n=>n.trim()).filter(Boolean).slice(0,3),notInDB:[]};}
+                  try{
+                    // Strip markdown code fences if present
+                    const clean=text.trim().replace(/^```json?\n?/,'').replace(/\n?```$/,'').trim();
+                    parsed=JSON.parse(clean);
+                    // Validate: inDB and notInDB must be arrays
+                    if(!Array.isArray(parsed.inDB)) parsed.inDB=[];
+                    if(!Array.isArray(parsed.notInDB)) parsed.notInDB=[];
+                    // Filter junk results: remove entries that are just "LLC", "Inc", single words under 3 chars, or clearly not vendor names
+                    const _isJunk=n=>!n||n.length<3||/^(llc|inc|corp|ltd|co\.|the|and|or|n\/a)\.?$/i.test(n.trim());
+                    parsed.inDB=parsed.inDB.filter(n=>typeof n==='string'&&!_isJunk(n));
+                    parsed.notInDB=parsed.notInDB.filter(item=>{const n=item&&(item.name||item);return typeof n==='string'&&!_isJunk(n);});
+                  }catch(_){
+                    // Fallback: treat as comma list
+                    parsed={inDB:text.split(',').map(n=>n.trim()).filter(n=>n.length>3&&!/^(llc|inc|json)$/i.test(n)).slice(0,3),notInDB:[]};
+                  }
                   if(!S._clAiSugged) S._clAiSugged={};
                   S._clAiSugged[_aiKey]={inDB:parsed.inDB||[],notInDB:parsed.notInDB||[]};
                   const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}
@@ -16320,6 +16335,9 @@ function openPromoteToVendorDBModal(itwVendor) {
 
 function renderToday(c) {
   if(!S._todayOpen) S._todayOpen={};
+  // Universal Today section header style — all sections use this
+  const _SEC_HDR_STYLE='display:flex;gap:6px;align-items:center;padding:5px 10px;background:var(--card);cursor:pointer;user-select:none;border-radius:4px;margin-bottom:4px;border:1px solid var(--border);font-size:11px;font-weight:700;';
+  const _SEC_CHEVRON_STYLE='font-size:9px;color:var(--muted);flex-shrink:0;';
   // Default all sections open
   ['fu','rev','outreach','sfboard','sfSignals'].forEach(k=>{if(S._todayOpen[k]===undefined)S._todayOpen[k]=false;});
   const today=new Date();
@@ -16378,12 +16396,12 @@ function renderToday(c) {
   if(USER.sfToken && S._sfSignals !== false) {
     if(S._sfSignalCollapsed === undefined) S._sfSignalCollapsed=true;
     if(!S._sfFilters) S._sfFilters={};
-    const sigSec=el('div',{style:{marginBottom:'12px',border:'1px solid var(--border)',borderRadius:'5px',overflow:'hidden'}});
-    const sigHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'6px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none'},
-      onclick(e){if(e.target.tagName==='BUTTON'||e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;S._sfSignalCollapsed=!S._sfSignalCollapsed;const _sr=$('content');if(_sr){_sr.innerHTML='';renderToday(_sr);};}});
-    sigHdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',flexShrink:'0'}},(S._sfSignalCollapsed?'▶':'▼')));
-    sigHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',color:'var(--blue)'}},'☁ Salesforce Signals'));
-    sigHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},S._sfSignalData?'('+S._sfSignalData.length+')':''));
+    const sigSec=el('div',{style:{marginBottom:'4px'}});
+    const sigHdr=el('div',{style:_SEC_HDR_STYLE,
+      onclick(e){if(e.target.tagName==='BUTTON'||e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;S._sfSignalCollapsed=!S._sfSignalCollapsed;const _sr=$('content');if(_sr){_sr.innerHTML='';renderToday(_sr);}}});
+    sigHdr.appendChild(el('span',{style:_SEC_CHEVRON_STYLE},(S._sfSignalCollapsed?'▶':'▼')));
+    sigHdr.appendChild(el('span',{style:{fontSize:'12px'}},'☁'));
+    sigHdr.appendChild(el('span',{style:{flex:'1'}},'Salesforce Signals'));
 
     // My records toggle
     const myToggle=el('label',{style:{fontSize:'9px',color:'var(--muted)',display:'flex',gap:'3px',alignItems:'center',cursor:'pointer'},onclick(e){e.stopPropagation();}});
@@ -16551,8 +16569,8 @@ function renderToday(c) {
   {
     // Default collapsed — doesn't push content down until user wants it
     if (S._calCollapsed === undefined) S._calCollapsed = true;
-    const calSec=el('div',{style:{marginBottom:'10px',border:'1px solid var(--border)',borderRadius:'5px',overflow:'hidden'}});
-    const calHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'5px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none'},
+    const calSec=el('div',{style:{marginBottom:'4px'}});
+    const calHdr=el('div',{style:_SEC_HDR_STYLE,
       onclick(e){if(e.target.tagName==='BUTTON')return;
         S._calCollapsed=!S._calCollapsed;
         // If expanding and no events loaded yet, try to fetch them now
@@ -16573,9 +16591,9 @@ function renderToday(c) {
         }
         const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}
       }});
-    calHdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',flexShrink:'0'}},(S._calCollapsed?'▶':'▼')));
-    calHdr.appendChild(el('span',{style:{fontSize:'13px'}},'📅'));
-    calHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Microsoft 365 Calendar'));
+    calHdr.appendChild(el('span',{style:_SEC_CHEVRON_STYLE},(S._calCollapsed?'▶':'▼')));
+    calHdr.appendChild(el('span',{style:{fontSize:'12px'}},'📅'));
+    calHdr.appendChild(el('span',{style:{flex:'1'}},'Microsoft 365 Calendar'));
     // Show event count badge on right when events loaded
     const _calEvtCount=S._msCalendarEvents?.length||0;
     if(_calEvtCount>0)calHdr.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(79,124,255,.1)',color:'var(--blue)',borderRadius:'10px',padding:'1px 7px',flexShrink:'0'}},_calEvtCount+' events'));
@@ -16629,7 +16647,7 @@ function renderToday(c) {
 
   // ── T1: 6-section Today Summary ──────────────────────────────────────────
   if(!S.filter&&!S.search){
-    if(!S._todaySecOpen)S._todaySecOpen={urgent:true,call:false,email:false,review:false,pipeline:false,stats:false};
+    if(!S._todaySecOpen)S._todaySecOpen={urgent:false,call:false,email:false,review:false,pipeline:false,stats:false};
     const _allV=(S.vendors||[]).filter(isVisible);
     const _todaySections=[
       {key:'urgent',icon:'🚨',label:'Urgent Actions',color:'var(--red)',
@@ -16704,7 +16722,14 @@ function renderToday(c) {
         );}},
       {key:'pipeline',icon:'💼',label:'Pipeline Opportunities',color:'var(--blue)',
         fn:()=>{
-          const _allITW=(S.itw||[]).filter(v=>isVisible(v));
+          const _ACTIVE=['New','Existing','AI','Pipe Line'];
+          const _allITW=(S.itw||[]).filter(v=>{
+            if(!isVisible(v)) return false;
+            // Exclude done/inactive sections
+            const sec=(v.section||'').trim();
+            if(sec && !_ACTIVE.some(a=>sec.toLowerCase().includes(a.toLowerCase()))) return false;
+            return true;
+          });
           const _now=new Date();
           const tierRank={'CALL':0,'EMAIL':1,'REVIEW':2,'MONITOR':3};
           const _scored=_allITW.map(v=>{
@@ -16745,11 +16770,11 @@ function renderToday(c) {
     try { _todaySections.forEach(sec=>{
       const items=sec.isStats?[]:sec.fn();
       const isOpen=S._todaySecOpen[sec.key];
-      const hdrEl=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'5px 8px',background:'var(--card)',borderRadius:'4px',cursor:'pointer',marginBottom:'2px',userSelect:'none',border:'1px solid var(--border)'},
-        onclick(){S._todaySecOpen[sec.key]=!S._todaySecOpen[sec.key];const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}});
-      hdrEl.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',flexShrink:'0'}},isOpen?'▼':'▶'));
+      const hdrEl=el('div',{style:_SEC_HDR_STYLE,
+        onclick(){S._todaySecOpen[sec.key]=!S._todaySecOpen[sec.key];const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}})
+      hdrEl.appendChild(el('span',{style:_SEC_CHEVRON_STYLE},isOpen?'▼':'▶'));
       hdrEl.appendChild(el('span',{style:{fontSize:'12px'}},sec.icon));
-      hdrEl.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},sec.label));
+      hdrEl.appendChild(el('span',{style:{flex:'1'}},sec.label));
       if(!sec.isStats)hdrEl.appendChild(el('span',{style:{fontSize:'10px',background:sec.color+'22',color:sec.color,padding:'1px 7px',borderRadius:'9px',fontWeight:'700'}},String(items.length)));
       secWrap.appendChild(hdrEl);
       if(isOpen){
