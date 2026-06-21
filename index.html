@@ -403,6 +403,7 @@ body.ps-light-theme .page-sticky-hdr{background:#edf4fb;border-bottom-color:rgba
 /* Tables */
 .tbl-wrap{overflow-x:auto;overflow-y:auto;-webkit-overflow-scrolling:touch;max-height:calc(100vh - 200px);margin-bottom:8px;border:1px solid var(--border);border-radius:4px}
 .tbl-wrap .data-table thead th{position:sticky;top:0;z-index:20;background:var(--sb)!important;box-shadow:0 2px 4px rgba(0,0,0,.18);will-change:transform}
+#content .data-table thead th{position:sticky;top:0;z-index:20;background:var(--sb)!important;box-shadow:0 2px 4px rgba(0,0,0,.18);}
 .summary-section .data-table thead th,.modal-body .data-table thead th,.scrollable-table-wrap .data-table thead th{position:sticky;top:0;z-index:1;background:var(--card)}
 body.ps-light-theme .tbl-wrap .data-table thead th{background:#0078b8!important;color:#fff!important;box-shadow:0 2px 4px rgba(0,0,0,.12)}
 .data-table{border-collapse:collapse;font-size:10px;width:max-content;min-width:100%}
@@ -8431,11 +8432,9 @@ function openVendorAliasModal(vendor) {
 }
 // ─── Vendor Database — Excel-style multi-select column filters ─────────────────
 function renderVendorDB(c) {
-  // Vendor DB needs tbl-wrap to be the scroll parent for sticky headers to work.
-  // #content has overflow-y:auto by default which breaks sticky thead positioning.
-  // Override it here; restored when navigating away via the main render() switch.
-  c.style.overflowY = 'hidden';
-  c.style.overflowX = 'hidden';
+  // For sticky thead to work, #content must be the scroll parent.
+  // Remove tbl-wrap's own overflow so the sticky positioning works relative to #content.
+  // We set padding:0 so the table fills the full content area cleanly.
   c.style.padding = '0';
   if (!S.loaded) { c.appendChild(el('p',{class:'muted',style:{padding:'16px'}},'Load a file first — upload your XLSM to see all contracts here.')); return; }
   if (!S.dbFilters) S.dbFilters = {};
@@ -8847,7 +8846,7 @@ function renderVendorDB(c) {
     });
   }
 
-  const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap'});
+  const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap',style:{overflowY:'visible',overflowX:'auto',maxHeight:'none',border:'1px solid var(--border)',borderRadius:'4px'}});
   const table=el('table',{class:'data-table',style:{borderCollapse:'collapse'}});
   const thead=el('thead'), trh=el('tr');
 
@@ -11770,6 +11769,7 @@ function renderChecklist(c) {
   }
   function _clLoadEntry(entry){if(!entry)return;S._clCurrVendor=Object.assign({},entry.currVendor||{});S._clGoWith=Object.assign({},entry.goWith||{});S._clStatus=Object.assign({},entry.status||{});if(entry.rep)S._checklistRep=entry.rep;}
   try {
+  console.log('[VCS Checklist] try block entered, S.loaded='+S.loaded+', PSX_CHECKLIST length='+(PSX_CHECKLIST&&PSX_CHECKLIST.length));
   if(!S._clStatus)S._clStatus={};
   const wrap=el('div',{style:{maxWidth:'1000px',margin:'0 auto',padding:'12px 0'}});
   const hdr=el('div',{style:{marginBottom:'12px'}});
@@ -12266,14 +12266,20 @@ function renderChecklist(c) {
   }); // end PSX_CHECKLIST.forEach
   }
   } catch(err) {
-    c.innerHTML='';
-    const _errDiv=el('div',{style:{padding:'20px',color:'#dc2626',background:'#fef2f2',borderRadius:'6px',margin:'12px',border:'1px solid #fca5a5'}});
-    _errDiv.appendChild(el('h3',{style:{marginTop:'0',fontSize:'13px'}},'⚠ Checklist Error'));
-    _errDiv.appendChild(el('p',{style:{fontSize:'11px',marginBottom:'8px'}},err.message));
-    _errDiv.appendChild(el('pre',{style:{fontSize:'9px',color:'#666',whiteSpace:'pre-wrap',maxHeight:'120px',overflow:'auto',marginBottom:'8px'}},err.stack||'(no stack)'));
-    _errDiv.appendChild(el('button',{class:'btn-primary',onclick:function(){const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}}}, 'Retry'));
-    c.appendChild(_errDiv);
-    console.error('[VCS] Checklist crash:', err.message, err);
+    try { c.innerHTML = ''; } catch(_) {}
+    try {
+      const _errDiv = document.createElement('div');
+      _errDiv.style.cssText = 'padding:20px;color:#dc2626;background:#fef2f2;border-radius:6px;margin:12px;border:1px solid #fca5a5;font-family:sans-serif;';
+      _errDiv.innerHTML = '<h3 style="margin-top:0;font-size:13px">⚠ Checklist Error</h3>'
+        + '<p style="font-size:11px;margin-bottom:8px">' + (err && err.message ? err.message : String(err)) + '</p>'
+        + '<pre style="font-size:9px;color:#666;white-space:pre-wrap;max-height:120px;overflow:auto;margin-bottom:8px">' + (err && err.stack ? err.stack.slice(0,500) : '(no stack)') + '</pre>'
+        + '<button onclick="var c=document.getElementById(\'content\');if(c){c.innerHTML=\'\';renderChecklist(c);}" style="background:#4f7cff;color:#fff;border:none;padding:5px 12px;border-radius:4px;cursor:pointer;font-size:11px">Retry</button>';
+      c.appendChild(_errDiv);
+    } catch(_e2) {
+      // absolute last resort
+      document.body.innerHTML += '<div style="position:fixed;top:20px;left:20px;background:red;color:white;padding:20px;z-index:9999">CHECKLIST ERROR: ' + String(err) + '</div>';
+    }
+    console.error('[VCS] Checklist crash:', err && err.message, err);
   }
 }
 
@@ -16411,16 +16417,19 @@ function renderToday(c) {
         S._calCollapsed=!S._calCollapsed;
         // If expanding and no events loaded yet, try to fetch them now
         if(!S._calCollapsed&&(!S._msCalendarEvents||!S._msCalendarEvents.length)){
-          const _tok=getMSToken&&getMSToken();
-          if(_tok){
-            const _start=new Date().toISOString();
-            const _end=new Date(Date.now()+30*24*60*60*1000).toISOString();
-            fetch('https://graph.microsoft.com/v1.0/me/calendarView?startDateTime='+_start+'&endDateTime='+_end+'&$top=20&$select=subject,start,end,location&$orderby=start/dateTime',
-              {headers:{Authorization:'Bearer '+_tok}})
-              .then(r=>r.ok?r.json():null)
-              .then(d=>{if(d&&d.value){S._msCalendarEvents=d.value;const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}})
-              .catch(()=>{});
-          }
+          // Try to get a valid token (ensureMSToken handles refresh if needed)
+          (async()=>{
+            try{
+              const _tok = (typeof ensureMSToken === 'function') ? await ensureMSToken() : (getMSToken&&getMSToken());
+              if(_tok){
+                const _start=new Date().toISOString();
+                const _end=new Date(Date.now()+30*24*60*60*1000).toISOString();
+                const _r=await fetch('https://graph.microsoft.com/v1.0/me/calendarView?startDateTime='+_start+'&endDateTime='+_end+'&$top=20&$select=subject,start,end,location&$orderby=start/dateTime',
+                  {headers:{Authorization:'Bearer '+_tok}});
+                if(_r.ok){const _d=await _r.json();if(_d&&_d.value){S._msCalendarEvents=_d.value;const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}}
+              }
+            }catch(_e){console.warn('[VCS Cal] fetch error:',_e.message);}
+          })();
         }
         const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}
       }});
@@ -16436,10 +16445,11 @@ function renderToday(c) {
       const calEvents=S._msCalendarEvents;
       if(!calEvents||!calEvents.length){
         const _tok=getMSToken&&getMSToken();
-        if(_tok){
+        const _hasRefresh = typeof getMSRefresh==='function' && getMSRefresh();
+        if(_tok||_hasRefresh){
           calBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px'}},'Loading calendar events…'));
         } else {
-          calBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px'}},'No Microsoft 365 calendar loaded.'));
+          calBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px'}},'No Microsoft 365 calendar connected.'));
           calBody.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){S.view='settings';const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}},'→ Connect Microsoft 365'));
         }
       } else {
@@ -16524,11 +16534,15 @@ function renderToday(c) {
           schedBtn
         );}},
       {key:'pipeline',icon:'💼',label:'Pipeline Opportunities',color:'var(--blue)',
-        fn:()=>(S.itw||[]).filter(v=>isVisible(v)),
-        rowFn:v=>el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer'},onclick(){openDetail(v);}},
-          v.score!=null?scorePill(v.score):'',
-          el('span',{style:{fontWeight:'700',fontSize:'11px',minWidth:'140px',color:'var(--blue)'}},v.name),
-          el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},v.category||''),
+        fn:()=>{
+          const _allITW=(S.itw||[]).filter(v=>isVisible(v));
+          // Show top 10 by score — use full Pipeline tab for the complete list
+          return _allITW.sort((a,b)=>(b.score||0)-(a.score||0)).slice(0,10);
+        },
+        rowFn:v=>el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer',borderBottom:'1px solid rgba(128,128,128,.06)'},onclick(){openDetail(v);}},
+          v.score!=null?scorePill(v.score):el('span',{style:{width:'32px'}},''),
+          el('span',{style:{fontWeight:'700',fontSize:'11px',minWidth:'150px',color:'var(--blue)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},v.name),
+          el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},v.category||v.section||'In The Works'),
           v.tier?tierTag(v.tier):''
         )},
       {key:'stats',icon:'📊',label:'Quick Stats',color:'var(--text)',fn:()=>[],isStats:true},
@@ -16571,7 +16585,15 @@ function renderToday(c) {
           body.appendChild(el('div',{style:{padding:'8px 12px',fontSize:'10px',color:'var(--green)',fontWeight:'600'}},'✓ All clear'));
         } else {
           items.slice(0,15).forEach(v=>body.appendChild(sec.rowFn(v)));
-          if(items.length>15)body.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',padding:'4px 8px'}},'+' +(items.length-15)+' more — use filter tabs above'));
+          if(sec.key==='pipeline'){
+            const _totalITW=(S.itw||[]).filter(v=>isVisible(v)).length;
+            if(_totalITW>10){
+              const _moreLink=el('div',{style:{padding:'4px 8px',fontSize:'9px',color:'var(--blue)',cursor:'pointer',textDecoration:'underline'},onclick(){S.view='itw';const c2=$('content');if(c2){c2.innerHTML='';render();}}}, '→ View all '+_totalITW+' Pipeline vendors');
+              body.appendChild(_moreLink);
+            }
+          } else if(items.length>15){
+            body.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',padding:'4px 8px'}},'+' +(items.length-15)+' more - use filter tabs above'));
+          }
         }
         secWrap.appendChild(body);
       }
@@ -24231,9 +24253,7 @@ function render() {
   const search=$('search');
   const hadFocus=document.activeElement===search, curPos=hadFocus?search.selectionStart:0;
   content.innerHTML='';
-  // Reset any view-specific style overrides (e.g. vendorDB sets overflow:hidden for sticky headers)
-  content.style.overflowY = '';
-  content.style.overflowX = '';
+  // Reset padding override from vendorDB view
   content.style.padding = '';
   const titles={
     today:'📋 Today',callsheet:'📞 Call Sheet',expiring:'⏰ Expiring',
