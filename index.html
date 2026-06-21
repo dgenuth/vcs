@@ -17078,212 +17078,135 @@ function renderToday(c) {
 // ─── Discovery Module ─────────────────────────────────────────────────────────
 // Upload client spend data (PDF/Excel) → Claude AI extracts category breakdown
 // → Display annualized spend estimates → Seed checklist
+// ─── Discovery Module ────────────────────────────────────────────────────────
 function renderDiscovery(c) {
   c.innerHTML = '';
-  if (!S.loaded) {
-    c.appendChild(el('p',{style:{padding:'20px',color:'var(--muted)'}},'Load a vendor file first.'));
-    return;
-  }
+  if (!S.loaded) { c.appendChild(el('p',{style:{padding:'20px',color:'var(--muted)'}},'Load a vendor file first.')); return; }
   const wrap = el('div',{style:{maxWidth:'900px',margin:'0 auto',padding:'12px'}});
-
-  // ── Header
   const hdr = el('div',{style:{marginBottom:'16px'}});
-  hdr.appendChild(el('h2',{style:{margin:'0 0 4px',fontSize:'16px',fontWeight:'700'}},'🔍 Client Spend Discovery'));
-  hdr.appendChild(el('p',{style:{margin:'0',fontSize:'10px',color:'var(--muted)',lineHeight:'1.6'}},
-    'Upload a client spend report (PDF, Excel, or CSV) and AI will extract spending by category. ' +
-    'Use the results to identify where they can save and seed the vendor checklist.'));
+  hdr.appendChild(el('h2',{style:{margin:'0 0 4px',fontSize:'16px',fontWeight:'700'}},'\uD83D\uDD0D Client Spend Discovery'));
+  hdr.appendChild(el('p',{style:{margin:'0',fontSize:'10px',color:'var(--muted)',lineHeight:'1.6'}},'Upload a client spend report (PDF, Excel, or CSV). AI will extract spending by category and help seed the vendor checklist.'));
   wrap.appendChild(hdr);
-
-  // ── State
   if (!S._discovery) S._discovery = {};
   const DS = S._discovery;
-
   // ── Upload Section
   const uploadSec = el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'16px',marginBottom:'12px'}});
-  uploadSec.appendChild(el('h3',{style:{margin:'0 0 10px',fontSize:'12px',fontWeight:'700',color:'var(--text)'}},'Step 1: Upload Spend Data'));
-
-  const dropzone = el('div',{style:{
-    border:'2px dashed var(--border)',borderRadius:'6px',padding:'24px',textAlign:'center',
-    cursor:'pointer',transition:'all .2s',marginBottom:'8px',
-    background: DS.fileName ? 'rgba(34,197,94,.04)' : 'var(--bg)'
-  }});
-  const _dzIcon = el('div',{style:{fontSize:'28px',marginBottom:'6px'}},DS.fileName ? '✅' : '📎');
-  const _dzLabel = el('div',{style:{fontSize:'11px',fontWeight:'600',color:DS.fileName?'var(--green)':'var(--text)',marginBottom:'4px'}},
-    DS.fileName ? DS.fileName : 'Drop file here or click to browse');
-  const _dzSub = el('div',{style:{fontSize:'9px',color:'var(--muted)'}},
-    DS.fileName ? 'File ready — click Extract below' : 'Supports: PDF, Excel (.xlsx), CSV');
-  dropzone.appendChild(_dzIcon); dropzone.appendChild(_dzLabel); dropzone.appendChild(_dzSub);
-
+  uploadSec.appendChild(el('h3',{style:{margin:'0 0 10px',fontSize:'12px',fontWeight:'700'}},'Step 1: Upload Spend Data'));
+  const dropzone = el('div',{style:{border:'2px dashed var(--border)',borderRadius:'6px',padding:'24px',textAlign:'center',cursor:'pointer',marginBottom:'8px',background:DS.fileName?'rgba(34,197,94,.04)':'var(--bg)'}});
+  dropzone.appendChild(el('div',{style:{fontSize:'28px',marginBottom:'6px'}},DS.fileName?'\u2705':'\uD83D\uDCCE'));
+  dropzone.appendChild(el('div',{style:{fontSize:'11px',fontWeight:'600',color:DS.fileName?'var(--green)':'var(--text)',marginBottom:'4px'}},DS.fileName||'Drop file here or click to browse'));
+  dropzone.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},DS.fileName?'File ready':'Supports: PDF, Excel, CSV'));
   const fileInput = el('input',{type:'file',accept:'.pdf,.xlsx,.xls,.csv',style:{display:'none'}});
-  fileInput.addEventListener('change', async e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    DS.fileName = file.name;
-    DS.fileData = null;
-    DS.results = null;
-    // Read file as base64
+  fileInput.addEventListener('change',function(ev){
+    const file = ev.target.files[0]; if(!file) return;
+    DS.fileName = file.name; DS.fileData = null; DS.results = null;
     const reader = new FileReader();
-    reader.onload = ev => {
-      DS.fileData = ev.target.result; // data URL
-      saveSessionState();
-      const c2=$('content');if(c2){c2.innerHTML='';renderDiscovery(c2);}
-    };
+    reader.onload = function(e){ DS.fileData = e.target.result; saveSessionState(); const c2=$('content');if(c2){c2.innerHTML='';renderDiscovery(c2);} };
     reader.readAsDataURL(file);
   });
-
-  dropzone.addEventListener('click',()=>fileInput.click());
-  dropzone.addEventListener('dragover',e=>{e.preventDefault();dropzone.style.borderColor='var(--blue)';dropzone.style.background='rgba(79,124,255,.04)';});
-  dropzone.addEventListener('dragleave',()=>{dropzone.style.borderColor='var(--border)';dropzone.style.background='var(--bg)';});
-  dropzone.addEventListener('drop',e=>{
-    e.preventDefault();
-    const file=e.dataTransfer.files[0];
-    if(file){fileInput.files=e.dataTransfer.files;fileInput.dispatchEvent(new Event('change'));}
-  });
+  dropzone.addEventListener('click',function(){fileInput.click();});
+  dropzone.addEventListener('dragover',function(e){e.preventDefault();dropzone.style.borderColor='var(--blue)';});
+  dropzone.addEventListener('dragleave',function(){dropzone.style.borderColor='var(--border)';});
+  dropzone.addEventListener('drop',function(e){e.preventDefault();const file=e.dataTransfer.files[0];if(file){const dt=new DataTransfer();dt.items.add(file);fileInput.files=dt.files;fileInput.dispatchEvent(new Event('change'));}});
   uploadSec.appendChild(dropzone);
   uploadSec.appendChild(fileInput);
-
-  // Facility name input
   const facRow = el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'8px'}});
   facRow.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',flexShrink:'0',minWidth:'80px'}},'Facility Name:'));
-  const facInp = el('input',{type:'text',class:'detail-edit-field',placeholder:'e.g. Sunrise Senior Living',
-    value:DS.facilityName||'',style:{flex:'1',height:'28px'}});
-  facInp.addEventListener('input',()=>{DS.facilityName=facInp.value.trim();});
+  const facInp = el('input',{type:'text',class:'detail-edit-field',placeholder:'e.g. Sunrise Senior Living',value:DS.facilityName||'',style:{flex:'1',height:'28px'}});
+  facInp.addEventListener('input',function(){DS.facilityName=facInp.value.trim();});
   facRow.appendChild(facInp);
   uploadSec.appendChild(facRow);
-
-  // Extract button
-  const extractBtn = el('button',{class:'btn-primary',style:{width:'100%'},onclick:async()=>{
+  const extractBtn = el('button',{class:'btn-primary',style:{width:'100%'}});
+  extractBtn.textContent = DS.fileData ? '\uD83D\uDD0D Extract & Analyze Spend' : '\uD83D\uDCCE Upload File First';
+  if (!DS.fileData) extractBtn.disabled = true;
+  extractBtn.addEventListener('click',async function(){
     if (!DS.fileData) { toast('Upload a file first','#f59e0b'); return; }
-    const apiKey = S._anthropicKey||S.settings?.apiKey||localStorage.getItem('vcs_api_key')||'';
-    if (!apiKey) { toast('Claude API key required — set in Settings','#ef4444'); return; }
-    extractBtn.textContent = '⏳ Analyzing...'; extractBtn.disabled = true;
-
+    const apiKey = S._anthropicKey||S.settings&&S.settings.apiKey||localStorage.getItem('vcs_api_key')||'';
+    if (!apiKey) { toast('Claude API key required in Settings','#ef4444'); return; }
+    extractBtn.textContent = '\u23F3 Analyzing...'; extractBtn.disabled = true;
     try {
-      const isCSV = DS.fileName && DS.fileName.toLowerCase().endsWith('.csv');
       const isPDF = DS.fileName && DS.fileName.toLowerCase().endsWith('.pdf');
       const b64 = DS.fileData.split(',')[1];
-      const mediaType = isPDF ? 'application/pdf' : isCSV ? 'text/plain' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-
-      const prompt = 'You are analyzing a client spend report for a healthcare facility (nursing home/assisted living/rehab).'
-        + ' Extract ALL spend categories and their amounts from this document.'
-        + ' For each category, provide: category name, period, total spend, estimated annual spend, top vendors, and match to PS categories'
-        + ' (Medical Supplies, Pharmacy, Food Service, Environmental Services, Laundry, IT Services, Staffing, Capital Equipment, Office Supplies, Maintenance, Other).'
-        + ' Facility: ' + (DS.facilityName || 'Unknown') + '.'
-        + ' Respond ONLY with JSON: {"facility":"name","period":"desc","totalAnnualSpend":0,"categories":[{"name":"cat","psCategory":"PS cat","periodAmount":0,"periodType":"monthly|quarterly|annual","annualEstimate":0,"vendors":["v1"],"notes":"notes"}],"summary":"brief summary"}';
-
-      const messages = [{role:'user',content:[
-        {type:'document',source:{type:'base64',media_type:mediaType,data:b64}},
-        {type:'text',text:prompt}
-      ]}];
-      // Fallback for non-PDF: send as text description
-            const fallbackMessages = [{role:'user',content:prompt+' [File: '+DS.fileName+' — please analyze based on filename context]'}];
-
-      const resp = await fetch('https://api.anthropic.com/v1/messages',{
-        method:'POST',
+      const mt = isPDF ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      const promptText = 'You are analyzing a client spend report for a healthcare facility. Extract ALL spend categories and their amounts. For each category: name, psCategory (Medical Supplies/Pharmacy/Food Service/EVS/Laundry/IT/Staffing/Capital Equipment/Office/Maintenance/Other), periodAmount, periodType (monthly/quarterly/annual), annualEstimate, vendors (array), notes. Also provide facility name, period covered, totalAnnualSpend, and a summary. Facility: ' + (DS.facilityName||'Unknown') + '. Reply ONLY with JSON: {"facility":"name","period":"desc","totalAnnualSpend":0,"categories":[{"name":"","psCategory":"","periodAmount":0,"periodType":"","annualEstimate":0,"vendors":[],"notes":""}],"summary":""}';
+      const msgs = isPDF
+        ? [{role:'user',content:[{type:'document',source:{type:'base64',media_type:mt,data:b64}},{type:'text',text:promptText}]}]
+        : [{role:'user',content:promptText+' [Analyzing: '+DS.fileName+']'}];
+      const resp = await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
         headers:{'x-api-key':apiKey,'anthropic-version':'2023-06-01','Content-Type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
-        body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:2000,messages: isPDF?messages:fallbackMessages})
-      });
+        body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:2000,messages:msgs})});
       const data = await resp.json();
       const text = (data.content&&data.content[0]&&data.content[0].text)||'';
       const clean = text.trim().replace(/^```json?\n?/,'').replace(/\n?```$/,'').trim();
       DS.results = JSON.parse(clean);
-      DS.results._extractedAt = new Date().toISOString();
+      DS.results._at = new Date().toISOString();
       saveSessionState();
       const c2=$('content');if(c2){c2.innerHTML='';renderDiscovery(c2);}
     } catch(err) {
       toast('Extraction failed: '+err.message,'#ef4444');
-      extractBtn.textContent='🔍 Extract & Analyze'; extractBtn.disabled=false;
+      extractBtn.textContent='\uD83D\uDD0D Extract & Analyze'; extractBtn.disabled=false;
     }
-  }}, DS.fileData ? '🔍 Extract & Analyze Spend' : '📎 Upload File First');
-  if (!DS.fileData) extractBtn.disabled = true;
+  });
   uploadSec.appendChild(extractBtn);
   wrap.appendChild(uploadSec);
-
-  // ── Results Section
+  // ── Results
   if (DS.results) {
     const res = DS.results;
-    const resultsSec = el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'16px',marginBottom:'12px'}});
-    const resHdr = el('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'12px'}});
-    resHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'12px',fontWeight:'700'}},'Step 2: Spend Analysis Results'));
-    resHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},
-      'Extracted '+(new Date(res._extractedAt||Date.now())).toLocaleString()));
-    resultsSec.appendChild(resHdr);
-
-    if (res.facility || res.period) {
-      const metaRow = el('div',{style:{display:'flex',gap:'16px',marginBottom:'12px',padding:'8px',background:'rgba(79,124,255,.04)',borderRadius:'4px'}});
-      if(res.facility) metaRow.appendChild(el('span',{style:{fontSize:'10px'}},el('b',{},'Facility: '),res.facility));
-      if(res.period) metaRow.appendChild(el('span',{style:{fontSize:'10px'}},el('b',{},'Period: '),res.period));
-      if(res.totalAnnualSpend) metaRow.appendChild(el('span',{style:{fontSize:'10px',color:'var(--green)',fontWeight:'700'}},
-        'Total Annual: $'+Number(res.totalAnnualSpend).toLocaleString()));
-      resultsSec.appendChild(metaRow);
+    const resSec = el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'16px',marginBottom:'12px'}});
+    resSec.appendChild(el('h3',{style:{margin:'0 0 12px',fontSize:'12px',fontWeight:'700'}},'Step 2: Spend Analysis'));
+    if (res.facility||res.period||res.totalAnnualSpend) {
+      const meta = el('div',{style:{display:'flex',gap:'16px',marginBottom:'12px',padding:'8px',background:'rgba(79,124,255,.04)',borderRadius:'4px'}});
+      if(res.facility)meta.appendChild(el('span',{style:{fontSize:'10px'}},el('b',{},'Facility: '),res.facility));
+      if(res.period)meta.appendChild(el('span',{style:{fontSize:'10px'}},el('b',{},'Period: '),res.period));
+      if(res.totalAnnualSpend)meta.appendChild(el('span',{style:{fontSize:'10px',color:'var(--green)',fontWeight:'700'}},'Total Annual: $'+Number(res.totalAnnualSpend).toLocaleString()));
+      resSec.appendChild(meta);
     }
-    if (res.summary) resultsSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',margin:'0 0 12px'}},res.summary));
-
-    // Category grid
-    if (res.categories && res.categories.length) {
-      const grid = el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:'8px',marginBottom:'12px'}});
-      res.categories.sort((a,b)=>(b.annualEstimate||0)-(a.annualEstimate||0)).forEach(cat=>{
-        const card = el('div',{style:{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'5px',padding:'10px'}});
-        const catHdr = el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'6px'}});
-        catHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',color:'var(--text)',maxWidth:'140px',lineHeight:'1.3'}},cat.name));
-        if(cat.annualEstimate) catHdr.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:'var(--green)'}},'$'+Math.round(cat.annualEstimate/1000)+'K/yr'));
+    if(res.summary)resSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',margin:'0 0 12px'}},res.summary));
+    if(res.categories&&res.categories.length){
+      const grid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(250px,1fr))',gap:'8px',marginBottom:'12px'}});
+      res.categories.slice().sort(function(a,b){return (b.annualEstimate||0)-(a.annualEstimate||0);}).forEach(function(cat){
+        const card=el('div',{style:{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'5px',padding:'10px'}});
+        const catHdr=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'6px'}});
+        catHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',color:'var(--text)',maxWidth:'140px',lineHeight:'1.3'}},cat.name||''));
+        if(cat.annualEstimate)catHdr.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:'var(--green)'}},'$'+Math.round((cat.annualEstimate||0)/1000)+'K/yr'));
         card.appendChild(catHdr);
-        if(cat.psCategory) card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--blue)',marginBottom:'4px',fontWeight:'600'}},cat.psCategory));
-        if(cat.vendors && cat.vendors.length) {
-          const vList = el('div',{style:{fontSize:'9px',color:'var(--muted)'}});
-          vList.appendChild(document.createTextNode('Vendors: '+cat.vendors.slice(0,3).join(', ')+(cat.vendors.length>3?' +more':'')));
-          card.appendChild(vList);
-        }
-        if(cat.notes) card.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'3px',fontStyle:'italic'}},cat.notes));
+        if(cat.psCategory)card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--blue)',marginBottom:'4px',fontWeight:'600'}},cat.psCategory));
+        if(cat.vendors&&cat.vendors.length)card.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},'Vendors: '+cat.vendors.slice(0,3).join(', ')));
         grid.appendChild(card);
       });
-      resultsSec.appendChild(grid);
+      resSec.appendChild(grid);
     }
-    wrap.appendChild(resultsSec);
-
-    // ── Step 3: Seed Checklist
-    const seedSec = el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'16px'}});
+    wrap.appendChild(resSec);
+    // ── Seed Checklist
+    const seedSec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'16px'}});
     seedSec.appendChild(el('h3',{style:{margin:'0 0 8px',fontSize:'12px',fontWeight:'700'}},'Step 3: Seed Vendor Checklist'));
-    seedSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',margin:'0 0 10px'}},
-      'Set the checklist facility to "'+( DS.facilityName||res.facility||'this client')+'" then click below to pre-open relevant checklist sections based on discovered spend categories.'));
-
-    const seedBtn = el('button',{class:'btn-primary',onclick(){
-      if (!DS.facilityName && !res.facility) { toast('Set facility name first','#f59e0b'); return; }
-      const fac = DS.facilityName || res.facility || '';
-      // Set the checklist facility
-      S._clLastFacility = fac;
-      // Open relevant sections based on discovered categories
-      if (!S._clOpen) S._clOpen = {};
-      if (res.categories) {
-        res.categories.forEach(cat => {
-          const nm = (cat.psCategory||cat.name).toLowerCase();
-          // Map to checklist section keys
-          if(nm.includes('medical')||nm.includes('supply')||nm.includes('surgical')) S['_clOpen_MEDSURG']=true;
-          if(nm.includes('pharmacy')||nm.includes('pharma')||nm.includes('drug')) S['_clOpen_PHARMACY']=true;
-          if(nm.includes('food')||nm.includes('dietary')||nm.includes('nutrition')) S['_clOpen_FOOD']=true;
-          if(nm.includes('laundry')||nm.includes('linen')||nm.includes('textile')) S['_clOpen_LAUNDRY']=true;
-          if(nm.includes('environmental')||nm.includes('housekeeping')||nm.includes('cleaning')) S['_clOpen_EVS']=true;
-          if(nm.includes('it')||nm.includes('technology')||nm.includes('software')||nm.includes('cyber')) S['_clOpen_IT']=true;
-          if(nm.includes('rehab')||nm.includes('therapy')||nm.includes('pt ')) S['_clOpen_REHAB']=true;
-          if(nm.includes('staffing')||nm.includes('labor')||nm.includes('nursing')) S['_clOpen_STAFFING']=true;
-        });
-      }
-      // Navigate to checklist
-      S.view = 'checklist';
-      saveSessionState();
+    seedSec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',margin:'0 0 10px'}},'Pre-open relevant checklist sections based on discovered spend categories.'));
+    const seedBtn=el('button',{class:'btn-primary'});
+    seedBtn.textContent='\u2705 Seed Checklist from Discovery';
+    seedBtn.addEventListener('click',function(){
+      const fac=DS.facilityName||res.facility||''; if(!fac){toast('Set facility name first','#f59e0b');return;}
+      S._clLastFacility=fac;
+      if(res.categories){res.categories.forEach(function(cat){
+        const nm=(cat.psCategory||cat.name||'').toLowerCase();
+        if(nm.includes('medical')||nm.includes('surgical'))S['_clOpen_MEDSURG']=true;
+        if(nm.includes('pharmacy')||nm.includes('drug'))S['_clOpen_PHARMACY']=true;
+        if(nm.includes('food')||nm.includes('dietary'))S['_clOpen_FOOD']=true;
+        if(nm.includes('laundry')||nm.includes('linen'))S['_clOpen_LAUNDRY']=true;
+        if(nm.includes('environmental')||nm.includes('cleaning'))S['_clOpen_EVS']=true;
+        if(nm.includes('it ')||nm.includes('technology'))S['_clOpen_IT']=true;
+        if(nm.includes('rehab')||nm.includes('therapy'))S['_clOpen_REHAB']=true;
+      });}
+      S.view='checklist'; saveSessionState();
       const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}
-      toast('✓ Checklist seeded for '+fac,'#22c55e');
-    }}, '✅ Seed Checklist from Discovery');
+      toast('\u2713 Checklist seeded for '+fac,'#22c55e');
+    });
     seedSec.appendChild(seedBtn);
-
-    const clearBtn = el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'8px',color:'var(--muted)'},onclick(){
-      DS.results=null;DS.fileData=null;DS.fileName=null;
-      saveSessionState();const c2=$('content');if(c2){c2.innerHTML='';renderDiscovery(c2);}
-    }},'↺ Start Over');
+    const clearBtn=el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'8px',color:'var(--muted)'}});
+    clearBtn.textContent='\u21BA Start Over';
+    clearBtn.addEventListener('click',function(){DS.results=null;DS.fileData=null;DS.fileName=null;saveSessionState();const c2=$('content');if(c2){c2.innerHTML='';renderDiscovery(c2);};});
     seedSec.appendChild(clearBtn);
     wrap.appendChild(seedSec);
   }
-
   c.appendChild(wrap);
 }
 
@@ -21227,272 +21150,6 @@ function buildFieldAccess(container, userEmail) {
     container.appendChild(aiToggleRow);
   }
 
-function renderSettings(c) {
-  c.innerHTML = ''; // CRITICAL: clear before re-rendering
-
-  const checks=[
-    {label:'Google Drive Connection',icon:'☁',roles:'admin',test:()=>!!(S.settings?.driveFileId||(S.vendors?.length>0)),pass:S.settings?.driveFileId?'Drive File ID configured':'Drive connected via GAS proxy ('+((S.vendors?.length||0)+' vendors loaded)')+')',fail:'No Drive File ID — go to Settings → Integrations',fix:()=>{S.view='settings';S._settingsJumpTo='driveSection';render();}},
-    {label:'Salesforce Connection',icon:'☁',roles:'all',test:()=>!!USER.sfToken,pass:'Connected as '+USER.email,fail:'Not connected — go to Settings to connect SF',fix:()=>{if(!S.settings?.sfClientId){S.view='settings';render();}else{sfConnect();}}},
-    {label:'GAS Proxy',icon:'🔗',roles:'admin',test:()=>!!VCS_PROXY_URL,pass:VCS_PROXY_URL.slice(0,40)+'…',fail:'No proxy URL configured — check Settings → Integrations',fix:()=>{S.view='settings';render();}},
-    {label:'Claude API Key',icon:'🤖',roles:'admin',test:()=>!!(S.settings?.apiKey||localStorage.getItem('vcs_api_key')),pass:'API key configured',fail:'No API key — set in Settings → AI Configuration',fix:()=>{S.view='settings';S._settingsJumpTo='apiConfig';render();}},
-    {label:'Vendors Loaded',icon:'🗂',roles:'all',test:()=>(S.vendors?.length||0)>0,pass:(S.vendors?.length||0)+' direct + '+(S.channelVendors?.length||0)+' channel vendors',fail:'No vendors loaded — upload a vendor file',fix:null},
-    {label:'Channel Partners',icon:'🤝',roles:'procurement',test:()=>(S.channelVendors?.length||0)>0,pass:(S.channelVendors?.length||0)+' channel vendors across GPOs',fail:'No channel vendor data',fix:()=>{S.view='settings';render();}},
-    {label:'User Session',icon:'👤',roles:'all',test:()=>!!USER.email,pass:USER.email+' ('+USER.role+')',fail:'No user session — reload the page',fix:()=>location.reload()},
-    {label:'Renzo API Key',icon:'✉',roles:'admin',test:()=>!!(S.settings?.renzoApiKey||S.settings?.renzoOutreachKey),pass:'Renzo outreach set in Settings → Renzo',fix:()=>{S.view='settings';S._settingsJumpTo='renzoSection';render();}},
-    {label:'No Smart Quotes in JS',icon:'🔤',roles:'admin',test:()=>{const _ss=document.querySelectorAll('script:not([src])');let _f=0;_ss.forEach(s=>{for(let i=0;i<s.textContent.length;i++){const c2=s.textContent.charCodeAt(i);if(c2===0x2018||c2===0x2019||c2===0x201c||c2===0x201d){_f++;break;}}});return _f===0;},pass:'Clean — no curly/smart quotes in script tags',fail:'Smart quotes found in JS! Run fix_smart_quotes.py immediately',fix:null},
-    // H1: Claude CORS status
-    {label:'Claude API (CORS)',icon:'🌐',roles:'admin',test:()=>!!(S.settings?.apiKey||localStorage.getItem('vcs_api_key')),pass:'API key present (CORS allowed via anthropic-dangerous-direct-browser-access header)',fail:'No API key or CORS header missing — AI features disabled',fix:()=>{S.view='settings';S._settingsJumpTo='apiConfig';render();}},
-    // H2: Renzo key validation
-    {label:'Renzo Key Valid',icon:'✉',roles:'admin',test:()=>!!(S.settings?.renzoApiKey&&S.settings.renzoApiKey.length>10),pass:(S.settings?.renzoApiKey?.length||0)+' chars — appears valid',fail:'Renzo key missing or too short',fix:()=>{S.view='settings';S._settingsJumpTo='renzoSection';render();}},
-    // H3: Data watcher status — checks live GAS watcher log
-    {label:'Data Watcher',icon:'👁',roles:'admin',
-     test:()=>S._watcherHealthy===true,
-     pass:'Watcher active — last run '+(S._watcherLastRun||'recently'),
-     fail:S._watcherHealthy===false?'Watcher offline — last run '+(S._watcherLastRun||'unknown')+' (>15 min ago)':'Watcher status unknown — run Live Tests to check',
-     fix:()=>{
-       openModal(body=>{
-         body.appendChild(el('h3',{style:{marginTop:'0',fontSize:'13px'}},'🔧 Data Watcher — Fix It'));
-         body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--muted)',marginBottom:'8px'}},
-           'The VCS Watcher is a PowerShell script (VCS_Watcher.ps1) running on your office computer via Windows Task Scheduler. It syncs contract files between your network server and Google Drive every 10 seconds.'));
-         body.appendChild(el('p',{style:{fontSize:'11px',fontWeight:'700',marginBottom:'4px'}},'If the watcher stopped, re-register it with Task Scheduler:'));
-         const cmd = el('pre',{style:{background:'var(--sidebar)',padding:'10px',borderRadius:'4px',fontSize:'10px',overflowX:'auto',userSelect:'all',cursor:'text',marginBottom:'8px'}},
-           'schtasks /create /tn "VCS Watcher" /tr "powershell.exe -WindowStyle Hidden -File \"D:\\My Drive\\Vendor Catalog Scheduler - Live\\VCS_Watcher.ps1\"" /sc ONLOGON /ru SYSTEM /f');
-         body.appendChild(cmd);
-         const copyBtn=el('button',{class:'btn-xs btn-primary',onclick(){
-           navigator.clipboard.writeText(cmd.textContent).then(()=>toast('✓ Command copied — paste into PowerShell as admin'));
-         }},'📋 Copy Command');
-         body.appendChild(copyBtn);
-         body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginTop:'8px'}},
-           'After running: open Task Scheduler → verify "VCS Watcher" task is listed with status "Ready". The watcher log in Drive should update within 30 seconds.'));
-         const checkBtn=el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'8px'},onclick(){
-           S.view='health';render();
-           setTimeout(()=>{const rb=document.querySelector('[data-ping-btn]');if(rb)rb.click();},500);
-         }},'🔄 Re-run Health Check');
-         body.appendChild(checkBtn);
-       });
-     }},
-  ];
-
-  const _visibleChecks=checks.filter(chk=>{
-    if(chk.roles==='all') return true;
-    if(chk.roles==='admin') return _isAdminRole;
-    if(chk.roles==='procurement') return ['admin','procurement','manager','cro'].includes(USER.role);
-    return _isAdminRole;
-  });
-  // Deduplicate by label (Renzo appears twice — keep last)
-  const _seenLabels=new Set();
-  const _dedupChecks=_visibleChecks.filter(chk=>{if(_seenLabels.has(chk.label))return false;_seenLabels.add(chk.label);return true;});
-
-  const grid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:'8px',marginBottom:'16px'}});
-  _dedupChecks.forEach(chk=>{
-    const ok=chk.test();
-    const card=el('div',{style:{background:'var(--card)',border:'1px solid '+(ok?'rgba(34,197,94,.3)':'rgba(239,68,68,.3)'),borderRadius:'6px',padding:'10px 12px',display:'flex',gap:'8px',alignItems:'flex-start'}});
-    card.appendChild(el('span',{style:{fontSize:'16px',flexShrink:'0'}},ok?'✅':'❌'));
-    const info=el('div',{style:{flex:'1',minWidth:'0'}});
-    info.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',color:ok?'var(--green)':'var(--red)',marginBottom:'2px'}},chk.label));
-    info.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:'3px'}},ok?chk.pass:chk.fail));
-    // H4: Fix It button for failed checks that have a fix action
-    if(!ok&&chk.fix){
-      if(chk.roles==='admin'&&!_isAdminRole){
-        // Non-admins can't fix admin settings — show informational message instead
-        const contactBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',marginTop:'2px',color:'var(--muted)',borderColor:'var(--muted)'},onclick(){
-          openModal(b=>{
-            b.appendChild(el('h3',{style:{marginTop:'0',fontSize:'13px'}},'ℹ️ Managed by Admin'));
-            b.appendChild(el('p',{style:{fontSize:'11px',color:'var(--muted)',lineHeight:'1.6'}},
-              'This setting is managed by your administrator. If you need access to this feature, please contact your admin to enable it for your account.'));
-          });
-        }},'ℹ Contact Admin');
-        info.appendChild(contactBtn);
-      } else {
-        const fixBtn=el('button',{class:'btn-xs btn-primary',style:{fontSize:'8px',marginTop:'2px'},onclick(){chk.fix();}},'🔧 Fix It');
-        info.appendChild(fixBtn);
-      }
-    }
-    card.appendChild(info);
-    grid.appendChild(card);
-  });
-  wrap.appendChild(grid);
-  c.appendChild(wrap);
-
-  // Proxy ping test
-  const pingSec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px',marginBottom:'12px'}});
-  pingSec.appendChild(el('h3',{style:{margin:'0 0 8px',fontSize:'12px',fontWeight:'700'}},'🏓 Live Connectivity Tests'));
-  const pingResults=el('div',{style:{display:'flex',flexDirection:'column',gap:'6px'}});
-
-  async function runPing(label,fn){
-    const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',fontSize:'10px'}});
-    row.appendChild(el('span',{style:{minWidth:'200px',fontWeight:'500'}},label));
-    const status=el('span',{style:{color:'var(--muted)'}},'⏳ Testing...');
-    row.appendChild(status);
-    pingResults.appendChild(row);
-    try{
-      const start=Date.now();
-      const result=await fn();
-      const ms=Date.now()-start;
-      const txt=typeof result==='object'&&result!==null?result.text:result;
-      const clr=typeof result==='object'&&result!==null&&result.color?result.color:'var(--green)';
-      const icon=clr==='var(--amber)'?'⚠':clr==='var(--red)'?'⚠':'✅';
-      status.textContent=icon+' '+txt+' ('+ms+'ms)';
-      status.style.color=clr;
-    }catch(e){
-      status.textContent='❌ '+e.message;
-      status.style.color='var(--red)';
-    }
-  }
-
-  pingSec.appendChild(pingResults);
-  const testBtn=el('button',{class:'btn-primary',style:{marginTop:'8px'},onclick:async()=>{
-    testBtn.disabled=true; testBtn.textContent='⏳ Running...';
-    pingResults.innerHTML='';
-    await runPing('GAS Proxy',async()=>{
-      const r=await fetch(VCS_PROXY_URL+'?action=ping',{method:'GET'});
-      const d=await r.json(); return d.message||'OK';
-    });
-    await runPing('Google Drive (catalogue)',async()=>{
-      const r=await fetch(VCS_PROXY_URL+'?action=getLockStatus',{method:'GET'});
-      const d=await r.json(); return d.status==='ok'?'Accessible':'Error';
-    });
-    await runPing('Salesforce',async()=>{
-      if(!USER.sfToken) throw new Error('Not connected');
-      const r=await sfQuery("SELECT Id,Name,Username FROM User WHERE Username='"+USER.email+"' LIMIT 1");
-      if(r.totalSize>0) return 'Connected as '+r.records[0].Name;
-      // Fallback: just confirm org is accessible
-      const r2=await sfQuery('SELECT Id FROM Organization LIMIT 1');
-      return 'Connected to SF org (user record not found — check SF username)';
-    });
-    await runPing('Claude AI API',async()=>{
-      const key=S.settings?.apiKey||localStorage.getItem('vcs_api_key')||'';
-      if(!key) throw new Error('No API key configured — go to Settings → AI');
-      const r=await fetch('https://api.anthropic.com/v1/messages',{
-        method:'POST',
-        headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
-        body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:10,messages:[{role:'user',content:'ping'}]})
-      });
-      if(r.status===401) throw new Error('Invalid API key (401)');
-      if(r.status===429) return 'Rate limited but key is valid';
-      if(!r.ok) throw new Error('HTTP '+r.status);
-      return 'Connected — key valid';
-    });
-    await runPing('Renzo Outreach API',async()=>{
-      const key=S.settings?.renzoApiKey||'';
-      if(!key) throw new Error('No Renzo API key — set in Settings → Renzo');
-      const r=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
-        body:JSON.stringify({action:'renzoPing'})});
-      const d=await r.json();
-      if(d.status==='ok') return 'Connected — '+d.message;
-      if(d.status==='error'&&d.message?.includes('401')) throw new Error('Invalid Renzo key (401)');
-      if(d.status==='error'&&d.message?.includes('Unauthorized')) throw new Error('Unauthorized — check Renzo API key');
-      return d.message||'Connected';
-    });
-    await runPing('Watcher Status',async()=>{
-      try{
-        const r=await fetch(VCS_PROXY_URL+'?action=getWatcherStatus',{method:'GET'});
-        if(!r.ok) throw new Error('HTTP '+r.status);
-        const d=await r.json();
-        if(!d||d.error) throw new Error(d?.error||'No watcher data');
-        if(!d.found&&!d.lastRunAt){S._watcherHealthy=false;S._watcherLastRun='never';return {text:'No watcher log found — is Watcher running?',color:'var(--amber)'};}
-        const lastRun=new Date(d.lastRunAt||d.lastRun||d.timestamp);
-        const mins=Math.round((Date.now()-lastRun)/60000);
-        const h=mins/60;
-        const label=mins<60?mins+'m ago':Math.round(h)+'h ago';
-        S._watcherLastRun=label;
-        if(h>24){S._watcherHealthy=false;return {text:'Last sync: '+label+' — watcher may be offline',color:'var(--red)'};}
-        if(h>2){S._watcherHealthy=false;return {text:'Last sync: '+label+' — check watcher health',color:'var(--amber)'};}
-        S._watcherHealthy=true;return {text:'Last sync: '+label+' — healthy',color:'var(--green)'};
-      }catch(e){
-        if(e.message.includes('404')||e.message.includes('not supported')||e.message.includes('HTTP 4')){
-          return {text:'Proxy does not support watcherStatus (update GAS script to enable)',color:'var(--amber)'};
-        }
-        throw e;
-      }
-    });
-    testBtn.disabled=false; testBtn.textContent='▶ Run Tests Again';
-  }},'▶ Run Connectivity Tests');
-  pingSec.appendChild(testBtn);
-  wrap.appendChild(pingSec);
-
-  // Session info
-  const sessSec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px'}});
-  sessSec.appendChild(el('h3',{style:{margin:'0 0 8px',fontSize:'12px',fontWeight:'700'}},'📊 Session Info'));
-  const info=[
-    ['App Version','VCS v2.2 (Jun 2026)'],
-    ['User',''+USER.email+' ('+USER.role+')'],
-    ['Vendors',''+S.vendors?.length+' direct'],
-    ['Channel Partners',''+(S.channelVendors?.length||0)+' vendors'],
-    ['Pipeline Records',''+(S._sfBoardData?.opps?.length||0)+' open opps'],
-    ['Session History',''+(S.history?.length||0)+' actions this session'],
-    ['Dirty Records',''+(S.dirty?.size||0)+' unsaved changes'],
-  ];
-  const infoGrid=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'4px'}});
-  info.forEach(([k,v])=>{
-    const row=el('div',{style:{display:'flex',gap:'8px',padding:'3px 0',fontSize:'9.5px',borderBottom:'1px solid rgba(128,128,128,.07)'}});
-    row.appendChild(el('span',{style:{color:'var(--muted)',minWidth:'140px',flexShrink:'0'}},k));
-    row.appendChild(el('span',{style:{fontWeight:'500'}},v));
-    infoGrid.appendChild(row);
-  });
-  sessSec.appendChild(infoGrid);
-  wrap.appendChild(sessSec);
-  // ── Checklist Training — Admin only ──────────────────────────────────────────
-  if (['admin','manager'].includes(USER.role)) {
-    const clTrainSec = el('div', {class:'settings-section'});
-    const clTrainHdr = el('div', {class:'settings-section-title'});
-    clTrainHdr.appendChild(el('span', {}, '🎯 Checklist Vendor Training'));
-    clTrainHdr.appendChild(el('span', {style:{fontSize:'9px',color:'var(--muted)',fontWeight:'400',marginLeft:'8px'}}, 'Pin vendors to categories or suppress them'));
-    clTrainSec.appendChild(clTrainHdr);
-    if (!S.settings._clCategoryOverrides) S.settings._clCategoryOverrides = {};
-    if (!S.settings._clCategorySuppressed) S.settings._clCategorySuppressed = {};
-    const _allCats = (typeof PSX_CHECKLIST !== 'undefined' ? PSX_CHECKLIST : []).map(s=>s.label);
-    const _catSel = el('select', {class:'detail-edit-field', style:{width:'200px',marginBottom:'8px',marginRight:'8px'}});
-    _allCats.forEach(cat => _catSel.appendChild(el('option', {value:cat}, cat)));
-    clTrainSec.appendChild(el('label', {style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'4px'}}, 'Select category:'));
-    clTrainSec.appendChild(_catSel);
-    const _vendorSearch = el('input', {type:'text', class:'detail-edit-field', placeholder:'Vendor name to pin or suppress...', style:{width:'220px',marginRight:'6px',marginBottom:'8px'}});
-    clTrainSec.appendChild(_vendorSearch);
-    clTrainSec.appendChild(el('button', {class:'btn-xs btn-blue', style:{marginRight:'4px'}, onclick() {
-      const cat=_catSel.value.toLowerCase().trim(); const vn=_vendorSearch.value.trim();
-      if(!cat||!vn){toast('Select category and enter vendor name','#f59e0b');return;}
-      if(!S.settings._clCategoryOverrides[cat])S.settings._clCategoryOverrides[cat]=[];
-      if(!S.settings._clCategoryOverrides[cat].includes(vn))S.settings._clCategoryOverrides[cat].push(vn);
-      saveSettings();toast('Pinned "'+vn+'" to "'+cat+'"');_vendorSearch.value='';
-      const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
-    }}, '📌 Pin'));
-    clTrainSec.appendChild(el('button', {class:'btn-xs btn-ghost', style:{color:'var(--red)'}, onclick() {
-      const cat=_catSel.value.toLowerCase().trim(); const vn=_vendorSearch.value.trim();
-      if(!cat||!vn){toast('Select category and enter vendor name','#f59e0b');return;}
-      if(!S.settings._clCategorySuppressed[cat])S.settings._clCategorySuppressed[cat]=[];
-      if(!S.settings._clCategorySuppressed[cat].includes(vn))S.settings._clCategorySuppressed[cat].push(vn);
-      saveSettings();toast('Suppressed "'+vn+'" from "'+cat+'"');_vendorSearch.value='';
-      const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
-    }}, '🚫 Suppress'));
-    const _ok = Object.keys(S.settings._clCategoryOverrides).filter(k=>S.settings._clCategoryOverrides[k].length>0);
-    const _sk = Object.keys(S.settings._clCategorySuppressed).filter(k=>S.settings._clCategorySuppressed[k].length>0);
-    if (_ok.length || _sk.length) {
-      const _ld = el('div', {style:{marginTop:'10px',borderTop:'1px solid var(--border)',paddingTop:'8px'}});
-      if(_ok.length){
-        _ld.appendChild(el('div',{style:{fontSize:'10px',fontWeight:'700',marginBottom:'4px',color:'var(--blue)'}},'📌 Pinned:'));
-        _ok.forEach(cat=>S.settings._clCategoryOverrides[cat].forEach(vn=>{
-          const r=el('div',{style:{display:'flex',gap:'6px',fontSize:'9px',padding:'2px 0',alignItems:'center'}});
-          r.appendChild(el('span',{style:{color:'var(--blue)',fontWeight:'600',minWidth:'100px'}},cat));
-          r.appendChild(el('span',{style:{flex:'1'}},vn));
-          r.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',color:'var(--red)'},onclick(){S.settings._clCategoryOverrides[cat]=S.settings._clCategoryOverrides[cat].filter(n=>n!==vn);saveSettings();const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}}},'✕'));
-          _ld.appendChild(r);
-        }));
-      }
-      if(_sk.length){
-        _ld.appendChild(el('div',{style:{fontSize:'10px',fontWeight:'700',marginTop:'6px',marginBottom:'4px',color:'var(--red)'}},'🚫 Suppressed:'));
-        _sk.forEach(cat=>S.settings._clCategorySuppressed[cat].forEach(vn=>{
-          const r=el('div',{style:{display:'flex',gap:'6px',fontSize:'9px',padding:'2px 0',alignItems:'center'}});
-          r.appendChild(el('span',{style:{color:'var(--red)',fontWeight:'600',minWidth:'100px'}},cat));
-          r.appendChild(el('span',{style:{flex:'1'}},vn));
-          r.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',color:'var(--red)'},onclick(){S.settings._clCategorySuppressed[cat]=S.settings._clCategorySuppressed[cat].filter(n=>n!==vn);saveSettings();const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}}},'✕'));
-          _ld.appendChild(r);
-        }));
-      }
-      clTrainSec.appendChild(_ld);
-    }
-    wrap.appendChild(clTrainSec);
-  }
-}
 
 
 // Field access builder — standalone so role tab toggle can call it for any user
