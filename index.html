@@ -711,6 +711,22 @@ body.light-theme .sb-logo-text{color:var(--blue)}
    Affected: sfboard, customers, contracts, spend, compare (see specs/).
    Settings and health already had no duplicate h1/h2 before this change.
    Reference: C:\VCS\specs\no-duplicate-titles.md */
+/* Sticky header fix: vendor DB uses #content as scroll parent (tbl-wrap has overflow:visible).
+   This rule makes thead sticky relative to #content rather than tbl-wrap. */
+#content > #vdb-table-wrap .data-table thead th,
+#content .data-table thead th {
+  position:sticky !important;
+  top:0 !important;
+  z-index:30 !important;
+  background:var(--sb) !important;
+  box-shadow:0 2px 4px rgba(0,0,0,.18) !important;
+}
+/* Prevent tbl-wrap from creating its own scroll context in vendor DB */
+#vdb-table-wrap.tbl-wrap {
+  overflow-y:visible !important;
+  overflow-x:auto !important;
+  max-height:none !important;
+}
 </style>
 </head>
 <body>
@@ -16360,7 +16376,7 @@ function renderToday(c) {
 
   // ── SF-Powered Signals (if connected) ──────────────────────────────────────
   if(USER.sfToken && S._sfSignals !== false) {
-    if(S._sfSignalCollapsed === undefined) S._sfSignalCollapsed=false;
+    if(S._sfSignalCollapsed === undefined) S._sfSignalCollapsed=true;
     if(!S._sfFilters) S._sfFilters={};
     const sigSec=el('div',{style:{marginBottom:'12px',border:'1px solid var(--border)',borderRadius:'5px',overflow:'hidden'}});
     const sigHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'6px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none'},
@@ -16618,12 +16634,41 @@ function renderToday(c) {
     const _todaySections=[
       {key:'urgent',icon:'🚨',label:'Urgent Actions',color:'var(--red)',
         fn:()=>_allV.filter(v=>{const e=getCurrentExpiry(v);const dExp=e?dayDiff(e,today):null;const fu=parseDate(v.followUp);const fuD=fu?dayDiff(today,fu):0;return v.tier==='CALL'||(dExp!==null&&dExp>=0&&dExp<=30&&!isAutoRenew(v))||(fuD>7);}),
-        rowFn:v=>{const e=getCurrentExpiry(v);const dExp=e?dayDiff(e,today):null;const _ph=v.phone||v.bizPhone||v.contactPhone||v.mobile||'';return el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer',background:'rgba(239,68,68,.05)',borderLeft:'3px solid var(--red)'},onclick(){openDetail(v);}},
+        rowFn:v=>{const e=getCurrentExpiry(v);const dExp=e?dayDiff(e,today):null;const _ph=v.phone||v.bizPhone||v.contactPhone||v.mobile||'';return el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer',background:'rgba(239,68,68,.05)',borderLeft:'3px solid var(--red)'},onclick(ev){if(ev.target.tagName==='BUTTON'||ev.target.closest('button'))return;openDetail(v);}},
           el('span',{style:{fontWeight:'700',fontSize:'11px',minWidth:'140px',color:'var(--blue)'}},v.name),
           el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},v.category||''),
           _ph?el('a',{href:'tel:'+_ph.replace(/[^+\d]/g,''),style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none'},onclick(e){e.stopPropagation();}},_ph):el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'—'),
           dExp!==null?el('span',{style:{fontSize:'9px',fontWeight:'700',color:dExp<=30?'var(--red)':'var(--muted)'}},dExp+'d to expiry'):'',
-          tierTag(v.tier)
+          tierTag(v.tier),
+          el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px',flexShrink:'0',color:'var(--muted)'},title:'Dismiss with reason',onclick(ev){ev.stopPropagation();
+            openModal(mbody=>{
+              mbody.appendChild(el('h3',{style:{marginTop:'0',fontSize:'13px'}},'Dismiss from Urgent — '+v.name));
+              mbody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginTop:'0'}},'This will snooze the vendor from urgent actions. Add a reason for the record.'));
+              const reasonSel=el('select',{class:'detail-edit-field',style:{marginBottom:'8px',width:'100%'}});
+              const _reasons=['Not renewing contract','Already handled externally','Contract under review','Intentionally letting expire','Other'];
+              reasonSel.appendChild(el('option',{value:''},'Select reason...'));
+              _reasons.forEach(r=>reasonSel.appendChild(el('option',{value:r},r)));
+              mbody.appendChild(reasonSel);
+              const noteInp=el('textarea',{class:'detail-edit-field',rows:'2',placeholder:'Additional notes (optional)...',style:{width:'100%',marginBottom:'8px',fontSize:'10px',resize:'vertical'}});
+              mbody.appendChild(noteInp);
+              const btns=el('div',{class:'modal-btns'});
+              btns.appendChild(el('button',{class:'btn-primary',onclick(){
+                const reason=reasonSel.value;
+                if(!reason){toast('Select a reason first','#f59e0b');return;}
+                const note='[DISMISSED: '+reason+(noteInp.value.trim()?' — '+noteInp.value.trim():'')+'] '+new Date().toLocaleDateString();
+                prependStructuredNote(v,note,'general');
+                markDirty(v);
+                if(!S.dismissed) S.dismissed=new Set();
+                S.dismissed.add(v.name);
+                saveSessionState();
+                closeModal();
+                toast('✓ '+v.name+' dismissed from urgent actions');
+                const c2=$('content');if(c2){c2.innerHTML='';renderToday(c2);}
+              }},'Dismiss'));
+              btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
+              mbody.appendChild(btns);
+            });
+          }},'✕ Dismiss')
         );}},
       {key:'call',icon:'📞',label:'Call Queue',color:'var(--red)',
         hasHdr:true,hdrs:['Score','Vendor','Category','Contact','Phone','Due'],
@@ -16678,7 +16723,7 @@ function renderToday(c) {
             priority += (v.score||0);
             return {v, priority};
           });
-          return _scored.sort((a,b)=>b.priority-a.priority).slice(0,10).map(r=>r.v);
+          return _scored.sort((a,b)=>b.priority-a.priority||(a.v.name||'').localeCompare(b.v.name||'')).slice(0,10).map(r=>r.v);
         },
         rowFn:v=>{
           const _fu=parseDate(v.followUp);
@@ -16736,10 +16781,9 @@ function renderToday(c) {
           items.slice(0,15).forEach(v=>body.appendChild(sec.rowFn(v)));
           if(sec.key==='pipeline'){
             const _totalITW=(S.itw||[]).filter(v=>isVisible(v)).length;
-            if(_totalITW>10){
-              const _moreLink=el('div',{style:{padding:'4px 8px',fontSize:'9px',color:'var(--blue)',cursor:'pointer',textDecoration:'underline'},onclick(){S.view='itw';const c2=$('content');if(c2){c2.innerHTML='';render();}}}, '→ View all '+_totalITW+' Pipeline vendors');
-              body.appendChild(_moreLink);
-            }
+            const _hasSignals=items.some(v=>parseDate(v.followUp)||parseDate(v.lastComm)||v.tier);
+            if(!_hasSignals&&items.length>0){body.insertBefore(el('div',{style:{padding:'4px 8px 2px',fontSize:'9px',color:'var(--muted)',fontStyle:'italic'}},'Top 10 alphabetically - set follow-up dates or tiers to prioritize'),body.firstChild);}
+            if(_totalITW>10)body.appendChild(el('div',{style:{padding:'4px 8px',fontSize:'9px',color:'var(--blue)',cursor:'pointer',textDecoration:'underline'},onclick(){S.view='itw';render();}},'→ View all '+_totalITW+' Pipeline vendors'));
           } else if(items.length>15){
             body.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',padding:'4px 8px'}},'+' +(items.length-15)+' more - use filter tabs above'));
           }
