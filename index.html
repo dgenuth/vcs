@@ -11769,7 +11769,6 @@ function renderChecklist(c) {
   }
   function _clLoadEntry(entry){if(!entry)return;S._clCurrVendor=Object.assign({},entry.currVendor||{});S._clGoWith=Object.assign({},entry.goWith||{});S._clStatus=Object.assign({},entry.status||{});if(entry.rep)S._checklistRep=entry.rep;}
   try {
-  console.log('[VCS Checklist] try block entered, S.loaded='+S.loaded+', PSX_CHECKLIST length='+(PSX_CHECKLIST&&PSX_CHECKLIST.length));
   if(!S._clStatus)S._clStatus={};
   const wrap=el('div',{style:{maxWidth:'1000px',margin:'0 auto',padding:'12px 0'}});
   const hdr=el('div',{style:{marginBottom:'12px'}});
@@ -11869,6 +11868,7 @@ function renderChecklist(c) {
       }catch(e2){toast('SF error: '+e2.message,'var(--red)');this.disabled=false;this.textContent='📎 Log in Salesforce';}
     }},'📎 Log in Salesforce');
     custRow.appendChild(sfLogBtn);
+  } // end if(USER.sfToken && S._clSavedFacility)
   // SF account autocomplete for facility input
   const sfAccountObjs=(S._sfBoardData?.accounts||SPEND_STATE?.data?.accounts||[]);
   const sfAccounts=sfAccountObjs.map(a=>({name:a.Name||a.name||'',city:a.BillingCity||a.billingCity||'',state:a.BillingState||a.billingState||''})).filter(a=>a.name);
@@ -12093,7 +12093,6 @@ function renderChecklist(c) {
   covBar.appendChild(_mkBar('Selected Vendors:',selectedPct,selectedItems.length,allItems.length,selectedPct>=80?'var(--green)':selectedPct>=50?'var(--amber)':'var(--red)'));
   wrap.appendChild(covBar);
   c.appendChild(wrap);
-  _clLoad(custIn.value);
   const isConsultant=S._checklistView===1;
 
   PSX_CHECKLIST.forEach(section=>{
@@ -12264,7 +12263,6 @@ function renderChecklist(c) {
     }
     wrap.appendChild(secDiv);
   }); // end PSX_CHECKLIST.forEach
-  }
   } catch(err) {
     try { c.innerHTML = ''; } catch(_) {}
     try {
@@ -16536,15 +16534,32 @@ function renderToday(c) {
       {key:'pipeline',icon:'💼',label:'Pipeline Opportunities',color:'var(--blue)',
         fn:()=>{
           const _allITW=(S.itw||[]).filter(v=>isVisible(v));
-          // Show top 10 by score — use full Pipeline tab for the complete list
-          return _allITW.sort((a,b)=>(b.score||0)-(a.score||0)).slice(0,10);
+          // Prioritize: vendors with overdue follow-ups, then recent notes, then by score
+          const _now=new Date();
+          const _sorted=_allITW.slice().sort((a,b)=>{
+            const aFu=parseDate(a.followUp); const bFu=parseDate(b.followUp);
+            const aOverdue=aFu&&dayDiff(_now,aFu)>0; const bOverdue=bFu&&dayDiff(_now,bFu)>0;
+            if(aOverdue&&!bOverdue) return -1;
+            if(!aOverdue&&bOverdue) return 1;
+            // Then by tier priority
+            const tierRank={'CALL':0,'EMAIL':1,'REVIEW':2,'MONITOR':3};
+            const aTier=tierRank[a.tier]??4; const bTier=tierRank[b.tier]??4;
+            if(aTier!==bTier) return aTier-bTier;
+            return (b.score||0)-(a.score||0);
+          });
+          return _sorted.slice(0,10);
         },
-        rowFn:v=>el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer',borderBottom:'1px solid rgba(128,128,128,.06)'},onclick(){openDetail(v);}},
-          v.score!=null?scorePill(v.score):el('span',{style:{width:'32px'}},''),
-          el('span',{style:{fontWeight:'700',fontSize:'11px',minWidth:'150px',color:'var(--blue)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},v.name),
-          el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},v.category||v.section||'In The Works'),
-          v.tier?tierTag(v.tier):''
-        )},
+        rowFn:v=>{
+          const _fu=parseDate(v.followUp);
+          const _fuOverdue=_fu&&dayDiff(new Date(),_fu)>0;
+          return el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer',borderBottom:'1px solid rgba(128,128,128,.06)'},onclick(){openDetail(v);}},
+            v.score!=null?scorePill(v.score):el('span',{style:{width:'32px',display:'inline-block'}},''),
+            el('span',{style:{fontWeight:'700',fontSize:'11px',minWidth:'150px',color:'var(--blue)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},v.name),
+            el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},v.category||v.section||'In The Works'),
+            _fuOverdue?el('span',{style:{fontSize:'8px',color:'var(--red)',fontWeight:'600'}},'Follow-up overdue'):'',
+            v.tier?tierTag(v.tier):''
+          );
+        }},
       {key:'stats',icon:'📊',label:'Quick Stats',color:'var(--text)',fn:()=>[],isStats:true},
     ];
     const secWrap=el('div',{style:{marginBottom:'8px'}});
