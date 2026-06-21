@@ -476,6 +476,7 @@ body.ps-light-theme .tbl-wrap .data-table thead th{background:#0078b8!important;
 .detail-sec-title{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;padding:5px 8px 5px 10px;border-radius:3px;display:flex;align-items:center;gap:6px}
 .detail-sec-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px}
 .detail-grid{display:grid;grid-template-columns:120px 1fr;gap:4px 8px;align-items:start}
+.detail-field{display:contents}
 .detail-label{color:var(--text);font-size:10px;padding:2px 0;font-weight:700;white-space:nowrap;letter-spacing:0.01em}
 .detail-value{font-size:10px;padding:2px 0;word-break:break-word;white-space:normal;color:var(--muted);line-height:1.4}
 .detail-edit-field{background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--font);font-size:10px;padding:2px 4px;border-radius:3px;width:100%;outline:none}
@@ -4457,7 +4458,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
     const _mkField = (label, value, opts={}) => {
       if(!value && value !== 0) return null;
-      const row = el('div', {class:'detail-field'});
+      const row = el('div', {style:{display:'grid',gridTemplateColumns:'110px 1fr',gap:'0 6px',alignItems:'baseline',marginBottom:'3px'}});
       row.appendChild(el('span', {class:'detail-label'}, label));
       if (opts.color) {
         row.appendChild(el('span', {class:'detail-value', style:{color:opts.color, fontWeight:'600'}}, String(value)));
@@ -4473,8 +4474,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       return row;
     };
 
-    // Row 1: GPO + Category + Sub-Category
-    const grid1 = el('div', {class:'detail-grid', style:{marginBottom:'8px'}});
+    // Row 1: Identity fields — each _mkField handles its own label/value layout
+    const grid1 = el('div', {style:{marginBottom:'8px'}});
     const _g1Fields = [
       ['GPO', vendor.gpo],
       ['Category', vendor.category],
@@ -4492,15 +4493,21 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     if (vendor.tier) metricsRow.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:_tierColors[vendor.tier]||'var(--muted)'}}, '● '+vendor.tier));
     if (vendor.score) metricsRow.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:'var(--text)'}}, '★ '+vendor.score.toFixed(1)));
     if (vendor.status) metricsRow.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',marginLeft:'auto'}}, vendor.status));
-    if (vendor.perpetuity && vendor.perpetuity !== 'No' && vendor.perpetuity !== 'no' && vendor.perpetuity !== 'false') {
-      const _pShield=el('span',{title:'Perpetuity — Protected Business',style:{position:'relative',display:'inline-flex',alignItems:'center',justifyContent:'center',cursor:'default',marginLeft:'4px'}});
-      _pShield.innerHTML='<span style="font-size:16px">🛡️</span><span style="position:absolute;font-size:8px;font-weight:900;color:#fff;line-height:1">∞</span>';
+    if (vendor.perpetuity) {
+      const _perpYes = vendor.perpetuity !== 'No' && vendor.perpetuity !== 'no' && vendor.perpetuity !== 'false' && vendor.perpetuity !== false;
+      const _pShield=el('span',{title:_perpYes?'Perpetuity — Protected Business':'Not Perpetuity — No contract shield',style:{position:'relative',display:'inline-flex',alignItems:'center',justifyContent:'center',cursor:'default',marginLeft:'4px',opacity:_perpYes?'1':'0.7'}});
+      if(_perpYes){
+        _pShield.innerHTML='<span style="font-size:16px">🛡️</span><span style="position:absolute;font-size:8px;font-weight:900;color:#fff;line-height:1">∞</span>';
+      } else {
+        // Red circle with slash — no perpetuity protection
+        _pShield.innerHTML='<span style="font-size:14px">🛡️</span><span style="position:absolute;font-size:14px;line-height:1;color:#ef4444;font-weight:900">🚫</span>';
+      }
       metricsRow.appendChild(_pShield);
     }
     if (metricsRow.children.length) viSec.appendChild(metricsRow);
 
     // Row 3: Contact info + extras
-    const grid2 = el('div', {class:'detail-grid', style:{marginTop:'4px'}});
+    const grid2 = el('div', {style:{marginTop:'4px'}});
     const _g2Fields = [
       ['Added Value', vendor.addedValue],
       ['Website', vendor.website, {link:true}],
@@ -16727,7 +16734,12 @@ function renderToday(c) {
         } else {
           items.slice(0,15).forEach(v=>body.appendChild(sec.rowFn(v)));
           if(sec.key==='pipeline'){
-            const _totalITW=(S.itw||[]).filter(v=>isVisible(v)).length;
+            const _ACTIVE_SECS=['New','Existing','AI','Pipe Line'];
+            const _totalITW=(S.itw||[]).filter(v=>{
+              if(!isVisible(v)) return false;
+              const sec=(v.section||'').trim();
+              return !sec || _ACTIVE_SECS.some(a=>sec.toLowerCase().includes(a.toLowerCase()));
+            }).length;
             const _hasSignals=items.some(v=>parseDate(v.followUp)||parseDate(v.lastComm)||v.tier);
             if(!_hasSignals&&items.length>0){body.insertBefore(el('div',{style:{padding:'4px 8px 2px',fontSize:'9px',color:'var(--muted)',fontStyle:'italic'}},'Top 10 alphabetically - set follow-up dates or tiers to prioritize'),body.firstChild);}
             if(_totalITW>10)body.appendChild(el('div',{style:{padding:'4px 8px',fontSize:'9px',color:'var(--blue)',cursor:'pointer',textDecoration:'underline'},onclick(){S.view='itw';render();}},'→ View all '+_totalITW+' Pipeline vendors'));
@@ -16838,6 +16850,7 @@ function renderToday(c) {
     fuHdr.appendChild(el('span',{style:{fontSize:'12px'}},'📞'));
     fuHdr.appendChild(el('span',{style:{flex:'1'}},'Relationship Follow-ups'));
     fuHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_fuVendors.length?_fuVendors.length+' vendors':''));
+    fuSec.appendChild(fuHdr);
     if(_fuOpen) _fuVendors.forEach(v=>{
       const lc=parseDate(v.lastComm),fu=parseDate(v.followUp);
       const daysSince=lc?dayDiff(today,lc):null,fuDays=fu?dayDiff(today,fu):null;
@@ -16887,6 +16900,7 @@ function renderToday(c) {
     revHdr.appendChild(el('span',{style:{fontSize:'12px'}},'📊'));
     revHdr.appendChild(el('span',{style:{flex:'1'}},'Business Reviews Due'));
     revHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_revDue.length?_revDue.length+' vendors':''));
+    revSec.appendChild(revHdr);
     if(_revOpen) _revDue.forEach(v=>{
       const lr=parseDate(v.lastReview);
       const daysSinceRev=lr?dayDiff(today,lr):null;
@@ -16916,6 +16930,7 @@ function renderToday(c) {
   outHdr.appendChild(el('span',{style:{fontSize:'12px'}},'🧠'));
   outHdr.appendChild(el('span',{style:{flex:'1'}},'Outreach Intelligence'));
   outHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'AI-ranked relationship priorities'));
+  outreachSec.appendChild(outHdr);
 
   // Build ranked outreach list
   const allV=(S.vendors||[]).filter(isVisible);
