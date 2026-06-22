@@ -406,7 +406,7 @@ body.ps-light-theme .page-sticky-hdr{background:#edf4fb;border-bottom-color:rgba
 #content .data-table thead th{position:sticky;top:0;z-index:20;background:var(--sb)!important;box-shadow:0 2px 4px rgba(0,0,0,.18);}
 .summary-section .data-table thead th,.modal-body .data-table thead th,.scrollable-table-wrap .data-table thead th{position:sticky;top:0;z-index:1;background:var(--card)}
 body.ps-light-theme .tbl-wrap .data-table thead th{background:#0078b8!important;color:#fff!important;box-shadow:0 2px 4px rgba(0,0,0,.12)}
-.data-table{border-collapse:collapse;font-size:10px;width:max-content;table-layout:fixed}
+.data-table{border-collapse:collapse;font-size:10px;width:max-content}
 .data-table th{position:sticky;top:0;background:var(--sb);color:var(--muted);text-align:left;padding:5px 6px;border-bottom:2px solid var(--border);font-weight:500;white-space:nowrap;overflow:hidden;z-index:20;user-select:none;cursor:default;will-change:transform}
 .data-table th.sortable{cursor:pointer}
 .data-table th.sortable:hover{color:var(--text)}
@@ -9090,20 +9090,21 @@ function renderVendorDB(c) {
   // Quick Note column header — second column, always visible without scrolling
   trh.appendChild(el('th',{style:{width:'32px',padding:'3px 4px',textAlign:'center',color:'var(--muted)',fontSize:'10px'}},'📝'));
 
+  // Default column widths — defined once outside the loop
+  const _VDB_DEFAULT_W = {
+    gpo:60, name:160, category:110, subCategory:110, product:180, classOfTrade:100,
+    markets:100, autoRenew:70, expiry:110, daysLeft:70, status:100, tier:60,
+    score:52, adminFee:70, perpetuity:70, terminationNotice:60, procContact:120,
+    bizPhone:90, email:140, notes:55, lastComm:85, website:110,
+    comments:140, about:140, agreementType:100, contractName:130,
+    inContractSince:90, effectiveDate:90, autoRenewType:90,
+    contractTerm:80, currentTerm:80, tiers:60, adminFeeNotes:120,
+    contractNo:80, followUp:90, aka:110, sfAccountId:80,
+  };
+
   VISIBLE_COLS.forEach(col=>{
     const th=el('th',{style:{position:'relative',whiteSpace:'nowrap',userSelect:'none',overflow:'hidden'}});
-    // Default widths — user can override by dragging resize handle
-    const _DEFAULT_COL_W = {
-      gpo:60, name:160, cat:110, subcat:110, product:180, cot:100, markets:100,
-      ar:70, expiry:110, days:70, status:100, tier:60, score:52, fee:70,
-      perp:70, notice:60, contact:120, phone:90, email:140, notes:55,
-      lastComm:85, website:110, wp:55, ss:55, vid:55, lop:55,
-      comments:140, about:140, agreementType:100, contractName:130,
-      inContractSince:90, contractEffective:90, autoRenewalType:90,
-      contractTerm:80, currentTerm:80, tiers:60, adminFeeNotes:120,
-      contractNo:80, followUp:90, aka:110, sf:80,
-    };
-    const _defaultW = _DEFAULT_COL_W[col.key] || 100;
+    const _defaultW = _VDB_DEFAULT_W[col.key] || 100;
     const isSorted=S.dbSort.col===col.label;
     const hasFilter=!!(S.dbFilters[col.key]?.size>0);
     const inner=el('div',{style:{display:'flex',alignItems:'center',gap:'3px'}});
@@ -9119,20 +9120,48 @@ function renderVendorDB(c) {
     // Resize handle
     const rh=document.createElement('div');
     rh.style.cssText='position:absolute;right:0;top:0;bottom:0;width:5px;cursor:col-resize;z-index:2;';
-    // Apply saved width for this column
+    // Apply saved or default width
     const _savedW = S.colWidths[col.label];
     const _applyW = _savedW || _defaultW;
     th.style.width = _applyW + 'px';
     th.style.minWidth = '0';
-    rh.addEventListener('mousedown',e=>{e.preventDefault();const sx=e.pageX,sw=th.offsetWidth;
-      const mm=ev=>{const w=Math.max(20,sw+ev.pageX-sx);th.style.width=w+'px';th.style.minWidth='0';};
-      const mu=()=>{
-        document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);
-        // Persist width so it survives re-renders
-        S.colWidths[col.label]=th.offsetWidth;
+    rh.addEventListener('mousedown',e=>{
+      e.preventDefault();
+      e.stopPropagation();
+      const sx = e.pageX;
+      const sw = th.getBoundingClientRect().width;
+      // Ghost line — visual indicator during drag, zero table reflow
+      const ghost = document.createElement('div');
+      ghost.style.cssText = 'position:fixed;top:0;bottom:0;width:2px;background:var(--blue);opacity:0.7;pointer-events:none;z-index:9999;';
+      ghost.style.left = e.clientX + 'px';
+      document.body.appendChild(ghost);
+      document.body.style.cursor = 'col-resize';
+      let finalW = sw;
+      const mm = ev => {
+        finalW = Math.max(20, sw + ev.pageX - sx);
+        ghost.style.left = ev.clientX + 'px';
+      };
+      const mu = () => {
+        document.removeEventListener('mousemove', mm);
+        document.removeEventListener('mouseup', mu);
+        document.body.removeChild(ghost);
+        document.body.style.cursor = '';
+        // Apply width once on mouseup — single reflow
+        th.style.width = finalW + 'px';
+        // Update all td cells in this column so content clips correctly
+        const colIdx = Array.from(th.parentElement.children).indexOf(th);
+        if (colIdx >= 0) {
+          tblWrap.querySelectorAll('tbody tr').forEach(tr => {
+            const td = tr.children[colIdx];
+            if (td) { td.style.maxWidth = finalW + 'px'; td.style.width = finalW + 'px'; }
+          });
+        }
+        S.colWidths[col.label] = finalW;
         debouncedSaveSettings();
       };
-      document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);});
+      document.addEventListener('mousemove', mm);
+      document.addEventListener('mouseup', mu);
+    });
     th.appendChild(inner); th.appendChild(rh); trh.appendChild(th);
   });
   thead.appendChild(trh); table.appendChild(thead);
@@ -9278,6 +9307,9 @@ function renderVendorDB(c) {
         _noteWrap.appendChild(noteBtn);_noteWrap.appendChild(_noteDot);noteTd.appendChild(_noteWrap);tr.appendChild(noteTd);
         VISIBLE_COLS.forEach(col=>{
           const td=document.createElement('td');
+          // Apply saved width so column clips correctly on initial render
+          const _tdW = S.colWidths[col.label] || _VDB_DEFAULT_W[col.key];
+          if (_tdW) { td.style.maxWidth=_tdW+'px'; td.style.width=_tdW+'px'; }
           try {
             const raw=col.fmt(v);
             if(raw==null||raw===''){td.textContent='';}
