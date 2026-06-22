@@ -406,7 +406,7 @@ body.ps-light-theme .page-sticky-hdr{background:#edf4fb;border-bottom-color:rgba
 #content .data-table thead th{position:sticky;top:0;z-index:20;background:var(--sb)!important;box-shadow:0 2px 4px rgba(0,0,0,.18);}
 .summary-section .data-table thead th,.modal-body .data-table thead th,.scrollable-table-wrap .data-table thead th{position:sticky;top:0;z-index:1;background:var(--card)}
 body.ps-light-theme .tbl-wrap .data-table thead th{background:#0078b8!important;color:#fff!important;box-shadow:0 2px 4px rgba(0,0,0,.12)}
-.data-table{border-collapse:collapse;font-size:10px;width:max-content}
+.data-table{border-collapse:collapse;font-size:10px;width:max-content;min-width:100%}
 .data-table th{position:sticky;top:0;background:var(--sb);color:var(--muted);text-align:left;padding:5px 6px;border-bottom:2px solid var(--border);font-weight:500;white-space:nowrap;overflow:hidden;z-index:20;user-select:none;cursor:default;will-change:transform}
 .data-table th.sortable{cursor:pointer}
 .data-table th.sortable:hover{color:var(--text)}
@@ -9079,7 +9079,21 @@ function renderVendorDB(c) {
   }
 
   const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap',style:{overflowX:'auto',overflowY:'auto',maxHeight:'calc(100vh - 220px)',border:'1px solid var(--border)',borderRadius:'4px',display:'block',WebkitOverflowScrolling:'touch'}});
-  const table=el('table',{class:'data-table',style:{borderCollapse:'collapse'}});
+  const table=el('table',{class:'data-table',style:{borderCollapse:'collapse',tableLayout:'fixed',width:'max-content',minWidth:'unset'}});
+  // Colgroup — one <col> per column. Width changes here flow to all td/th automatically.
+  const colgroup=document.createElement('colgroup');
+  // checkbox col, note col, then one per VISIBLE_COLS
+  const _cgCb=document.createElement('col'); _cgCb.style.width='28px'; colgroup.appendChild(_cgCb);
+  const _cgNote=document.createElement('col'); _cgNote.style.width='32px'; colgroup.appendChild(_cgNote);
+  const _cgCols={}; // label -> <col> element for resize updates
+  VISIBLE_COLS.forEach(col=>{
+    const cg=document.createElement('col');
+    const w=(S.colWidths[col.label]||_VDB_DEFAULT_W[col.key]||100);
+    cg.style.width=w+'px';
+    _cgCols[col.label]=cg;
+    colgroup.appendChild(cg);
+  });
+  table.appendChild(colgroup);
   const thead=el('thead'), trh=el('tr');
 
   // Select-all checkbox column
@@ -9120,11 +9134,7 @@ function renderVendorDB(c) {
     // Resize handle
     const rh=document.createElement('div');
     rh.style.cssText='position:absolute;right:0;top:0;bottom:0;width:5px;cursor:col-resize;z-index:2;';
-    // Apply saved or default width
-    const _savedW = S.colWidths[col.label];
-    const _applyW = _savedW || _defaultW;
-    th.style.width = _applyW + 'px';
-    th.style.minWidth = '0';
+    // Width is set via colgroup <col> element above — th just needs overflow:hidden for clipping
     rh.addEventListener('mousedown',e=>{
       e.preventDefault();
       e.stopPropagation();
@@ -9146,16 +9156,9 @@ function renderVendorDB(c) {
         document.removeEventListener('mouseup', mu);
         document.body.removeChild(ghost);
         document.body.style.cursor = '';
-        // Apply width once on mouseup — single reflow
+        // Apply width once on mouseup — update <col> element (single reflow, no td touching needed)
+        if (_cgCols[col.label]) _cgCols[col.label].style.width = finalW + 'px';
         th.style.width = finalW + 'px';
-        // Update all td cells in this column so content clips correctly
-        const colIdx = Array.from(th.parentElement.children).indexOf(th);
-        if (colIdx >= 0) {
-          tblWrap.querySelectorAll('tbody tr').forEach(tr => {
-            const td = tr.children[colIdx];
-            if (td) { td.style.maxWidth = finalW + 'px'; td.style.width = finalW + 'px'; }
-          });
-        }
         S.colWidths[col.label] = finalW;
         debouncedSaveSettings();
       };
@@ -9307,9 +9310,6 @@ function renderVendorDB(c) {
         _noteWrap.appendChild(noteBtn);_noteWrap.appendChild(_noteDot);noteTd.appendChild(_noteWrap);tr.appendChild(noteTd);
         VISIBLE_COLS.forEach(col=>{
           const td=document.createElement('td');
-          // Apply saved width so column clips correctly on initial render
-          const _tdW = S.colWidths[col.label] || _VDB_DEFAULT_W[col.key];
-          if (_tdW) { td.style.maxWidth=_tdW+'px'; td.style.width=_tdW+'px'; }
           try {
             const raw=col.fmt(v);
             if(raw==null||raw===''){td.textContent='';}
@@ -21686,13 +21686,37 @@ function renderSettings(c) {
     }},'↑ Sync All to Drive');
   syncSec.appendChild(syncAllBtn);
   // D3: Expand/Collapse ALL known settings keys
-  const _allSettingsKeys=['emailSig','fileInfo','dataActions','handover','themeFont','startup','calendarAvail','displayPrefs','sfSettings','driveSettings','msSettings','renzoSettings','dialerSettings','apiConfig','userMgmt','roleTabDefaults','apiUsage','quickSetup','renzo'];
-  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},title:'Expand All (Ctrl+Shift+E)',onclick(){S._settingsExpandAll=true;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=true);localStorage.setItem('vcs_rd_collapsed','0');localStorage.setItem('vcs_um_collapsed','0');S._setupChecklistOpen=true;render();}},'▼ Expand All'));
-  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},title:'Collapse All (Ctrl+Shift+C)',onclick(){S._settingsExpandAll=false;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=false);localStorage.setItem('vcs_rd_collapsed','1');localStorage.setItem('vcs_um_collapsed','1');S._setupChecklistOpen=false;render();}},'▶ Collapse All'));
+  const _allSettingsKeys=['emailSig','fileInfo','dataActions','handover'];
+  // All localStorage keys used by makeCollapsibleSection calls in renderSettings
+  const _allRawSectionKeys=['vcs_s_sf','vcs_s_drive','vcs_s_ms','vcs_s_ai','vcs_s_dialer',
+    'vcs_s_cols','vcs_s_prefs','vcs_s_startup','vcs_s_theme','vcs_s_display',
+    'vcs_rd_collapsed','vcs_um_collapsed','vcs_s_cal'];
+  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},title:'Expand All (Ctrl+Shift+E)',onclick(){
+    S._settingsExpandAll=true;
+    if(!S._settingsOpen)S._settingsOpen={};
+    _allSettingsKeys.forEach(k=>S._settingsOpen[k]=true);
+    _allRawSectionKeys.forEach(k=>localStorage.setItem(k,'0')); // '0' = expanded
+    localStorage.setItem('vcs_rd_collapsed','0');
+    localStorage.setItem('vcs_um_collapsed','0');
+    localStorage.setItem('vcs_s_cal','1');
+    S._setupChecklistOpen=true;
+    render();
+  }},'▼ Expand All'));
+  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},title:'Collapse All (Ctrl+Shift+C)',onclick(){
+    S._settingsExpandAll=false;
+    if(!S._settingsOpen)S._settingsOpen={};
+    _allSettingsKeys.forEach(k=>S._settingsOpen[k]=false);
+    _allRawSectionKeys.forEach(k=>localStorage.setItem(k,'1')); // '1' = collapsed
+    localStorage.setItem('vcs_rd_collapsed','1');
+    localStorage.setItem('vcs_um_collapsed','1');
+    localStorage.setItem('vcs_s_cal','0');
+    S._setupChecklistOpen=false;
+    render();
+  }},'▶ Collapse All'));
   // A3: Keyboard shortcuts for expand/collapse all settings sections
   const _settingsKbHandler=(e)=>{
-    if(e.ctrlKey&&e.shiftKey&&e.key==='E'){e.preventDefault();S._settingsExpandAll=true;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=true);localStorage.setItem('vcs_rd_collapsed','0');localStorage.setItem('vcs_um_collapsed','0');S._setupChecklistOpen=true;render();}
-    if(e.ctrlKey&&e.shiftKey&&e.key==='C'){e.preventDefault();S._settingsExpandAll=false;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=false);localStorage.setItem('vcs_rd_collapsed','1');localStorage.setItem('vcs_um_collapsed','1');S._setupChecklistOpen=false;render();}
+    if(e.ctrlKey&&e.shiftKey&&e.key==='E'){e.preventDefault();S._settingsExpandAll=true;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=true);_allRawSectionKeys.forEach(k=>localStorage.setItem(k,'0'));localStorage.setItem('vcs_rd_collapsed','0');localStorage.setItem('vcs_um_collapsed','0');localStorage.setItem('vcs_s_cal','1');S._setupChecklistOpen=true;render();}
+    if(e.ctrlKey&&e.shiftKey&&e.key==='C'){e.preventDefault();S._settingsExpandAll=false;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=false);_allRawSectionKeys.forEach(k=>localStorage.setItem(k,'1'));localStorage.setItem('vcs_rd_collapsed','1');localStorage.setItem('vcs_um_collapsed','1');localStorage.setItem('vcs_s_cal','0');S._setupChecklistOpen=false;render();}
   };
   document.addEventListener('keydown',_settingsKbHandler);
   c.addEventListener('DOMNodeRemovedFromDocument',()=>document.removeEventListener('keydown',_settingsKbHandler),{once:true});
