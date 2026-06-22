@@ -8753,7 +8753,7 @@ function renderVendorDB(c) {
     {key:'name',    label:'Vendor',          sortable:true,  get:v=>v.name||'',               fmt:v=>{const n=el('span',{class:'vendor-link',onclick(e){e.stopPropagation();openDetail(v);}});n.appendChild(hl(v.name));n.style.color=v.tier==='CALL'?'var(--red)':v.tier==='EMAIL'?'var(--amber)':'';n.style.fontWeight='600';return n;}, sk:v=>v.name.toLowerCase()},
     {key:'cat',     label:'Category',        sortable:true,  get:v=>v.category||'',           fmt:v=>hlEl(v.category), sk:v=>v.category||''},
     {key:'subcat',  label:'Sub-Category',    sortable:true,  get:v=>v.subCategory||'',        fmt:v=>hlEl(v.subCategory), sk:v=>v.subCategory||''},
-    {key:'product', label:'Product / Description',    sortable:false, get:v=>v.product||v.about||'',   fmt:v=>{const txt=(v.product||v.about||'').slice(0,60);const s=el('span',{title:v.product||v.about||'',style:{maxWidth:'180px',display:'inline-block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}});s.appendChild(hl(txt));return s;}, sk:v=>v.product||''},
+    {key:'product', label:'Product / Description',    sortable:false, get:v=>v.product||v.about||'',   fmt:v=>{const txt=v.product||v.about||'';const s=el('span',{title:txt,style:{display:'inline-block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'100%'}});s.appendChild(hl(txt));return s;}, sk:v=>v.product||''},
     {key:'cot',     label:'Class of Trade',  sortable:true,  get:v=>v.classOfTrade||'',       fmt:v=>hlEl(v.classOfTrade), sk:v=>v.classOfTrade||''},
     {key:'markets', label:'Markets Serviced',         sortable:true,  get:v=>v.markets||'',            fmt:v=>hlEl(v.markets), sk:v=>v.markets||''},
     {key:'ar',      label:'Auto-renewal',      sortable:true,  get:v=>isAutoRenew(v)?'Yes':'No',fmt:v=>arBadge(v), sk:v=>isAutoRenew(v)?0:1},
@@ -8789,29 +8789,29 @@ function renderVendorDB(c) {
     {key:'about',         label:'About',            sortable:false, get:v=>v.about||'',            fmt:v=>v.about?String(v.about).slice(0,40):'—', sk:v=>v.about||''},
     {key:'followUp',      label:'Scheduled Follow-up Date',   sortable:true,  get:v=>{const d=parseDate(v.followUp);return d?isoDate(d):'';}, fmt:v=>{const d=parseDate(v.followUp);return d?fmtDate(d):'—';}, sk:v=>parseDate(v.followUp)||new Date(9e12)},
     {key:'aka',           label:'Previously Named / AKA',              sortable:false, get:v=>v.aka||'',              fmt:v=>v.aka||'—', sk:v=>v.aka||''},
-        {key:'signatory',label:'Signatory',sortable:false,get:v=>v.signatory||'',fmt:v=>{const _v=v.signatory||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.signatory||''},
-    {key:'assignment',label:'Assingment (Allowed, Not Allowed)',sortable:false,get:v=>v.assignment||'',fmt:v=>{const _v=v.assignment||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.assignment||''},
-    {key:'assignmentConditions',label:'Assingment Conditions',sortable:false,get:v=>v.assignmentConditions||'',fmt:v=>{const _v=v.assignmentConditions||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.assignmentConditions||''},
-    {key:'exclusivity',label:'Exclusivity (Y/N)',sortable:false,get:v=>v.exclusivity||'',fmt:v=>{const _v=v.exclusivity||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.exclusivity||''},
-    {key:'terminationWoCause',label:'Termination w/o Cause (Y/N)',sortable:false,get:v=>v.terminationWoCause||'',fmt:v=>{const _v=v.terminationWoCause||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.terminationWoCause||''},
-    {key:'pricingCommitment',label:'Pricing Commitment to PS (Best, Competitive, Case by case)',sortable:false,get:v=>v.pricingCommitment||'',fmt:v=>{const _v=v.pricingCommitment||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingCommitment||''},
-    {key:'mobile2',label:'Business (#2)',sortable:false,get:v=>v.mobile2||'',fmt:v=>{const _v=v.mobile2||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.mobile2||''},
-    {key:'email2',label:'Email Address (2)',sortable:false,get:v=>v.email2||'',fmt:v=>{const _v=v.email2||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.email2||''},
-    {key:'termEffective',label:'Latest Term Effective Date',sortable:false,get:v=>v.termEffective||'',fmt:v=>{const _v=v.termEffective||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.termEffective||''},
-    {key:'engagementReminder',label:'Vendor Engagement Reminder (Optional)',sortable:false,get:v=>v.engagementReminder||'',fmt:v=>{const _v=v.engagementReminder||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.engagementReminder||''},
-    {key:'terminationReceived',label:'Termination Notice Received?',sortable:false,get:v=>v.terminationReceived||'',fmt:v=>{const _v=v.terminationReceived||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.terminationReceived||''},
-    {key:'coverSheet',label:'Cover Sheet',sortable:false,get:v=>v.coverSheet||'',fmt:v=>{const _v=v.coverSheet||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.coverSheet||''},
-    {key:'dataSheet',label:'Data Sheet',sortable:false,get:v=>v.dataSheet||'',fmt:v=>{const _v=v.dataSheet||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.dataSheet||''},
-    {key:'havePricing',label:'Have Pricing?',sortable:false,get:v=>v.havePricing||'',fmt:v=>{const _v=v.havePricing||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.havePricing||''},
-    {key:'pricingLocation',label:'Location of Pricing',sortable:false,get:v=>v.pricingLocation||'',fmt:v=>{const _v=v.pricingLocation||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingLocation||''},
-    {key:'pricingDate',label:'Pricing Date',sortable:false,get:v=>v.pricingDate||'',fmt:v=>{const _v=v.pricingDate||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingDate||''},
-    {key:'pricingFrequency',label:'Update Pricing Frequency?',sortable:false,get:v=>v.pricingFrequency||'',fmt:v=>{const _v=v.pricingFrequency||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingFrequency||''},
-    {key:'minYears',label:'Min. # yrs per Customer',sortable:false,get:v=>v.minYears||'',fmt:v=>{const _v=v.minYears||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.minYears||''},
-    {key:'reportFrequency',label:'Report Frequency',sortable:false,get:v=>v.reportFrequency||'',fmt:v=>{const _v=v.reportFrequency||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.reportFrequency||''},
+        {key:'signatory',label:'Signatory',sortable:false,get:v=>v.signatory||'',fmt:v=>{const _v=v.signatory||'';return _v?String(_v):'—';},sk:v=>v.signatory||''},
+    {key:'assignment',label:'Assingment (Allowed, Not Allowed)',sortable:false,get:v=>v.assignment||'',fmt:v=>{const _v=v.assignment||'';return _v?String(_v):'—';},sk:v=>v.assignment||''},
+    {key:'assignmentConditions',label:'Assingment Conditions',sortable:false,get:v=>v.assignmentConditions||'',fmt:v=>{const _v=v.assignmentConditions||'';return _v?String(_v):'—';},sk:v=>v.assignmentConditions||''},
+    {key:'exclusivity',label:'Exclusivity (Y/N)',sortable:false,get:v=>v.exclusivity||'',fmt:v=>{const _v=v.exclusivity||'';return _v?String(_v):'—';},sk:v=>v.exclusivity||''},
+    {key:'terminationWoCause',label:'Termination w/o Cause (Y/N)',sortable:false,get:v=>v.terminationWoCause||'',fmt:v=>{const _v=v.terminationWoCause||'';return _v?String(_v):'—';},sk:v=>v.terminationWoCause||''},
+    {key:'pricingCommitment',label:'Pricing Commitment to PS (Best, Competitive, Case by case)',sortable:false,get:v=>v.pricingCommitment||'',fmt:v=>{const _v=v.pricingCommitment||'';return _v?String(_v):'—';},sk:v=>v.pricingCommitment||''},
+    {key:'mobile2',label:'Business (#2)',sortable:false,get:v=>v.mobile2||'',fmt:v=>{const _v=v.mobile2||'';return _v?String(_v):'—';},sk:v=>v.mobile2||''},
+    {key:'email2',label:'Email Address (2)',sortable:false,get:v=>v.email2||'',fmt:v=>{const _v=v.email2||'';return _v?String(_v):'—';},sk:v=>v.email2||''},
+    {key:'termEffective',label:'Latest Term Effective Date',sortable:false,get:v=>v.termEffective||'',fmt:v=>{const _v=v.termEffective||'';return _v?String(_v):'—';},sk:v=>v.termEffective||''},
+    {key:'engagementReminder',label:'Vendor Engagement Reminder (Optional)',sortable:false,get:v=>v.engagementReminder||'',fmt:v=>{const _v=v.engagementReminder||'';return _v?String(_v):'—';},sk:v=>v.engagementReminder||''},
+    {key:'terminationReceived',label:'Termination Notice Received?',sortable:false,get:v=>v.terminationReceived||'',fmt:v=>{const _v=v.terminationReceived||'';return _v?String(_v):'—';},sk:v=>v.terminationReceived||''},
+    {key:'coverSheet',label:'Cover Sheet',sortable:false,get:v=>v.coverSheet||'',fmt:v=>{const _v=v.coverSheet||'';return _v?String(_v):'—';},sk:v=>v.coverSheet||''},
+    {key:'dataSheet',label:'Data Sheet',sortable:false,get:v=>v.dataSheet||'',fmt:v=>{const _v=v.dataSheet||'';return _v?String(_v):'—';},sk:v=>v.dataSheet||''},
+    {key:'havePricing',label:'Have Pricing?',sortable:false,get:v=>v.havePricing||'',fmt:v=>{const _v=v.havePricing||'';return _v?String(_v):'—';},sk:v=>v.havePricing||''},
+    {key:'pricingLocation',label:'Location of Pricing',sortable:false,get:v=>v.pricingLocation||'',fmt:v=>{const _v=v.pricingLocation||'';return _v?String(_v):'—';},sk:v=>v.pricingLocation||''},
+    {key:'pricingDate',label:'Pricing Date',sortable:false,get:v=>v.pricingDate||'',fmt:v=>{const _v=v.pricingDate||'';return _v?String(_v):'—';},sk:v=>v.pricingDate||''},
+    {key:'pricingFrequency',label:'Update Pricing Frequency?',sortable:false,get:v=>v.pricingFrequency||'',fmt:v=>{const _v=v.pricingFrequency||'';return _v?String(_v):'—';},sk:v=>v.pricingFrequency||''},
+    {key:'minYears',label:'Min. # yrs per Customer',sortable:false,get:v=>v.minYears||'',fmt:v=>{const _v=v.minYears||'';return _v?String(_v):'—';},sk:v=>v.minYears||''},
+    {key:'reportFrequency',label:'Report Frequency',sortable:false,get:v=>v.reportFrequency||'',fmt:v=>{const _v=v.reportFrequency||'';return _v?String(_v):'—';},sk:v=>v.reportFrequency||''},
     {key:'lastComm',label:'Last Contact',sortable:true,get:v=>{const d=parseDate(v.lastComm);return d?isoDate(d):'';},fmt:v=>{const d=parseDate(v.lastComm);if(!d){const _gd=el('span',{style:{display:'inline-block',width:'7px',height:'7px',borderRadius:'50%',background:'#9ca3af',marginRight:'4px',verticalAlign:'middle',flexShrink:'0'}});const _gw=el('span',{style:{display:'inline-flex',alignItems:'center',color:'var(--muted)',fontSize:'9px'},title:'No contact recorded'});_gw.appendChild(_gd);_gw.appendChild(document.createTextNode('Not contacted'));return _gw;}const ago=Math.floor((new Date()-d)/(1000*86400));const col=ago<14?'var(--green)':ago<30?'var(--amber)':ago<90?'#f97316':'var(--red)';const dot=el('span',{style:{display:'inline-block',width:'7px',height:'7px',borderRadius:'50%',background:col,marginRight:'4px',verticalAlign:'middle',flexShrink:'0'}});const txt=ago===0?'Today':ago===1?'Yesterday':ago+'d ago';const wrap=el('span',{style:{display:'inline-flex',alignItems:'center',fontWeight:'600',color:col},title:'Last contacted: '+fmtDate(d)+' — '+ago+'d ago'});wrap.appendChild(dot);wrap.appendChild(document.createTextNode(txt));return wrap;},sk:v=>parseDate(v.lastComm)||new Date(0)},
-    {key:'justification',label:'Short Justification',sortable:false,get:v=>v.justification||'',fmt:v=>{const _v=v.justification||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.justification||''},
-    {key:'changeOfControl',label:'Change of Control (Y/N & Conditions)',sortable:false,get:v=>v.changeOfControl||'',fmt:v=>{const _v=v.changeOfControl||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.changeOfControl||''},
-    {key:'attachment',label:'Attachment / Location',sortable:false,get:v=>v.attachment||'',fmt:v=>{const _v=v.attachment||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.attachment||''},
+    {key:'justification',label:'Short Justification',sortable:false,get:v=>v.justification||'',fmt:v=>{const _v=v.justification||'';return _v?String(_v):'—';},sk:v=>v.justification||''},
+    {key:'changeOfControl',label:'Change of Control (Y/N & Conditions)',sortable:false,get:v=>v.changeOfControl||'',fmt:v=>{const _v=v.changeOfControl||'';return _v?String(_v):'—';},sk:v=>v.changeOfControl||''},
+    {key:'attachment',label:'Attachment / Location',sortable:false,get:v=>v.attachment||'',fmt:v=>{const _v=v.attachment||'';return _v?String(_v):'—';},sk:v=>v.attachment||''},
     {key:'notes',   label:'Notes',           sortable:false, get:v=>v.notes?'yes':'',         fmt:v=>v.notes?el('span',{class:'note-preview clickable',title:String(v.notes).slice(0,200),onclick(e){e.stopPropagation();showNotePopup(v.name,v.notes,v);}},String(v.notes).split('|')[0].slice(0,40)+'…'):'', sk:v=>v.notes?0:1},
     {key:'sf', label:'☁ SF (YTD)', sortable:true, get:v=>{const ctx=_sfCtxCache?.get(v.name.toLowerCase());return ctx?(ctx.spend||0):0;}, fmt:v=>{const ctx=_sfCtxCache?.get(v.name.toLowerCase());if(!ctx)return el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'—');const d=el('div',{style:{fontSize:'9px',display:'flex',gap:'3px',flexWrap:'wrap',alignItems:'center'}});if(ctx.spend)d.appendChild(el('span',{style:{color:'var(--blue)',fontWeight:'600'}},'$'+Math.round(ctx.spend/1000)+'K'));if(ctx.openOpps)d.appendChild(el('span',{style:{color:'var(--green)'}},'💼'+ctx.openOpps));if(ctx.openCases)d.appendChild(el('span',{style:{color:ctx.highCases?'var(--red)':'var(--amber)'}},'🎫'+ctx.openCases));return d.children.length?d:el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'—');}, sk:v=>{const ctx=_sfCtxCache?.get(v.name.toLowerCase());return ctx?.spend||0;}},
     {key:'_cpSplit',label:'CP Split',sortable:false,get:v=>v._cpSplitPct||0,fmt:v=>{
@@ -9078,9 +9078,8 @@ function renderVendorDB(c) {
     });
   }
 
-  const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap',style:{overflowX:'auto',overflowY:'visible',maxHeight:'unset',border:'1px solid var(--border)',borderRadius:'4px',display:'block'}});
+  const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap',style:{overflowX:'auto',overflowY:'auto',maxHeight:'calc(100vh - 220px)',border:'1px solid var(--border)',borderRadius:'4px',display:'block',WebkitOverflowScrolling:'touch'}});
   const table=el('table',{class:'data-table',style:{borderCollapse:'collapse'}});
-
   const thead=el('thead'), trh=el('tr');
 
   // Select-all checkbox column
@@ -9090,7 +9089,6 @@ function renderVendorDB(c) {
   cbTh.appendChild(cbAll); trh.appendChild(cbTh);
   // Quick Note column header — second column, always visible without scrolling
   trh.appendChild(el('th',{style:{width:'32px',padding:'3px 4px',textAlign:'center',color:'var(--muted)',fontSize:'10px'}},'📝'));
-
 
   VISIBLE_COLS.forEach(col=>{
     const th=el('th',{style:{position:'relative',whiteSpace:'nowrap',userSelect:'none'}});
@@ -9109,9 +9107,17 @@ function renderVendorDB(c) {
     // Resize handle
     const rh=document.createElement('div');
     rh.style.cssText='position:absolute;right:0;top:0;bottom:0;width:5px;cursor:col-resize;z-index:2;';
+    // Apply saved width for this column
+    const _savedW = S.colWidths[col.label];
+    if (_savedW) { th.style.width=_savedW+'px'; th.style.minWidth='0'; }
     rh.addEventListener('mousedown',e=>{e.preventDefault();const sx=e.pageX,sw=th.offsetWidth;
-      const mm=ev=>{const w=Math.max(50,sw+ev.pageX-sx);th.style.minWidth=w+'px';th.style.width=w+'px';};
-      const mu=()=>{document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);};
+      const mm=ev=>{const w=Math.max(20,sw+ev.pageX-sx);th.style.width=w+'px';th.style.minWidth='0';};
+      const mu=()=>{
+        document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);
+        // Persist width so it survives re-renders
+        S.colWidths[col.label]=th.offsetWidth;
+        debouncedSaveSettings();
+      };
       document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);});
     th.appendChild(inner); th.appendChild(rh); trh.appendChild(th);
   });
