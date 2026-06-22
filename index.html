@@ -9109,9 +9109,9 @@ function renderVendorDB(c) {
     rh.style.cssText='position:absolute;right:0;top:0;bottom:0;width:5px;cursor:col-resize;z-index:2;';
     // Apply saved width for this column
     const _savedW = S.colWidths[col.label];
-    if (_savedW) { th.style.minWidth=_savedW+'px'; th.style.width=_savedW+'px'; }
+    if (_savedW) { th.style.width=_savedW+'px'; th.style.minWidth='0'; }
     rh.addEventListener('mousedown',e=>{e.preventDefault();const sx=e.pageX,sw=th.offsetWidth;
-      const mm=ev=>{const w=Math.max(50,sw+ev.pageX-sx);th.style.minWidth=w+'px';th.style.width=w+'px';};
+      const mm=ev=>{const w=Math.max(20,sw+ev.pageX-sx);th.style.width=w+'px';th.style.minWidth='0';};
       const mu=()=>{
         document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);
         // Persist width so it survives re-renders
