@@ -9078,7 +9078,7 @@ function renderVendorDB(c) {
     });
   }
 
-  const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap',style:{overflowX:'auto',overflowY:'auto',maxHeight:'calc(100vh - 180px)',border:'1px solid var(--border)',borderRadius:'4px',display:'block',WebkitOverflowScrolling:'touch'}});
+  const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap',style:{overflowX:'auto',overflowY:'auto',maxHeight:'calc(100vh - 180px)',width:'100%',border:'1px solid var(--border)',borderRadius:'4px',display:'block',WebkitOverflowScrolling:'touch'}});
   const table=el('table',{class:'data-table',style:{borderCollapse:'collapse'}});
   const thead=el('thead'), trh=el('tr');
 
@@ -16782,6 +16782,7 @@ function renderToday(c) {
     const _allV=(S.vendors||[]).filter(isVisible);
     const _todaySections=[
       {key:'urgent',icon:'🚨',label:'Urgent Actions',color:'var(--red)',
+        hasHdr:true,hdrs:['Score','Vendor','Category','Phone','Expiry','Tier'],
         fn:()=>_allV.filter(v=>{const e=getCurrentExpiry(v);const dExp=e?dayDiff(e,today):null;const fu=parseDate(v.followUp);const fuD=fu?dayDiff(today,fu):0;return v.tier==='CALL'||(dExp!==null&&dExp>=0&&dExp<=30&&!isAutoRenew(v))||(fuD>7);}),
         rowFn:v=>{
           const e=getCurrentExpiry(v);const dExp=e?dayDiff(e,today):null;
@@ -16898,7 +16899,7 @@ function renderToday(c) {
         if(sec.hasHdr&&sec.hdrs&&items.length>0){
           const colHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 6px',borderBottom:'1px solid var(--border)',marginBottom:'2px'}});
           // Placeholders to align with leading checkbox and action-buttons columns in each row
-          colHdr.appendChild(el('span',{style:{width:'16px',flexShrink:'0'}},''));
+          colHdr.appendChild(el('span',{style:{width:'28px',flexShrink:'0'}},''));
           colHdr.appendChild(el('span',{style:{width:'90px',flexShrink:'0'}},''));
           sec.hdrs.forEach((h,i)=>colHdr.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:i===0?'none':(i<=2?'1':'none'),minWidth:i===0?'32px':'auto'}},h)));
           body.appendChild(colHdr);
@@ -17045,26 +17046,27 @@ function renderToday(c) {
       const daysSince=lc?dayDiff(today,lc):null,fuDays=fu?dayDiff(today,fu):null;
       const isOvr=fuDays!==null&&fuDays>=0;
       const priScore=Math.round(_fuScore(v));
-      const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'5px 8px',borderRadius:'4px',marginBottom:'3px',flexWrap:'wrap',background:isOvr?'rgba(239,68,68,.06)':'rgba(245,158,11,.04)',border:'1px solid '+(isOvr?'rgba(239,68,68,.15)':'rgba(245,158,11,.12)')}});
-      // B4: Score pill FIRST, before vendor name
+      const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'5px 8px',borderRadius:'4px',marginBottom:'3px',background:isOvr?'rgba(239,68,68,.06)':'rgba(245,158,11,.04)',border:'1px solid '+(isOvr?'rgba(239,68,68,.15)':'rgba(245,158,11,.12)')}});
+      // Score pill
       const _pc=priScore>30?'#ef4444':priScore>=15?'#f59e0b':'#6b7280';
       row.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',color:'#fff',background:_pc,borderRadius:'3px',padding:'1px 5px',flexShrink:'0'},title:'Priority score'},String(priScore)));
-      row.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontWeight:'700',fontSize:'11px',minWidth:'130px',textAlign:'left'},onclick(){openDetail(v);}},v.name));
-      if(v.category) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'80px'}},v.category));
-      const tc={'CALL':'#ef4444','EMAIL':'#f59e0b','REVIEW':'#4f7cff','MONITOR':'#6b7280'}[v.tier]||'#6b7280';
-      if(v.tier) row.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',color:tc,background:tc+'18',padding:'1px 5px',borderRadius:'3px'}},v.tier));
-      const cadence={'CALL':7,'EMAIL':14,'REVIEW':30,'MONITOR':60}[v.tier]||30;
-      const lcColor=daysSince===null?'var(--muted)':daysSince<=cadence?'var(--green)':daysSince<=Math.round(cadence*1.2)?'var(--amber)':'var(--red)';
-      const lcLabel=daysSince===null?'never contacted':daysSince===0?'today':daysSince===1?'yesterday':daysSince+'d ago';
-      row.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:lcColor},title:'Cadence: '+cadence+'d'},lcLabel));
-      if(fu){
-        const fuLabel=isOvr?'⚠ '+fuDays+'d overdue':'Due '+fmtDate(fu);
-        row.appendChild(el('span',{style:{fontSize:'9px',color:isOvr?'#ef4444':'var(--muted)',fontWeight:isOvr?'700':'400'}},fuLabel));
-      }
-      const acts=el('div',{style:{display:'flex',gap:'4px',marginLeft:'auto'}});
+      // Actions in column 1 (left)
+      const acts=el('div',{style:{display:'flex',gap:'4px',flexShrink:'0'}});
       acts.appendChild(el('button',{class:'btn-xs btn-blue',onclick(e){e.stopPropagation();openEmailModal(v);}},'✉ Email'));
       acts.appendChild(el('button',{class:'btn-xs btn-green',onclick(e){e.stopPropagation();openDetail(v);}},'📞 Call'));
       row.appendChild(acts);
+      row.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontWeight:'700',fontSize:'11px',minWidth:'130px',textAlign:'left'},onclick(){openDetail(v);}},v.name));
+      if(v.category) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'80px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},v.category));
+      const tc={'CALL':'#ef4444','EMAIL':'#f59e0b','REVIEW':'#4f7cff','MONITOR':'#6b7280'}[v.tier]||'#6b7280';
+      if(v.tier) row.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',color:tc,background:tc+'18',padding:'1px 5px',borderRadius:'3px',flexShrink:'0'}},v.tier));
+      const cadence={'CALL':7,'EMAIL':14,'REVIEW':30,'MONITOR':60}[v.tier]||30;
+      const lcColor=daysSince===null?'var(--muted)':daysSince<=cadence?'var(--green)':daysSince<=Math.round(cadence*1.2)?'var(--amber)':'var(--red)';
+      const lcLabel=daysSince===null?'never contacted':daysSince===0?'today':daysSince===1?'yesterday':daysSince+'d ago';
+      row.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:lcColor,flexShrink:'0'},title:'Cadence: '+cadence+'d'},lcLabel));
+      if(fu){
+        const fuLabel=isOvr?'⚠ '+fuDays+'d overdue':'Due '+fmtDate(fu);
+        row.appendChild(el('span',{style:{fontSize:'9px',color:isOvr?'#ef4444':'var(--muted)',fontWeight:isOvr?'700':'400',flexShrink:'0'}},fuLabel));
+      }
       fuSec.appendChild(row);
     });
     c.appendChild(fuSec);
@@ -17095,17 +17097,18 @@ function renderToday(c) {
       const daysSinceRev=lr?dayDiff(today,lr):null;
       const revLabel=daysSinceRev===null?'Never reviewed':'Last: '+fmtDate(lr)+' ('+daysSinceRev+'d ago)';
       const revColor=daysSinceRev===null?'var(--red)':daysSinceRev>180?'var(--red)':daysSinceRev>90?'var(--amber)':'var(--muted)';
-      const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'5px 8px',borderRadius:'4px',marginBottom:'3px',flexWrap:'wrap',background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.12)'}});
-      // B4: Score pill FIRST
+      const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'5px 8px',borderRadius:'4px',marginBottom:'3px',background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.12)'}});
+      // Score pill
       const _rs=v.score||0;const _rc=_rs>=8?'#ef4444':_rs>=5?'#f59e0b':'#6b7280';
       row.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',color:'#fff',background:_rc,borderRadius:'3px',padding:'1px 5px',flexShrink:'0'},title:'Priority score'},String(_rs)));
-      row.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontWeight:'700',fontSize:'11px',minWidth:'130px',textAlign:'left'},onclick(){openDetail(v);}},v.name));
-      if(v.category) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'80px'}},v.category));
-      row.appendChild(el('span',{style:{fontSize:'9px',color:revColor,fontWeight:'600'}},revLabel));
-      const acts=el('div',{style:{display:'flex',gap:'4px',marginLeft:'auto'}});
+      // Actions in column 1 (left)
+      const acts=el('div',{style:{display:'flex',gap:'4px',flexShrink:'0'}});
       acts.appendChild(el('button',{class:'btn-xs btn-blue',onclick(e){e.stopPropagation();openEmailModal(v,{subject:'Business Review — '+v.name,body:'Hi,\n\nI\'d like to schedule our quarterly business review with '+v.name+'. Could we find a time in the next two weeks?\n\nAgenda items:\n• Contract performance review\n• Admin fee reconciliation\n• Upcoming renewal planning\n• Any open issues\n\nBest,\n'+(USER.name||USER.email)});}},'📅 Schedule Review'));
       acts.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(e){e.stopPropagation();openDetail(v);}},'→'));
       row.appendChild(acts);
+      row.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontWeight:'700',fontSize:'11px',minWidth:'130px',textAlign:'left'},onclick(){openDetail(v);}},v.name));
+      if(v.category) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'80px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},v.category));
+      row.appendChild(el('span',{style:{fontSize:'9px',color:revColor,fontWeight:'600',flexShrink:'0'}},revLabel));
       revSec.appendChild(row);
     });
     c.appendChild(revSec);
@@ -17958,44 +17961,45 @@ function renderReviews(c) {
     addSortToTable(reviewsTable,[],()=>[]);
     c.appendChild(reviewsTable);
   } else {
+  const _revRowFn=r=>{
+    // Check exact match first, then alias resolution
+    const psd = findPSDVendor(r.name);
+    // Check if there's an alias link even if findPSDVendor returned null
+    const aliasKey = normName(r.name);
+    const aliasedName = S.vendorAliases[aliasKey];
+    const aliasedPSD = !psd && aliasedName ? S.vendors.find(v=>vendorNamesMatch(v.name,aliasedName)) : null;
+    const resolvedPSD = psd || aliasedPSD;
+
+    let nameEl;
+    if (resolvedPSD) {
+      // Known vendor — show in normal color, open full detail on click
+      nameEl = vLink(resolvedPSD, r.name);
+      if (aliasedPSD) {
+        // Show alias indicator
+        const wrap=el('span',{});
+        wrap.appendChild(nameEl);
+        wrap.appendChild(el('div',{style:{fontSize:'8px',color:'var(--blue)'}},'🔗 → '+aliasedPSD.name));
+        nameEl = wrap;
+      } else if (resolvedPSD.name !== r.name) {
+        const wrap=el('span',{});
+        wrap.appendChild(nameEl);
+        wrap.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)'}},'→ '+resolvedPSD.name));
+        nameEl = wrap;
+      }
+    } else {
+      // No match — gray, opens review detail with alias link option
+      nameEl = el('span',{class:'vendor-link',style:{color:'var(--muted)'},onclick(){openReviewDetail(r);}},r.name);
+      nameEl.title = 'No Vendor DB match — click to link';
+    }
+    const noteCell=(txt,fieldName,label)=>makeReviewNoteCell(r,txt,fieldName,label);
+    return [nameEl,makeReviewDateCell(r),makeReviewActionCell(r),noteCell(r.progressNotes,'progressNotes','Progress Notes'),noteCell(r.sfNotes,'sfNotes','SF Notes'),noteCell(r.contractNotes,'contractNotes','Contract Notes')];
+  };
   reviewsTable=buildTable(
     ['Vendor','Date','Action','Review Progress Notes','SF / Meeting Notes','Contract Notes'],
     reviews,
-    r=>{
-      // Check exact match first, then alias resolution
-      const psd = findPSDVendor(r.name);
-      // Check if there's an alias link even if findPSDVendor returned null
-      const aliasKey = normName(r.name);
-      const aliasedName = S.vendorAliases[aliasKey];
-      const aliasedPSD = !psd && aliasedName ? S.vendors.find(v=>vendorNamesMatch(v.name,aliasedName)) : null;
-      const resolvedPSD = psd || aliasedPSD;
-
-      let nameEl;
-      if (resolvedPSD) {
-        // Known vendor — show in normal color, open full detail on click
-        nameEl = vLink(resolvedPSD, r.name);
-        if (aliasedPSD) {
-          // Show alias indicator
-          const wrap=el('span',{});
-          wrap.appendChild(nameEl);
-          wrap.appendChild(el('div',{style:{fontSize:'8px',color:'var(--blue)'}},'🔗 → '+aliasedPSD.name));
-          nameEl = wrap;
-        } else if (resolvedPSD.name !== r.name) {
-          const wrap=el('span',{});
-          wrap.appendChild(nameEl);
-          wrap.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)'}},'→ '+resolvedPSD.name));
-          nameEl = wrap;
-        }
-      } else {
-        // No match — gray, opens review detail with alias link option
-        nameEl = el('span',{class:'vendor-link',style:{color:'var(--muted)'},onclick(){openReviewDetail(r);}},r.name);
-        nameEl.title = 'No Vendor DB match — click to link';
-      }
-      const noteCell=(txt,fieldName,label)=>makeReviewNoteCell(r,txt,fieldName,label);
-      return [nameEl,makeReviewDateCell(r),makeReviewActionCell(r),noteCell(r.progressNotes,'progressNotes','Progress Notes'),noteCell(r.sfNotes,'sfNotes','SF Notes'),noteCell(r.contractNotes,'contractNotes','Contract Notes')];
-    }
+    _revRowFn
   );
-  addSortToTable(reviewsTable,reviews,r=>[r.name||'',r.reviewDate||'',r.action||'',r.reviewNotes||'',r.sfNotes||'',r.contractNotes||'']);
+  addSortToTable(reviewsTable,reviews,_revRowFn);
   c.appendChild(reviewsTable);
   }
   if (S.reviewTPs.length) {
@@ -21025,17 +21029,18 @@ function renderVCSHealth(c) {
       if(S.view==='health') render();
     })();
   }
+  // Init watcher health state — set by "Run Connectivity Tests" button
+  if(typeof S._watcherHealthy==='undefined') S._watcherHealthy=null;
   const checks=[
     {label:'Google Drive Connection',icon:'☁',roles:'admin',test:()=>!!S.settings?.driveFileId,pass:'Drive File ID configured',fail:'No Drive File ID — go to Settings → Integrations',fix:()=>{S.view='settings';render();}},
     {label:'Salesforce Connection',icon:'☁',roles:'all',
       test:()=>{
-        if(!USER.sfToken) return false;
-        // Also check stored expiry — if expired, token is useless even if present in memory
+        if(USER.sfToken) return true; // connected this session — memory token wins
         try {
-          const stored = JSON.parse(localStorage.getItem('vcs_sf_token_ls')||'null');
-          if(stored && stored.expiry && Date.now() > stored.expiry) return false;
+          const stored=JSON.parse(localStorage.getItem('vcs_sf_token_ls')||'null');
+          if(stored&&stored.token&&stored.expiry&&Date.now()<stored.expiry) return true;
         } catch(e){}
-        return true;
+        return false;
       },
       pass:'Connected as '+USER.email,
       fail:'Not connected — click to reconnect',
@@ -21054,7 +21059,7 @@ function renderVCSHealth(c) {
     // H2: Renzo key validation
     {label:'Renzo Key Valid',icon:'✉',roles:'admin',test:()=>!!(S.settings?.renzoApiKey&&S.settings.renzoApiKey.length>10),pass:'Renzo key is '+S.settings?.renzoApiKey?.length+' chars — appears valid',fail:'Renzo key missing or too short',fix:()=>{S.view='settings';render();}},
     // H3: Data watcher status
-    {label:'Data Watcher',icon:'👁',roles:'admin',test:()=>!!(S.settings?.driveFileId&&window.GDriveToken),pass:'Watcher active — Drive connected, file ID set',fail:'Watcher inactive — connect Drive and configure file ID to enable auto-reload',fixLabel:'🔧 Fix Watcher',fix:()=>openWatcherFixModal()}
+    {label:'Data Watcher',icon:'👁',roles:'admin',test:()=>S._watcherHealthy===true,pass:'Watcher healthy — last sync confirmed by connectivity test',fail:S._watcherHealthy===null?'Watcher not yet checked — run Connectivity Tests on this page':'Watcher unreachable — check GAS watcherStatus handler',fixLabel:'🔧 Fix Watcher',fix:()=>openWatcherFixModal()}
 ,
     // C1: PSD Schema Integrity
     {label:'PSD Column Map (C1)',icon:'📊',roles:'admin',
@@ -21200,19 +21205,19 @@ function renderVCSHealth(c) {
         if(!r.ok) throw new Error('HTTP '+r.status);
         const d=await r.json();
         if(!d||d.error) throw new Error(d?.error||'No watcher data');
-        if(!d.found&&!d.lastRunAt) return {text:'No watcher log found — is Watcher running?',color:'var(--amber)'};
+        if(!d.found&&!d.lastRunAt){S._watcherHealthy=false;return {text:'No watcher log found — is Watcher running?',color:'var(--amber)'};}
         const lastRun=new Date(d.lastRunAt||d.lastRun||d.timestamp);
         const mins=Math.round((Date.now()-lastRun)/60000);
         const h=mins/60;
         const label=mins<60?mins+'m ago':Math.round(h)+'h ago';
-        if(h>24) return {text:'Last sync: '+label+' — watcher may be offline',color:'var(--red)'};
-        if(h>2) return {text:'Last sync: '+label+' — check watcher health',color:'var(--amber)'};
-        return {text:'Last sync: '+label+' — healthy',color:'var(--green)'};
+        if(h>24){S._watcherHealthy=false;return {text:'Last sync: '+label+' — watcher may be offline',color:'var(--red)'};}
+        if(h>2){S._watcherHealthy=false;return {text:'Last sync: '+label+' — check watcher health',color:'var(--amber)'};}
+        S._watcherHealthy=true;return {text:'Last sync: '+label+' — healthy',color:'var(--green)'};
       }catch(e){
         if(e.message.includes('404')||e.message.includes('not supported')||e.message.includes('HTTP 4')){
           return {text:'Proxy does not support watcherStatus (update GAS script to enable)',color:'var(--amber)'};
         }
-        throw e;
+        S._watcherHealthy=false;throw e;
       }
     });
     testBtn.disabled=false; testBtn.textContent='▶ Run Tests Again';
