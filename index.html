@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -706,6 +706,10 @@ body.light-theme .sb-logo-text{color:var(--blue)}
 ::-webkit-scrollbar-thumb{background:#3a3d52;border-radius:4px}
 ::-webkit-scrollbar-thumb:hover{background:var(--muted)}
 ::-webkit-scrollbar-corner{background:transparent}
+#vdb-table-wrap{overflow-x:auto!important;overflow-y:auto!important}
+#vdb-table-wrap::-webkit-scrollbar{height:8px;width:8px}
+#vdb-table-wrap::-webkit-scrollbar-track{background:rgba(0,0,0,.05)}
+#vdb-table-wrap::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
 /* no-duplicate-titles policy: page titles live exclusively in #view-title.
    Render functions must not add h1/h2 that repeat the nav-bar page name.
    h3 section headings within a page are permitted and should not be removed.
@@ -7048,6 +7052,7 @@ function sfConnect(){
       startSFTokenMonitor();
       console.log('[VCS SF] Connected. Instance:', USER.sfInstance);
       toast('✓ Salesforce connected');updateUserBadge();
+if(S.view==='health'){const _hc=$('content');if(_hc){_hc.innerHTML='';renderVCSHealth(_hc);}}
       // If vendor panel is open, auto-reload its SF data
       if(_openDetailVendor){ delete _openDetailVendor._sfCache; }
       if(S.view)render();}}catch(e){}},500);
@@ -9078,7 +9083,7 @@ function renderVendorDB(c) {
     });
   }
 
-  const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap',style:{overflowX:'auto',overflowY:'auto',maxHeight:'calc(100vh - 180px)',width:'100%',border:'1px solid var(--border)',borderRadius:'4px',display:'block',WebkitOverflowScrolling:'touch'}});
+  const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap',style:{overflowX:'auto',overflowY:'auto',maxHeight:'calc(100vh - 180px)',width:'100%',minWidth:'0',position:'relative',border:'1px solid var(--border)',borderRadius:'4px',display:'block',WebkitOverflowScrolling:'touch',scrollbarWidth:'auto',scrollbarColor:'var(--border) transparent'}});
   const table=el('table',{class:'data-table',style:{borderCollapse:'collapse'}});
   const thead=el('thead'), trh=el('tr');
 
@@ -16782,50 +16787,35 @@ function renderToday(c) {
     const _allV=(S.vendors||[]).filter(isVisible);
     const _todaySections=[
       {key:'urgent',icon:'🚨',label:'Urgent Actions',color:'var(--red)',
-        hasHdr:true,hdrs:['Score','Vendor','Category','Phone','Expiry','Tier'],
+        tblHdrs:['','Actions','Score','Vendor','Category','Phone','Expiry','Tier'],
         fn:()=>_allV.filter(v=>{const e=getCurrentExpiry(v);const dExp=e?dayDiff(e,today):null;const fu=parseDate(v.followUp);const fuD=fu?dayDiff(today,fu):0;return v.tier==='CALL'||(dExp!==null&&dExp>=0&&dExp<=30&&!isAutoRenew(v))||(fuD>7);}),
         rowFn:v=>{
           const e=getCurrentExpiry(v);const dExp=e?dayDiff(e,today):null;
           const _ph=v.phone||v.bizPhone||v.contactPhone||v.mobile||'';
-          const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'4px 6px',borderRadius:'3px',cursor:'pointer',background:'rgba(239,68,68,.04)',borderLeft:'3px solid var(--red)'},
-            onclick(ev){if(ev.target.tagName==='BUTTON'||ev.target.tagName==='A'||ev.target.closest('button')||ev.target.closest('.action-cell'))return;openDetail(v);}});
-          row.appendChild(el('input',{type:'checkbox',style:{flexShrink:'0'},onclick(e){e.stopPropagation();}}));
-          row.appendChild(_todayRowBtns(v));
-          if(v.score!=null)row.appendChild(scorePill(v.score));else row.appendChild(el('span',{style:{width:'32px'}},''));
-          row.appendChild(el('span',{style:{fontWeight:'700',fontSize:'10px',minWidth:'110px',maxWidth:'110px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--blue)'}},v.name));
-          row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},v.category||''));
-          if(_ph)row.appendChild(el('a',{href:'tel:'+_ph.replace(/[^+\d]/g,''),style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none',flexShrink:'0'},onclick(e){e.stopPropagation();}},_ph.slice(0,12)));
-          if(dExp!==null)row.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'700',color:dExp<=30?'var(--red)':'var(--muted)',flexShrink:'0'}},dExp+'d'));
-          if(v.tier)row.appendChild(tierTag(v.tier));
-          return row;}},
+          const cb=el('input',{type:'checkbox',onclick(ev){ev.stopPropagation();}});
+          const nameEl=el('span',{style:{fontWeight:'700',fontSize:'10px',color:'var(--blue)',cursor:'pointer'},onclick(){openDetail(v);}},v.name);
+          const phEl=_ph?el('a',{href:'tel:'+_ph.replace(/[^+\d]/g,''),style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none'},onclick(ev){ev.stopPropagation();}},_ph.slice(0,12)):'';
+          const expEl=dExp!==null?el('span',{style:{fontSize:'9px',fontWeight:'700',color:dExp<=30?'var(--red)':'var(--muted)'}},dExp+'d'):'';
+          return [cb,_todayRowBtns(v),v.score!=null?scorePill(v.score):'',nameEl,v.category||'',phEl,expEl,v.tier?tierTag(v.tier):''];}},
       {key:'call',icon:'📞',label:'Call Queue',color:'var(--red)',
-        hasHdr:true,hdrs:['Score','Vendor','Category','Contact','Phone','Due'],
+        tblHdrs:['','Actions','Score','Vendor','Category','Contact','Phone','Due'],
         fn:()=>_allV.filter(v=>v.tier==='CALL').sort((a,b)=>b.score-a.score),
         rowFn:v=>{const fu=parseDate(v.followUp);const fuD=fu?dayDiff(today,fu):null;const _ph=v.phone||v.bizPhone||v.contactPhone||v.mobile||'';
-          const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'4px 6px',cursor:'pointer'},onclick(ev){if(ev.target.closest('button')||ev.target.tagName==='A')return;openDetail(v);}});
-          row.appendChild(el('input',{type:'checkbox',style:{flexShrink:'0'},onclick(e){e.stopPropagation();}}));
-          row.appendChild(_todayRowBtns(v));
-          if(v.score!=null)row.appendChild(scorePill(v.score));
-          row.appendChild(el('span',{style:{fontWeight:'700',fontSize:'10px',minWidth:'110px',maxWidth:'110px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--blue)'}},v.name));
-          row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},v.category||''));
-          if(v.procContact)row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--text)',flexShrink:'0'}},v.procContact.split(' ')[0]));
-          if(_ph)row.appendChild(el('a',{href:'tel:'+_ph.replace(/[^+\d]/g,''),style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none',flexShrink:'0'},onclick(e){e.stopPropagation();}},_ph.slice(0,12)));
-          if(fuD!==null)row.appendChild(el('span',{style:{fontSize:'9px',color:fuD>0?'var(--red)':'var(--muted)',fontWeight:fuD>0?'700':'400',flexShrink:'0'}},(fuD>0?'Overdue':'Due in '+((-fuD)+'d'))));
-          return row;}},
+          const cb=el('input',{type:'checkbox',onclick(ev){ev.stopPropagation();}});
+          const nameEl=el('span',{style:{fontWeight:'700',fontSize:'10px',color:'var(--blue)',cursor:'pointer'},onclick(){openDetail(v);}},v.name);
+          const phEl=_ph?el('a',{href:'tel:'+_ph.replace(/[^+\d]/g,''),style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none'},onclick(ev){ev.stopPropagation();}},_ph.slice(0,12)):'';
+          const dueEl=fuD!==null?el('span',{style:{fontSize:'9px',color:fuD>0?'var(--red)':'var(--muted)',fontWeight:fuD>0?'700':'400'}},(fuD>0?'Overdue':'Due in '+((-fuD)+'d'))):'';
+          return [cb,_todayRowBtns(v),v.score!=null?scorePill(v.score):'',nameEl,v.category||'',v.procContact?v.procContact.split(' ')[0]:'',phEl,dueEl];}},
       {key:'email',icon:'📧',label:'Email Queue',color:'var(--amber)',
-        hasHdr:true,hdrs:['Score','Vendor','Category','Reason','Email','Due'],
+        tblHdrs:['','Actions','Score','Vendor','Category','Reason','Email','Due'],
         fn:()=>_allV.filter(v=>v.tier==='EMAIL').sort((a,b)=>b.score-a.score),
         rowFn:v=>{const fu=parseDate(v.followUp);const fuD=fu?dayDiff(today,fu):null;const _lc=parseDate(v.lastComm);const _lcDays=_lc?dayDiff(_lc,today):null;const _reason=v.tier==='EMAIL'?(fuD!==null&&fuD>0?'Overdue follow-up':_lcDays!==null?'Last contact: '+_lcDays+'d ago':'Due for outreach'):'';
-          const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'4px 6px',cursor:'pointer'},onclick(ev){if(ev.target.closest('button')||ev.target.tagName==='A')return;openDetail(v);}});
-          row.appendChild(el('input',{type:'checkbox',style:{flexShrink:'0'},onclick(e){e.stopPropagation();}}));
-          row.appendChild(_todayRowBtns(v));
-          if(v.score!=null)row.appendChild(scorePill(v.score));
-          row.appendChild(el('span',{style:{fontWeight:'700',fontSize:'10px',minWidth:'110px',maxWidth:'110px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--blue)'}},v.name));
-          row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},v.category||''));
-          if(_reason)row.appendChild(el('span',{style:{fontSize:'8px',color:'var(--amber)',flexShrink:'0',maxWidth:'100px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'},title:_reason},_reason));
-          if(v.email)row.appendChild(el('a',{href:'mailto:'+v.email,style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none',flexShrink:'0'},onclick(e){e.stopPropagation();},title:v.email},'\u2709'+v.email.split('@')[0].slice(0,10)));
-          if(fuD!==null)row.appendChild(el('span',{style:{fontSize:'9px',color:fuD>0?'var(--amber)':'var(--muted)',fontWeight:fuD>0?'700':'400',flexShrink:'0'}},(fuD>0?'Overdue':fuD===0?'Today':'In '+(-fuD)+'d')));
-          return row;}},
+          const cb=el('input',{type:'checkbox',onclick(ev){ev.stopPropagation();}});
+          const nameEl=el('span',{style:{fontWeight:'700',fontSize:'10px',color:'var(--blue)',cursor:'pointer'},onclick(){openDetail(v);}},v.name);
+          const reasonEl=_reason?el('span',{style:{fontSize:'8px',color:'var(--amber)'},title:_reason},_reason):'';
+          const emailEl=v.email?el('a',{href:'mailto:'+v.email,style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none'},onclick(ev){ev.stopPropagation();},title:v.email},'\u2709'+v.email.split('@')[0].slice(0,10)):'';
+          const dueEl=fuD!==null?el('span',{style:{fontSize:'9px',color:fuD>0?'var(--amber)':'var(--muted)',fontWeight:fuD>0?'700':'400'}},(fuD>0?'Overdue':fuD===0?'Today':'In '+(-fuD)+'d')):'';
+          return [cb,_todayRowBtns(v),v.score!=null?scorePill(v.score):'',nameEl,v.category||'',reasonEl,emailEl,dueEl];}},
       {key:'review',icon:'📋',label:'Business Reviews Due',color:'var(--blue)',
         fn:()=>_allV.filter(v=>{const fu=parseDate(v.followUp);return v.tier==='REVIEW'&&fu&&dayDiff(today,fu)>=0;}).sort((a,b)=>b.score-a.score),
         rowFn:v=>{const fu=parseDate(v.followUp);const _lc=parseDate(v.lastComm);const _lcDays=_lc?dayDiff(_lc,today):null;const schedBtn=el('button',{class:'btn-xs btn-blue',style:{fontSize:'8px',flexShrink:'0'},onclick(e){e.stopPropagation();openCalendarEventModal(isoDate(today),v.name);}});schedBtn.textContent='Schedule';return el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'4px 8px',borderRadius:'3px',cursor:'pointer'},onclick(){openDetail(v);}},
@@ -16895,15 +16885,7 @@ function renderToday(c) {
       secWrap.appendChild(hdrEl);
       if(isOpen){
         const body=el('div',{style:{marginBottom:'6px',padding:'4px 4px',border:'1px solid var(--border)',borderTop:'none',borderRadius:'0 0 4px 4px',background:'var(--bg)'}});
-        // D2: column headers for queue sections
-        if(sec.hasHdr&&sec.hdrs&&items.length>0){
-          const colHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 6px',borderBottom:'1px solid var(--border)',marginBottom:'2px'}});
-          // Placeholders to align with leading checkbox and action-buttons columns in each row
-          colHdr.appendChild(el('span',{style:{width:'28px',flexShrink:'0'}},''));
-          colHdr.appendChild(el('span',{style:{width:'90px',flexShrink:'0'}},''));
-          sec.hdrs.forEach((h,i)=>colHdr.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:i===0?'none':(i<=2?'1':'none'),minWidth:i===0?'32px':'auto'}},h)));
-          body.appendChild(colHdr);
-        }
+        // D2: column headers — now handled by buildTable for tblHdrs sections
         if(sec.isStats){
           const sGrid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:'6px',padding:'4px'}});
           [['CALL Tier',_allV.filter(v=>v.tier==='CALL').length,'var(--red)'],
@@ -16922,7 +16904,11 @@ function renderToday(c) {
         } else if(!items.length){
           body.appendChild(el('div',{style:{padding:'8px 12px',fontSize:'10px',color:'var(--green)',fontWeight:'600'}},'✓ All clear'));
         } else {
-          items.slice(0,15).forEach(v=>body.appendChild(sec.rowFn(v)));
+          if(sec.tblHdrs){
+            body.appendChild(buildTable(sec.tblHdrs,items.slice(0,15),sec.rowFn));
+          } else {
+            items.slice(0,15).forEach(v=>body.appendChild(sec.rowFn(v)));
+          }
           if(sec.key==='pipeline'){
             const _ACTIVE_SECS=['New','Existing','AI','Pipe Line'];
             const _totalITW=(S.itw||[]).filter(v=>{
@@ -17041,34 +17027,32 @@ function renderToday(c) {
     fuHdr.appendChild(el('span',{style:{flex:'1'}},'Relationship Follow-ups'));
     fuHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_fuVendors.length?_fuVendors.length+' vendors':''));
     fuSec.appendChild(fuHdr);
-    if(_fuOpen) _fuVendors.forEach(v=>{
-      const lc=parseDate(v.lastComm),fu=parseDate(v.followUp);
-      const daysSince=lc?dayDiff(today,lc):null,fuDays=fu?dayDiff(today,fu):null;
-      const isOvr=fuDays!==null&&fuDays>=0;
-      const priScore=Math.round(_fuScore(v));
-      const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'5px 8px',borderRadius:'4px',marginBottom:'3px',background:isOvr?'rgba(239,68,68,.06)':'rgba(245,158,11,.04)',border:'1px solid '+(isOvr?'rgba(239,68,68,.15)':'rgba(245,158,11,.12)')}});
-      // Score pill
-      const _pc=priScore>30?'#ef4444':priScore>=15?'#f59e0b':'#6b7280';
-      row.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',color:'#fff',background:_pc,borderRadius:'3px',padding:'1px 5px',flexShrink:'0'},title:'Priority score'},String(priScore)));
-      // Actions in column 1 (left)
-      const acts=el('div',{style:{display:'flex',gap:'4px',flexShrink:'0'}});
-      acts.appendChild(el('button',{class:'btn-xs btn-blue',onclick(e){e.stopPropagation();openEmailModal(v);}},'✉ Email'));
-      acts.appendChild(el('button',{class:'btn-xs btn-green',onclick(e){e.stopPropagation();openDetail(v);}},'📞 Call'));
-      row.appendChild(acts);
-      row.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontWeight:'700',fontSize:'11px',minWidth:'130px',textAlign:'left'},onclick(){openDetail(v);}},v.name));
-      if(v.category) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'80px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},v.category));
-      const tc={'CALL':'#ef4444','EMAIL':'#f59e0b','REVIEW':'#4f7cff','MONITOR':'#6b7280'}[v.tier]||'#6b7280';
-      if(v.tier) row.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',color:tc,background:tc+'18',padding:'1px 5px',borderRadius:'3px',flexShrink:'0'}},v.tier));
-      const cadence={'CALL':7,'EMAIL':14,'REVIEW':30,'MONITOR':60}[v.tier]||30;
-      const lcColor=daysSince===null?'var(--muted)':daysSince<=cadence?'var(--green)':daysSince<=Math.round(cadence*1.2)?'var(--amber)':'var(--red)';
-      const lcLabel=daysSince===null?'never contacted':daysSince===0?'today':daysSince===1?'yesterday':daysSince+'d ago';
-      row.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:lcColor,flexShrink:'0'},title:'Cadence: '+cadence+'d'},lcLabel));
-      if(fu){
-        const fuLabel=isOvr?'⚠ '+fuDays+'d overdue':'Due '+fmtDate(fu);
-        row.appendChild(el('span',{style:{fontSize:'9px',color:isOvr?'#ef4444':'var(--muted)',fontWeight:isOvr?'700':'400',flexShrink:'0'}},fuLabel));
-      }
-      fuSec.appendChild(row);
-    });
+    if(_fuOpen){
+      fuSec.appendChild(buildTable(
+        ['','Actions','Vendor','Category','Tier','Follow-Up','Last Contact'],
+        _fuVendors,
+        v=>{
+          const lc=parseDate(v.lastComm),fu=parseDate(v.followUp);
+          const daysSince=lc?dayDiff(today,lc):null,fuDays=fu?dayDiff(today,fu):null;
+          const isOvr=fuDays!==null&&fuDays>=0;
+          const priScore=Math.round(_fuScore(v));
+          const _pc=priScore>30?'#ef4444':priScore>=15?'#f59e0b':'#6b7280';
+          const scoreEl=el('span',{style:{fontSize:'8px',fontWeight:'700',color:'#fff',background:_pc,borderRadius:'3px',padding:'1px 5px'},title:'Priority score'},String(priScore));
+          const acts=el('div',{style:{display:'flex',gap:'4px'}});
+          acts.appendChild(el('button',{class:'btn-xs btn-blue',onclick(e){e.stopPropagation();openEmailModal(v);}},'✉ Email'));
+          acts.appendChild(el('button',{class:'btn-xs btn-green',onclick(e){e.stopPropagation();openDetail(v);}},'📞 Call'));
+          const nameEl=el('span',{style:{fontWeight:'600',fontSize:'10px',color:'var(--blue)',cursor:'pointer'},onclick(){openDetail(v);}},v.name||'');
+          const tierEl=v.tier?tierTag(v.tier):'—';
+          const cadence={'CALL':7,'EMAIL':14,'REVIEW':30,'MONITOR':60}[v.tier]||30;
+          const lcColor=daysSince===null?'var(--muted)':daysSince<=cadence?'var(--green)':daysSince<=Math.round(cadence*1.2)?'var(--amber)':'var(--red)';
+          const lcLabel=daysSince===null?'never contacted':daysSince===0?'today':daysSince===1?'yesterday':daysSince+'d ago';
+          const lcEl=el('span',{style:{fontSize:'9px',fontWeight:'600',color:lcColor},title:'Cadence: '+cadence+'d'},lcLabel);
+          const fuLabel=fu?(isOvr?'⚠ '+fuDays+'d overdue':'Due '+fmtDate(fu)):'—';
+          const fuEl=el('span',{style:{fontSize:'9px',color:isOvr?'#ef4444':'var(--muted)',fontWeight:isOvr?'700':'400'}},fuLabel);
+          return [scoreEl,acts,nameEl,v.category||'',tierEl,fuEl,lcEl];
+        }
+      ));
+    }
     c.appendChild(fuSec);
   }
 
@@ -17092,25 +17076,27 @@ function renderToday(c) {
     revHdr.appendChild(el('span',{style:{flex:'1'}},'Business Reviews Due'));
     revHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_revDue.length?_revDue.length+' vendors':''));
     revSec.appendChild(revHdr);
-    if(_revOpen) _revDue.forEach(v=>{
-      const lr=parseDate(v.lastReview);
-      const daysSinceRev=lr?dayDiff(today,lr):null;
-      const revLabel=daysSinceRev===null?'Never reviewed':'Last: '+fmtDate(lr)+' ('+daysSinceRev+'d ago)';
-      const revColor=daysSinceRev===null?'var(--red)':daysSinceRev>180?'var(--red)':daysSinceRev>90?'var(--amber)':'var(--muted)';
-      const row=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'5px 8px',borderRadius:'4px',marginBottom:'3px',background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.12)'}});
-      // Score pill
-      const _rs=v.score||0;const _rc=_rs>=8?'#ef4444':_rs>=5?'#f59e0b':'#6b7280';
-      row.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',color:'#fff',background:_rc,borderRadius:'3px',padding:'1px 5px',flexShrink:'0'},title:'Priority score'},String(_rs)));
-      // Actions in column 1 (left)
-      const acts=el('div',{style:{display:'flex',gap:'4px',flexShrink:'0'}});
-      acts.appendChild(el('button',{class:'btn-xs btn-blue',onclick(e){e.stopPropagation();openEmailModal(v,{subject:'Business Review — '+v.name,body:'Hi,\n\nI\'d like to schedule our quarterly business review with '+v.name+'. Could we find a time in the next two weeks?\n\nAgenda items:\n• Contract performance review\n• Admin fee reconciliation\n• Upcoming renewal planning\n• Any open issues\n\nBest,\n'+(USER.name||USER.email)});}},'📅 Schedule Review'));
-      acts.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(e){e.stopPropagation();openDetail(v);}},'→'));
-      row.appendChild(acts);
-      row.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontWeight:'700',fontSize:'11px',minWidth:'130px',textAlign:'left'},onclick(){openDetail(v);}},v.name));
-      if(v.category) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'80px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},v.category));
-      row.appendChild(el('span',{style:{fontSize:'9px',color:revColor,fontWeight:'600',flexShrink:'0'}},revLabel));
-      revSec.appendChild(row);
-    });
+    if(_revOpen){
+      revSec.appendChild(buildTable(
+        ['','Actions','Vendor','Category','Tier','Last Review'],
+        _revDue,
+        v=>{
+          const lr=parseDate(v.lastReview);
+          const daysSinceRev=lr?dayDiff(today,lr):null;
+          const revLabel=daysSinceRev===null?'Never reviewed':'Last: '+fmtDate(lr)+' ('+daysSinceRev+'d ago)';
+          const revColor=daysSinceRev===null?'var(--red)':daysSinceRev>180?'var(--red)':daysSinceRev>90?'var(--amber)':'var(--muted)';
+          const _rs=v.score||0;const _rc=_rs>=8?'#ef4444':_rs>=5?'#f59e0b':'#6b7280';
+          const scoreEl=el('span',{style:{fontSize:'8px',fontWeight:'700',color:'#fff',background:_rc,borderRadius:'3px',padding:'1px 5px'},title:'Priority score'},String(_rs));
+          const acts=el('div',{style:{display:'flex',gap:'4px'}});
+          acts.appendChild(el('button',{class:'btn-xs btn-blue',onclick(e){e.stopPropagation();openEmailModal(v,{subject:'Business Review — '+v.name,body:'Hi,\n\nI\'d like to schedule our quarterly business review with '+v.name+'. Could we find a time in the next two weeks?\n\nAgenda items:\n• Contract performance review\n• Admin fee reconciliation\n• Upcoming renewal planning\n• Any open issues\n\nBest,\n'+(USER.name||USER.email)});}},'📅 Schedule Review'));
+          acts.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(e){e.stopPropagation();openDetail(v);}},'→'));
+          const nameEl=el('span',{style:{fontWeight:'600',fontSize:'10px',color:'var(--blue)',cursor:'pointer'},onclick(){openDetail(v);}},v.name||'');
+          const tierEl=v.tier?tierTag(v.tier):'—';
+          const revEl=el('span',{style:{fontSize:'9px',color:revColor,fontWeight:'600'}},revLabel);
+          return [scoreEl,acts,nameEl,v.category||'',tierEl,revEl];
+        }
+      ));
+    }
     c.appendChild(revSec);
   }
 
@@ -21111,7 +21097,7 @@ function renderVCSHealth(c) {
   const _seenLabels=new Set();
   const _dedupChecks=_visibleChecks.filter(chk=>{if(_seenLabels.has(chk.label))return false;_seenLabels.add(chk.label);return true;});
 
-  const grid=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:'8px',marginBottom:'16px'}});
+  const grid=el('div',{id:'vcs-status-grid',style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:'8px',marginBottom:'16px'}});
   _dedupChecks.forEach(chk=>{
     const ok=chk.test();
     const card=el('div',{style:{background:'var(--card)',border:'1px solid '+(ok?'rgba(34,197,94,.3)':'rgba(239,68,68,.3)'),borderRadius:'6px',padding:'10px 12px',display:'flex',gap:'8px',alignItems:'flex-start'}});
@@ -21221,6 +21207,22 @@ function renderVCSHealth(c) {
       }
     });
     testBtn.disabled=false; testBtn.textContent='▶ Run Tests Again';
+    // Rebuild status cards in-place with updated flags (_watcherHealthy, _renzoHealthy)
+    const _sg=document.getElementById('vcs-status-grid');
+    if(_sg){
+      _sg.innerHTML='';
+      _dedupChecks.forEach(chk=>{
+        const ok=chk.test();
+        const card=el('div',{style:{background:'var(--card)',border:'1px solid '+(ok?'rgba(34,197,94,.3)':'rgba(239,68,68,.3)'),borderRadius:'6px',padding:'10px 12px',display:'flex',gap:'8px',alignItems:'flex-start'}});
+        card.appendChild(el('span',{style:{fontSize:'16px',flexShrink:'0'}},ok?'✅':'❌'));
+        const _ci=el('div',{style:{flex:'1',minWidth:'0'}});
+        _ci.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',color:ok?'var(--green)':'var(--red)',marginBottom:'2px'}},chk.label));
+        _ci.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',marginBottom:'3px'}},ok?chk.pass:chk.fail));
+        if(!ok&&chk.fix){const fixBtn=el('button',{class:'btn-xs btn-primary',style:{fontSize:'8px',marginTop:'2px'},onclick(){chk.fix();}},chk.fixLabel||'🔧 Fix It');_ci.appendChild(fixBtn);}
+        card.appendChild(_ci);
+        _sg.appendChild(card);
+      });
+    }
   }},'▶ Run Connectivity Tests');
   pingSec.appendChild(testBtn);
   wrap.appendChild(pingSec);
