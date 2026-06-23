@@ -1,4 +1,372 @@
 ﻿<!DOCTYPE html>
+</html>
+function renderDiscovery(c) {
+  c.innerHTML = '';
+  if (!S.loaded) { c.appendChild(el('p',{style:{padding:'20px',color:'var(--muted)'}},'Load a vendor file first.')); return; }
+  if (!S.discovery) S.discovery = {files:[],facility:'',repId:'',categories:[],totalSpend:null,sfOppId:null,sessionId:null,sessions:[]};
+  const DS = S.discovery;
+  const wrap = el('div',{style:{maxWidth:'960px',margin:'0 auto',padding:'16px'}});
+  wrap.appendChild(_discHeader());
+  wrap.appendChild(_discFacilityFields(DS));
+  wrap.appendChild(_discUploadZone(DS));
+  if (DS.files.length) wrap.appendChild(_discFileQueue(DS));
+  if (DS.categories.length) {
+    wrap.appendChild(_discResultsSummary(DS));
+    wrap.appendChild(_discActions(DS));
+  }
+  wrap.appendChild(_discPastSessions(DS));
+  c.appendChild(wrap);
+}
+
+function _discRerender() {
+  const c2=$('content'); if(c2){c2.innerHTML='';renderDiscovery(c2);}
+}
+
+function _discHeader() {
+  const hdr=el('div',{style:{marginBottom:'16px'}});
+  hdr.appendChild(el('h2',{style:{margin:'0 0 4px',fontSize:'16px',fontWeight:'700'}},'🔍 Client Spend Discovery'));
+  hdr.appendChild(el('p',{style:{margin:'0',fontSize:'10px',color:'var(--muted)'}},'Upload client invoices/spend reports. AI extracts spending categories and estimates to seed the vendor checklist.'));
+  return hdr;
+}
+
+function _discFacilityFields(DS) {
+  const sec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'14px',marginBottom:'12px'}});
+  sec.appendChild(el('h3',{style:{margin:'0 0 10px',fontSize:'12px',fontWeight:'700'}},'Facility & Assignment'));
+  const row=el('div',{style:{display:'flex',gap:'10px',flexWrap:'wrap'}});
+  const facWrap=el('div',{style:{flex:'2',minWidth:'200px'}});
+  facWrap.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'3px'}},'Facility / Account Name'));
+  const facInp=el('input',{type:'text',class:'detail-edit-field',placeholder:'e.g. Sunrise Senior Living',value:DS.facility||'',style:{width:'100%',height:'28px',boxSizing:'border-box'}});
+  facInp.addEventListener('input',function(){DS.facility=facInp.value.trim();saveSessionState();});
+  facWrap.appendChild(facInp);
+  row.appendChild(facWrap);
+  const repWrap=el('div',{style:{flex:'1',minWidth:'160px'}});
+  repWrap.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'3px'}},'Assigned Rep'));
+  const repSel=el('select',{class:'detail-edit-field',style:{width:'100%',height:'28px'}});
+  repSel.appendChild(el('option',{value:''},'— Select Rep —'));
+  try {
+    const allUsers=getApprovedUsers()||[];
+    allUsers.filter(function(u){return u.role==='sales'||u.role==='admin'||u.role==='procurement';}).forEach(function(u){
+      const name=(u.name||u.email||'').split('@')[0].replace(/[._]/g,' ');
+      const opt=el('option',{value:u.email||name},name);
+      if(DS.repId===u.email||DS.repId===name) opt.selected=true;
+      repSel.appendChild(opt);
+    });
+    if(S._sfActiveUsers&&S._sfActiveUsers.length){
+      S._sfActiveUsers.forEach(function(u){
+        const name=u.Name||u.name||''; if(!name) return;
+        const opt=el('option',{value:u.Email||name},name);
+        if(DS.repId===u.Email||DS.repId===name) opt.selected=true;
+        repSel.appendChild(opt);
+      });
+    }
+  } catch(e) {}
+  repSel.addEventListener('change',function(){DS.repId=repSel.value;saveSessionState();});
+  repWrap.appendChild(repSel);
+  row.appendChild(repWrap);
+  const bedsWrap=el('div',{style:{minWidth:'100px'}});
+  bedsWrap.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'3px'}},'Est. Beds/Units'));
+  const bedsInp=el('input',{type:'number',class:'detail-edit-field',placeholder:'e.g. 120',value:DS.beds||'',style:{width:'100%',height:'28px',boxSizing:'border-box'}});
+  bedsInp.addEventListener('input',function(){DS.beds=bedsInp.value;saveSessionState();});
+  bedsWrap.appendChild(bedsInp);
+  row.appendChild(bedsWrap);
+  sec.appendChild(row);
+  return sec;
+}
+
+function _discUploadZone(DS) {
+  const sec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'14px',marginBottom:'12px'}});
+  sec.appendChild(el('h3',{style:{margin:'0 0 10px',fontSize:'12px',fontWeight:'700'}},'Upload Files'));
+  const zone=el('div',{style:{border:'2px dashed var(--border)',borderRadius:'6px',padding:'28px',textAlign:'center',cursor:'pointer',background:'var(--bg)',transition:'border-color .15s'}});
+  zone.appendChild(el('div',{style:{fontSize:'28px',marginBottom:'6px'}},'📎'));
+  zone.appendChild(el('div',{style:{fontSize:'11px',fontWeight:'600',color:'var(--text)',marginBottom:'4px'}},'Drop files here or click to browse'));
+  zone.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},'Supports: PDF, Excel (.xlsx/.xls), CSV — multiple files accepted'));
+  const fileInp=el('input',{type:'file',accept:'.pdf,.xlsx,.xls,.csv',multiple:'multiple',style:{display:'none'}});
+  fileInp.addEventListener('change',function(ev){
+    const files=Array.from(ev.target.files||[]);
+    files.forEach(function(file){
+      if(DS.files.some(function(f){return f.name===file.name&&f.size===file.size;})) return;
+      const entry={name:file.name,size:file.size,status:'queued',result:null,error:null,fileData:null};
+      DS.files.push(entry);
+      const reader=new FileReader();
+      reader.onload=function(e){entry.fileData=e.target.result;saveSessionState();};
+      reader.readAsDataURL(file);
+    });
+    saveSessionState(); _discRerender();
+  });
+  zone.addEventListener('click',function(){fileInp.click();});
+  zone.addEventListener('dragover',function(e){e.preventDefault();zone.style.borderColor='var(--blue)';});
+  zone.addEventListener('dragleave',function(){zone.style.borderColor='var(--border)';});
+  zone.addEventListener('drop',function(e){
+    e.preventDefault(); zone.style.borderColor='var(--border)';
+    const files=Array.from(e.dataTransfer.files||[]);
+    files.forEach(function(file){
+      if(DS.files.some(function(f){return f.name===file.name&&f.size===file.size;})) return;
+      const entry={name:file.name,size:file.size,status:'queued',result:null,error:null,fileData:null};
+      DS.files.push(entry);
+      const reader=new FileReader();
+      reader.onload=function(e2){entry.fileData=e2.target.result;saveSessionState();};
+      reader.readAsDataURL(file);
+    });
+    saveSessionState(); _discRerender();
+  });
+  zone.appendChild(fileInp);
+  sec.appendChild(zone);
+  return sec;
+}
+
+function _discFileQueue(DS) {
+  const sec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'14px',marginBottom:'12px'}});
+  const qHdr=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'10px'}});
+  qHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'12px',fontWeight:'700'}},'File Queue ('+DS.files.length+' file'+(DS.files.length!==1?'s':'')+')'));
+  const pending=DS.files.filter(function(f){return f.status==='queued';});
+  const processBtn=el('button',{class:'btn-primary',style:{fontSize:'10px',padding:'4px 12px'}});
+  processBtn.textContent='▶ Process All ('+pending.length+' pending)';
+  if(!pending.length) processBtn.disabled=true;
+  processBtn.addEventListener('click',function(){_discProcessAll(DS);});
+  qHdr.appendChild(processBtn);
+  sec.appendChild(qHdr);
+  const tbl=el('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:'10px'}});
+  const thead=el('thead');
+  const trh=el('tr',{style:{background:'var(--bg)'}});
+  ['File','Size','Status',''].forEach(function(h){
+    trh.appendChild(el('th',{style:{padding:'4px 8px',textAlign:'left',fontWeight:'600',fontSize:'9px',color:'var(--muted)',borderBottom:'1px solid var(--border)'}},h));
+  });
+  thead.appendChild(trh); tbl.appendChild(thead);
+  const tbody=el('tbody',{id:'disc-queue-tbody'});
+  DS.files.forEach(function(f,i){
+    const statusColors={queued:'var(--muted)',processing:'var(--amber)',done:'var(--green)',error:'var(--red)'};
+    const statusLabels={queued:'⏳ Queued',processing:'⚙ Processing…',done:'✅ Done',error:'❌ Error'};
+    const tr=el('tr',{style:{borderBottom:'1px solid var(--border)'}});
+    tr.appendChild(el('td',{style:{padding:'5px 8px',fontWeight:'500'}},f.name));
+    tr.appendChild(el('td',{style:{padding:'5px 8px',color:'var(--muted)',whiteSpace:'nowrap'}},f.size>1048576?Math.round(f.size/1048576)+'MB':Math.round(f.size/1024)+'KB'));
+    const stCell=el('td',{style:{padding:'5px 8px',color:statusColors[f.status]||'var(--muted)',fontWeight:'600',whiteSpace:'nowrap'}});
+    stCell.textContent=statusLabels[f.status]||f.status;
+    if(f.error) stCell.title=f.error;
+    tr.appendChild(stCell);
+    const actCell=el('td',{style:{padding:'5px 8px',textAlign:'right',whiteSpace:'nowrap'}});
+    if(f.status==='queued'){
+      const rmBtn=el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'}});
+      rmBtn.textContent='✕ Remove';
+      rmBtn.addEventListener('click',function(){DS.files.splice(i,1);saveSessionState();_discRerender();});
+      actCell.appendChild(rmBtn);
+    }
+    if(f.result&&f.status==='done'){
+      const cats=(f.result.categories||[]).length;
+      actCell.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},cats+' categor'+(cats===1?'y':'ies')+' found'));
+    }
+    tr.appendChild(actCell);
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+  sec.appendChild(tbl);
+  return sec;
+}
+
+async function _discProcessAll(DS) {
+  const apiKey=(S.settings&&(S.settings.claudeApiKey||S.settings.apiKey))||localStorage.getItem('vcs_api_key')||'';
+  if(!apiKey){toast('Claude API key required in Settings','#ef4444');return;}
+  const pending=DS.files.filter(function(f){return f.status==='queued';});
+  if(!pending.length){toast('No files to process','#f59e0b');return;}
+  const extractPrompt='Analyze this document and extract:\n1. All spending/purchasing categories mentioned (food service, medical supplies, pharmaceuticals, cleaning supplies, laundry, maintenance, etc.)\n2. Estimated annual spend per category (use invoice amounts x 12 if monthly, or annualize as appropriate)\n3. Key vendor names mentioned per category\n4. Any contract or pricing information visible\n\nRespond in JSON: {"categories":[{"name":"category name","annualSpend":null,"vendors":[],"notes":""}],"totalEstimatedSpend":null,"documentType":"invoice|spend_report|contract|other","confidence":"high|medium|low"}';
+  for(let i=0;i<pending.length;i++){
+    const f=pending[i];
+    f.status='processing'; saveSessionState(); _discRerender();
+    try {
+      if(!f.fileData){await new Promise(function(res){setTimeout(res,600);});}
+      if(!f.fileData){f.status='error';f.error='File data not loaded';saveSessionState();_discRerender();continue;}
+      const isPDF=f.name.toLowerCase().endsWith('.pdf');
+      const b64=f.fileData.split(',')[1];
+      const mt=isPDF?'application/pdf':'text/plain';
+      const msgs=isPDF
+        ?[{role:'user',content:[{type:'document',source:{type:'base64',media_type:mt,data:b64}},{type:'text',text:extractPrompt}]}]
+        :[{role:'user',content:extractPrompt+'\n\n[File: '+f.name+']'}];
+      const resp=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+        headers:{'x-api-key':apiKey,'anthropic-version':'2023-06-01','Content-Type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
+        body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:2000,messages:msgs})});
+      const data=await resp.json();
+      const text=(data.content&&data.content[0]&&data.content[0].text)||'';
+      const clean=text.trim().replace(/^```json?\n?/,'').replace(/\n?```$/,'').trim();
+      f.result=JSON.parse(clean);
+      f.status='done';
+    } catch(err) {
+      f.status='error'; f.error=err.message||'Unknown error';
+    }
+    saveSessionState(); _discRerender();
+  }
+  _discMergeCategories(DS);
+  saveSessionState(); _discRerender();
+  toast('✓ Extraction complete — '+DS.files.filter(function(f){return f.status==='done';}).length+' files processed','#22c55e');
+}
+
+function _discMergeCategories(DS) {
+  const merged={};
+  DS.files.filter(function(f){return f.result&&f.result.categories;}).forEach(function(f){
+    (f.result.categories||[]).forEach(function(cat){
+      const key=(cat.name||'').toLowerCase().trim();
+      if(!key) return;
+      if(!merged[key]) merged[key]={name:cat.name,annualSpend:0,vendors:[],notes:cat.notes||''};
+      merged[key].annualSpend+=(cat.annualSpend||0);
+      (cat.vendors||[]).forEach(function(v){if(!merged[key].vendors.includes(v))merged[key].vendors.push(v);});
+    });
+  });
+  DS.categories=Object.values(merged).sort(function(a,b){return (b.annualSpend||0)-(a.annualSpend||0);});
+  DS.totalSpend=DS.categories.reduce(function(s,c){return s+(c.annualSpend||0);},0)||null;
+}
+
+function _discResultsSummary(DS) {
+  const sec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'14px',marginBottom:'12px'}});
+  const sHdr=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px'}});
+  sHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'12px',fontWeight:'700'}},'Combined Spend Analysis'));
+  if(DS.totalSpend){
+    sHdr.appendChild(el('span',{style:{fontSize:'14px',fontWeight:'700',color:'var(--green)'}},'Est. Total: $'+Math.round(DS.totalSpend).toLocaleString()+'/yr'));
+  }
+  sec.appendChild(sHdr);
+  const tbl=el('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:'10px'}});
+  const thead=el('thead');
+  const trh=el('tr',{style:{background:'var(--bg)'}});
+  ['Category','Annual Est.','Vendors','Notes'].forEach(function(h){
+    trh.appendChild(el('th',{style:{padding:'4px 8px',textAlign:'left',fontWeight:'600',fontSize:'9px',color:'var(--muted)',borderBottom:'1px solid var(--border)'}},h));
+  });
+  thead.appendChild(trh); tbl.appendChild(thead);
+  const tbody=el('tbody');
+  DS.categories.forEach(function(cat,i){
+    const tr=el('tr',{style:{borderBottom:'1px solid var(--border)'}});
+    tr.appendChild(el('td',{style:{padding:'5px 8px',fontWeight:'600'}},cat.name||''));
+    const spendCell=el('td',{style:{padding:'5px 8px'}});
+    const spendInp=el('input',{type:'number',value:Math.round(cat.annualSpend||0),style:{width:'100px',fontSize:'10px',padding:'2px 4px',background:'transparent',border:'1px solid var(--border)',borderRadius:'3px',color:'var(--text)'}});
+    spendInp.addEventListener('change',function(){
+      DS.categories[i].annualSpend=parseFloat(spendInp.value)||0;
+      DS.totalSpend=DS.categories.reduce(function(s,c){return s+(c.annualSpend||0);},0)||null;
+      saveSessionState();
+    });
+    spendCell.appendChild(spendInp);
+    tr.appendChild(spendCell);
+    tr.appendChild(el('td',{style:{padding:'5px 8px',color:'var(--muted)',fontSize:'9px'}},(cat.vendors||[]).slice(0,3).join(', ')||'—'));
+    tr.appendChild(el('td',{style:{padding:'5px 8px',color:'var(--muted)',fontSize:'9px'}},cat.notes||''));
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+  sec.appendChild(tbl);
+  return sec;
+}
+
+function _discActions(DS) {
+  const sec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'14px',marginBottom:'12px'}});
+  sec.appendChild(el('h3',{style:{margin:'0 0 10px',fontSize:'12px',fontWeight:'700'}},'Actions'));
+  const row=el('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap'}});
+  const seedBtn=el('button',{class:'btn-primary'});
+  seedBtn.textContent='✅ Seed Checklist';
+  seedBtn.addEventListener('click',function(){
+    const fac=DS.facility||''; if(!fac){toast('Set facility name first','#f59e0b');return;}
+    S._clLastFacility=fac;
+    DS.categories.forEach(function(cat){
+      const nm=(cat.name||'').toLowerCase();
+      if(nm.includes('medical')||nm.includes('surgical'))S['_clOpen_MEDSURG']=true;
+      if(nm.includes('pharmacy')||nm.includes('drug'))S['_clOpen_PHARMACY']=true;
+      if(nm.includes('food')||nm.includes('dietary'))S['_clOpen_FOOD']=true;
+      if(nm.includes('laundry')||nm.includes('linen'))S['_clOpen_LAUNDRY']=true;
+      if(nm.includes('environmental')||nm.includes('cleaning')||nm.includes('evs'))S['_clOpen_EVS']=true;
+      if(nm.includes('it ')||nm.includes('technology')||nm.includes('tech'))S['_clOpen_IT']=true;
+      if(nm.includes('rehab')||nm.includes('therapy'))S['_clOpen_REHAB']=true;
+    });
+    S.view='checklist'; saveSessionState();
+    const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}
+    toast('✓ Checklist seeded for '+fac,'#22c55e');
+  });
+  row.appendChild(seedBtn);
+  const sfBtn=el('button',{class:'btn-blue'});
+  sfBtn.textContent='☁ Create SF Opportunity';
+  sfBtn.addEventListener('click',async function(){
+    if(!DS.facility){toast('Set facility name first','#f59e0b');return;}
+    if(!USER.sfToken){toast('Connect Salesforce first','#ef4444');return;}
+    sfBtn.disabled=true; sfBtn.textContent='Creating…';
+    try {
+      const today=new Date();
+      const closeDate=new Date(today.getTime()+90*24*3600*1000).toISOString().split('T')[0];
+      const catText=DS.categories.map(function(c){return c.name+': $'+(c.annualSpend?Math.round(c.annualSpend).toLocaleString():'TBD')+'/yr';}).join('\n');
+      const opp={Name:DS.facility+' — Discovery '+today.toISOString().split('T')[0],StageName:'Prospecting',CloseDate:closeDate,Amount:DS.totalSpend||0,Description:'Discovery session categories:\n'+catText};
+      const r=await fetch(USER.sfInstance+'/services/data/v59.0/sobjects/Opportunity/',{
+        method:'POST',
+        headers:{'Authorization':'Bearer '+USER.sfToken,'Content-Type':'application/json'},
+        body:JSON.stringify(opp)
+      });
+      const d=await r.json();
+      if(d.id){
+        DS.sfOppId=d.id; saveSessionState();
+        sfBtn.textContent='✅ SF Opp Created';
+        toast('✓ Salesforce opportunity created','#22c55e');
+      } else { throw new Error((d[0]&&d[0].message)||'SF error'); }
+    } catch(err) {
+      sfBtn.disabled=false; sfBtn.textContent='☁ Create SF Opportunity';
+      toast('SF error: '+err.message,'#ef4444');
+    }
+  });
+  row.appendChild(sfBtn);
+  const driveBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'10px'}});
+  driveBtn.textContent='📂 Save to Drive';
+  driveBtn.addEventListener('click',async function(){
+    if(!DS.facility){toast('Set facility name first','#f59e0b');return;}
+    driveBtn.disabled=true; driveBtn.textContent='Saving…';
+    try {
+      const dateStr=new Date().toISOString().split('T')[0];
+      const folderName=DS.facility+'/Discovery/'+dateStr;
+      const summaryJson=JSON.stringify({facility:DS.facility,rep:DS.repId,date:dateStr,categories:DS.categories,totalSpend:DS.totalSpend,sfOppId:DS.sfOppId},null,2);
+      const b64Summary=btoa(unescape(encodeURIComponent(summaryJson)));
+      const resp=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
+        body:JSON.stringify({action:'uploadVendorFile',vendorName:folderName,fileName:'discovery-summary.json',fileContent:b64Summary,mimeType:'application/json'})});
+      const d=await resp.json();
+      if(d.status==='ok'){
+        DS.sessionId=d.fileId||null; saveSessionState();
+        driveBtn.textContent='✓ Saved';
+        toast('✓ Discovery saved to Drive','#22c55e');
+        _discSaveSession(DS,d.fileId);
+        _discRerender();
+      } else { throw new Error(d.message||'Drive error'); }
+    } catch(err) {
+      driveBtn.disabled=false; driveBtn.textContent='📂 Save to Drive';
+      toast('Drive error: '+err.message,'#ef4444');
+    }
+  });
+  row.appendChild(driveBtn);
+  const clearBtn=el('button',{class:'btn-xs btn-ghost',style:{color:'var(--muted)',fontSize:'10px'}});
+  clearBtn.textContent='↺ Start Over';
+  clearBtn.addEventListener('click',function(){
+    S.discovery={files:[],facility:'',repId:'',categories:[],totalSpend:null,sfOppId:null,sessionId:null,sessions:DS.sessions||[]};
+    saveSessionState(); _discRerender();
+  });
+  row.appendChild(clearBtn);
+  sec.appendChild(row);
+  return sec;
+}
+
+function _discSaveSession(DS,fileId) {
+  if(!DS.sessions) DS.sessions=[];
+  const dateStr=new Date().toISOString().split('T')[0];
+  DS.sessions.unshift({facility:DS.facility,date:dateStr,categories:DS.categories.length,totalSpend:DS.totalSpend,sfOppId:DS.sfOppId,fileId:fileId||null});
+  if(DS.sessions.length>5) DS.sessions=DS.sessions.slice(0,5);
+  saveSessionState();
+}
+
+function _discPastSessions(DS) {
+  const sessions=DS.sessions||[];
+  const sec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'14px'}});
+  sec.appendChild(el('h3',{style:{margin:'0 0 8px',fontSize:'12px',fontWeight:'700'}},'Past Sessions'+(sessions.length?' ('+sessions.length+')':'')));
+  if(!sessions.length){
+    sec.appendChild(el('p',{style:{margin:'0',fontSize:'10px',color:'var(--muted)'}},'No saved sessions yet. Complete a discovery and save to Drive.'));
+    return sec;
+  }
+  sessions.forEach(function(sess){
+    const row=el('div',{style:{display:'flex',gap:'10px',alignItems:'center',padding:'6px 0',borderBottom:'1px solid var(--border)'}});
+    row.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'600',flex:'1'}},sess.facility||'Unknown'));
+    row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},sess.date||''));
+    row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},sess.categories+' categories'));
+    if(sess.totalSpend) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--green)',fontWeight:'700'}},'$'+Math.round(sess.totalSpend).toLocaleString()));
+    if(sess.sfOppId) row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--blue)'}},'SF linked'));
+    sec.appendChild(row);
+  });
+  return sec;
+}
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1216,6 +1584,7 @@ S = {
   summaryRange: '30',
   summaryFrom: '', summaryTo: '',
   aiOpen: false,
+  discovery: {files:[],facility:'',repId:'',categories:[],totalSpend:null,sfOppId:null,sessionId:null,sessions:[]},
 };
 
 // ─── DOM ──────────────────────────────────────────────────────────────────────
