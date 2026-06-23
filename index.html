@@ -407,7 +407,7 @@ body.ps-light-theme .page-sticky-hdr{background:#edf4fb;border-bottom-color:rgba
 .summary-section .data-table thead th,.modal-body .data-table thead th,.scrollable-table-wrap .data-table thead th{position:sticky;top:0;z-index:1;background:var(--card)}
 body.ps-light-theme .tbl-wrap .data-table thead th{background:#0078b8!important;color:#fff!important;box-shadow:0 2px 4px rgba(0,0,0,.12)}
 .data-table{border-collapse:collapse;font-size:10px;width:max-content;min-width:100%}
-.data-table th{position:sticky;top:0;background:var(--sb);color:var(--muted);text-align:left;padding:5px 6px;border-bottom:2px solid var(--border);font-weight:500;white-space:nowrap;z-index:20;user-select:none;cursor:default;will-change:transform}
+.data-table th{position:sticky;top:0;background:var(--sb);color:var(--muted);text-align:left;padding:5px 6px;border-bottom:2px solid var(--border);font-weight:500;white-space:nowrap;overflow:hidden;z-index:20;user-select:none;cursor:default;will-change:transform}
 .data-table th.sortable{cursor:pointer}
 .data-table th.sortable:hover{color:var(--text)}
 .data-table td{padding:3px 5px;border-bottom:1px solid rgba(42,45,62,.5);vertical-align:middle;white-space:nowrap}
@@ -9078,9 +9078,32 @@ function renderVendorDB(c) {
     });
   }
 
-  const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap',style:{overflowX:'auto',overflowY:'visible',maxHeight:'unset',border:'1px solid var(--border)',borderRadius:'4px',display:'block'}});
-  const table=el('table',{class:'data-table',style:{borderCollapse:'collapse'}});
-
+  const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap',style:{overflowX:'auto',overflowY:'auto',maxHeight:'calc(100vh - 180px)',border:'1px solid var(--border)',borderRadius:'4px',display:'block',WebkitOverflowScrolling:'touch'}});
+  const table=el('table',{class:'data-table',style:{borderCollapse:'collapse',tableLayout:'fixed',width:'max-content',minWidth:'unset'}});
+  // Colgroup: one <col> per visible column. Resize updates <col> only — no td/th touching needed.
+  const _cg=document.createElement('colgroup');
+  const _cgCb=document.createElement('col'); _cgCb.style.width='32px'; _cg.appendChild(_cgCb); // checkbox
+  const _cgNote=document.createElement('col'); _cgNote.style.width='32px'; _cg.appendChild(_cgNote); // note btn
+  const _cgColMap={}; // col.label -> <col> element
+  // Default column widths (px) — used when no saved width exists
+  const _VDB_W={
+    gpo:60,name:160,category:110,subCategory:100,product:180,classOfTrade:100,
+    markets:100,autoRenew:70,expiry:100,daysLeft:65,status:90,tier:55,score:50,
+    adminFee:70,perpetuity:65,terminationNotice:60,procContact:120,
+    bizPhone:90,email:140,notes:55,lastComm:85,website:110,
+    comments:140,about:130,agreementType:90,contractName:130,
+    contractNo:75,followUp:90,aka:110,tiers:55,tail:55,
+    inContractSince:85,effectiveDate:85,autoRenewType:85,
+    contractTerm:75,currentTerm:75,adminFeeNotes:110,sfAccountId:80,
+    trainualUrl:90,vendorAliasOf:90,extraContacts:90,vendorRelationships:90,vendorAliases:90,
+  };
+  VISIBLE_COLS.forEach(col=>{
+    const _cge=document.createElement('col');
+    _cge.style.width=(S.colWidths[col.label]||_VDB_W[col.key]||90)+'px';
+    _cgColMap[col.label]=_cge;
+    _cg.appendChild(_cge);
+  });
+  table.appendChild(_cg);
   const thead=el('thead'), trh=el('tr');
 
   // Select-all checkbox column
@@ -9093,7 +9116,7 @@ function renderVendorDB(c) {
 
 
   VISIBLE_COLS.forEach(col=>{
-    const th=el('th',{style:{position:'relative',whiteSpace:'nowrap',userSelect:'none'}});
+    const th=el('th',{style:{position:'relative',whiteSpace:'nowrap',userSelect:'none',overflow:'hidden'}});
     const isSorted=S.dbSort.col===col.label;
     const hasFilter=!!(S.dbFilters[col.key]?.size>0);
     const inner=el('div',{style:{display:'flex',alignItems:'center',gap:'3px'}});
@@ -9109,10 +9132,29 @@ function renderVendorDB(c) {
     // Resize handle
     const rh=document.createElement('div');
     rh.style.cssText='position:absolute;right:0;top:0;bottom:0;width:5px;cursor:col-resize;z-index:2;';
-    rh.addEventListener('mousedown',e=>{e.preventDefault();const sx=e.pageX,sw=th.offsetWidth;
-      const mm=ev=>{const w=Math.max(50,sw+ev.pageX-sx);th.style.minWidth=w+'px';th.style.width=w+'px';};
-      const mu=()=>{document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);};
-      document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);});
+    rh.addEventListener('mousedown',e=>{
+      e.preventDefault(); e.stopPropagation();
+      const sx=e.pageX, sw=(_cgColMap[col.label]?parseFloat(_cgColMap[col.label].style.width):th.getBoundingClientRect().width)||90;
+      // Ghost line — visual indicator, zero table reflow during drag
+      const _ghost=document.createElement('div');
+      _ghost.style.cssText='position:fixed;top:0;bottom:0;width:2px;background:var(--blue);opacity:.7;pointer-events:none;z-index:9999;left:'+e.clientX+'px';
+      document.body.appendChild(_ghost);
+      document.body.style.cursor='col-resize';
+      let _fw=sw;
+      const mm=ev=>{_fw=Math.max(24,sw+ev.pageX-sx);_ghost.style.left=ev.clientX+'px';};
+      const mu=()=>{
+        document.removeEventListener('mousemove',mm);
+        document.removeEventListener('mouseup',mu);
+        document.body.removeChild(_ghost);
+        document.body.style.cursor='';
+        // Single update to <col> element — browser propagates to all th/td in that column
+        if(_cgColMap[col.label]) _cgColMap[col.label].style.width=_fw+'px';
+        S.colWidths[col.label]=_fw;
+        debouncedSaveSettings();
+      };
+      document.addEventListener('mousemove',mm);
+      document.addEventListener('mouseup',mu);
+    });
     th.appendChild(inner); th.appendChild(rh); trh.appendChild(th);
   });
   thead.appendChild(trh); table.appendChild(thead);
@@ -16897,7 +16939,10 @@ function renderToday(c) {
         const body=el('div',{style:{marginBottom:'6px',padding:'4px 4px',border:'1px solid var(--border)',borderTop:'none',borderRadius:'0 0 4px 4px',background:'var(--bg)'}});
         // D2: column headers for queue sections
         if(sec.hasHdr&&sec.hdrs&&items.length>0){
-          const colHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'3px 8px',borderBottom:'1px solid var(--border)',marginBottom:'2px'}});
+          const colHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'3px 6px',borderBottom:'1px solid var(--border)',marginBottom:'2px'}});
+          // Placeholders to align with leading checkbox and action-buttons columns in each row
+          colHdr.appendChild(el('span',{style:{width:'16px',flexShrink:'0'}},''));
+          colHdr.appendChild(el('span',{style:{width:'90px',flexShrink:'0'}},''));
           sec.hdrs.forEach((h,i)=>colHdr.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:i===0?'none':(i<=2?'1':'none'),minWidth:i===0?'32px':'auto'}},h)));
           body.appendChild(colHdr);
         }
@@ -16981,8 +17026,8 @@ function renderToday(c) {
     c.appendChild(vlistHdr);
     if (!S._todayVendorListOpen) { /* collapsed — skip table render */ } else {
   // Build column-aware table using settings.cols visibility
-  const ALL_HDRS=['','Score','Vendor','Category','Contact','Phone','Email','Current Expiry','Days','AR','Follow-Up','Tier','Why','Actions'];
-  const ALL_KEYS=['_cb','score','vendor','category','contact','phone','email','expiry','days','ar','followup','tier','why','actions'];
+  const ALL_HDRS=['','Actions','Score','Vendor','Category','Contact','Phone','Email','Current Expiry','Days','AR','Follow-Up','Tier','Why'];
+  const ALL_KEYS=['_cb','actions','score','vendor','category','contact','phone','email','expiry','days','ar','followup','tier','why'];
   const visIdx=ALL_KEYS.map((k,i)=>(k==='_cb'||S.settings.cols[k]!==false)?i:-1).filter(i=>i>=0);
   const headers=visIdx.map(i=>ALL_HDRS[i]);
   // Outer container — buildTable creates its own tbl-wrap inside
@@ -17490,7 +17535,7 @@ function renderCallSheet(c) {
   }
 
   // Shared colgroup spec (R2): Vendor 25%, Category 20%, Tier 8%, Last Contact 12%, Follow-up 12%, Score 8%, Actions 15%
-  const CS_COLS=[{w:'25%',h:'Vendor'},{w:'18%',h:'Category'},{w:'7%',h:'Tier'},{w:'12%',h:'Last Contact'},{w:'12%',h:'Follow-up'},{w:'7%',h:'Score'},{w:'19%',h:'Actions'}];
+  const CS_COLS=[{w:'160px',h:'Vendor'},{w:'18%',h:'Category'},{w:'7%',h:'Tier'},{w:'12%',h:'Last Contact'},{w:'12%',h:'Follow-up'},{w:'7%',h:'Score'},{w:'19%',h:'Actions'}];
   function buildCallTable(members,color){
     const tbl=el('div',{class:'tbl-wrap'});
     const table=el('table',{class:'data-table',style:{tableLayout:'fixed',width:'100%'}});
@@ -21634,13 +21679,34 @@ function renderSettings(c) {
     }},'↑ Sync All to Drive');
   syncSec.appendChild(syncAllBtn);
   // D3: Expand/Collapse ALL known settings keys
-  const _allSettingsKeys=['emailSig','fileInfo','dataActions','handover','themeFont','startup','calendarAvail','displayPrefs','sfSettings','driveSettings','msSettings','renzoSettings','dialerSettings','apiConfig','userMgmt','roleTabDefaults','apiUsage','quickSetup','renzo'];
-  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},title:'Expand All (Ctrl+Shift+E)',onclick(){S._settingsExpandAll=true;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=true);localStorage.setItem('vcs_rd_collapsed','0');localStorage.setItem('vcs_um_collapsed','0');S._setupChecklistOpen=true;render();}},'▼ Expand All'));
-  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},title:'Collapse All (Ctrl+Shift+C)',onclick(){S._settingsExpandAll=false;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=false);localStorage.setItem('vcs_rd_collapsed','1');localStorage.setItem('vcs_um_collapsed','1');S._setupChecklistOpen=false;render();}},'▶ Collapse All'));
+  const _allSettingsKeys=['emailSig','fileInfo','dataActions','handover'];
+  const _allRawKeys=['vcs_s_sf','vcs_s_drive','vcs_s_ms','vcs_s_ai','vcs_s_dialer','vcs_s_cols','vcs_s_prefs','vcs_s_startup','vcs_s_theme','vcs_s_display'];
+  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},title:'Expand All (Ctrl+Shift+E)',onclick(){
+    S._settingsExpandAll=true;
+    if(!S._settingsOpen)S._settingsOpen={};
+    _allSettingsKeys.forEach(k=>S._settingsOpen[k]=true);
+    _allRawKeys.forEach(k=>localStorage.setItem(k,'0'));
+    localStorage.setItem('vcs_rd_collapsed','0');
+    localStorage.setItem('vcs_um_collapsed','0');
+    localStorage.setItem('vcs_s_cal','1');
+    S._setupChecklistOpen=true;
+    render();
+  }},'▼ Expand All'));
+  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},title:'Collapse All (Ctrl+Shift+C)',onclick(){
+    S._settingsExpandAll=false;
+    if(!S._settingsOpen)S._settingsOpen={};
+    _allSettingsKeys.forEach(k=>S._settingsOpen[k]=false);
+    _allRawKeys.forEach(k=>localStorage.setItem(k,'1'));
+    localStorage.setItem('vcs_rd_collapsed','1');
+    localStorage.setItem('vcs_um_collapsed','1');
+    localStorage.setItem('vcs_s_cal','0');
+    S._setupChecklistOpen=false;
+    render();
+  }},'▶ Collapse All'));
   // A3: Keyboard shortcuts for expand/collapse all settings sections
   const _settingsKbHandler=(e)=>{
-    if(e.ctrlKey&&e.shiftKey&&e.key==='E'){e.preventDefault();S._settingsExpandAll=true;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=true);localStorage.setItem('vcs_rd_collapsed','0');localStorage.setItem('vcs_um_collapsed','0');S._setupChecklistOpen=true;render();}
-    if(e.ctrlKey&&e.shiftKey&&e.key==='C'){e.preventDefault();S._settingsExpandAll=false;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=false);localStorage.setItem('vcs_rd_collapsed','1');localStorage.setItem('vcs_um_collapsed','1');S._setupChecklistOpen=false;render();}
+    if(e.ctrlKey&&e.shiftKey&&e.key==='E'){e.preventDefault();S._settingsExpandAll=true;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=true);['vcs_s_sf','vcs_s_drive','vcs_s_ms','vcs_s_ai','vcs_s_dialer','vcs_s_cols','vcs_s_prefs','vcs_s_startup','vcs_s_theme','vcs_s_display'].forEach(k=>localStorage.setItem(k,'0'));localStorage.setItem('vcs_rd_collapsed','0');localStorage.setItem('vcs_um_collapsed','0');localStorage.setItem('vcs_s_cal','1');S._setupChecklistOpen=true;render();}
+    if(e.ctrlKey&&e.shiftKey&&e.key==='C'){e.preventDefault();S._settingsExpandAll=false;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=false);['vcs_s_sf','vcs_s_drive','vcs_s_ms','vcs_s_ai','vcs_s_dialer','vcs_s_cols','vcs_s_prefs','vcs_s_startup','vcs_s_theme','vcs_s_display'].forEach(k=>localStorage.setItem(k,'1'));localStorage.setItem('vcs_rd_collapsed','1');localStorage.setItem('vcs_um_collapsed','1');localStorage.setItem('vcs_s_cal','0');S._setupChecklistOpen=false;render();}
   };
   document.addEventListener('keydown',_settingsKbHandler);
   c.addEventListener('DOMNodeRemovedFromDocument',()=>document.removeEventListener('keydown',_settingsKbHandler),{once:true});
