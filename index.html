@@ -9107,7 +9107,7 @@ function renderVendorDB(c) {
   const thead=el('thead'), trh=el('tr');
 
   // Select-all checkbox column
-  const cbTh=el('th',{style:{width:'28px',padding:'4px'}});
+  const cbTh=el('th',{style:{width:'32px',padding:'4px'}});
   const cbAll=el('input',{type:'checkbox',title:'Select/deselect all'});
   cbAll.addEventListener('change',()=>table.querySelectorAll('tbody input[data-name]').forEach(cb=>cb.checked=cbAll.checked));
   cbTh.appendChild(cbAll); trh.appendChild(cbTh);
