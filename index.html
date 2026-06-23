@@ -410,7 +410,8 @@ body.ps-light-theme .tbl-wrap .data-table thead th{background:#0078b8!important;
 .data-table th{position:sticky;top:0;background:var(--sb);color:var(--muted);text-align:left;padding:5px 6px;border-bottom:2px solid var(--border);font-weight:500;white-space:nowrap;z-index:20;user-select:none;cursor:default;will-change:transform}
 .data-table th.sortable{cursor:pointer}
 .data-table th.sortable:hover{color:var(--text)}
-.data-table td{padding:3px 5px;border-bottom:1px solid rgba(42,45,62,.5);vertical-align:middle;white-space:nowrap}
+.data-table td{padding:3px 5px;border-bottom:1px solid rgba(42,45,62,.5);vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.data-table.compact td{padding:2px 4px!important}
 .data-table tr:hover td{background:rgba(255,255,255,.025)}
 .vendor-link{color:var(--text);cursor:pointer;font-weight:500}
 .vendor-link:hover{color:var(--blue);text-decoration:underline}
@@ -8257,7 +8258,7 @@ function buildSortableTable(headers, rows, rowFn, opts) {
 function buildTable(headers, rows, rowFn, opts) {
   if (!rows.length) return el('p',{class:'muted',style:{padding:'10px 0'}},'No results.');
   const wrap=el('div',{class:'tbl-wrap'});
-  const tbl=el('table',{class:'data-table'});
+  const tbl=el('table',{class:'data-table'+(opts&&opts.compact?' compact':'')});
   if(opts&&opts.fixedLayout) tbl.style.tableLayout='fixed';
   // Add <colgroup> so column widths apply uniformly to both th and td
   const colgroup=document.createElement('colgroup');
@@ -8758,13 +8759,13 @@ function renderVendorDB(c) {
     {key:'name',    label:'Vendor',          sortable:true,  get:v=>v.name||'',               fmt:v=>{const n=el('span',{class:'vendor-link',onclick(e){e.stopPropagation();openDetail(v);}});n.appendChild(hl(v.name));n.style.color=v.tier==='CALL'?'var(--red)':v.tier==='EMAIL'?'var(--amber)':'';n.style.fontWeight='600';return n;}, sk:v=>v.name.toLowerCase()},
     {key:'cat',     label:'Category',        sortable:true,  get:v=>v.category||'',           fmt:v=>hlEl(v.category), sk:v=>v.category||''},
     {key:'subcat',  label:'Sub-Category',    sortable:true,  get:v=>v.subCategory||'',        fmt:v=>hlEl(v.subCategory), sk:v=>v.subCategory||''},
-    {key:'product', label:'Product / Description',    sortable:false, get:v=>v.product||v.about||'',   fmt:v=>{const txt=(v.product||v.about||'').slice(0,60);const s=el('span',{title:v.product||v.about||'',style:{maxWidth:'180px',display:'inline-block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}});s.appendChild(hl(txt));return s;}, sk:v=>v.product||''},
+    {key:'product', label:'Product / Description',    sortable:false, get:v=>v.product||v.about||'',   fmt:v=>{const txt=v.product||v.about||'';const s=el('span',{title:txt,style:{maxWidth:'100%',display:'inline-block',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}});s.appendChild(hl(txt));return s;}, sk:v=>v.product||''},
     {key:'cot',     label:'Class of Trade',  sortable:true,  get:v=>v.classOfTrade||'',       fmt:v=>hlEl(v.classOfTrade), sk:v=>v.classOfTrade||''},
     {key:'markets', label:'Markets Serviced',         sortable:true,  get:v=>v.markets||'',            fmt:v=>hlEl(v.markets), sk:v=>v.markets||''},
     {key:'ar',      label:'Auto-renewal',      sortable:true,  get:v=>isAutoRenew(v)?'Yes':'No',fmt:v=>arBadge(v), sk:v=>isAutoRenew(v)?0:1},
     {key:'expiry',  label:'Latest Contract Expiration Date',          sortable:true,  get:v=>{const e=getCurrentExpiry(v);return e?isoDate(e):'';}, fmt:v=>{const e=getCurrentExpiry(v);if(!e)return '—';const d=dayDiff(e,today);return el('span',{style:{color:d<0?'var(--red)':d<=30?'var(--amber)':''},title:fmtDate(e)},(d<0?'⚠ '+formatDuration(d)+' ago':d<=30?'⚡ '+formatDuration(d):fmtDate(e)));}, sk:v=>getCurrentExpiry(v)||new Date(9e12)},
     {key:'days',    label:'Days',            sortable:true,  get:v=>{const e=getCurrentExpiry(v);return e?String(dayDiff(e,today)):'';}, fmt:v=>{const e=getCurrentExpiry(v);if(!e)return '';const d=dayDiff(e,today);return d<0?formatDuration(d)+' ago':formatDuration(d);}, sk:v=>{const e=getCurrentExpiry(v);return e?dayDiff(e,today):99999;}},
-    {key:'status',  label:'Status',          sortable:true,  get:v=>(v.status||'').slice(0,40), fmt:v=>(v.status||'').slice(0,35)||'', sk:v=>v.status||''},
+    {key:'status',  label:'Status',          sortable:true,  get:v=>v.status||'', fmt:v=>v.status||'', sk:v=>v.status||''},
     {key:'tier',    label:'Tier',            sortable:true,  get:v=>v.tier||'',               fmt:v=>v.tier?tierTag(v.tier):'', sk:v=>({CALL:0,EMAIL:1,REVIEW:2,MONITOR:3}[v.tier]||4)},
     {key:'score',   label:'Score',           sortable:true,  get:v=>String((v.score||0).toFixed(1)), fmt:v=>scorePill(v.score), sk:v=>v.score||0},
     {key:'fee',     label:'Admin Fee',       sortable:true,  get:v=>{const f=parseFee(v.adminFee);return f?f+'%':'';}, fmt:v=>{const f=parseFee(v.adminFee);return f?el('span',{style:{color:f>=5?'var(--green)':f>=3?'var(--amber)':'var(--red)',fontWeight:'600'}},f+'%'):(v.adminFee||'—');}, sk:v=>parseFee(v.adminFee)||0},
@@ -8794,29 +8795,29 @@ function renderVendorDB(c) {
     {key:'about',         label:'About',            sortable:false, get:v=>v.about||'',            fmt:v=>v.about?String(v.about).slice(0,40):'—', sk:v=>v.about||''},
     {key:'followUp',      label:'Scheduled Follow-up Date',   sortable:true,  get:v=>{const d=parseDate(v.followUp);return d?isoDate(d):'';}, fmt:v=>{const d=parseDate(v.followUp);return d?fmtDate(d):'—';}, sk:v=>parseDate(v.followUp)||new Date(9e12)},
     {key:'aka',           label:'Previously Named / AKA',              sortable:false, get:v=>v.aka||'',              fmt:v=>v.aka||'—', sk:v=>v.aka||''},
-        {key:'signatory',label:'Signatory',sortable:false,get:v=>v.signatory||'',fmt:v=>{const _v=v.signatory||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.signatory||''},
-    {key:'assignment',label:'Assingment (Allowed, Not Allowed)',sortable:false,get:v=>v.assignment||'',fmt:v=>{const _v=v.assignment||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.assignment||''},
-    {key:'assignmentConditions',label:'Assingment Conditions',sortable:false,get:v=>v.assignmentConditions||'',fmt:v=>{const _v=v.assignmentConditions||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.assignmentConditions||''},
-    {key:'exclusivity',label:'Exclusivity (Y/N)',sortable:false,get:v=>v.exclusivity||'',fmt:v=>{const _v=v.exclusivity||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.exclusivity||''},
-    {key:'terminationWoCause',label:'Termination w/o Cause (Y/N)',sortable:false,get:v=>v.terminationWoCause||'',fmt:v=>{const _v=v.terminationWoCause||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.terminationWoCause||''},
-    {key:'pricingCommitment',label:'Pricing Commitment to PS (Best, Competitive, Case by case)',sortable:false,get:v=>v.pricingCommitment||'',fmt:v=>{const _v=v.pricingCommitment||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingCommitment||''},
-    {key:'mobile2',label:'Business (#2)',sortable:false,get:v=>v.mobile2||'',fmt:v=>{const _v=v.mobile2||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.mobile2||''},
-    {key:'email2',label:'Email Address (2)',sortable:false,get:v=>v.email2||'',fmt:v=>{const _v=v.email2||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.email2||''},
-    {key:'termEffective',label:'Latest Term Effective Date',sortable:false,get:v=>v.termEffective||'',fmt:v=>{const _v=v.termEffective||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.termEffective||''},
-    {key:'engagementReminder',label:'Vendor Engagement Reminder (Optional)',sortable:false,get:v=>v.engagementReminder||'',fmt:v=>{const _v=v.engagementReminder||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.engagementReminder||''},
-    {key:'terminationReceived',label:'Termination Notice Received?',sortable:false,get:v=>v.terminationReceived||'',fmt:v=>{const _v=v.terminationReceived||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.terminationReceived||''},
-    {key:'coverSheet',label:'Cover Sheet',sortable:false,get:v=>v.coverSheet||'',fmt:v=>{const _v=v.coverSheet||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.coverSheet||''},
-    {key:'dataSheet',label:'Data Sheet',sortable:false,get:v=>v.dataSheet||'',fmt:v=>{const _v=v.dataSheet||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.dataSheet||''},
-    {key:'havePricing',label:'Have Pricing?',sortable:false,get:v=>v.havePricing||'',fmt:v=>{const _v=v.havePricing||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.havePricing||''},
-    {key:'pricingLocation',label:'Location of Pricing',sortable:false,get:v=>v.pricingLocation||'',fmt:v=>{const _v=v.pricingLocation||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingLocation||''},
-    {key:'pricingDate',label:'Pricing Date',sortable:false,get:v=>v.pricingDate||'',fmt:v=>{const _v=v.pricingDate||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingDate||''},
-    {key:'pricingFrequency',label:'Update Pricing Frequency?',sortable:false,get:v=>v.pricingFrequency||'',fmt:v=>{const _v=v.pricingFrequency||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.pricingFrequency||''},
-    {key:'minYears',label:'Min. # yrs per Customer',sortable:false,get:v=>v.minYears||'',fmt:v=>{const _v=v.minYears||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.minYears||''},
-    {key:'reportFrequency',label:'Report Frequency',sortable:false,get:v=>v.reportFrequency||'',fmt:v=>{const _v=v.reportFrequency||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.reportFrequency||''},
+        {key:'signatory',label:'Signatory',sortable:false,get:v=>v.signatory||'',fmt:v=>{const _v=v.signatory||'';return _v?String(_v):'—';},sk:v=>v.signatory||''},
+    {key:'assignment',label:'Assingment (Allowed, Not Allowed)',sortable:false,get:v=>v.assignment||'',fmt:v=>{const _v=v.assignment||'';return _v?String(_v):'—';},sk:v=>v.assignment||''},
+    {key:'assignmentConditions',label:'Assingment Conditions',sortable:false,get:v=>v.assignmentConditions||'',fmt:v=>{const _v=v.assignmentConditions||'';return _v?String(_v):'—';},sk:v=>v.assignmentConditions||''},
+    {key:'exclusivity',label:'Exclusivity (Y/N)',sortable:false,get:v=>v.exclusivity||'',fmt:v=>{const _v=v.exclusivity||'';return _v?String(_v):'—';},sk:v=>v.exclusivity||''},
+    {key:'terminationWoCause',label:'Termination w/o Cause (Y/N)',sortable:false,get:v=>v.terminationWoCause||'',fmt:v=>{const _v=v.terminationWoCause||'';return _v?String(_v):'—';},sk:v=>v.terminationWoCause||''},
+    {key:'pricingCommitment',label:'Pricing Commitment to PS (Best, Competitive, Case by case)',sortable:false,get:v=>v.pricingCommitment||'',fmt:v=>{const _v=v.pricingCommitment||'';return _v?String(_v):'—';},sk:v=>v.pricingCommitment||''},
+    {key:'mobile2',label:'Business (#2)',sortable:false,get:v=>v.mobile2||'',fmt:v=>{const _v=v.mobile2||'';return _v?String(_v):'—';},sk:v=>v.mobile2||''},
+    {key:'email2',label:'Email Address (2)',sortable:false,get:v=>v.email2||'',fmt:v=>{const _v=v.email2||'';return _v?String(_v):'—';},sk:v=>v.email2||''},
+    {key:'termEffective',label:'Latest Term Effective Date',sortable:false,get:v=>v.termEffective||'',fmt:v=>{const _v=v.termEffective||'';return _v?String(_v):'—';},sk:v=>v.termEffective||''},
+    {key:'engagementReminder',label:'Vendor Engagement Reminder (Optional)',sortable:false,get:v=>v.engagementReminder||'',fmt:v=>{const _v=v.engagementReminder||'';return _v?String(_v):'—';},sk:v=>v.engagementReminder||''},
+    {key:'terminationReceived',label:'Termination Notice Received?',sortable:false,get:v=>v.terminationReceived||'',fmt:v=>{const _v=v.terminationReceived||'';return _v?String(_v):'—';},sk:v=>v.terminationReceived||''},
+    {key:'coverSheet',label:'Cover Sheet',sortable:false,get:v=>v.coverSheet||'',fmt:v=>{const _v=v.coverSheet||'';return _v?String(_v):'—';},sk:v=>v.coverSheet||''},
+    {key:'dataSheet',label:'Data Sheet',sortable:false,get:v=>v.dataSheet||'',fmt:v=>{const _v=v.dataSheet||'';return _v?String(_v):'—';},sk:v=>v.dataSheet||''},
+    {key:'havePricing',label:'Have Pricing?',sortable:false,get:v=>v.havePricing||'',fmt:v=>{const _v=v.havePricing||'';return _v?String(_v):'—';},sk:v=>v.havePricing||''},
+    {key:'pricingLocation',label:'Location of Pricing',sortable:false,get:v=>v.pricingLocation||'',fmt:v=>{const _v=v.pricingLocation||'';return _v?String(_v):'—';},sk:v=>v.pricingLocation||''},
+    {key:'pricingDate',label:'Pricing Date',sortable:false,get:v=>v.pricingDate||'',fmt:v=>{const _v=v.pricingDate||'';return _v?String(_v):'—';},sk:v=>v.pricingDate||''},
+    {key:'pricingFrequency',label:'Update Pricing Frequency?',sortable:false,get:v=>v.pricingFrequency||'',fmt:v=>{const _v=v.pricingFrequency||'';return _v?String(_v):'—';},sk:v=>v.pricingFrequency||''},
+    {key:'minYears',label:'Min. # yrs per Customer',sortable:false,get:v=>v.minYears||'',fmt:v=>{const _v=v.minYears||'';return _v?String(_v):'—';},sk:v=>v.minYears||''},
+    {key:'reportFrequency',label:'Report Frequency',sortable:false,get:v=>v.reportFrequency||'',fmt:v=>{const _v=v.reportFrequency||'';return _v?String(_v):'—';},sk:v=>v.reportFrequency||''},
     {key:'lastComm',label:'Last Contact',sortable:true,get:v=>{const d=parseDate(v.lastComm);return d?isoDate(d):'';},fmt:v=>{const d=parseDate(v.lastComm);if(!d){const _gd=el('span',{style:{display:'inline-block',width:'7px',height:'7px',borderRadius:'50%',background:'#9ca3af',marginRight:'4px',verticalAlign:'middle',flexShrink:'0'}});const _gw=el('span',{style:{display:'inline-flex',alignItems:'center',color:'var(--muted)',fontSize:'9px'},title:'No contact recorded'});_gw.appendChild(_gd);_gw.appendChild(document.createTextNode('Not contacted'));return _gw;}const ago=Math.floor((new Date()-d)/(1000*86400));const col=ago<14?'var(--green)':ago<30?'var(--amber)':ago<90?'#f97316':'var(--red)';const dot=el('span',{style:{display:'inline-block',width:'7px',height:'7px',borderRadius:'50%',background:col,marginRight:'4px',verticalAlign:'middle',flexShrink:'0'}});const txt=ago===0?'Today':ago===1?'Yesterday':ago+'d ago';const wrap=el('span',{style:{display:'inline-flex',alignItems:'center',fontWeight:'600',color:col},title:'Last contacted: '+fmtDate(d)+' — '+ago+'d ago'});wrap.appendChild(dot);wrap.appendChild(document.createTextNode(txt));return wrap;},sk:v=>parseDate(v.lastComm)||new Date(0)},
-    {key:'justification',label:'Short Justification',sortable:false,get:v=>v.justification||'',fmt:v=>{const _v=v.justification||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.justification||''},
-    {key:'changeOfControl',label:'Change of Control (Y/N & Conditions)',sortable:false,get:v=>v.changeOfControl||'',fmt:v=>{const _v=v.changeOfControl||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.changeOfControl||''},
-    {key:'attachment',label:'Attachment / Location',sortable:false,get:v=>v.attachment||'',fmt:v=>{const _v=v.attachment||'';return _v?String(_v).slice(0,35):'—';},sk:v=>v.attachment||''},
+    {key:'justification',label:'Short Justification',sortable:false,get:v=>v.justification||'',fmt:v=>{const _v=v.justification||'';return _v?String(_v):'—';},sk:v=>v.justification||''},
+    {key:'changeOfControl',label:'Change of Control (Y/N & Conditions)',sortable:false,get:v=>v.changeOfControl||'',fmt:v=>{const _v=v.changeOfControl||'';return _v?String(_v):'—';},sk:v=>v.changeOfControl||''},
+    {key:'attachment',label:'Attachment / Location',sortable:false,get:v=>v.attachment||'',fmt:v=>{const _v=v.attachment||'';return _v?String(_v):'—';},sk:v=>v.attachment||''},
     {key:'notes',   label:'Notes',           sortable:false, get:v=>v.notes?'yes':'',         fmt:v=>v.notes?el('span',{class:'note-preview clickable',title:String(v.notes).slice(0,200),onclick(e){e.stopPropagation();showNotePopup(v.name,v.notes,v);}},String(v.notes).split('|')[0].slice(0,40)+'…'):'', sk:v=>v.notes?0:1},
     {key:'sf', label:'☁ SF (YTD)', sortable:true, get:v=>{const ctx=_sfCtxCache?.get(v.name.toLowerCase());return ctx?(ctx.spend||0):0;}, fmt:v=>{const ctx=_sfCtxCache?.get(v.name.toLowerCase());if(!ctx)return el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'—');const d=el('div',{style:{fontSize:'9px',display:'flex',gap:'3px',flexWrap:'wrap',alignItems:'center'}});if(ctx.spend)d.appendChild(el('span',{style:{color:'var(--blue)',fontWeight:'600'}},'$'+Math.round(ctx.spend/1000)+'K'));if(ctx.openOpps)d.appendChild(el('span',{style:{color:'var(--green)'}},'💼'+ctx.openOpps));if(ctx.openCases)d.appendChild(el('span',{style:{color:ctx.highCases?'var(--red)':'var(--amber)'}},'🎫'+ctx.openCases));return d.children.length?d:el('span',{style:{color:'var(--muted)',fontSize:'9px'}},'—');}, sk:v=>{const ctx=_sfCtxCache?.get(v.name.toLowerCase());return ctx?.spend||0;}},
     {key:'_cpSplit',label:'CP Split',sortable:false,get:v=>v._cpSplitPct||0,fmt:v=>{
@@ -9084,7 +9085,7 @@ function renderVendorDB(c) {
   }
 
   const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap',style:{overflowX:'auto',overflowY:'auto',maxHeight:'calc(100vh - 180px)',width:'100%',minWidth:'0',position:'relative',border:'1px solid var(--border)',borderRadius:'4px',display:'block',WebkitOverflowScrolling:'touch',scrollbarWidth:'auto',scrollbarColor:'var(--border) transparent'}});
-  const table=el('table',{class:'data-table',style:{borderCollapse:'collapse'}});
+  const table=el('table',{class:'data-table',style:{borderCollapse:'collapse',minWidth:'unset'}});
   const thead=el('thead'), trh=el('tr');
 
   // Select-all checkbox column
@@ -16905,7 +16906,7 @@ function renderToday(c) {
           body.appendChild(el('div',{style:{padding:'8px 12px',fontSize:'10px',color:'var(--green)',fontWeight:'600'}},'✓ All clear'));
         } else {
           if(sec.tblHdrs){
-            body.appendChild(buildTable(sec.tblHdrs,items.slice(0,15),sec.rowFn));
+            body.appendChild(buildTable(sec.tblHdrs,items.slice(0,15),sec.rowFn,{compact:true}));
           } else {
             items.slice(0,15).forEach(v=>body.appendChild(sec.rowFn(v)));
           }
@@ -16970,8 +16971,8 @@ function renderToday(c) {
     c.appendChild(vlistHdr);
     if (!S._todayVendorListOpen) { /* collapsed — skip table render */ } else {
   // Build column-aware table using settings.cols visibility
-  const ALL_HDRS=['','Actions','Score','Vendor','Category','Contact','Phone','Email','Current Expiry','Days','AR','Follow-Up','Tier','Why'];
-  const ALL_KEYS=['_cb','actions','score','vendor','category','contact','phone','email','expiry','days','ar','followup','tier','why'];
+  const ALL_HDRS=['','Actions','Score','Why','Tier','Vendor','Category','Contact','Phone','Email','Current Expiry','Days','AR','Follow-Up'];
+  const ALL_KEYS=['_cb','actions','score','why','tier','vendor','category','contact','phone','email','expiry','days','ar','followup'];
   const visIdx=ALL_KEYS.map((k,i)=>(k==='_cb'||S.settings.cols[k]!==false)?i:-1).filter(i=>i>=0);
   const headers=visIdx.map(i=>ALL_HDRS[i]);
   // Outer container — buildTable creates its own tbl-wrap inside
@@ -16987,12 +16988,12 @@ function renderToday(c) {
     nameEl.appendChild(vLink(v));
     if (S.dismissed.has(v.name)) nameEl.appendChild(el('span',{class:'dismissed-badge'},'dismissed'));
     const allCells=[
-      cb, actionBtns(v), scorePill(v.score), nameEl, v.category||'',
+      cb, actionBtns(v), scorePill(v.score), whyCell(v), tierTag(v.tier), nameEl, v.category||'',
       S.search ? el('span',{},highlightText(v.procContact||'', S.search)) : (v.procContact||''),
       v.bizPhone||v.mobile||'', v.email||'',
       exp?fmtDate(exp):'',
       days!==null?fmtDaysSpan(days):'',
-      arBadge(v), fu?fmtDate(fu):'', tierTag(v.tier), whyCell(v),
+      arBadge(v), fu?fmtDate(fu):'',
     ];
     return visIdx.map(i=>allCells[i]);
   }));
@@ -17050,7 +17051,8 @@ function renderToday(c) {
           const fuLabel=fu?(isOvr?'⚠ '+fuDays+'d overdue':'Due '+fmtDate(fu)):'—';
           const fuEl=el('span',{style:{fontSize:'9px',color:isOvr?'#ef4444':'var(--muted)',fontWeight:isOvr?'700':'400'}},fuLabel);
           return [scoreEl,acts,nameEl,v.category||'',tierEl,fuEl,lcEl];
-        }
+        },
+        {compact:true}
       ));
     }
     c.appendChild(fuSec);
@@ -17094,7 +17096,8 @@ function renderToday(c) {
           const tierEl=v.tier?tierTag(v.tier):'—';
           const revEl=el('span',{style:{fontSize:'9px',color:revColor,fontWeight:'600'}},revLabel);
           return [scoreEl,acts,nameEl,v.category||'',tierEl,revEl];
-        }
+        },
+        {compact:true}
       ));
     }
     c.appendChild(revSec);
