@@ -1538,6 +1538,37 @@ async function completeLogin() {
 // VCS Data Proxy — Google Apps Script URL (serves file to any authenticated user)
 const VCS_PROXY_URL = 'https://script.google.com/macros/s/AKfycbzjSZX_QmdQ9voaWbOOSYpAE39y9S7SwNstCPJTjjKrcZyzA7fS1jQR6ORryQoAuVxJ/exec';
 
+// ── Supabase API layer ────────────────────────────────────────────────────────
+const SB = {
+  url: function(){ return (typeof S!=='undefined'&&S.settings&&S.settings.supabaseUrl)||''; },
+  key: function(){ return (typeof S!=='undefined'&&S.settings&&S.settings.supabaseKey)||''; },
+  ready: function(){ return !!(SB.url()&&SB.key()); },
+  async query(table, params) {
+    if (!SB.ready()) return null;
+    try {
+      params=params||{};
+      const qs=Object.entries(params).map(function(kv){return kv[0]+'='+encodeURIComponent(kv[1]);}).join('&');
+      const r=await fetch(SB.url()+'/rest/v1/'+table+(qs?'?'+qs:''),{
+        headers:{'apikey':SB.key(),'Authorization':'Bearer '+SB.key(),'Content-Type':'application/json','Prefer':'return=representation'}
+      });
+      if(!r.ok){console.warn('[VCS SB] query failed:',r.status);return null;}
+      return r.json();
+    } catch(e){console.warn('[VCS SB] query error:',e);return null;}
+  },
+  async upsert(table, data) {
+    if (!SB.ready()) return null;
+    try {
+      const r=await fetch(SB.url()+'/rest/v1/'+table,{
+        method:'POST',
+        headers:{'apikey':SB.key(),'Authorization':'Bearer '+SB.key(),'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=representation'},
+        body:JSON.stringify(Array.isArray(data)?data:[data])
+      });
+      if(!r.ok){console.warn('[VCS SB] upsert failed:',r.status);return null;}
+      return r.json();
+    } catch(e){console.warn('[VCS SB] upsert error:',e);return null;}
+  }
+};
+
 // Google Drive OAuth token (set after user authorizes)
 let GDriveToken = null;
 let GDriveTokenExpiry = 0;
@@ -1575,6 +1606,7 @@ S = {
     emailSignature: '',
     sfClientId: '', sfRedirectUri: '', sfLoginUrl: 'https://login.salesforce.com',
     msGraphClientId: '', msGraphTenantId: '', driveFileId: '', driveAutoSync: false,
+    supabaseUrl: '', supabaseKey: '',
     psdSchemaVersion: '2026-06-21', // C1: tracks which field map this VCS build expects (keep in sync with PSD_SCHEMA_VERSION)
     closedDays: JSON.parse(localStorage.getItem('vcs_closed_days')||'[]'),
     oooDays: JSON.parse(localStorage.getItem('vcs_ooo_days')||'[]'),
@@ -3278,7 +3310,14 @@ async function executeSave() {
     try {
       const syncBuffer = typeof histBuffer !== 'undefined' ? histBuffer : uint8.buffer;
       const synced = await saveToDrive(syncBuffer, outName);
-      if (synced) { toast('✅ Saved and synced to Google Drive'); clearSessionState(); }
+      if (synced) {
+        toast('✅ Saved and synced to Google Drive'); clearSessionState();
+        // Supabase parallel write — non-blocking, failure does not affect Excel save
+        if (SB.ready()) {
+          const _dirtyV=(S.vendors||[]).filter(function(v){return v._dirty;});
+          _dirtyV.forEach(function(v){saveToSupabase(v).catch(function(e){console.warn('[VCS SB] bg save failed:',e);});});
+        }
+      }
       else toast('⚠ Drive sync failed — saveToDrive returned false. Check console.','#f59e0b');
     } catch(syncErr) {
       toast('⚠ Drive sync error: ' + syncErr.message.slice(0,100),'#ef4444');
@@ -6056,6 +6095,67 @@ async function getGDriveToken() {
   });
 }
 
+
+async function saveToSupabase(vendor) {
+  if (!SB.ready()||!vendor) return;
+  try {
+    const row={
+      name:vendor.name, gpo:vendor.gpo||'', category:vendor.category||'',
+      sub_category:vendor.subCategory||'', product:vendor.product||'',
+      class_of_trade:vendor.classOfTrade||'', markets:vendor.markets||'',
+      added_value:vendor.addedValue||'', website:vendor.website||'',
+      contract_name:vendor.contractName||'', assignment:vendor.assignment||'',
+      exclusivity:vendor.exclusivity||'', termination_notice:vendor.terminationNotice||'',
+      proc_contact:vendor.procContact||'', title:vendor.title||'',
+      biz_phone:vendor.bizPhone||'', mobile:vendor.mobile||'', email:vendor.email||'',
+      in_contract_since:vendor.inContractSince||null, effective_date:vendor.effectiveDate||null,
+      expiry:vendor.expiry||null, auto_renew:vendor.autoRenew||'',
+      auto_renew_type:vendor.autoRenewType||'', status:vendor.status||'',
+      contract_term:vendor.contractTerm||'', current_term:vendor.currentTerm||'',
+      admin_fee:vendor.adminFee||'', admin_fee_notes:vendor.adminFeeNotes||'',
+      tiers:vendor.tiers||'', perpetuity:vendor.perpetuity||'', tail:vendor.tail||'',
+      contract_no:vendor.contractNo||'', agreement_type:vendor.agreementType||'',
+      comments:vendor.comments||'', notes:vendor.notes||'',
+      last_comm:vendor.lastComm||null, about:vendor.about||'',
+      follow_up:vendor.followUp||null, aka:vendor.aka||'',
+      sf_account_id:vendor.sfAccountId||'', vendor_aliases:vendor.vendorAliases||'',
+      score:vendor.score||0, tier:vendor.tier||'', source:'psd',
+      updated_at:'now()'
+    };
+    if (vendor._sbId) row.id=vendor._sbId;
+    await SB.upsert('vendors',row);
+  } catch(e){console.warn('[VCS SB] saveToSupabase error:',e.message);}
+}
+
+async function loadFromSupabase() {
+  if (!SB.ready()) return false;
+  try {
+    toast('Loading from Supabase...','#6366f1');
+    const data=await SB.query('vendors','select=*&source=eq.psd&limit=10000');
+    if(!data||!data.length){toast('No vendors in Supabase yet — use Drive load first','#f59e0b');return false;}
+    S.vendors=data.map(function(r){return {
+      name:r.name||'', gpo:r.gpo||'', category:r.category||'', subCategory:r.sub_category||'',
+      product:r.product||'', classOfTrade:r.class_of_trade||'', markets:r.markets||'',
+      addedValue:r.added_value||'', website:r.website||'', contractName:r.contract_name||'',
+      assignment:r.assignment||'', exclusivity:r.exclusivity||'', terminationNotice:r.termination_notice||'',
+      procContact:r.proc_contact||'', title:r.title||'', bizPhone:r.biz_phone||'',
+      mobile:r.mobile||'', email:r.email||'', inContractSince:r.in_contract_since||'',
+      effectiveDate:r.effective_date||'', expiry:r.expiry||'', autoRenew:r.auto_renew||'',
+      autoRenewType:r.auto_renew_type||'', status:r.status||'', contractTerm:r.contract_term||'',
+      currentTerm:r.current_term||'', adminFee:r.admin_fee||'', adminFeeNotes:r.admin_fee_notes||'',
+      tiers:r.tiers||'', perpetuity:r.perpetuity||'', tail:r.tail||'', contractNo:r.contract_no||'',
+      agreementType:r.agreement_type||'', comments:r.comments||'', notes:r.notes||'',
+      lastComm:r.last_comm||'', about:r.about||'', followUp:r.follow_up||'', aka:r.aka||'',
+      sfAccountId:r.sf_account_id||'', vendorAliases:r.vendor_aliases||'',
+      score:r.score||0, tier:r.tier||'', source:'psd', _sbId:r.id
+    };});
+    S.loaded=true;
+    S.source='supabase';
+    toast('✅ Loaded '+S.vendors.length+' vendors from Supabase','#10b981');
+    render();
+    return true;
+  } catch(e){console.warn('[VCS SB] loadFromSupabase error:',e);return false;}
+}
 
 async function loadFromGoogleDrive() {
   // Show persistent loading banner with spinner until load completes
@@ -21538,6 +21638,7 @@ function renderVCSHealth(c) {
   }
   // Init watcher health state — set by "Run Connectivity Tests" button
   if(typeof S._watcherHealthy==='undefined') S._watcherHealthy=null;
+  if(typeof S._sbHealthy==='undefined') S._sbHealthy=null;
   const checks=[
     {label:'Google Drive Connection',icon:'☁',roles:'admin',test:()=>!!S.settings?.driveFileId,pass:'Drive File ID configured',fail:'No Drive File ID — go to Settings → Integrations',fix:()=>{S.view='settings';render();}},
     {label:'Salesforce Connection',icon:'☁',roles:'all',
@@ -21604,6 +21705,18 @@ function renderVCSHealth(c) {
           details.appendChild(table);
           body.appendChild(details);
         });
+      }
+    },
+    {label:'Supabase Database',icon:'🗄',roles:'admin',
+      test:function(){return SB.ready()&&S._sbHealthy===true;},
+      pass:'Connected — '+(SB.url().replace('https://','').split('.')[0]||'?')+'.supabase.co',
+      fail:SB.ready()?'Configured but not verified — click Fix to test':'Not configured — optional',
+      fixLabel:'🔌 Test Connection',
+      fix:async function(){
+        const r=await SB.query('vendors','select=id&limit=1');
+        S._sbHealthy=(r!==null);
+        toast(r!==null?'✅ Supabase connected':'❌ Supabase connection failed',r!==null?'#10b981':'#ef4444');
+        const _hc=$('content');if(_hc){_hc.innerHTML='';renderVCSHealth(_hc);}
       }
     },
   ];
@@ -22932,6 +23045,84 @@ function renderSettings(c) {
   makeCollapsibleSection(secDrive,'📁 Google Drive','vcs_s_drive',true);
   c.appendChild(secDrive);
   } // end configDrive admin block
+
+  // ── Supabase Database ──────────────────────────────────────────────────────
+  if(hasPermission('configDrive')) {
+  const secSupa=el('div',{class:'settings-section'});
+  secSupa.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},
+    'Optional: connect a Supabase database for faster loads and a proper database backend. '+
+    'VCS continues to work without it — Excel/Drive remains the primary storage.'));
+  // URL field
+  const supaUrlRow=el('div',{style:{marginBottom:'8px'}});
+  supaUrlRow.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'2px'}},'Supabase Project URL'));
+  const supaUrlInput=el('input',{type:'text',placeholder:'https://xxx.supabase.co',
+    style:{width:'100%',padding:'5px 8px',border:'1px solid var(--border)',borderRadius:'4px',
+           background:'var(--bg)',color:'var(--text)',fontSize:'11px'}});
+  supaUrlInput.value=S.settings.supabaseUrl||'';
+  supaUrlInput.addEventListener('change',function(){S.settings.supabaseUrl=supaUrlInput.value.trim();debouncedSaveSettings();});
+  supaUrlRow.appendChild(supaUrlInput);
+  secSupa.appendChild(supaUrlRow);
+  // Key field
+  const supaKeyRow=el('div',{style:{marginBottom:'8px'}});
+  supaKeyRow.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'2px'}},'Supabase Anon Key'));
+  const supaKeyInput=el('input',{type:'password',placeholder:'eyJ...',
+    style:{width:'100%',padding:'5px 8px',border:'1px solid var(--border)',borderRadius:'4px',
+           background:'var(--bg)',color:'var(--text)',fontSize:'11px'}});
+  supaKeyInput.value=S.settings.supabaseKey||'';
+  supaKeyInput.addEventListener('change',function(){S.settings.supabaseKey=supaKeyInput.value.trim();debouncedSaveSettings();});
+  supaKeyRow.appendChild(supaKeyInput);
+  secSupa.appendChild(supaKeyRow);
+  // Buttons
+  const supaBtnRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginBottom:'10px'}});
+  supaBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:async function(){
+    const r=await SB.query('vendors','select=id&limit=1');
+    if(r!==null) toast('✅ Supabase connected — vendors table accessible','#10b981');
+    else toast('❌ Supabase connection failed — check URL and key','#ef4444');
+  }},'🔌 Test Connection'));
+  supaBtnRow.appendChild(el('button',{class:'btn-xs btn-blue',onclick:async function(){
+    const ok=await loadFromSupabase();
+    if(!ok) toast('Load failed — check connection or populate DB first','#f59e0b');
+  }},'⬇ Load from Supabase'));
+  secSupa.appendChild(supaBtnRow);
+  // SQL schema
+  const schemaDetails=el('details',{style:{marginTop:'4px'}});
+  schemaDetails.appendChild(el('summary',{style:{cursor:'pointer',fontSize:'10px',color:'var(--muted)',userSelect:'none'}},'View SQL Schema (run in Supabase SQL editor)'));
+  const sqlBox=el('textarea',{readonly:true,style:{width:'100%',height:'200px',marginTop:'6px',padding:'6px',
+    fontSize:'9px',fontFamily:'monospace',background:'var(--sb)',color:'var(--text)',
+    border:'1px solid var(--border)',borderRadius:'4px',resize:'vertical',boxSizing:'border-box'}});
+  sqlBox.value='CREATE TABLE vendors (\n'+
+    '  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,\n'+
+    '  name TEXT NOT NULL, gpo TEXT, category TEXT, sub_category TEXT,\n'+
+    '  product TEXT, class_of_trade TEXT, markets TEXT, added_value TEXT,\n'+
+    '  website TEXT, contract_name TEXT, assignment TEXT, exclusivity TEXT,\n'+
+    '  termination_notice TEXT, proc_contact TEXT, title TEXT,\n'+
+    '  biz_phone TEXT, mobile TEXT, email TEXT,\n'+
+    '  in_contract_since DATE, effective_date DATE, expiry DATE,\n'+
+    '  auto_renew TEXT, auto_renew_type TEXT, status TEXT,\n'+
+    '  contract_term TEXT, current_term TEXT, admin_fee TEXT,\n'+
+    '  admin_fee_notes TEXT, tiers TEXT, perpetuity TEXT, tail TEXT,\n'+
+    '  contract_no TEXT, report_frequency TEXT, agreement_type TEXT,\n'+
+    '  comments TEXT, notes TEXT, last_comm DATE, about TEXT,\n'+
+    '  follow_up DATE, aka TEXT, sf_account_id TEXT, vendor_aliases TEXT,\n'+
+    '  score INTEGER, tier TEXT, source TEXT DEFAULT \'psd\',\n'+
+    '  created_at TIMESTAMPTZ DEFAULT NOW(),\n'+
+    '  updated_at TIMESTAMPTZ DEFAULT NOW()\n'+
+    ');\n'+
+    'CREATE INDEX vendors_name_idx ON vendors(name);\n'+
+    'CREATE INDEX vendors_category_idx ON vendors(category);\n'+
+    'CREATE INDEX vendors_status_idx ON vendors(status);\n'+
+    'ALTER TABLE vendors ENABLE ROW LEVEL SECURITY;\n'+
+    'CREATE POLICY "anon read" ON vendors FOR SELECT USING (true);\n'+
+    'CREATE POLICY "anon write" ON vendors FOR ALL USING (true);';
+  const copyBtn=el('button',{class:'btn-xs btn-ghost',style:{marginTop:'4px'},
+    onclick:function(){navigator.clipboard.writeText(sqlBox.value);toast('SQL copied','#10b981');}
+  },'Copy SQL');
+  schemaDetails.appendChild(sqlBox);
+  schemaDetails.appendChild(copyBtn);
+  secSupa.appendChild(schemaDetails);
+  makeCollapsibleSection(secSupa,'🗄 Supabase Database','vcs_s_supa',true);
+  c.appendChild(secSupa);
+  } // end Supabase admin block
 
   // ── Microsoft 365 / Outlook Calendar Integration ──
   if(hasPermission('configDrive')) {
