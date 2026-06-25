@@ -5522,6 +5522,9 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   // ── Block 6: Communications Intelligence ──────────────────────────────────────
   renderCommPanel(body, vendor);
 
+  // ── Notes section (all vendor panels) ──────────────────────────────────────
+  try { addUnifiedNotesSection(body, vendor, null, null); } catch(e) { console.warn('[VCS] Notes section error:', e); }
+
   showDetailPanel();
 }
 
@@ -6850,7 +6853,7 @@ function logLoginAttempt(email,success,reason){
   if(success){
     const all=getApprovedUsers();
     const idx=all.findIndex(u=>u.email.toLowerCase()===email.toLowerCase());
-    if(idx>=0){all[idx].lastLogin=new Date().toISOString();localStorage.setItem(AUTH_KEY,JSON.stringify(all));}
+    if(idx>=0){all[idx].lastLogin=new Date().toISOString();setApprovedUsers(all);} // syncs to Drive so admin can see last login
   }
 }
 
@@ -8869,10 +8872,13 @@ function openVendorAliasModal(vendor) {
 }
 // ─── Vendor Database — Excel-style multi-select column filters ─────────────────
 function renderVendorDB(c) {
-  // For sticky thead to work, #content must be the scroll parent.
-  // Remove tbl-wrap's own overflow so the sticky positioning works relative to #content.
-  // We set padding:0 so the table fills the full content area cleanly.
-  c.style.padding = '0';
+  // Layout: fixed controls bar at top, scrollable table area below.
+  c.style.display='flex';
+  c.style.flexDirection='column';
+  c.style.height='100%';
+  c.style.padding='0';
+  c.style.overflow='hidden';
+  const ctrlBar=el('div',{style:{flexShrink:'0',background:'var(--bg)',borderBottom:'1px solid var(--border)',padding:'0 0 4px 0',zIndex:'10',position:'relative'}});
   if (!S.loaded) { c.appendChild(el('p',{class:'muted',style:{padding:'16px'}},'Load a file first — upload your XLSM to see all contracts here.')); return; }
   if (!S.dbFilters) S.dbFilters = {};
   if (!S.dbSort || !S._dbSortUserSet) S.dbSort = {col:'Vendor', dir:1};
@@ -8941,7 +8947,7 @@ function renderVendorDB(c) {
   }
   const desc=el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'8px'}},sourcePool[S.dbSource].desc);
   sourceBar.appendChild(desc);
-  c.appendChild(sourceBar);
+  ctrlBar.appendChild(sourceBar);
 
   // Reps can choose Direct, Channel Partners, or All — no forced source
   const VENDOR_POOL = sourcePool[S.dbSource].data;
@@ -9176,7 +9182,7 @@ function renderVendorDB(c) {
 
     colToggleWrap.appendChild(colToggleBody);
   }
-  c.appendChild(colToggleWrap);
+  ctrlBar.appendChild(colToggleWrap);
 
   const colToggleBar=el('div',{style:{display:'none'}}); // legacy ref kept for compat
   colToggleBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'3px'}},'Columns:'));
@@ -9221,7 +9227,7 @@ function renderVendorDB(c) {
         onclick(){S._dbNoContactFilter=!S._dbNoContactFilter;const c2=$('content');if(c2){c2.innerHTML='';renderVendorDB(c2);}}},
         '⬜ Not contacted ('+ncCount+')');
       qfRow.appendChild(ncBtn);
-      if(qfRow.children.length) c.appendChild(qfRow);
+      if(qfRow.children.length) ctrlBar.appendChild(qfRow);
     }
   }
 
@@ -9238,7 +9244,7 @@ function renderVendorDB(c) {
       chip.appendChild(x); chipRow.appendChild(chip);
     });
     chipRow.appendChild(el('button',{class:'btn-xs btn-danger',onclick(){S.dbFilters={};S._dbRenderCount=150;const c2=$('content');if(c2&&S.view==='vendordb'){c2.innerHTML='';renderVendorDB(c2);}else render();}},'✕ Clear All'));
-    c.appendChild(chipRow);
+    ctrlBar.appendChild(chipRow);
   }
 
   // ── Action bar ──
@@ -9252,7 +9258,7 @@ function renderVendorDB(c) {
   actionBar.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){exportCSV(vendors,'vendor_db_'+isoDate(new Date()));}}, '⬇ CSV'));
   actionBar.appendChild(el('button',{class:'btn-xs btn-green',onclick(){openAddVendorRecordModal({destination:'psd'});}},'+ Add Vendor Record'));
   actionBar.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Click ▼ on any column header to filter • Click label to sort • Drag border to resize'));
-  c.appendChild(actionBar);
+  ctrlBar.appendChild(actionBar);
 
   // ── Table ──
   // Pre-build SF context map for O(1) lookup per vendor row (instead of O(n) per row)
@@ -9283,7 +9289,7 @@ function renderVendorDB(c) {
     });
   }
 
-  const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap',style:{overflowX:'auto',overflowY:'auto',maxHeight:'calc(100vh - 180px)',width:'100%',minWidth:'0',position:'relative',border:'1px solid var(--border)',borderRadius:'4px',display:'block',WebkitOverflowScrolling:'touch',scrollbarWidth:'auto',scrollbarColor:'var(--border) transparent'}});
+  const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap',style:{width:'100%',minWidth:'max-content',border:'1px solid var(--border)',borderRadius:'4px'}});
   const table=el('table',{class:'data-table',style:{borderCollapse:'collapse',minWidth:'unset'}});
   const thead=el('thead',{style:{position:'sticky',top:'0',zIndex:'3',background:'var(--card)'}}), trh=el('tr');
 
@@ -9500,10 +9506,12 @@ function renderVendorDB(c) {
       }
     }
   }
-  table.appendChild(tbody); tblWrap.appendChild(table); c.appendChild(tblWrap);
-
-  // Show total count
-  c.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',padding:'6px 2px',textAlign:'center'}},vendors.length+' vendor'+(vendors.length!==1?'s':'')));
+  table.appendChild(tbody); tblWrap.appendChild(table);
+  const tableArea=el('div',{style:{flex:'1',overflow:'auto',position:'relative',minHeight:'0',WebkitOverflowScrolling:'touch'}});
+  tableArea.appendChild(tblWrap);
+  tableArea.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',padding:'6px 2px',textAlign:'center',minWidth:'max-content'}},vendors.length+' vendor'+(vendors.length!==1?'s':'')));
+  c.appendChild(ctrlBar);
+  c.appendChild(tableArea);
 }
 
 function openColumnFilterModal(col, filteredVendors) {
@@ -13917,8 +13925,9 @@ function renderSpend(c) {
   hdr.appendChild(el('p',{style:{margin:'0',fontSize:'10px',color:'var(--muted)'}},'Live spend data from Salesforce. Compare actual spend against contract admin fees to identify commission gaps.'));
   // View mode toggle: By Vendor | By Customer
   if(!S._spendView) S._spendView='vendor';
+  if(S._spendView==='sf') S._spendView='vendor'; // sf tab removed
   const modeTabs=el('div',{style:{display:'flex',gap:'4px',marginTop:'8px'}});
-  [{key:'vendor',label:'📦 By Vendor'},{key:'customer',label:'🏢 By Customer'},{key:'sf',label:'☁ By Vendor (SF)'}].forEach(function(m){
+  [{key:'vendor',label:'📦 By Vendor'},{key:'customer',label:'🏢 By Customer'}].forEach(function(m){
     modeTabs.appendChild(el('button',{class:'filter-tab'+(S._spendView===m.key?' active':''),onclick:function(){S._spendView=m.key;renderSpend(c);}},m.label));
   });
   hdr.appendChild(modeTabs);
@@ -13929,13 +13938,6 @@ function renderSpend(c) {
     c.appendChild(wrap);
     return;
   }
-  // SF spend view — AP_Spend__c records
-  if(S._spendView==='sf'){
-    (async()=>{ await _renderSpendBySF(wrap,c); })();
-    c.appendChild(wrap);
-    return;
-  }
-
   if(!USER.sfToken){
     const banner=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'6px',padding:'20px',textAlign:'center'}});
     banner.appendChild(el('p',{style:{fontWeight:'600',marginBottom:'4px'}},'Connect Salesforce to view spend analytics'));
