@@ -707,7 +707,7 @@ body.light-theme .sb-logo-text{color:var(--blue)}
 ::-webkit-scrollbar-thumb{background:#3a3d52;border-radius:4px}
 ::-webkit-scrollbar-thumb:hover{background:var(--muted)}
 ::-webkit-scrollbar-corner{background:transparent}
-#vdb-table-wrap{overflow-x:auto!important;overflow-y:auto!important}
+#vdb-table-wrap{overflow:visible}
 #vdb-table-wrap::-webkit-scrollbar{height:8px;width:8px}
 #vdb-table-wrap::-webkit-scrollbar-track{background:rgba(0,0,0,.05)}
 #vdb-table-wrap::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
@@ -717,20 +717,18 @@ body.light-theme .sb-logo-text{color:var(--blue)}
    Affected: sfboard, customers, contracts, spend, compare (see specs/).
    Settings and health already had no duplicate h1/h2 before this change.
    Reference: C:\VCS\specs\no-duplicate-titles.md */
-/* Sticky header fix: vendor DB uses #content as scroll parent (tbl-wrap has overflow:visible).
-   This rule makes thead sticky relative to #content rather than tbl-wrap. */
-#content > #vdb-table-wrap .data-table thead th,
-#content .data-table thead th {
+/* S16: VendorDB uses #vdb-table-area as scroll parent. tblWrap has overflow:visible.
+   Sticky thead is relative to #vdb-table-area. */
+#vdb-table-area .data-table thead th {
   position:sticky !important;
   top:0 !important;
   z-index:30 !important;
   background:var(--sb) !important;
   box-shadow:0 2px 4px rgba(0,0,0,.18) !important;
 }
-/* Prevent tbl-wrap from creating its own scroll context in vendor DB */
+/* Prevent tbl-wrap from creating its own scroll context */
 #vdb-table-wrap.tbl-wrap {
-  overflow-y:visible !important;
-  overflow-x:auto !important;
+  overflow:visible !important;
   max-height:none !important;
 }
 </style>
@@ -5103,7 +5101,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
           relSec.appendChild(row);
         });
       }
-      body.appendChild(relSec);
+      body._pendingRelSec=relSec; // deferred — appended after notes section
     }
   }
 
@@ -5524,6 +5522,9 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
   // ── Notes section (all vendor panels) ──────────────────────────────────────
   try { addUnifiedNotesSection(body, vendor, null, null); } catch(e) { console.warn('[VCS] Notes section error:', e); }
+
+  // ── Related Vendors (appended last — least relevant) ─────────────────────
+  if(body._pendingRelSec){body.appendChild(body._pendingRelSec);delete body._pendingRelSec;}
 
   showDetailPanel();
 }
@@ -8060,8 +8061,22 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
     });
   }
 
-  // Note: Review notes are shown in a separate section (addReviewNotesSection)
-  // so they stay organized by their three distinct categories
+  // Review progress notes on vendor object
+  const _rvNotes=vendor.progressNotes||vendor.reviewNotes||'';
+  if(_rvNotes.trim()){
+    allEntries.push({date:'',tag:'Review',author:'',content:_rvNotes,_source:'Review',_vendor:vendor});
+  }
+
+  // Review records from S.reviews
+  if(S.reviews&&S.reviews.length){
+    const vName=(vendor.name||'').toLowerCase();
+    S.reviews.filter(r=>(r.vendor||r.vendorName||'').toLowerCase()===vName).forEach(r=>{
+      const rText=r.notes||r.progressNotes||'';
+      if(rText.trim()) allEntries.push({
+        date:r.date||'',tag:'Review',author:r.reviewer||'',content:rText,_source:'Review',_vendor:null
+      });
+    });
+  }
 
   if(!allEntries.length){
     sec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',padding:'6px 0',fontStyle:'italic'}},'No notes yet.'));
@@ -8364,7 +8379,7 @@ function openStructuredNoteModal(vendor) {
       if(vendor.source==='itw'){vendor._dirty=true;if(!S.dirtyITW)S.dirtyITW=new Set();S.dirtyITW.add(vendor._row);}
       else{markDirty(vendor);}
       logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendor.name,action:'Note Added ['+selectedTag+']',note:content.slice(0,60)});
-      saveSessionState(); updateSidebar(); refreshDetailIfOpen(vendor); closeModal();
+      saveSessionState(); updateSidebar(); closeModal(); requestAnimationFrame(()=>refreshDetailIfOpen(vendor));
       toast('📝 '+selectedTag+' note saved');
     }},'Save Note'));
     btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
@@ -9507,7 +9522,7 @@ function renderVendorDB(c) {
     }
   }
   table.appendChild(tbody); tblWrap.appendChild(table);
-  const tableArea=el('div',{style:{flex:'1',overflow:'auto',position:'relative',minHeight:'0',WebkitOverflowScrolling:'touch'}});
+  const tableArea=el('div',{id:'vdb-table-area',style:{flex:'1',overflow:'auto',position:'relative',minHeight:'0',WebkitOverflowScrolling:'touch'}});
   tableArea.appendChild(tblWrap);
   tableArea.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',padding:'6px 2px',textAlign:'center',minWidth:'max-content'}},vendors.length+' vendor'+(vendors.length!==1?'s':'')));
   c.appendChild(ctrlBar);
@@ -13859,12 +13874,38 @@ async function _renderSpendBySF(wrap,c) {
 }
 
 function renderSpendByCustomer(wrap) {
+  if(!USER.sfToken){
+    wrap.appendChild(el('div',{style:{textAlign:'center',padding:'30px',color:'var(--muted)',fontSize:'10px'}},'Connect Salesforce to view customer spend data.'));
+    return;
+  }
   const opps=S._sfBoardData?.opps||[];
   const isRep=(USER.role==='sales_rep'||USER.role==='rep');
-  // Filter to rep's accounts if they're a sales rep
   const myOpps=isRep?opps.filter(o=>o._ownerName===USER.name):opps;
+  if(!myOpps.length&&!S._custSpendLoading){
+    S._custSpendLoading=true;
+    wrap.appendChild(el('p',{style:{padding:'20px',color:'var(--muted)',fontSize:'10px'}},'Loading customer data from Salesforce...'));
+    (async()=>{
+      try{
+        const soql='SELECT Id, Name, Amount, StageName, Account.Name, Owner.Name, CloseDate FROM Opportunity WHERE IsClosed=false OR (IsClosed=true AND StageName=\'Closed Won\') ORDER BY CloseDate DESC LIMIT 500';
+        const result=await sfQuery(soql);
+        S._custSpendLoading=false;
+        if(result&&result.records&&result.records.length){
+          if(!S._sfBoardData)S._sfBoardData={};
+          S._sfBoardData.opps=result.records.map(r=>({
+            Id:r.Id,Name:r.Name,Amount:r.Amount||0,StageName:r.StageName,
+            _accountName:r.Account?.Name||'Unknown',_ownerName:r.Owner?.Name||'',CloseDate:r.CloseDate
+          }));
+          const c2=$('content');if(c2&&S.view==='spend'){c2.innerHTML='';renderSpend(c2);}
+        } else {
+          wrap.innerHTML='';wrap.appendChild(el('div',{style:{textAlign:'center',padding:'30px',color:'var(--muted)',fontSize:'10px'}},'No Salesforce opportunity data found.'));
+        }
+      }catch(e){S._custSpendLoading=false;console.warn('[VCS Spend] Customer load failed:',e);}
+    })();
+    return;
+  }
+  S._custSpendLoading=false;
   if(!myOpps.length){
-    wrap.appendChild(el('div',{style:{textAlign:'center',padding:'30px',color:'var(--muted)',fontSize:'10px'}},'No Salesforce opportunity data loaded. Load SF data from the SF Board tab first.'));
+    wrap.appendChild(el('div',{style:{textAlign:'center',padding:'30px',color:'var(--muted)',fontSize:'10px'}},'No opportunity data found.'));
     return;
   }
   // Aggregate by account
@@ -25342,6 +25383,8 @@ function render() {
     S.view = _allowedTabs[0] || 'today';
   }
   if (!S.loaded&&S.view!=='settings'&&S.view!=='health'){content.appendChild(el('p',{class:'muted',style:{padding:'24px'}},'No file loaded. Upload a workbook to begin.'));return;}
+  // Reset per-tab inline styles VendorDB sets on #content so other pages aren't broken
+  content.style.display='';content.style.flexDirection='';content.style.overflow='';content.style.padding='';content.style.height='';
   switch(S.view){
     case 'today':renderToday(content);break;case 'callsheet':renderCallSheet(content);break;case 'expiring':renderExpiring(content);break;
     case 'vendordb':renderVendorDB(content);break;
