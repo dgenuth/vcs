@@ -25360,8 +25360,12 @@ function render() {
   const search=$('search');
   const hadFocus=document.activeElement===search, curPos=hadFocus?search.selectionStart:0;
   content.innerHTML='';
-  // Reset padding override from vendorDB view
+  // Reset all style overrides set by renderVendorDB — prevents bleed into Settings/Today/etc.
   content.style.padding = '';
+  content.style.display = '';
+  content.style.flexDirection = '';
+  content.style.overflow = '';
+  content.style.height = '';
   const titles={
     today:'📋 Today',callsheet:'📞 Call Sheet',expiring:'⏰ Expiring',
     vendordb:'🗂 Vendor Database',network:'🔗 Network Intel',itw:'💼 Pipeline',
