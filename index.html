@@ -4655,7 +4655,6 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       promoSec.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',margin:'2px 0 0 0',textAlign:'center'}},'Pre-fills all fields — completes the contract record in Vendor DB'));
       body.appendChild(promoSec);
     }
-    if (hasPermission('editNotes') || ['admin','procurement','manager','cro'].includes(USER.role)) addNotesSection(body, vendor, '📋 Pipeline Notes (In The Works)');
     if (psdVendor) {
       // Show contract summary inline
       const cSec=el('div',{class:'detail-section'});
@@ -4665,8 +4664,9 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       cSec.appendChild(grid);
       cSec.appendChild(el('button',{class:'btn-xs btn-blue',style:{marginTop:'6px'},onclick(){openDetail(psdVendor, fromAnalytics, true);}},'→ Open Full Contract Record'));
       body.appendChild(cSec);
-      if (hasPermission('editNotes') || ['admin','procurement','manager','cro'].includes(USER.role)) addNotesSection(body, psdVendor, '📝 Contract Notes (Prime Source Direct)');
     }
+    // Unified notes section for ITW vendors
+    try { addUnifiedNotesSection(body, vendor, vendor, null); } catch(e) { console.warn('[VCS] Notes section error:', e); }
     // ── Communications Intelligence — shown for all vendor types including ITW ──
     renderCommPanel(body, vendor);
     showDetailPanel(); return;
@@ -5512,9 +5512,6 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
   // ── Block 6: Communications Intelligence ──────────────────────────────────────
   renderCommPanel(body, vendor);
-
-  // ── Notes section (all vendor panels) ──────────────────────────────────────
-  try { addUnifiedNotesSection(body, vendor, null, null); } catch(e) { console.warn('[VCS] Notes section error:', e); }
 
   // ── Related Vendors (appended last — least relevant) ─────────────────────
   if(body._pendingRelSec){body.appendChild(body._pendingRelSec);delete body._pendingRelSec;}
@@ -6985,6 +6982,19 @@ function hasPermission(p){
   if(p==='configDrive') return USER.role==='admin';
   return !!(ROLE_PERMS[USER.role]||{})[p];
 }
+function getRoleFeatureDefault(role, feature){
+  const val=S.settings&&S.settings.roleDefaults&&S.settings.roleDefaults[role]&&S.settings.roleDefaults[role].features&&S.settings.roleDefaults[role].features[feature];
+  if(val!==undefined) return val;
+  // Defaults: AI+Renzo disabled for sales_rep/viewer; everything else on
+  if(['sales_rep','viewer','restricted'].includes(role)&&(feature==='ai'||feature==='renzo')) return false;
+  return true;
+}
+function setRoleFeatureDefault(role, feature, value){
+  if(!S.settings.roleDefaults) S.settings.roleDefaults={};
+  if(!S.settings.roleDefaults[role]) S.settings.roleDefaults[role]={};
+  if(!S.settings.roleDefaults[role].features) S.settings.roleDefaults[role].features={};
+  S.settings.roleDefaults[role].features[feature]=value;
+}
 function applyCopyProtection() {
   var canCopy = (ROLE_PERMS[USER.role||'restricted']||{}).canCopy;
   if (window._vcsCopyHandler) { document.removeEventListener('keydown', window._vcsCopyHandler, true); }
@@ -7285,7 +7295,7 @@ async function _loadSFCard(container, vendor, card) {
         row.appendChild(el('span',{style:{flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},o.Name));
         row.appendChild(el('span',{style:{color:'var(--muted)',whiteSpace:'nowrap',fontSize:'9px'}},o.StageName));
         if(o.Amount!=null) row.appendChild(el('span',{style:{color:'var(--green)',whiteSpace:'nowrap',fontSize:'9px',fontWeight:'700'}},'$'+Math.round(o.Amount).toLocaleString()));
-        if(USER.sfInstance&&o.Id) row.appendChild(el('a',{href:USER.sfInstance+'/'+o.Id,target:'_blank',class:'btn-xs btn-ghost',style:{textDecoration:'none',fontSize:'8px',padding:'1px 5px',flexShrink:'0'}},'↗ SF'));
+        if(USER.sfInstance&&o.Id) row.appendChild(el('a',{href:USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view',target:'_blank',class:'btn-xs btn-ghost',style:{textDecoration:'none',fontSize:'8px',padding:'1px 5px',flexShrink:'0'}},'↗ SF'));
         container.appendChild(row);
       });
     } else {
@@ -7298,7 +7308,7 @@ async function _loadSFCard(container, vendor, card) {
         const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'2px',fontSize:'10px'}});
         row.appendChild(el('span',{style:{flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},t.Subject));
         if(t.ActivityDate) row.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px',whiteSpace:'nowrap'}},t.ActivityDate));
-        if(USER.sfInstance&&t.Id) row.appendChild(el('a',{href:USER.sfInstance+'/'+t.Id,target:'_blank',class:'btn-xs btn-ghost',style:{textDecoration:'none',fontSize:'8px',padding:'1px 5px',flexShrink:'0'}},'↗ SF'));
+        if(USER.sfInstance&&t.Id) row.appendChild(el('a',{href:USER.sfInstance+'/lightning/r/Task/'+t.Id+'/view',target:'_blank',class:'btn-xs btn-ghost',style:{textDecoration:'none',fontSize:'8px',padding:'1px 5px',flexShrink:'0'}},'↗ SF'));
         container.appendChild(row);
       });
     }
@@ -21621,7 +21631,9 @@ function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
       if(!S._settingsOpen) S._settingsOpen={};
       S._settingsOpen[key]=!isOpen;
       S._settingsExpandAll=null; // clear bulk expand so individual state takes over
+      const _sEl=document.getElementById('content');const _sY=_sEl?_sEl.scrollTop:0;
       render();
+      requestAnimationFrame(()=>{const _el=document.getElementById('content');if(_el)_el.scrollTop=_sY;});
     }});
   hdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',fontWeight:'400',marginRight:'2px'}},isOpen?'▼':'▶'));
   hdr.appendChild(el('span',{style:{fontSize:'14px'}},icon));
@@ -23531,17 +23543,6 @@ function renderSettings(c) {
   makeCollapsibleSection(secDialer,'📞 Click-to-Call & Phone Connect','vcs_s_dialer',false);
   c.appendChild(secDialer);
 
-  const sec1=el('div',{class:'settings-section'});
-  sec1.appendChild(el('h3',{},'📋 Table Columns (Today view)'));
-  const colDefs=[['score','Score'],['vendor','Vendor'],['category','Category'],['contact','Contact'],['phone','Phone'],['email','Email'],['expiry','Expiry'],['days','Days'],['tier','Tier'],['why','Why'],['actions','Actions']];
-  const colWrap=el('div',{class:'col-toggle'});
-  for (const [key,label] of colDefs) {
-    const on=S.settings.cols[key]!==false;
-    const btn=el('button',{class:'col-toggle-btn'+(on?' on':''),onclick(){S.settings.cols[key]=!on;renderSettings(c);}},label);
-    colWrap.appendChild(btn);
-  }
-  sec1.appendChild(colWrap); if(['admin','procurement','manager'].includes(USER.role)){makeCollapsibleSection(sec1,'📋 Table Columns','vcs_s_cols',false);c.appendChild(sec1);}
-
   // Display preferences
   const sec4=el('div',{class:'settings-section'});
   // header for Display Preferences added by makeCollapsibleSection below
@@ -24062,6 +24063,35 @@ function out(o){return ContentService.createTextOutput(JSON.stringify(o)).setMim
       }
     }
     c.appendChild(apiSec);
+  }
+
+  // ── Role Defaults — Admin only ──
+  if(USER.role==='admin'){
+  settingsCard(c,'Role Feature Defaults','🎛','roleDefaults',false,body=>{
+    body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.5'}},'Configure which features are enabled by default for each role. Users can still be granted individual overrides in User Management.'));
+    const ROLES_LIST=[['admin','Admin'],['procurement','Procurement'],['manager','Manager'],['cro','CRO'],['sales_rep','Sales Rep'],['viewer','Viewer']];
+    const FEATURES=[['ai','AI Assistant'],['renzo','Renzo Access'],['discovery','Discovery'],['sfboard','SF Board'],['spend','Spend Page'],['contracts','Contracts']];
+    const grid=el('div',{style:{overflowX:'auto'}});
+    const tbl=el('table',{class:'data-table',style:{width:'100%',fontSize:'9px'}});
+    const thead=el('thead');const hr=el('tr');
+    hr.appendChild(el('th',{style:{textAlign:'left',padding:'4px 6px'}},'Role'));
+    FEATURES.forEach(([,fl])=>hr.appendChild(el('th',{style:{textAlign:'center',padding:'4px 6px',whiteSpace:'nowrap'}},fl)));
+    thead.appendChild(hr);tbl.appendChild(thead);
+    const tbody=el('tbody');
+    ROLES_LIST.forEach(([role,roleLabel])=>{
+      const tr=el('tr');
+      tr.appendChild(el('td',{style:{padding:'4px 6px',fontWeight:'600',whiteSpace:'nowrap'}},roleLabel));
+      FEATURES.forEach(([feat])=>{
+        const td=el('td',{style:{textAlign:'center',padding:'4px 6px'}});
+        const cb=el('input',{type:'checkbox'});
+        cb.checked=getRoleFeatureDefault(role,feat);
+        cb.addEventListener('change',()=>{setRoleFeatureDefault(role,feat,cb.checked);debouncedSaveSettings();});
+        td.appendChild(cb);tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);grid.appendChild(tbl);body.appendChild(grid);
+  });
   }
 
   // ── Session Handover Generator — Admin only ──
