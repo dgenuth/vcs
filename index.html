@@ -4663,7 +4663,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       const cSec=el('div',{class:'detail-section'});
       cSec.appendChild(el('h4',{class:'detail-sec-title'},'📄 Contract Info (Prime Source Direct)'));
       const grid=el('div',{class:'detail-grid'});
-      [['Expiry',psdVendor.expiry?fmtDate(getCurrentExpiry(psdVendor)):' — '],['Auto-Renew',psdVendor.autoRenew||'—'],['Admin Fee',psdVendor.adminFee||'—'],['Status',psdVendor.status||'—'],['Contact',psdVendor.procContact||'—'],['Phone',psdVendor.bizPhone||psdVendor.mobile||'—'],['Email',psdVendor.email||'—']].forEach(([l,v])=>{grid.appendChild(el('span',{class:'detail-label'},l));grid.appendChild(el('span',{class:'detail-value'},v));});
+      [['Expiry',psdVendor.expiry?fmtDate(getCurrentExpiry(psdVendor)):' — '],['Auto-Renew',psdVendor.autoRenew||'—'],['Admin Fee',psdVendor.adminFee||'—'],['Status',psdVendor.status||'—'],['Contact',psdVendor.procContact||'—'],['Phone',psdVendor.bizPhone||psdVendor.mobile||'—'],['Email',psdVendor.email||'—']].forEach(([l,v])=>{grid.appendChild(el('span',{class:'detail-label'},l));if(l==='Email'&&psdVendor.email){grid.appendChild(el('a',{class:'detail-value',href:'mailto:'+psdVendor.email,style:{color:'var(--blue)',textDecoration:'none'}},psdVendor.email));}else{grid.appendChild(el('span',{class:'detail-value'},v));}});
       cSec.appendChild(grid);
       cSec.appendChild(el('button',{class:'btn-xs btn-blue',style:{marginTop:'6px'},onclick(){openDetail(psdVendor, fromAnalytics, true);}},'→ Open Full Contract Record'));
       body.appendChild(cSec);
@@ -8028,8 +8028,8 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
 
   // Action buttons
   if(hasPermission('editNotes')){
-    const btnGrp=el('div',{style:{display:'flex',gap:'3px'}});
-    btnGrp.appendChild(el('button',{class:'btn-xs btn-green',onclick(){openStructuredNoteModal(vendor);}},'+ Add'));
+    const btnGrp=el('div',{style:{display:'flex',gap:'3px',marginLeft:'auto'}});
+    btnGrp.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){openAddNoteModal(vendor);}},'+ Add Note'));
     btnGrp.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){openEditNotesModal(vendor);}}, 'Edit'));
     hdr.appendChild(btnGrp);
   }
@@ -9285,7 +9285,7 @@ function renderVendorDB(c) {
 
   const tblWrap=el('div',{id:'vdb-table-wrap',class:'tbl-wrap',style:{overflowX:'auto',overflowY:'auto',maxHeight:'calc(100vh - 180px)',width:'100%',minWidth:'0',position:'relative',border:'1px solid var(--border)',borderRadius:'4px',display:'block',WebkitOverflowScrolling:'touch',scrollbarWidth:'auto',scrollbarColor:'var(--border) transparent'}});
   const table=el('table',{class:'data-table',style:{borderCollapse:'collapse',minWidth:'unset'}});
-  const thead=el('thead'), trh=el('tr');
+  const thead=el('thead',{style:{position:'sticky',top:'0',zIndex:'3',background:'var(--card)'}}), trh=el('tr');
 
   // Select-all checkbox column
   const cbTh=el('th',{style:{width:'32px',padding:'4px'}});
@@ -10945,7 +10945,10 @@ function renderSFVendorBrief(wrap, opps, cases, tasks, spendLeaderboard) {
       contactBody.appendChild(emailRow);
     }
     if(vcsV.procContact2||vcsV.email2){
-      contactBody.appendChild(el('div',{style:{borderTop:'1px solid var(--border)',marginTop:'6px',paddingTop:'6px',fontSize:'9px',color:'var(--muted)'}},'Secondary: '+(vcsV.procContact2||'')+(vcsV.email2?' | '+vcsV.email2:'')));
+      const secRow=el('div',{style:{borderTop:'1px solid var(--border)',marginTop:'6px',paddingTop:'6px',fontSize:'9px',color:'var(--muted)'}});
+      secRow.appendChild(document.createTextNode('Secondary: '+(vcsV.procContact2||'')+(vcsV.email2?' | ':'')));
+      if(vcsV.email2) secRow.appendChild(el('a',{href:'mailto:'+vcsV.email2,style:{color:'var(--blue)',textDecoration:'none',fontSize:'9px'}},vcsV.email2));
+      contactBody.appendChild(secRow);
     }
     if(vcsV.lastComm) contactBody.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px'}},'Last contact: '+vcsV.lastComm));
     if(vcsV.followUp) contactBody.appendChild(el('div',{style:{fontSize:'8px',color:'var(--amber)',marginTop:'2px'}},'Follow-up: '+vcsV.followUp));
@@ -13928,7 +13931,7 @@ function renderSpend(c) {
   }
   // SF spend view — AP_Spend__c records
   if(S._spendView==='sf'){
-    _renderSpendBySF(wrap,c);
+    (async()=>{ await _renderSpendBySF(wrap,c); })();
     c.appendChild(wrap);
     return;
   }
@@ -13938,6 +13941,11 @@ function renderSpend(c) {
     banner.appendChild(el('p',{style:{fontWeight:'600',marginBottom:'4px'}},'Connect Salesforce to view spend analytics'));
     banner.appendChild(el('button',{class:'btn-primary',style:{marginTop:'8px'},onclick(){if(!S.settings.sfClientId){S.view='settings';render();}else{sfConnect();}}},'🔗 Connect Salesforce'));
     wrap.appendChild(banner); c.appendChild(wrap); return;
+  }
+
+  // Auto-load when SF connected but no data fetched yet
+  if(!SPEND_STATE.data && !SPEND_STATE.loading){
+    setTimeout(()=>loadSpendData(), 100);
   }
 
   // Controls
@@ -17559,6 +17567,12 @@ function _discFacilityFields(DS) {
       });
     }
   } catch(e) {}
+  if(repSel.options.length<=1&&(USER.name||USER.email)){
+    const _un=USER.name||USER.email;
+    const opt=el('option',{value:USER.email||_un},_un);
+    if(DS.repId===USER.email||DS.repId===_un) opt.selected=true;
+    repSel.appendChild(opt);
+  }
   repSel.addEventListener('change',function(){DS.repId=repSel.value;saveSessionState();});
   repWrap.appendChild(repSel);
   row.appendChild(repWrap);
