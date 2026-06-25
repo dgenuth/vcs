@@ -5475,13 +5475,6 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
 
 
-  if (vendor.comments && String(vendor.comments).trim()) {
-    const sec=el('div',{class:'detail-section'});
-    sec.appendChild(el('h4',{class:'detail-sec-title'},'Comments (Spreadsheet)'));
-    const nd=el('div',{class:'notes-area'});
-    for (const line of String(vendor.comments).split('\n')) fmtNoteLine(nd,line);
-    sec.appendChild(nd); body.appendChild(sec);
-  }
   // ── Vendor Activity Timeline ──
   const vendorHistory=S.history.filter(h=>h.vendor===vendor.name);
   if (vendorHistory.length) {
@@ -7247,7 +7240,28 @@ function restoreSFSession(){
 // SF token monitor — disabled proactive refresh (causes unwanted popups)
 // Token stays valid until a 401 is received, at which point sfAutoReconnect handles it
 let _sfTokenMonitor=null;
-function startSFTokenMonitor(){ /* disabled — no proactive refresh */ }
+function startSFTokenMonitor(){
+  if(_sfTokenMonitor) clearInterval(_sfTokenMonitor);
+  _sfTokenMonitor=setInterval(()=>{
+    try{
+      const ls=JSON.parse(localStorage.getItem('vcs_sf_token_ls')||'null');
+      if(!ls||!ls.expiry) return;
+      const minsLeft=Math.round((ls.expiry-Date.now())/60000);
+      if(minsLeft<=5&&minsLeft>0&&!S._sfExpiryWarned){
+        S._sfExpiryWarned=true;
+        toast('⚠ Salesforce session expires in '+minsLeft+' min — save your work','#f59e0b',8000);
+      }
+      if(minsLeft<=0){
+        clearInterval(_sfTokenMonitor);_sfTokenMonitor=null;S._sfExpiryWarned=false;
+        USER.sfToken=null;USER.sfInstance='';
+        localStorage.removeItem('vcs_sf_token_ls');
+        sessionStorage.removeItem('vcs_sf_token');
+        toast('⚠ Salesforce session expired — please reconnect','#ef4444',8000);
+        if(S.view==='health'){const hc=$('content');if(hc){hc.innerHTML='';renderVCSHealth(hc);}}
+      }
+    }catch(e){}
+  },30000);
+}
 function stopSFTokenMonitor(){ if(_sfTokenMonitor){clearInterval(_sfTokenMonitor);_sfTokenMonitor=null;} }
 async function _loadSFCard(container, vendor, card) {
   card._loaded=true;
@@ -7271,6 +7285,7 @@ async function _loadSFCard(container, vendor, card) {
         row.appendChild(el('span',{style:{flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},o.Name));
         row.appendChild(el('span',{style:{color:'var(--muted)',whiteSpace:'nowrap',fontSize:'9px'}},o.StageName));
         if(o.Amount!=null) row.appendChild(el('span',{style:{color:'var(--green)',whiteSpace:'nowrap',fontSize:'9px',fontWeight:'700'}},'$'+Math.round(o.Amount).toLocaleString()));
+        if(USER.sfInstance&&o.Id) row.appendChild(el('a',{href:USER.sfInstance+'/'+o.Id,target:'_blank',class:'btn-xs btn-ghost',style:{textDecoration:'none',fontSize:'8px',padding:'1px 5px',flexShrink:'0'}},'↗ SF'));
         container.appendChild(row);
       });
     } else {
@@ -7283,6 +7298,7 @@ async function _loadSFCard(container, vendor, card) {
         const row=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'2px',fontSize:'10px'}});
         row.appendChild(el('span',{style:{flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},t.Subject));
         if(t.ActivityDate) row.appendChild(el('span',{style:{color:'var(--muted)',fontSize:'9px',whiteSpace:'nowrap'}},t.ActivityDate));
+        if(USER.sfInstance&&t.Id) row.appendChild(el('a',{href:USER.sfInstance+'/'+t.Id,target:'_blank',class:'btn-xs btn-ghost',style:{textDecoration:'none',fontSize:'8px',padding:'1px 5px',flexShrink:'0'}},'↗ SF'));
         container.appendChild(row);
       });
     }
@@ -8054,10 +8070,23 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
     : parseNoteEntries(vendor.notes);
   _psdSrc.forEach(function(e){allEntries.push(Object.assign({},e,{_source:'Contract',_vendor:vendor}));});
 
-  // ITW notes
-  if(itwVendor && itwVendor.notes){
-    parseNoteEntries(itwVendor.notes).forEach(e=>{
-      allEntries.push({...e, _source:'Pipeline', _vendor:itwVendor});
+  // vendor.comments (spreadsheet Comments column — shown here not as standalone section)
+  if(vendor.comments && String(vendor.comments).trim()){
+    const _cParsed=parseNoteEntries(String(vendor.comments));
+    if(_cParsed.length){
+      _cParsed.forEach(e=>allEntries.push(Object.assign({},e,{_source:'Contract',_vendor:vendor})));
+    } else {
+      allEntries.push({date:'',tag:'',author:'',content:String(vendor.comments).trim(),_source:'Contract',_vendor:vendor});
+    }
+  }
+
+  // ITW notes — passed directly OR auto-matched from S.itwVendors
+  const _itwSrc=itwVendor||(S.itwVendors||(S._itwData)||[]).find(itw=>
+    itw.name===vendor.name||(itw.vendorId&&itw.vendorId===vendor.id)
+  );
+  if(_itwSrc && _itwSrc.notes){
+    parseNoteEntries(_itwSrc.notes).forEach(e=>{
+      allEntries.push({...e, _source:'Pipeline', _vendor:_itwSrc});
     });
   }
 
@@ -21591,6 +21620,7 @@ function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
     onclick(){
       if(!S._settingsOpen) S._settingsOpen={};
       S._settingsOpen[key]=!isOpen;
+      S._settingsExpandAll=null; // clear bulk expand so individual state takes over
       render();
     }});
   hdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',fontWeight:'400',marginRight:'2px'}},isOpen?'▼':'▶'));
@@ -23018,6 +23048,8 @@ function renderSettings(c) {
       row.appendChild(inp);
       secSF.appendChild(row);
     });
+    secSF.appendChild(el('p',{style:{fontSize:'9px',color:'var(--amber)',marginTop:'8px',lineHeight:'1.5'}},
+      '⚠ SF sessions expire after your org\'s session timeout (default 2 hours). To extend: Salesforce Setup → Session Settings → Session Timeout → set to 8 hours or Never. VCS will use the stored token until it expires.'));
     makeCollapsibleSection(secSF,'☁ Salesforce Integration','vcs_s_sf',true);
     c.appendChild(secSF);
   }
