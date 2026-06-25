@@ -21468,6 +21468,40 @@ function renderDataCheck(c) {
   });
   if(!shown.length){c.appendChild(el('p',{class:'success'},'✅ No issues found! Data is clean.'));return;}
   c.appendChild(sumRow);
+  // Export button
+  const exportBtn=el('button',{class:'btn-xs btn-ghost',style:{marginBottom:'8px',display:'flex',alignItems:'center',gap:'4px'},
+    onclick(){
+      // Build CSV rows
+      const rows=[['Severity','Issue Type','Vendor','Category','GPO','Contact','Email','Phone','Expiry','Status']];
+      shown.forEach(({vendor:v,type,sev})=>{
+        rows.push([
+          sev.toUpperCase(),
+          type,
+          v.name||'',
+          v.category||'',
+          v.gpo||'',
+          v.procContact||'',
+          v.email||'',
+          v.bizPhone||v.mobile||'',
+          v.expiry||'',
+          v.status||''
+        ]);
+      });
+      const csv=rows.map(r=>r.map(cell=>{
+        const s=String(cell).replace(/"/g,'""');
+        return s.includes(',')||s.includes('"')||s.includes('\n')?'"'+s+'"':s;
+      }).join(',')).join('\r\n');
+      const blob=new Blob([csv],{type:'text/csv'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url;
+      a.download='VCS_DataCheck_'+new Date().toISOString().split('T')[0]+'.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+      toast('📊 Exported '+shown.length+' issues to CSV','#10b981');
+    }
+  },'📊 Export to Spreadsheet');
+  c.appendChild(exportBtn);
   c.appendChild(el('p',{class:'muted',style:{marginBottom:'7px'}},shown.length+' issue'+(shown.length!==1?'s':'')+' across '+[...new Set(shown.map(i=>i.vendor.name))].length+' vendors — click Fix to open the relevant panel'));
 
   for(const [sev,label] of [['high','🔴 High Priority'],['med','🟡 Medium'],['low','⚪ Low']]) {
