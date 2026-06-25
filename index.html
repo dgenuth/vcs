@@ -1082,7 +1082,8 @@ function loginAs(userObj) {
   // Persist session
   sessionStorage.setItem('vcs_session', JSON.stringify({
     email: USER.email, name: USER.name, role: USER.role,
-    loginTime: USER.loginTime.toISOString(), hiddenFields: USER.hiddenFields
+    loginTime: USER.loginTime.toISOString(), hiddenFields: USER.hiddenFields,
+    tabOverrides: USER.tabOverrides||{}
   }));
   return {ok:true};
 }
@@ -6926,7 +6927,7 @@ function logLoginAttempt(email,success,reason){
   if(success){
     const all=getApprovedUsers();
     const idx=all.findIndex(u=>u.email.toLowerCase()===email.toLowerCase());
-    if(idx>=0){all[idx].lastLogin=new Date().toISOString();setApprovedUsers(all);} // syncs to Drive so admin can see last login
+    if(idx>=0){all[idx].lastLogin=new Date().toISOString();setApprovedUsers(all,true);saveUsersViaProxy().catch(()=>{});} // immediate sync to Drive so admin can see last login
   }
 }
 
@@ -6966,6 +6967,7 @@ function restoreSession(){
     USER.email=s.email;USER.name=s.name;USER.role=s.role;USER.loggedIn=true;
     USER.loginTime=new Date(s.loginTime);
     USER.hiddenFields=Array.isArray(s.hiddenFields)?s.hiddenFields:[];
+    USER.tabOverrides=s.tabOverrides||{};
     return true;
   }catch(e){return false;}
 }
@@ -8174,7 +8176,7 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
   }
 
   // ITW notes — passed directly OR auto-matched from S.itwVendors
-  const _itwSrc=itwVendor||(S.itwVendors||(S._itwData)||[]).find(itw=>
+  const _itwSrc=itwVendor||(S.itw||S.itwVendors||S._itwData||[]).find(itw=>
     itw.name===vendor.name||(itw.vendorId&&itw.vendorId===vendor.id)
   );
   if(_itwSrc && _itwSrc.notes){
@@ -21468,7 +21470,8 @@ function renderDataCheck(c) {
   });
   if(!shown.length){c.appendChild(el('p',{class:'success'},'✅ No issues found! Data is clean.'));return;}
   c.appendChild(sumRow);
-  // Export button
+  // Export button — admin and procurement only
+  if(hasPermission('admin')||USER.role==='procurement'||USER.role==='manager'||USER.role==='cro'){
   const exportBtn=el('button',{class:'btn-xs btn-ghost',style:{marginBottom:'8px',display:'flex',alignItems:'center',gap:'4px'},
     onclick(){
       // Build CSV rows
@@ -21502,6 +21505,7 @@ function renderDataCheck(c) {
     }
   },'📊 Export to Spreadsheet');
   c.appendChild(exportBtn);
+  } // end export permission check
   c.appendChild(el('p',{class:'muted',style:{marginBottom:'7px'}},shown.length+' issue'+(shown.length!==1?'s':'')+' across '+[...new Set(shown.map(i=>i.vendor.name))].length+' vendors — click Fix to open the relevant panel'));
 
   for(const [sev,label] of [['high','🔴 High Priority'],['med','🟡 Medium'],['low','⚪ Low']]) {
