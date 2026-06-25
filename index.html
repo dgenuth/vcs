@@ -1237,6 +1237,7 @@ S = {
     sfClientId: '', sfRedirectUri: '', sfLoginUrl: 'https://login.salesforce.com',
     msGraphClientId: '', msGraphTenantId: '', driveFileId: '', driveAutoSync: false,
     supabaseUrl: '', supabaseKey: '',
+    roleDefaults: {},
     psdSchemaVersion: '2026-06-21', // C1: tracks which field map this VCS build expects (keep in sync with PSD_SCHEMA_VERSION)
     closedDays: JSON.parse(localStorage.getItem('vcs_closed_days')||'[]'),
     oooDays: JSON.parse(localStorage.getItem('vcs_ooo_days')||'[]'),
@@ -4204,6 +4205,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   $('detail-overlay').style.background = fromAnalytics ? 'transparent' : 'rgba(0,0,0,.4)';
   const body=$('detail-body');
   body.innerHTML='';
+  let _pendingRelSec = null;
 
   // Back button if there's navigation history
   if (_detailStack.length > 0) {
@@ -5099,7 +5101,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
           relSec.appendChild(row);
         });
       }
-      body._pendingRelSec=relSec; // deferred — appended after notes section
+      _pendingRelSec=relSec; // deferred — appended after notes section
     }
   }
 
@@ -5512,7 +5514,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   renderCommPanel(body, vendor);
 
   // ── Related Vendors (appended last — least relevant) ─────────────────────
-  if(body._pendingRelSec){body.appendChild(body._pendingRelSec);delete body._pendingRelSec;}
+  if(_pendingRelSec){body.appendChild(_pendingRelSec);}
 
   showDetailPanel();
 }
@@ -6249,7 +6251,7 @@ const PERSONAL_SETTING_KEYS = ['theme','fontSize','compactRows','defaultView','s
   'emailSignature','cols','dbHiddenCols','sidebarWidth','closedDays','oooDays','dialerUrl',
   'myPhone','sfClientId','aiProvider']; // sfClientId is per-user (each user has own SF credentials)
 // Global settings — org-wide, admin-controlled, apply to all sessions
-const GLOBAL_SETTING_KEYS = ['sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey','apiKey','grokKey','aiKeyShared','composioKey'];
+const GLOBAL_SETTING_KEYS = ['sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey','apiKey','grokKey','aiKeyShared','composioKey','roleDefaults'];
 window.GLOBAL_SETTING_KEYS = GLOBAL_SETTING_KEYS;
 const PERSIST_KEYS = [...PERSONAL_SETTING_KEYS, ...GLOBAL_SETTING_KEYS];
 
@@ -6517,7 +6519,7 @@ async function loadConfigFromDrive() {
     // User list — Drive is source of truth, but merge with fresh directory if needed
     if (config.users && config.users.length > 0) {
       // Check if Drive config has the new role system (v2+)
-      const hasNewRoles = config.users.some(u => ['procurement','cro','director_ops','ops_qc','finance_sr','finance_jr','ssa','sales_rep'].includes(u.role));
+      const hasNewRoles = config.configVersion >= 3 || config.users.some(u => ['procurement','cro','director_ops','ops_qc','finance_sr','finance_jr','ssa','sales_rep'].includes(u.role));
       if (hasNewRoles || (config.configVersion && config.configVersion >= 2)) {
         setApprovedUsers(config.users);
       } else {
@@ -6869,9 +6871,37 @@ function getApprovedUsers(){
 }
 function setApprovedUsers(u, skipDriveSync){
   localStorage.setItem(AUTH_KEY,JSON.stringify(u));
-  // Push to Drive after short delay (non-blocking) — skip during migration
   if (!skipDriveSync) {
-    setTimeout(() => saveConfigToDrive().catch(e=>console.warn('Drive user save:',e.message)), 2000);
+    setTimeout(() => saveUsersViaProxy().catch(e=>console.warn('[VCS] User save failed:',e.message)), 2000);
+  }
+}
+
+// Save user array + global settings to Drive via GAS proxy (no Google OAuth required)
+async function saveUsersViaProxy() {
+  try {
+    const users = getApprovedUsers();
+    const globalSettings = {};
+    GLOBAL_SETTING_KEYS.forEach(k => { if(S.settings[k]!==undefined) globalSettings[k]=S.settings[k]; });
+    const existing = JSON.parse(localStorage.getItem('vcs_config')||'{}');
+    const cfg = Object.assign({}, existing, {
+      users,
+      globalSettings,
+      vendorAliases: S.vendorAliases||{},
+      configVersion: 3,
+      updatedAt: new Date().toISOString(),
+      updatedBy: USER.email||'unknown'
+    });
+    localStorage.setItem('vcs_config', JSON.stringify(cfg));
+    const resp = await fetch(VCS_PROXY_URL, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain'},
+      body: JSON.stringify({action:'saveConfig', config: JSON.stringify(cfg)})
+    });
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    console.log('[VCS] Users saved to Drive via proxy ✅');
+  } catch(e) {
+    console.warn('[VCS] saveUsersViaProxy failed:', e.message);
+    throw e;
   }
 }
 
@@ -8116,6 +8146,7 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
     hdr.appendChild(btnGrp);
   }
   sec.appendChild(hdr);
+  body.appendChild(sec); // attach early so header always shows even if entries throw
 
   // Collect all entries from all sources
   const allEntries = [];
@@ -8177,7 +8208,7 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
 
   if(!allEntries.length){
     sec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',padding:'6px 0',fontStyle:'italic'}},'No notes yet.'));
-    body.appendChild(sec); return;
+    return;
   }
 
   // Sort: dated entries by date desc, undated legacy entries at end
@@ -8257,7 +8288,6 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
   }
 
   sec.appendChild(list);
-  body.appendChild(sec);
 }
 
 function addNotesSection(body, vendor, title) {
@@ -22082,7 +22112,7 @@ function buildFieldAccess(container, userEmail) {
         // Update visual immediately — no rebuild needed
         btn._hidden = !nowHidden;
         updateBtnStyle(!nowHidden);
-        setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+        setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
       });
       fieldGrid.appendChild(btn);
     });
@@ -22129,7 +22159,7 @@ function buildFieldAccess(container, userEmail) {
     const currentAccess=hasOverride?tabOverrides[t.id]:roleDefaultTabs.has(t.id);
     all[i].tabOverrides[t.id]=!currentAccess;
     localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-    setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+    setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
     requestAnimationFrame(()=>buildFieldAccess(container,userEmail));
         }
       },t.label+' '+(hasAccess?'✅':'🚫')+(isOverridden?' ⚡':''));
@@ -22141,7 +22171,7 @@ function buildFieldAccess(container, userEmail) {
       const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
       delete all[i].tabOverrides;
       localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-      setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+      setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
       buildFieldAccess(container,userEmail);
     }},'↺ Reset tabs to role defaults');
     const resetFieldsBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(){
@@ -22149,7 +22179,7 @@ function buildFieldAccess(container, userEmail) {
       all[i].hiddenFields=getDefaultHiddenFields(all[i].role);
       all[i]._customHiddenFields=false;
       localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-      setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+      setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
       buildFieldAccess(container,userEmail);
     }},'↺ Reset fields to role defaults');
     container.appendChild(el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginTop:'4px'}},resetTabsBtn,resetFieldsBtn));
@@ -22171,7 +22201,7 @@ function buildFieldAccess(container, userEmail) {
         if(!all[i].featureFlags)all[i].featureFlags={};
         all[i].featureFlags.aiEnabled=!_aiOn;
         localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-        setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+        setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
         buildFieldAccess(container,userEmail);
       }
     },_aiOn?'Enabled ✅':'Disabled 🚫');
@@ -22243,7 +22273,7 @@ function buildFieldAccess(container, userEmail) {
         // Update visual immediately — no rebuild needed
         btn._hidden = !nowHidden;
         updateBtnStyle(!nowHidden);
-        setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+        setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
       });
       fieldGrid.appendChild(btn);
     });
@@ -22290,7 +22320,7 @@ function buildFieldAccess(container, userEmail) {
     const currentAccess=hasOverride?tabOverrides[t.id]:roleDefaultTabs.has(t.id);
     all[i].tabOverrides[t.id]=!currentAccess;
     localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-    setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+    setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
     requestAnimationFrame(()=>buildFieldAccess(container,userEmail));
         }
       },t.label+' '+(hasAccess?'✅':'🚫')+(isOverridden?' ⚡':''));
@@ -22302,7 +22332,7 @@ function buildFieldAccess(container, userEmail) {
       const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
       delete all[i].tabOverrides;
       localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-      setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+      setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
       buildFieldAccess(container,userEmail);
     }},'↺ Reset tabs to role defaults');
     const resetFieldsBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(){
@@ -22310,7 +22340,7 @@ function buildFieldAccess(container, userEmail) {
       all[i].hiddenFields=getDefaultHiddenFields(all[i].role);
       all[i]._customHiddenFields=false;
       localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-      setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+      setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
       buildFieldAccess(container,userEmail);
     }},'↺ Reset fields to role defaults');
     container.appendChild(el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginTop:'4px'}},resetTabsBtn,resetFieldsBtn));
@@ -22333,7 +22363,7 @@ function buildFieldAccess(container, userEmail) {
         if(!all[i].featureFlags)all[i].featureFlags={};
         all[i].featureFlags.aiEnabled=!_aiOn;
         localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-        setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+        setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
         buildFieldAccess(container,userEmail);
       }
     },_aiOn?'Enabled ✅':'Disabled 🚫');
@@ -22353,7 +22383,7 @@ function buildFieldAccess(container, userEmail) {
         if(!all[i].featureFlags)all[i].featureFlags={};
         all[i].featureFlags.renzoEnabled=!_renzoOn;
         localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-        setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+        setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
         buildFieldAccess(container,userEmail);
       }
     },_renzoOn?'Enabled ✅':'Disabled 🚫');
@@ -22648,7 +22678,7 @@ function renderSettings(c) {
               u.tabOverrides[t.id]=newOn;
             });
             localStorage.setItem(AUTH_KEY,JSON.stringify(allUsers));
-            setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);
+            setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
           }catch(ue){ console.error('[RoleTab]',ue); }
           rbtn._on=newOn;
           rbtn.textContent=t.label+(newOn?' ✅':' 🚫');
@@ -22694,7 +22724,7 @@ function renderSettings(c) {
             e.stopPropagation();e.preventDefault();
             const newH=!fbtn._hidden;
             try{const rh=new Set(JSON.parse(localStorage.getItem(_rfKey)||'[]'));if(newH){rh.add(fKey);}else{rh.delete(fKey);}localStorage.setItem(_rfKey,JSON.stringify([...rh]));}catch(e2){}
-            try{const allU=getApprovedUsers();allU.forEach(u=>{if((u.role||'admin')!==role)return;if(!u.hiddenFields)u.hiddenFields=[];if(newH){if(!u.hiddenFields.includes(fKey))u.hiddenFields.push(fKey);}else{u.hiddenFields=u.hiddenFields.filter(k=>k!==fKey);}});localStorage.setItem(AUTH_KEY,JSON.stringify(allU));setTimeout(()=>saveConfigToDrive().catch(()=>{}),2000);}catch(e3){}
+            try{const allU=getApprovedUsers();allU.forEach(u=>{if((u.role||'admin')!==role)return;if(!u.hiddenFields)u.hiddenFields=[];if(newH){if(!u.hiddenFields.includes(fKey))u.hiddenFields.push(fKey);}else{u.hiddenFields=u.hiddenFields.filter(k=>k!==fKey);}});localStorage.setItem(AUTH_KEY,JSON.stringify(allU));setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);}catch(e3){}
             fbtn._hidden=newH;upF(newH);
             toast('✓ '+lbl+' '+(newH?'hidden':'visible')+' for all '+role+' users','#22c55e');
           });
