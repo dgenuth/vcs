@@ -5035,20 +5035,18 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     body.appendChild(sfCard);
   }
 
-  if (hasPermission('editNotes') || ['admin','procurement','manager','cro'].includes(USER.role)) {
-    try {
-      // PSD + ITW notes merged into one timeline
-      addUnifiedNotesSection(body, vendor, itwVendor, null);
-      // Review notes shown separately — three distinct categories, each collapsible
-      if (reviewRecord) addReviewNotesSection(body, reviewRecord, vendor);
-    } catch(noteErr) {
-      console.error('[VCS] Notes section error:', noteErr);
-      // Fallback: show plain notes so detail panel still opens
-      if (vendor.notes) {
-        const fb=el('div',{class:'detail-section'});
-        fb.appendChild(el('h4',{class:'detail-sec-title'},'📝 Notes'));
-        const nd=el('div',{class:'notes-area'});renderNotesStr(nd,vendor.notes);fb.appendChild(nd);body.appendChild(fb);
-      }
+  // Notes always visible — Add/Edit gated inside addUnifiedNotesSection
+  try {
+    addUnifiedNotesSection(body, vendor, itwVendor, null);
+    // Review notes shown separately — three distinct categories, each collapsible
+    if (reviewRecord) addReviewNotesSection(body, reviewRecord, vendor);
+  } catch(noteErr) {
+    console.error('[VCS] Notes section error:', noteErr);
+    // Fallback: show plain notes so detail panel still opens
+    if (vendor.notes) {
+      const fb=el('div',{class:'detail-section'});
+      fb.appendChild(el('h4',{class:'detail-sec-title'},'📝 Notes'));
+      const nd=el('div',{class:'notes-area'});renderNotesStr(nd,vendor.notes);fb.appendChild(nd);body.appendChild(fb);
     }
   }
 
@@ -5752,6 +5750,54 @@ async function saveToSupabase(vendor) {
   } catch(e){console.warn('[VCS SB] saveToSupabase error:',e.message);}
 }
 
+async function seedSupabase() {
+  if(!SB.ready()){toast('Supabase not configured','#ef4444');return;}
+  if(!S.vendors||!S.vendors.length){toast('No vendors loaded — load from Drive first','#f59e0b');return;}
+  toast('Seeding Supabase... 0/'+S.vendors.length,'#6366f1',0);
+  const BATCH=50;
+  let done=0,errors=0;
+  for(let i=0;i<S.vendors.length;i+=BATCH){
+    const batch=S.vendors.slice(i,i+BATCH);
+    const rows=batch.map(v=>({
+      name:v.name||'',gpo:v.gpo||'',category:v.category||'',
+      sub_category:v.subCategory||'',product:v.product||'',
+      class_of_trade:v.classOfTrade||'',markets:v.markets||'',
+      added_value:v.addedValue||'',website:v.website||'',
+      contract_name:v.contractName||'',assignment:v.assignment||'',
+      exclusivity:v.exclusivity||'',termination_notice:v.terminationNotice||'',
+      proc_contact:v.procContact||'',title:v.title||'',
+      biz_phone:v.bizPhone||'',mobile:v.mobile||'',email:v.email||'',
+      in_contract_since:v.inContractSince||null,effective_date:v.effectiveDate||null,
+      expiry:v.expiry||null,auto_renew:v.autoRenew||'',
+      auto_renew_type:v.autoRenewType||'',status:v.status||'',
+      contract_term:v.contractTerm||'',current_term:v.currentTerm||'',
+      admin_fee:v.adminFee||'',admin_fee_notes:v.adminFeeNotes||'',
+      tiers:v.tiers||'',perpetuity:v.perpetuity||'',tail:v.tail||'',
+      contract_no:v.contractNo||'',agreement_type:v.agreementType||'',
+      comments:v.comments||'',notes:v.notes||'',last_comm:v.lastComm||null,
+      about:v.about||'',follow_up:v.followUp||null,aka:v.aka||'',
+      sf_account_id:v.sfAccountId||'',vendor_aliases:v.vendorAliases||'',
+      score:v.score||0,tier:v.tier||'',source:'psd',updated_at:'now()'
+    }));
+    rows.forEach(r=>{
+      ['in_contract_since','effective_date','expiry','last_comm','follow_up'].forEach(f=>{
+        if(!r[f]||String(r[f]).trim()==='') r[f]=null;
+      });
+    });
+    try{
+      const result=await SB.upsert('vendors',rows);
+      if(result) done+=batch.length; else errors+=batch.length;
+    }catch(e){errors+=batch.length;console.warn('[VCS SB] Seed batch error:',e);}
+    toast('Seeding... '+Math.min(i+BATCH,S.vendors.length)+'/'+S.vendors.length,'#6366f1',0);
+  }
+  if(errors===0){
+    toast('✅ Seeded '+done+' vendors to Supabase successfully!','#10b981',6000);
+    S._sbHealthy=true;
+  } else {
+    toast('⚠ Seeded '+done+' vendors, '+errors+' errors — check console','#f59e0b',6000);
+  }
+}
+
 async function loadFromSupabase() {
   if (!SB.ready()) return false;
   try {
@@ -5783,6 +5829,12 @@ async function loadFromSupabase() {
 }
 
 async function loadFromGoogleDrive() {
+  // Try Supabase first if configured (faster than Drive)
+  if(SB.ready()){
+    const sbOk=await loadFromSupabase();
+    if(sbOk) return;
+    console.log('[VCS] Supabase load failed, falling back to Drive');
+  }
   // Show persistent loading banner with spinner until load completes
   let loadBanner = document.getElementById('vcs-load-banner');
   if (!loadBanner) {
@@ -8113,6 +8165,12 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
       const rText=r.notes||r.progressNotes||'';
       if(rText.trim()) allEntries.push({
         date:r.date||'',tag:'Review',author:r.reviewer||'',content:rText,_source:'Review',_vendor:null
+      });
+      if(r.contractNotes&&r.contractNotes.trim()) allEntries.push({
+        date:r.reviewDate||r.date||'',tag:'Contract',author:r.reviewer||'',content:'[Contract] '+r.contractNotes.trim(),_source:'Review',_vendor:null
+      });
+      if(r.sfNotes&&r.sfNotes.trim()) allEntries.push({
+        date:r.reviewDate||r.date||'',tag:'SF Notes',author:r.reviewer||'',content:'[SF] '+r.sfNotes.trim(),_source:'Review',_vendor:null
       });
     });
   }
@@ -21402,7 +21460,7 @@ function makeCollapsibleSection(sec, title, storageKey, defaultCollapsed) {
   const isCollapsed = localStorage.getItem(storageKey) !== null
     ? localStorage.getItem(storageKey) === '1'
     : (defaultCollapsed === true);
-  const hdr=el('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',cursor:'pointer',userSelect:'none',padding:'4px 0'},onclick(){
+  const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'4px 0'},onclick(){
     const c=body.style.display==='none';
     body.style.display=c?'':'none';
     chev.textContent=c?'▼':'▶';
@@ -22454,7 +22512,7 @@ function renderSettings(c) {
       }});
     const _rdChev=el('span',{style:{fontSize:'12px',color:'var(--muted)'}},_rdCollapsed?'▶':'▼');
     _rdHdr.appendChild(_rdChev);
-    _rdHdr.appendChild(el('h3',{style:{margin:'0'}},'🎭 Role Tab Defaults'));
+    _rdHdr.appendChild(el('h3',{style:{margin:'0'}},'🎭 Role & Feature Defaults'));
     // Expand/Collapse all role rows
     const rdBtnRow=el('div',{style:{display:'flex',gap:'4px',marginLeft:'auto'},onclick(e){e.stopPropagation();}});
     rdBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){
@@ -22645,6 +22703,28 @@ function renderSettings(c) {
         _roleBody.appendChild(fgrid);
       });
       _roleBody.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)',marginBottom:'4px'}},'✅ = visible to role · 🚫 = hidden from role'));
+
+      // ── Feature Defaults for this role ────────────────────────────────────
+      _roleBody.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:'var(--text)',marginTop:'10px',marginBottom:'4px',paddingTop:'6px',borderTop:'1px solid var(--border)'}},'⚙ Feature Defaults:'));
+      const ROLE_FEATURES=[['ai','AI Assistant'],['renzo','Renzo Access'],['discovery','Discovery'],['sfboard','SF Board'],['spend','Spend Page'],['contracts','Contracts']];
+      const featGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',marginBottom:'4px'}});
+      ROLE_FEATURES.forEach(function([feat,featLabel]){
+        const fOn=getRoleFeatureDefault(role,feat);
+        const fbtn2=document.createElement('button');
+        fbtn2._on=fOn;
+        const upFeat=function(f){fbtn2.textContent=featLabel+' '+(f?'✅':'🚫');fbtn2.style.cssText='font-size:7px;padding:2px 6px;border-radius:3px;cursor:pointer;font-weight:500;border:1px solid '+(f?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)')+';background:'+(f?'rgba(34,197,94,.08)':'rgba(239,68,68,.05)')+';color:'+(f?'#4ade80':'#f87171')+';';};
+        upFeat(fOn);
+        fbtn2.addEventListener('click',function(e){
+          e.stopPropagation();e.preventDefault();
+          const newOn2=!fbtn2._on;
+          setRoleFeatureDefault(role,feat,newOn2);
+          debouncedSaveSettings();
+          fbtn2._on=newOn2;upFeat(newOn2);
+          toast('✓ '+featLabel+' '+(newOn2?'ON':'OFF')+' for all '+role+' users — saved','#22c55e');
+        });
+        featGrid.appendChild(fbtn2);
+      });
+      _roleBody.appendChild(featGrid);
 
       roleSection.appendChild(_roleBody);
       _rdBody.appendChild(roleSection);
@@ -23164,6 +23244,12 @@ function renderSettings(c) {
     const ok=await loadFromSupabase();
     if(!ok) toast('Load failed — check connection or populate DB first','#f59e0b');
   }},'⬇ Load from Supabase'));
+  supaBtnRow.appendChild(el('button',{class:'btn-xs btn-blue',style:{background:'var(--green)'},onclick:async function(){
+    if(!SB.ready()){toast('Configure Supabase URL and key first','#f59e0b');return;}
+    if(!S.vendors||!S.vendors.length){toast('Load vendors from Drive first','#f59e0b');return;}
+    if(!confirm('Export all '+S.vendors.length+' vendors to Supabase? This will overwrite existing data.')) return;
+    await seedSupabase();
+  }},'🌱 Seed Database (export all vendors)'));
   secSupa.appendChild(supaBtnRow);
   // SQL schema
   const schemaDetails=el('details',{style:{marginTop:'4px'}});
@@ -23929,7 +24015,7 @@ function out(o){return ContentService.createTextOutput(JSON.stringify(o)).setMim
   // ── API Usage Monitoring (Admin only) ──
   if(['admin','procurement'].includes(USER.role)){
     const apiSec=el('div',{class:'summary-section'});
-    const apiHdrRow=el('div',{style:{display:'flex',alignItems:'center',cursor:'pointer',marginBottom:'4px'},onclick(){S._apiSecOpen=!S._apiSecOpen;render();}});
+    const apiHdrRow=el('div',{style:{display:'flex',alignItems:'center',cursor:'pointer',marginBottom:'4px'},onclick(){const _ac=$('content');const _asp=_ac?_ac.scrollTop:0;S._apiSecOpen=!S._apiSecOpen;render();if(_ac) requestAnimationFrame(()=>{_ac.scrollTop=_asp;});}});
     apiHdrRow.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'6px'}},S._apiSecOpen!==false?'▼':'▶'));
     apiHdrRow.appendChild(el('h3',{style:{margin:'0',flex:'1'}},'📊 API Usage Monitor'));
     apiSec.appendChild(apiHdrRow);
@@ -24065,34 +24151,6 @@ function out(o){return ContentService.createTextOutput(JSON.stringify(o)).setMim
     c.appendChild(apiSec);
   }
 
-  // ── Role Defaults — Admin only ──
-  if(USER.role==='admin'){
-  settingsCard(c,'Role Feature Defaults','🎛','roleDefaults',false,body=>{
-    body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.5'}},'Configure which features are enabled by default for each role. Users can still be granted individual overrides in User Management.'));
-    const ROLES_LIST=[['admin','Admin'],['procurement','Procurement'],['manager','Manager'],['cro','CRO'],['sales_rep','Sales Rep'],['viewer','Viewer']];
-    const FEATURES=[['ai','AI Assistant'],['renzo','Renzo Access'],['discovery','Discovery'],['sfboard','SF Board'],['spend','Spend Page'],['contracts','Contracts']];
-    const grid=el('div',{style:{overflowX:'auto'}});
-    const tbl=el('table',{class:'data-table',style:{width:'100%',fontSize:'9px'}});
-    const thead=el('thead');const hr=el('tr');
-    hr.appendChild(el('th',{style:{textAlign:'left',padding:'4px 6px'}},'Role'));
-    FEATURES.forEach(([,fl])=>hr.appendChild(el('th',{style:{textAlign:'center',padding:'4px 6px',whiteSpace:'nowrap'}},fl)));
-    thead.appendChild(hr);tbl.appendChild(thead);
-    const tbody=el('tbody');
-    ROLES_LIST.forEach(([role,roleLabel])=>{
-      const tr=el('tr');
-      tr.appendChild(el('td',{style:{padding:'4px 6px',fontWeight:'600',whiteSpace:'nowrap'}},roleLabel));
-      FEATURES.forEach(([feat])=>{
-        const td=el('td',{style:{textAlign:'center',padding:'4px 6px'}});
-        const cb=el('input',{type:'checkbox'});
-        cb.checked=getRoleFeatureDefault(role,feat);
-        cb.addEventListener('change',()=>{setRoleFeatureDefault(role,feat,cb.checked);debouncedSaveSettings();});
-        td.appendChild(cb);tr.appendChild(td);
-      });
-      tbody.appendChild(tr);
-    });
-    tbl.appendChild(tbody);grid.appendChild(tbl);body.appendChild(grid);
-  });
-  }
 
   // ── Session Handover Generator — Admin only ──
   if(USER.role==='admin'){
