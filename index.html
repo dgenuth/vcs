@@ -4218,6 +4218,8 @@ function closeAnalyticsPopup() { $('analytics-popup-wrap').style.display='none';
 
 // ─── Detail Panel ─────────────────────────────────────────────────────────────
 function openDetail(vendor, fromAnalytics, pushStack=true) {
+  // itwVendor: ITW record for this vendor if it exists (null for pure PSD vendors)
+  const itwVendor = (S.itw||[]).find(v=>v.name===vendor.name||(v.psdName&&v.psdName===vendor.name))||null;
   if (pushStack && _openDetailVendor && _openDetailVendor.name !== vendor.name) {
     _detailStack.push(_openDetailVendor);
   }
@@ -22537,7 +22539,7 @@ function renderSettings(c) {
   syncSec.appendChild(syncAllBtn);
   // D3: Expand/Collapse ALL known settings keys
   const _allSettingsKeys=['emailSig','fileInfo','dataActions','handover','renzo'];
-  const _allRawKeys=['vcs_s_sf','vcs_s_drive','vcs_s_ms','vcs_s_ai','vcs_s_dialer','vcs_s_cols','vcs_s_prefs','vcs_s_startup','vcs_s_theme','vcs_s_display'];
+  const _allRawKeys=['vcs_s_sf','vcs_s_drive','vcs_s_supa','vcs_s_ms','vcs_s_ai','vcs_s_dialer','vcs_s_cols','vcs_s_prefs','vcs_s_startup','vcs_s_theme','vcs_s_display'];
   syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},title:'Expand All (Ctrl+Shift+E)',onclick(){
     S._settingsExpandAll=true;
     if(!S._settingsOpen)S._settingsOpen={};
