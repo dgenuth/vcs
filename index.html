@@ -1131,6 +1131,22 @@ async function completeLogin() {
   setTimeout(applyCopyProtection, 300);
   // H2: If the session was active before a page reload (OAuth redirect or cache-bust),
   // attempt Drive auto-load even when driveAutoSync is off — the user had a file loaded.
+  // Try Supabase FIRST — fastest load path, works even without Drive config
+  if(!S.settings.supabaseUrl||!S.settings.supabaseKey){
+    try{
+      const _cfg=JSON.parse(localStorage.getItem('vcs_config')||'{}');
+      if(_cfg.globalSettings){
+        if(_cfg.globalSettings.supabaseUrl) S.settings.supabaseUrl=_cfg.globalSettings.supabaseUrl;
+        if(_cfg.globalSettings.supabaseKey) S.settings.supabaseKey=_cfg.globalSettings.supabaseKey;
+      }
+    }catch(_){}
+  }
+  if(SB.ready()){
+    console.log('[VCS] Attempting Supabase auto-load...');
+    const sbOk=await loadFromSupabase();
+    if(sbOk){console.log('[VCS] Loaded from Supabase ✅');return;}
+    console.log('[VCS] Supabase load failed, trying Drive...');
+  }
   const _wasSessionActive = sessionStorage.getItem('vcs_session_active') === '1';
   const autoLoaded = (S.settings.driveFileId && S.settings.googleClientId && (_wasSessionActive || S.settings.driveAutoSync))
     ? await tryAutoLoadFromDrive(_wasSessionActive && !S.settings.driveAutoSync)
