@@ -22476,7 +22476,9 @@ function renderSettings(c) {
     onclick:async()=>{
       syncAllBtn.disabled=true; syncAllBtn.textContent='⏳ Syncing...';
       try{
-        await saveConfigToDrive();
+        // Save via GAS proxy (works without Google OAuth) + direct Drive if connected
+        await saveUsersViaProxy();
+        await saveConfigToDrive().catch(()=>{}); // also try direct if connected
         localStorage.setItem('vcs_last_drive_sync',Date.now().toString());
         syncAllBtn.textContent='✓ Synced!';
         setTimeout(()=>{syncAllBtn.disabled=false;syncAllBtn.textContent='↑ Sync All to Drive';},2000);
