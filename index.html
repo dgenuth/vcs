@@ -1147,6 +1147,7 @@ async function completeLogin() {
         }
       } catch(_){}
     }
+    console.log('[VCS SB Auto-load] url:', S.settings.supabaseUrl?'SET':'MISSING', '| key:', S.settings.supabaseKey?'SET':'MISSING', '| SB.ready:', SB.ready());
     if(SB.ready()) {
       const sbOk = await loadFromSupabase();
       if(sbOk) return; // loaded from Supabase — skip upload screen
