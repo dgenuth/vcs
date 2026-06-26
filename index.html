@@ -796,7 +796,7 @@ var VCS_VERSION = 'v1778431112';
     <button class="up-btn" id="upload-btn">📂 Choose File</button>
     <input type="file" id="file-input" accept=".xlsm,.xlsx" style="display:none">
     <div style="margin:12px 0;display:flex;align-items:center;gap:10px"><hr style="flex:1;border:none;border-top:1px solid var(--border)"><span style="font-size:10px;color:var(--muted)">or</span><hr style="flex:1;border:none;border-top:1px solid var(--border)"></div>
-    <button class="up-btn" id="drive-load-btn" style="background:transparent;color:var(--blue);border:1px solid var(--blue)">☁ Load from Google Drive</button>
+    <button class="up-btn" id="drive-load-btn" style="background:transparent;color:var(--blue);border:1px solid var(--blue)">🗄 Load from Database</button>
     <div id="upload-user-info" style="margin-top:16px;font-size:10px;color:var(--muted)"></div>
   </div>
 </div>
@@ -1110,6 +1110,30 @@ async function completeLogin() {
     // Fallback: still try proxy for global settings
     try { await loadGlobalSettingsViaProxy(); } catch(_) {}
   }
+  // ── SUPABASE FIRST LOAD ──────────────────────────────────────────────────
+  // Credentials are now loaded from Drive config or GAS proxy above.
+  // Try Supabase before anything else — faster and more reliable than Drive.
+  {
+    if(!S.settings.supabaseUrl || !S.settings.supabaseKey) {
+      try {
+        const _lsCfg = JSON.parse(localStorage.getItem('vcs_config')||'{}');
+        const _gs = _lsCfg.globalSettings || {};
+        if(_gs.supabaseUrl) S.settings.supabaseUrl = _gs.supabaseUrl;
+        if(_gs.supabaseKey) S.settings.supabaseKey = _gs.supabaseKey;
+      } catch(_) {}
+    }
+    if(SB.ready()) {
+      const sbOk = await loadFromSupabase();
+      if(sbOk) {
+        console.log('[VCS] ✅ Loaded from Supabase — skipping Drive');
+        return;
+      }
+      console.log('[VCS] Supabase load failed, falling through to Drive');
+    } else {
+      console.log('[VCS] Supabase not configured, using Drive');
+    }
+  }
+  // ── END SUPABASE FIRST LOAD ──────────────────────────────────────────────
   // Check Drive for a newer session from another device
   try {
     const driveSession = await loadSessionFromDrive();
@@ -1129,45 +1153,11 @@ async function completeLogin() {
     }
   } catch(e) { console.warn('[VCS] Drive session check failed:', e.message); }
   setTimeout(applyCopyProtection, 300);
-  // H2: If the session was active before a page reload (OAuth redirect or cache-bust),
-  // attempt Drive auto-load even when driveAutoSync is off — the user had a file loaded.
-  // Try Supabase FIRST — fastest load path, works even without Drive config
-  if(!S.settings.supabaseUrl||!S.settings.supabaseKey){
-    try{
-      const _cfg=JSON.parse(localStorage.getItem('vcs_config')||'{}');
-      if(_cfg.globalSettings){
-        if(_cfg.globalSettings.supabaseUrl) S.settings.supabaseUrl=_cfg.globalSettings.supabaseUrl;
-        if(_cfg.globalSettings.supabaseKey) S.settings.supabaseKey=_cfg.globalSettings.supabaseKey;
-      }
-    }catch(_){}
-  }
-  if(SB.ready()){
-    console.log('[VCS] Attempting Supabase auto-load...');
-    const sbOk=await loadFromSupabase();
-    if(sbOk){console.log('[VCS] Loaded from Supabase ✅');return;}
-    console.log('[VCS] Supabase load failed, trying Drive...');
-  }
   const _wasSessionActive = sessionStorage.getItem('vcs_session_active') === '1';
   const autoLoaded = (S.settings.driveFileId && S.settings.googleClientId && (_wasSessionActive || S.settings.driveAutoSync))
     ? await tryAutoLoadFromDrive(_wasSessionActive && !S.settings.driveAutoSync)
     : false;
   if (!autoLoaded) {
-    // Try Supabase before showing upload screen
-    // Read credentials directly from localStorage in case S.settings hasn't been populated yet
-    if(!S.settings.supabaseUrl || !S.settings.supabaseKey) {
-      try {
-        const _cfg = JSON.parse(localStorage.getItem('vcs_config')||'{}');
-        if(_cfg.globalSettings) {
-          if(_cfg.globalSettings.supabaseUrl) S.settings.supabaseUrl=_cfg.globalSettings.supabaseUrl;
-          if(_cfg.globalSettings.supabaseKey) S.settings.supabaseKey=_cfg.globalSettings.supabaseKey;
-        }
-      } catch(_){}
-    }
-    console.log('[VCS SB Auto-load] url:', S.settings.supabaseUrl?'SET':'MISSING', '| key:', S.settings.supabaseKey?'SET':'MISSING', '| SB.ready:', SB.ready());
-    if(SB.ready()) {
-      const sbOk = await loadFromSupabase();
-      if(sbOk) return; // loaded from Supabase — skip upload screen
-    }
     $('upload-screen').style.display = 'flex';
     const _uploadInfoHtml = 'Signed in as <strong>' + USER.name + '</strong> <span style="color:' + ROLE_COLORS[USER.role] + '">' + ROLES[USER.role] + '</span> — <a href="#" style="color:var(--blue)" onclick="event.preventDefault();logout();">Sign out</a>';
     $('upload-user-info').innerHTML = _uploadInfoHtml;
@@ -5887,12 +5877,6 @@ async function loadFromSupabase() {
 }
 
 async function loadFromGoogleDrive() {
-  // Try Supabase first if configured (faster than Drive)
-  if(SB.ready()){
-    const sbOk=await loadFromSupabase();
-    if(sbOk) return;
-    console.log('[VCS] Supabase load failed, falling back to Drive');
-  }
   // Show persistent loading banner with spinner until load completes
   let loadBanner = document.getElementById('vcs-load-banner');
   if (!loadBanner) {
@@ -25882,8 +25866,11 @@ function init() {
   $('login-pass').addEventListener('keydown',e=>{if(e.key==='Enter')$('login-btn').click();});
 
   $('upload-btn').addEventListener('click',()=>$('file-input').click());
-  $('drive-load-btn').addEventListener('click',()=>{
-    // Always try proxy first — works for all users without any settings
+  $('drive-load-btn').addEventListener('click',async function(){
+    if(SB.ready()){
+      const ok=await loadFromSupabase();
+      if(ok) return;
+    }
     loadFromGoogleDrive();
   });
   $('file-input').addEventListener('change',e=>{const f=e.target.files[0];if(f)loadFile(f);e.target.value='';});
