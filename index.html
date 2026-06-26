@@ -1194,8 +1194,8 @@ const SB = {
         headers:{'apikey':SB.key(),'Authorization':'Bearer '+SB.key(),'Content-Type':'application/json','Prefer':'return=minimal'},
         body:JSON.stringify(Array.isArray(data)?data:[data])
       });
-      if(!r.ok){console.warn('[VCS SB] upsert failed:',r.status);return null;}
-      return r.json();
+      if(!r.ok){console.warn('[VCS SB] upsert failed:',r.status,await r.text());return null;}
+      return true; // Prefer:return=minimal gives 204 No Content — r.json() would throw
     } catch(e){console.warn('[VCS SB] upsert error:',e);return null;}
   }
 };
