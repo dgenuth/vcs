@@ -23288,7 +23288,7 @@ function renderSettings(c) {
     style:{width:'100%',padding:'5px 8px',border:'1px solid var(--border)',borderRadius:'4px',
            background:'var(--bg)',color:'var(--text)',fontSize:'11px'}});
   supaUrlInput.value=S.settings.supabaseUrl||'';
-  supaUrlInput.addEventListener('change',function(){S.settings.supabaseUrl=supaUrlInput.value.trim();debouncedSaveSettings();});
+  supaUrlInput.addEventListener('input',function(){S.settings.supabaseUrl=supaUrlInput.value.trim();debouncedSaveSettings();});
   supaUrlRow.appendChild(supaUrlInput);
   secSupa.appendChild(supaUrlRow);
   // Key field
@@ -23298,15 +23298,25 @@ function renderSettings(c) {
     style:{width:'100%',padding:'5px 8px',border:'1px solid var(--border)',borderRadius:'4px',
            background:'var(--bg)',color:'var(--text)',fontSize:'11px'}});
   supaKeyInput.value=S.settings.supabaseKey||'';
-  supaKeyInput.addEventListener('change',function(){S.settings.supabaseKey=supaKeyInput.value.trim();debouncedSaveSettings();});
+  supaKeyInput.addEventListener('input',function(){S.settings.supabaseKey=supaKeyInput.value.trim();debouncedSaveSettings();});
   supaKeyRow.appendChild(supaKeyInput);
   secSupa.appendChild(supaKeyRow);
   // Buttons
   const supaBtnRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginBottom:'10px'}});
   supaBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:async function(){
-    const r=await SB.query('vendors','select=id&limit=1');
-    if(r!==null) toast('✅ Supabase connected — vendors table accessible','#10b981');
-    else toast('❌ Supabase connection failed — check URL and key','#ef4444');
+    // Read directly from inputs in case settings haven't saved yet
+    const testUrl=(supaUrlInput.value||'').trim();
+    const testKey=(supaKeyInput.value||'').trim();
+    if(!testUrl||!testKey){toast('Enter Supabase URL and key first','#f59e0b');return;}
+    S.settings.supabaseUrl=testUrl; S.settings.supabaseKey=testKey;
+    try{
+      const r=await fetch(testUrl+'/rest/v1/vendors?select=id&limit=1',{
+        headers:{'apikey':testKey,'Authorization':'Bearer '+testKey}
+      });
+      if(r.ok||r.status===406) toast('✅ Supabase connected — vendors table accessible','#10b981');
+      else if(r.status===404) toast('⚠ Connected but vendors table not found — run SQL schema first','#f59e0b');
+      else toast('❌ Connection failed: HTTP '+r.status+' — check URL and key','#ef4444');
+    }catch(e){toast('❌ Supabase connection failed: '+e.message,'#ef4444');}
   }},'🔌 Test Connection'));
   supaBtnRow.appendChild(el('button',{class:'btn-xs btn-blue',onclick:async function(){
     const ok=await loadFromSupabase();
