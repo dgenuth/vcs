@@ -5787,7 +5787,7 @@ async function seedSupabase() {
       comments:v.comments||'',notes:v.notes||'',last_comm:v.lastComm||null,
       about:v.about||'',follow_up:v.followUp||null,aka:v.aka||'',
       sf_account_id:v.sfAccountId||'',vendor_aliases:v.vendorAliases||'',
-      score:v.score||0,tier:v.tier||'',source:'psd',updated_at:'now()'
+      score:Math.round(v.score||0),tier:v.tier||'',source:'psd',updated_at:'now()'
     }));
     // Convert Excel serial dates to ISO strings, strip empty dates to null
     rows.forEach(r=>{
@@ -22492,6 +22492,11 @@ function renderSettings(c) {
     onclick:async()=>{
       syncAllBtn.disabled=true; syncAllBtn.textContent='⏳ Syncing...';
       try{
+        // Flush any pending input values into S.settings before saving
+        const _supaUrl=document.querySelector('input[placeholder="https://xxx.supabase.co"]');
+        const _supaKey=document.querySelector('input[placeholder="eyJ..."]');
+        if(_supaUrl&&_supaUrl.value.trim()) S.settings.supabaseUrl=_supaUrl.value.trim();
+        if(_supaKey&&_supaKey.value.trim()) S.settings.supabaseKey=_supaKey.value.trim();
         // Save via GAS proxy (works without Google OAuth) + direct Drive if connected
         await saveUsersViaProxy();
         await saveConfigToDrive().catch(()=>{}); // also try direct if connected
