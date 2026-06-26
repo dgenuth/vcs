@@ -797,7 +797,6 @@ var VCS_VERSION = 'v1778431112';
     <input type="file" id="file-input" accept=".xlsm,.xlsx" style="display:none">
     <div style="margin:12px 0;display:flex;align-items:center;gap:10px"><hr style="flex:1;border:none;border-top:1px solid var(--border)"><span style="font-size:10px;color:var(--muted)">or</span><hr style="flex:1;border:none;border-top:1px solid var(--border)"></div>
     <button class="up-btn" id="drive-load-btn" style="background:transparent;color:var(--blue);border:1px solid var(--blue)">🗄 Load from Database</button>
-    <button class="up-btn" id="gdrive-load-btn" style="background:transparent;color:var(--muted);border:1px solid var(--border);margin-top:6px;font-size:10px">☁ Load from Google Drive (fallback)</button>
     <div id="upload-user-info" style="margin-top:16px;font-size:10px;color:var(--muted)"></div>
   </div>
 </div>
@@ -4305,8 +4304,6 @@ function closeAnalyticsPopup() { $('analytics-popup-wrap').style.display='none';
 
 // ─── Detail Panel ─────────────────────────────────────────────────────────────
 function openDetail(vendor, fromAnalytics, pushStack=true) {
-  // itwVendor: ITW record for this vendor if it exists (null for pure PSD vendors)
-  const itwVendor = (S.itw||[]).find(v=>v.name===vendor.name||(v.psdName&&v.psdName===vendor.name))||null;
   if (pushStack && _openDetailVendor && _openDetailVendor.name !== vendor.name) {
     _detailStack.push(_openDetailVendor);
   }
@@ -6001,8 +5998,6 @@ async function seedSupabase() {
 
 async function loadFromSupabase() {
   if (!SB.ready()) return false;
-  if (S._sbLoading) return false; // prevent double load
-  S._sbLoading = true;
   try {
     toast('Loading from Supabase...','#6366f1');
 
@@ -6094,14 +6089,9 @@ async function loadFromSupabase() {
     S.loaded=true;
     S.source='supabase';
     toast('✅ Loaded '+S.vendors.length+' vendors from Supabase','#10b981');
-    // Hide upload screen, show app
-    const _us=$('upload-screen'); if(_us) _us.style.display='none';
-    const _app=$('app'); if(_app) _app.style.display='flex';
-    sessionStorage.setItem('vcs_session_active','1');
-    S._sbLoading = false;
     render();
     return true;
-  } catch(e){S._sbLoading=false;console.warn('[VCS SB] loadFromSupabase error:',e);return false;}
+  } catch(e){console.warn('[VCS SB] loadFromSupabase error:',e);return false;}
 }
 
 async function loadFromGoogleDrive() {
@@ -6519,7 +6509,7 @@ const PERSONAL_SETTING_KEYS = ['theme','fontSize','compactRows','defaultView','s
   'emailSignature','cols','dbHiddenCols','sidebarWidth','closedDays','oooDays','dialerUrl',
   'myPhone','sfClientId','aiProvider']; // sfClientId is per-user (each user has own SF credentials)
 // Global settings — org-wide, admin-controlled, apply to all sessions
-const GLOBAL_SETTING_KEYS = ['sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey','apiKey','grokKey','aiKeyShared','composioKey','roleDefaults','supabaseUrl','supabaseKey'];
+const GLOBAL_SETTING_KEYS = ['sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey','apiKey','grokKey','aiKeyShared','composioKey','roleDefaults','supabaseUrl','supabaseKey','fathomApiKey'];
 window.GLOBAL_SETTING_KEYS = GLOBAL_SETTING_KEYS;
 const PERSIST_KEYS = [...PERSONAL_SETTING_KEYS, ...GLOBAL_SETTING_KEYS];
 
@@ -6856,7 +6846,7 @@ async function loadGlobalSettingsViaProxy() {
     // Apply global settings (admin-configured values shared across all users)
     if (cfg.globalSettings) {
       const gs = cfg.globalSettings;
-      const SAFE_GLOBAL_KEYS = ['apiKey','renzoApiKey','driveFileId','aiKeyShared','supabaseUrl','supabaseKey'];
+      const SAFE_GLOBAL_KEYS = ['apiKey','renzoApiKey','driveFileId','aiKeyShared','supabaseUrl','supabaseKey','fathomApiKey'];
       SAFE_GLOBAL_KEYS.forEach(k => {
         if (gs[k] !== undefined && !S.settings[k]) {
           S.settings[k] = gs[k];
@@ -9035,69 +9025,180 @@ function openLogActivityModal(vendor) {
 }
 
 // ── Activity Timeline (rendered inside vendor panel) ──────────────────────────
-function renderActivityTimeline(body, vendor) {
-  const activities=vendor._sbActivity||[];
-  if(!activities.length) return;
+async function loadFathomMeetings(vendor) {
+  if(!S.settings.fathomApiKey) return [];
+  // 5-minute cache per vendor
+  const cacheKey='fathom_'+(vendor.name||'');
+  if(S._fathomCache&&S._fathomCache[cacheKey]&&Date.now()-S._fathomCache[cacheKey].ts<5*60*1000){
+    return S._fathomCache[cacheKey].data;
+  }
+  try {
+    const after=new Date(Date.now()-90*24*60*60*1000).toISOString();
+    const resp=await fetch('https://api.fathom.video/v1/meetings?limit=100&after='+encodeURIComponent(after),{
+      headers:{'Authorization':'Bearer '+S.settings.fathomApiKey}
+    });
+    if(!resp.ok){console.warn('[VCS Fathom] fetch failed:',resp.status);return [];}
+    const data=await resp.json();
+    const meetings=data.results||data.data||[];
+    const vendorName=(vendor.name||'').toLowerCase();
+    // Collect all known vendor contact emails for matching
+    const vendorEmails=[
+      vendor.email, vendor.email2,
+      ...(vendor._sbContacts||[]).flatMap(function(c){
+        return (c.emails||[]).map(function(e){return e.address||'';});
+      })
+    ].filter(Boolean).map(function(e){return e.toLowerCase();});
+
+    const matched=meetings.filter(function(m){
+      const titleMatch=(m.title||'').toLowerCase().includes(vendorName);
+      const attendees=m.attendees||m.participants||[];
+      const emailMatch=attendees.some(function(a){
+        return vendorEmails.includes((a.email||'').toLowerCase());
+      });
+      return titleMatch||emailMatch;
+    }).map(function(m){
+      const attendees=m.attendees||m.participants||[];
+      const vendorAttendees=attendees.filter(function(a){
+        const em=(a.email||'').toLowerCase();
+        return !em.includes('@primesourcex.com')&&!em.includes('@gmail.com')&&em!=='';
+      });
+      const psAttendee=attendees.find(function(a){
+        return (a.email||'').toLowerCase().includes('@primesourcex.com');
+      });
+      return {
+        id:'fathom_'+m.id,
+        activityType:'fathom_recording',
+        vendorName:vendor.name,
+        subject:m.title||'Fathom Call',
+        activityDate:(m.started_at||m.date||'').split('T')[0],
+        durationMinutes:m.duration_seconds?Math.round(m.duration_seconds/60):null,
+        contactName:vendorAttendees.map(function(a){return a.name||a.email||'';}).join(', '),
+        source:'fathom',
+        sourceId:String(m.id),
+        sourceUrl:m.recording_url||m.share_url||'',
+        summary:m.summary||'',
+        psUserName:psAttendee?(psAttendee.name||psAttendee.email||''):'',
+        psUserEmail:psAttendee?(psAttendee.email||''):'',
+        tags:[]
+      };
+    });
+    if(!S._fathomCache) S._fathomCache={};
+    S._fathomCache[cacheKey]={data:matched,ts:Date.now()};
+    return matched;
+  } catch(e){
+    console.warn('[VCS Fathom] load failed:',e.message);
+    return [];
+  }
+}
+
+function _buildActivityCard(a) {
+  const icon=ACTIVITY_ICONS[a.activityType||a.source]||'📌';
+  const isFathom=a.source==='fathom';
+  const card=el('div',{style:{padding:'6px 10px',background:'var(--card)',border:'1px solid var(--border)',
+    borderRadius:'4px',borderLeft:'3px solid '+(isFathom?'#8b5cf6':'var(--blue)')}});
+  // Header row
+  const cardHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'2px'}});
+  cardHdr.appendChild(el('span',{style:{fontSize:'12px'}},icon));
+  cardHdr.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'600',flex:'1'}},a.subject||(a.activityType||'').replace(/_/g,' ')));
+  if(a.activityDate) cardHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},a.activityDate));
+  if(a.durationMinutes) cardHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},a.durationMinutes+'m'));
+  card.appendChild(cardHdr);
+  // Source badge + contact
+  const meta=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',marginBottom:(a.summary||a.sourceUrl)?'4px':'0'}});
+  if(a.source&&a.source!=='manual'){
+    const srcColor=isFathom?{bg:'rgba(139,92,246,.12)',color:'#a78bfa'}:{bg:'rgba(99,102,241,.12)',color:'#818cf8'};
+    meta.appendChild(el('span',{style:{fontSize:'8px',padding:'1px 5px',borderRadius:'3px',background:srcColor.bg,color:srcColor.color}},a.source));
+  }
+  if(a.contactName) meta.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},a.contactName));
+  if(a.psUserName||a.psUserEmail){
+    meta.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'→ '+(a.psUserName||a.psUserEmail)));
+  }
+  if(meta.children.length) card.appendChild(meta);
+  // Recording link for Fathom
+  if(isFathom&&a.sourceUrl){
+    const recRow=el('div',{style:{marginBottom:'3px'}});
+    recRow.appendChild(el('a',{href:a.sourceUrl,target:'_blank',
+      style:{fontSize:'9px',color:'#8b5cf6',textDecoration:'none',fontWeight:'600'}},'▶ Recording'));
+    card.appendChild(recRow);
+  }
+  // Summary
+  if(a.summary){
+    const sum=el('div',{style:{fontSize:'10px',color:'var(--text)',lineHeight:'1.5'}});
+    sum.textContent=a.summary.slice(0,200)+(a.summary.length>200?'…':'');
+    card.appendChild(sum);
+  }
+  // Outcome + next action (manual entries)
+  if(a.outcome||a.nextAction){
+    const footer=el('div',{style:{display:'flex',gap:'6px',marginTop:'3px',flexWrap:'wrap'}});
+    if(a.outcome){
+      const oc={positive:'#22c55e',negative:'#ef4444',follow_up_needed:'#f59e0b',neutral:'var(--muted)'};
+      footer.appendChild(el('span',{style:{fontSize:'9px',color:oc[a.outcome]||'var(--muted)'}},
+        {positive:'✅',negative:'❌',follow_up_needed:'🔔',neutral:'→'}[a.outcome]||'',' '+(a.outcome||'').replace(/_/g,' ')));
+    }
+    if(a.nextAction) footer.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Next: '+a.nextAction.slice(0,60)));
+    card.appendChild(footer);
+  }
+  if(!isFathom&&a.sourceUrl){
+    card.appendChild(el('a',{href:a.sourceUrl,target:'_blank',style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none',display:'block',marginTop:'2px'}},'↗ Open source'));
+  }
+  return card;
+}
+
+async function renderActivityTimeline(body, vendor) {
+  const sbActivities=vendor._sbActivity||[];
+  const hasFathomKey=!!(S.settings&&S.settings.fathomApiKey);
+
+  // Skip section entirely if nothing to show
+  if(!sbActivities.length&&!hasFathomKey) return;
 
   const sec=el('div',{class:'detail-section'});
-  const hdr=el('div',{class:'detail-sec-hdr'});
-  hdr.appendChild(el('h4',{class:'detail-sec-title',style:{marginBottom:'0'}},'📞 Activity ('+activities.length+')'));
+  const hdrEl=el('div',{class:'detail-sec-hdr'});
+  const titleEl=el('h4',{class:'detail-sec-title',style:{marginBottom:'0'}},'📞 Activity'+(sbActivities.length?' ('+sbActivities.length+')':''));
+  hdrEl.appendChild(titleEl);
   if(hasPermission('editNotes')){
-    hdr.appendChild(el('button',{class:'btn-xs btn-blue',style:{marginLeft:'auto'},onclick(){openLogActivityModal(vendor);}},'+ Log'));
+    hdrEl.appendChild(el('button',{class:'btn-xs btn-blue',style:{marginLeft:'auto'},onclick(){openLogActivityModal(vendor);}},'+ Log'));
   }
-  sec.appendChild(hdr);
+  sec.appendChild(hdrEl);
+  body.appendChild(sec); // attach early so header always visible
 
-  const list=el('div',{style:{display:'flex',flexDirection:'column',gap:'4px',marginTop:'4px'}});
-  const shown=activities.slice(0,20);
-  shown.forEach(a=>{
-    const icon=ACTIVITY_ICONS[a.activityType||a.source]||'📌';
-    const card=el('div',{style:{padding:'6px 10px',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',borderLeft:'3px solid var(--blue)'}});
-    // Header row
-    const cardHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'2px'}});
-    cardHdr.appendChild(el('span',{style:{fontSize:'12px'}},icon));
-    cardHdr.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'600',flex:'1'}},a.subject||(a.activityType||'').replace(/_/g,' ')));
-    if(a.activityDate) cardHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},a.activityDate));
-    if(a.durationMinutes) cardHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},a.durationMinutes+'m'));
-    card.appendChild(cardHdr);
-    // Source badge + contact
-    const meta=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',marginBottom:a.summary?'4px':'0'}});
-    if(a.source&&a.source!=='manual'){
-      meta.appendChild(el('span',{style:{fontSize:'8px',padding:'1px 5px',borderRadius:'3px',background:'rgba(99,102,241,.12)',color:'#818cf8'}},a.source));
-    }
-    if(a.contactName) meta.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},a.contactName));
-    if(a.psUserName||a.psUserEmail){
-      meta.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'→ '+(a.psUserName||a.psUserEmail)));
-    }
-    if(meta.children.length) card.appendChild(meta);
-    // Summary
-    if(a.summary){
-      const sum=el('div',{style:{fontSize:'10px',color:'var(--text)',lineHeight:'1.5'}});
-      sum.textContent=a.summary.slice(0,200)+(a.summary.length>200?'…':'');
-      card.appendChild(sum);
-    }
-    // Outcome + next action
-    if(a.outcome||a.nextAction){
-      const footer=el('div',{style:{display:'flex',gap:'6px',marginTop:'3px',flexWrap:'wrap'}});
-      if(a.outcome){
-        const oc={positive:'#22c55e',negative:'#ef4444',follow_up_needed:'#f59e0b',neutral:'var(--muted)'};
-        footer.appendChild(el('span',{style:{fontSize:'9px',color:oc[a.outcome]||'var(--muted)'}},
-          {positive:'✅',negative:'❌',follow_up_needed:'🔔',neutral:'→'}[a.outcome]||'',' '+(a.outcome||'').replace(/_/g,' ')));
-      }
-      if(a.nextAction) footer.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Next: '+a.nextAction.slice(0,60)));
-      card.appendChild(footer);
-    }
-    if(a.sourceUrl){
-      const lnk=el('a',{href:a.sourceUrl,target:'_blank',style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none',display:'block',marginTop:'2px'}},'↗ Open source');
-      card.appendChild(lnk);
-    }
-    list.appendChild(card);
-  });
-  if(activities.length>20){
-    list.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',textAlign:'center',padding:'4px 0'}},
-      '+'+(activities.length-20)+' more activities in database'));
+  const listEl=el('div',{style:{display:'flex',flexDirection:'column',gap:'4px',marginTop:'4px'}});
+  sec.appendChild(listEl);
+
+  // Render SB activities immediately (no wait)
+  sbActivities.slice(0,20).forEach(a=>listEl.appendChild(_buildActivityCard(a)));
+  if(sbActivities.length>20){
+    listEl.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',textAlign:'center',padding:'4px 0'}},
+      '+'+(sbActivities.length-20)+' more in database'));
   }
-  sec.appendChild(list);
-  body.appendChild(sec);
+
+  // Async: load and append Fathom results
+  if(hasFathomKey){
+    const loadingEl=el('div',{style:{fontSize:'9px',color:'var(--muted)',padding:'4px 2px',display:'flex',gap:'5px',alignItems:'center'}});
+    loadingEl.appendChild(el('span',{style:{display:'inline-block',width:'8px',height:'8px',borderRadius:'50%',
+      border:'1.5px solid rgba(139,92,246,.3)',borderTopColor:'#8b5cf6',animation:'spin 1s linear infinite'}},''));
+    loadingEl.appendChild(el('span',{},'Loading Fathom recordings...'));
+    listEl.appendChild(loadingEl);
+
+    const fathomItems=await loadFathomMeetings(vendor);
+    loadingEl.remove();
+
+    if(fathomItems.length){
+      // Merge, sort, and rebuild the full list
+      const merged=[...sbActivities,...fathomItems].sort(function(a,b){
+        const da=new Date((a.activityDate||a.activity_date)||0);
+        const db=new Date((b.activityDate||b.activity_date)||0);
+        return db-da;
+      }).slice(0,30);
+      listEl.innerHTML='';
+      merged.forEach(a=>listEl.appendChild(_buildActivityCard(a)));
+      if(merged.length>=30){
+        listEl.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',textAlign:'center',padding:'4px 0'}},'Showing 30 most recent activities'));
+      }
+      titleEl.textContent='📞 Activity ('+merged.length+(merged.length>=30?'+':'')+')'+(fathomItems.length?' · 🎙 '+fathomItems.length+' Fathom':'');
+    } else if(!sbActivities.length){
+      listEl.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',padding:'4px 0',fontStyle:'italic'}},'No matching Fathom recordings found for this vendor.'));
+    }
+  }
 }
 
 function showDetailPanel() {
@@ -23073,7 +23174,7 @@ function renderSettings(c) {
   syncSec.appendChild(syncAllBtn);
   // D3: Expand/Collapse ALL known settings keys
   const _allSettingsKeys=['emailSig','fileInfo','dataActions','handover','renzo'];
-  const _allRawKeys=['vcs_s_sf','vcs_s_drive','vcs_s_supa','vcs_s_ms','vcs_s_ai','vcs_s_dialer','vcs_s_cols','vcs_s_prefs','vcs_s_startup','vcs_s_theme','vcs_s_display'];
+  const _allRawKeys=['vcs_s_sf','vcs_s_drive','vcs_s_ms','vcs_s_ai','vcs_s_dialer','vcs_s_cols','vcs_s_prefs','vcs_s_startup','vcs_s_theme','vcs_s_display'];
   syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},title:'Expand All (Ctrl+Shift+E)',onclick(){
     S._settingsExpandAll=true;
     if(!S._settingsOpen)S._settingsOpen={};
@@ -24355,6 +24456,37 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
     statusEl.textContent=hasKey?`✓ ${provider==='grok'?'Grok':'Claude'} API key configured — AI assistant ready`:'⚠ No API key — AI assistant disabled';
     secAI.appendChild(statusEl);
   }
+  // ── Fathom call recordings ────────────────────────────────────────────────
+  const fathomDiv=el('div',{style:{marginTop:'12px',paddingTop:'8px',borderTop:'1px solid var(--border)'}});
+  fathomDiv.appendChild(el('p',{style:{fontSize:'10px',fontWeight:'600',marginBottom:'4px'}},'🎙 Fathom — Call Recordings'));
+  fathomDiv.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'6px',lineHeight:'1.5'}},'Connect Fathom to pull call recordings into vendor activity timelines automatically.'));
+  const fathomKeyRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'4px'}});
+  fathomKeyRow.appendChild(el('label',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'55px'}},'API Key'));
+  const fathomKeyInp=el('input',{type:'password',class:'detail-edit-field',
+    style:{flex:'1',fontSize:'9px'},placeholder:'fathom_...'});
+  fathomKeyInp.value=S.settings.fathomApiKey||'';
+  fathomKeyInp.addEventListener('input',function(){
+    S.settings.fathomApiKey=fathomKeyInp.value.trim();
+    debouncedSaveSettings();
+  });
+  fathomKeyRow.appendChild(fathomKeyInp);
+  fathomKeyRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:async function(){
+    const key=fathomKeyInp.value.trim();
+    if(!key){toast('Enter Fathom API key first','#f59e0b');return;}
+    try{
+      const r=await fetch('https://api.fathom.video/v1/meetings?limit=1',{
+        headers:{'Authorization':'Bearer '+key}
+      });
+      if(r.ok) toast('✅ Fathom connected!','#10b981');
+      else toast('❌ Fathom auth failed: HTTP '+r.status,'#ef4444');
+    }catch(e){toast('❌ Fathom connection failed: '+e.message,'#ef4444');}
+  }},'Test'));
+  fathomDiv.appendChild(fathomKeyRow);
+  const fathomStatus=el('p',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'2px',lineHeight:'1.5'}},
+    (S.settings.fathomApiKey?'✅ Fathom key configured — recordings will appear in vendor activity timelines':'Get your API key at fathom.video → Settings → Integrations → API'));
+  fathomDiv.appendChild(fathomStatus);
+  secAI.appendChild(fathomDiv);
+
   makeCollapsibleSection(secAI,'🤖 AI Configuration','vcs_s_ai',true);
   c.appendChild(secAI);
   } // end AI config admin block
@@ -26578,9 +26710,6 @@ function init() {
     }
     loadFromGoogleDrive();
   });
-  // Fallback Google Drive button
-  const _gdb=$('gdrive-load-btn');
-  if(_gdb) _gdb.addEventListener('click',function(){ loadFromGoogleDrive(); });
   $('file-input').addEventListener('change',e=>{const f=e.target.files[0];if(f)loadFile(f);e.target.value='';});
   $('reload-btn').addEventListener('click',()=>{const inp=document.createElement('input');inp.type='file';inp.accept='.xlsm,.xlsx';inp.addEventListener('change',e=>{if(e.target.files[0])loadFile(e.target.files[0]);});inp.click();});
 
