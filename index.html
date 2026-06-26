@@ -9034,12 +9034,12 @@ async function loadFathomMeetings(vendor) {
   }
   try {
     const after=new Date(Date.now()-90*24*60*60*1000).toISOString();
-    const resp=await fetch('https://api.fathom.video/v1/meetings?limit=100&after='+encodeURIComponent(after),{
-      headers:{'Authorization':'Bearer '+S.settings.fathomApiKey}
+    const resp=await fetch('https://api.fathom.ai/external/v1/meetings?include_summary=true&limit=100&after='+encodeURIComponent(after),{
+      headers:{'X-Api-Key':S.settings.fathomApiKey}
     });
     if(!resp.ok){console.warn('[VCS Fathom] fetch failed:',resp.status);return [];}
     const data=await resp.json();
-    const meetings=data.results||data.data||[];
+    const meetings=data.items||data.results||data.data||[];
     const vendorName=(vendor.name||'').toLowerCase();
     // Collect all known vendor contact emails for matching
     const vendorEmails=[
@@ -24474,8 +24474,8 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
     const key=fathomKeyInp.value.trim();
     if(!key){toast('Enter Fathom API key first','#f59e0b');return;}
     try{
-      const r=await fetch('https://api.fathom.video/v1/meetings?limit=1',{
-        headers:{'Authorization':'Bearer '+key}
+      const r=await fetch('https://api.fathom.ai/external/v1/meetings?limit=1',{
+        headers:{'X-Api-Key':key}
       });
       if(r.ok) toast('✅ Fathom connected!','#10b981');
       else toast('❌ Fathom auth failed: HTTP '+r.status,'#ef4444');
