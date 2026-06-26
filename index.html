@@ -1275,24 +1275,41 @@ function fixDate(v){
 }
 
 // Map vendor JS object → vendors table row
-function vendorToRow(v){
+function vendorToRow(v,updatedBy){
   return {
     name:v.name||'',gpo:v.gpo||'',category:v.category||'',sub_category:v.subCategory||'',
     product:v.product||'',class_of_trade:v.classOfTrade||'',markets:v.markets||'',
     added_value:v.addedValue||'',website:v.website||'',contract_name:v.contractName||'',
     assignment:v.assignment||'',exclusivity:v.exclusivity||'',termination_notice:v.terminationNotice||'',
+    // Primary contact
     proc_contact:v.procContact||'',title:v.title||'',biz_phone:v.bizPhone||'',
     mobile:v.mobile||'',email:v.email||'',
+    // Secondary contact
+    shared2:v.shared2||'',title2:v.title2||'',mobile2:v.mobile2||'',email2:v.email2||'',
+    // Dates
     in_contract_since:fixDate(v.inContractSince),effective_date:fixDate(v.effectiveDate),
     expiry:fixDate(v.expiry),last_comm:fixDate(v.lastComm),follow_up:fixDate(v.followUp),
+    // Contract terms
     auto_renew:v.autoRenew||'',auto_renew_type:v.autoRenewType||'',status:v.status||'',
     contract_term:v.contractTerm||'',current_term:v.currentTerm||'',
     admin_fee:v.adminFee||'',admin_fee_notes:v.adminFeeNotes||'',
     tiers:v.tiers||'',perpetuity:v.perpetuity||'',tail:v.tail||'',
     contract_no:v.contractNo||'',agreement_type:v.agreementType||'',
+    report_frequency:v.reportFrequency||'',
+    // Text fields
     comments:v.comments||'',notes:v.notes||'',about:v.about||'',aka:v.aka||'',
-    sf_account_id:v.sfAccountId||'',vendor_aliases:v.vendorAliases||'',
-    score:Math.round(v.score||0),tier:v.tier||'',source:v.source||'psd'
+    // VCS-specific fields
+    trainual_url:v.trainualUrl||'',
+    vendor_alias_of:v.vendorAliasOf||'',
+    extra_contacts:v.extraContacts?JSON.stringify(v.extraContacts):null,
+    vendor_relationships:v.vendorRelationships?JSON.stringify(v.vendorRelationships):null,
+    sf_account_id:v.sfAccountId||'',
+    vendor_aliases:v.vendorAliases?JSON.stringify(v.vendorAliases):null,
+    // Scoring
+    score:Math.round(v.score||0),tier:v.tier||'',source:v.source||'psd',
+    // Metadata
+    updated_by:updatedBy||USER?.email||'seed',
+    excel_row:v._row||null
   };
 }
 
