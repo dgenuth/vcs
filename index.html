@@ -1136,6 +1136,11 @@ async function completeLogin() {
     ? await tryAutoLoadFromDrive(_wasSessionActive && !S.settings.driveAutoSync)
     : false;
   if (!autoLoaded) {
+    // Try Supabase before showing upload screen — credentials now loaded from proxy above
+    if(SB.ready()) {
+      const sbOk = await loadFromSupabase();
+      if(sbOk) return; // loaded from Supabase — skip upload screen
+    }
     $('upload-screen').style.display = 'flex';
     const _uploadInfoHtml = 'Signed in as <strong>' + USER.name + '</strong> <span style="color:' + ROLE_COLORS[USER.role] + '">' + ROLES[USER.role] + '</span> — <a href="#" style="color:var(--blue)" onclick="event.preventDefault();logout();">Sign out</a>';
     $('upload-user-info').innerHTML = _uploadInfoHtml;
