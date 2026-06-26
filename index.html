@@ -5988,9 +5988,29 @@ async function seedSupabase() {
     console.log('[VCS SB] Reviews seeded:',rvRows.length);
   }
 
+  // ── 6. Channel Partners ───────────────────────────────────────────────────────
+  const cpVendors = S.channelVendors||[];
+  if(cpVendors.length){
+    toast('Seeding '+cpVendors.length+' channel partners...','#7c3aed',3000);
+    try { await SB.delete('channel_partners','source=eq.channel'); } catch(_){}
+    for(let i=0;i<cpVendors.length;i+=BATCH){
+      const batch=cpVendors.slice(i,i+BATCH);
+      const rows=batch.map(v=>({
+        name:v.name||'',gpo:v.gpo||'',category:v.category||'',
+        sub_category:v.subCategory||'',product:v.product||'',
+        website:v.website||'',about:v.about||'',aka:v.aka||'',
+        score:Math.round(v.score||0),tier:v.tier||'',source:'channel'
+      }));
+      await SB.upsert('channel_partners',rows);
+      toast('Partners: '+Math.min(i+BATCH,cpVendors.length)+'/'+cpVendors.length,'#7c3aed',3000);
+    }
+    done+=cpVendors.length;
+    console.log('[VCS SB] Channel partners seeded:',cpVendors.length);
+  }
+
   const totalErrors=errors;
   if(totalErrors===0){
-    toast('✅ Database seeded: '+done+' vendors, '+contactRows.length+' contacts, '+noteRows.length+' notes','#10b981',7000);
+    toast('✅ Database seeded: '+done+' vendors+partners, '+contactRows.length+' contacts, '+noteRows.length+' notes','#10b981',7000);
     S._sbHealthy=true;
   } else {
     toast('⚠ Seeded with '+totalErrors+' vendor errors — check console','#f59e0b',6000);
@@ -9035,11 +9055,14 @@ async function loadFathomMeetings(vendor) {
   }
   try {
     const after=new Date(Date.now()-90*24*60*60*1000).toISOString();
-    const resp=await fetch('https://api.fathom.ai/external/v1/meetings?include_summary=true&limit=100&after='+encodeURIComponent(after),{
-      headers:{'X-Api-Key':S.settings.fathomApiKey}
+    const resp=await fetch(VCS_PROXY_URL,{
+      method:'POST',
+      headers:{'Content-Type':'text/plain'},
+      body:JSON.stringify({action:'fathomProxy',fathomKey:S.settings.fathomApiKey,fathomAction:'meetings',after:after})
     });
-    if(!resp.ok){console.warn('[VCS Fathom] fetch failed:',resp.status);return [];}
-    const data=await resp.json();
+    if(!resp.ok){console.warn('[VCS Fathom] proxy failed:',resp.status);return [];}
+    const proxyData=await resp.json();
+    const data=proxyData.result||proxyData;
     const meetings=data.items||data.results||data.data||[];
     const vendorName=(vendor.name||'').toLowerCase();
     // Collect all known vendor contact emails for matching
@@ -24475,11 +24498,15 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
     const key=fathomKeyInp.value.trim();
     if(!key){toast('Enter Fathom API key first','#f59e0b');return;}
     try{
-      const r=await fetch('https://api.fathom.ai/external/v1/meetings?limit=1',{
-        headers:{'X-Api-Key':key}
+      const r=await fetch(VCS_PROXY_URL,{
+        method:'POST',
+        headers:{'Content-Type':'text/plain'},
+        body:JSON.stringify({action:'fathomProxy',fathomKey:key,fathomAction:'test'})
       });
-      if(r.ok) toast('✅ Fathom connected!','#10b981');
-      else toast('❌ Fathom auth failed: HTTP '+r.status,'#ef4444');
+      const d=await r.json().catch(()=>({}));
+      if(r.ok&&(d.status==='ok'||d.success||d.meetings!==undefined)) toast('✅ Fathom connected!','#10b981');
+      else if(r.status===401||d.error==='Unauthorized') toast('❌ Fathom auth failed — check API key','#ef4444');
+      else toast('⚠ Fathom: '+(d.error||'HTTP '+r.status),'#f59e0b');
     }catch(e){toast('❌ Fathom connection failed: '+e.message,'#ef4444');}
   }},'Test'));
   fathomDiv.appendChild(fathomKeyRow);
