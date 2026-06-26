@@ -828,6 +828,7 @@ var VCS_VERSION = 'v1778431112';
       <button id="theme-toggle-btn" onclick="toggleTheme()" title="Toggle dark/light mode" style="padding:4px 8px;font-size:13px;border-radius:4px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;font-family:inherit">☀</button>
       <button id="ai-toggle">🤖 AI</button>
       <span id="user-badge" class="user-badge" title="Signed in — click to manage session" style="display:none"></span>
+      <span id="vcs-sb-dot" title="Database status" style="display:none;width:8px;height:8px;border-radius:50%;background:#64748b;flex-shrink:0;transition:background .3s"></span>
       <span id="dirty-indicator" style="display:none;font-size:9px;color:var(--amber);padding:2px 6px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:3px" title="You have unsaved changes">● Unsaved</span>
     </div>
     <div id="content"></div>
@@ -1211,17 +1212,103 @@ const SB = {
   },
   async upsert(table, data) {
     if (!SB.ready()) return null;
+    sbDot('saving');
     try {
       const r=await fetch(SB.url()+'/rest/v1/'+table,{
         method:'POST',
-        headers:{'apikey':SB.key(),'Authorization':'Bearer '+SB.key(),'Content-Type':'application/json','Prefer':'return=minimal'},
+        headers:{'apikey':SB.key(),'Authorization':'Bearer '+SB.key(),'Content-Type':'application/json','Prefer':'return=minimal,resolution=merge-duplicates'},
         body:JSON.stringify(Array.isArray(data)?data:[data])
       });
-      if(!r.ok){console.warn('[VCS SB] upsert failed:',r.status,await r.text());return null;}
+      if(!r.ok){const txt=await r.text();console.warn('[VCS SB] upsert failed:',r.status,txt);sbDot('error');return null;}
+      sbDot('saved');
       return true; // Prefer:return=minimal gives 204 No Content — r.json() would throw
-    } catch(e){console.warn('[VCS SB] upsert error:',e);return null;}
+    } catch(e){console.warn('[VCS SB] upsert error:',e);sbDot('error');return null;}
+  },
+  async delete(table, filter) {
+    if (!SB.ready()) return null;
+    try {
+      const r=await fetch(SB.url()+'/rest/v1/'+table+'?'+filter,{
+        method:'DELETE',
+        headers:{'apikey':SB.key(),'Authorization':'Bearer '+SB.key(),'Prefer':'return=minimal'}
+      });
+      if(!r.ok){console.warn('[VCS SB] delete failed:',r.status);return null;}
+      return true;
+    } catch(e){console.warn('[VCS SB] delete error:',e);return null;}
+  },
+  async count(table) {
+    if (!SB.ready()) return null;
+    try {
+      const r=await fetch(SB.url()+'/rest/v1/'+table+'?select=id&limit=1',{
+        headers:{'apikey':SB.key(),'Authorization':'Bearer '+SB.key(),'Prefer':'count=exact','Range':'0-0'}
+      });
+      if(!r.ok) return null;
+      const cr=r.headers.get('content-range');
+      if(cr){const m=cr.match(/\/(\d+)/);if(m) return parseInt(m[1]);}
+      return null;
+    } catch(e){return null;}
   }
 };
+
+// Save indicator — tiny dot in header showing DB state
+let _sbDotTimer=null;
+function sbDot(state){
+  const dot=document.getElementById('vcs-sb-dot');
+  if(!dot) return;
+  dot.style.display='block';
+  if(_sbDotTimer){clearTimeout(_sbDotTimer);_sbDotTimer=null;}
+  if(state==='saving'){dot.style.background='#f59e0b';dot.title='Saving to database...';}
+  else if(state==='saved'){dot.style.background='#22c55e';dot.title='Saved to database';_sbDotTimer=setTimeout(()=>{dot.style.display='none';},2500);}
+  else if(state==='error'){dot.style.background='#ef4444';dot.title='Database save failed — check console';}
+  else{dot.style.display='none';}
+}
+
+// Date conversion: Excel serial / string → YYYY-MM-DD or null
+function fixDate(v){
+  if(!v&&v!==0) return null;
+  const s=String(v).trim();
+  if(!s||s==='null'||s==='undefined') return null;
+  if(typeof v==='number'||(s.length>=4&&s.length<=5&&/^\d+$/.test(s))){
+    try{const n=parseInt(s);const d=new Date(Date.UTC(1899,11,30)+n*86400000);return d.toISOString().split('T')[0];}catch(_){return null;}
+  }
+  if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
+  return null;
+}
+
+// Map vendor JS object → vendors table row
+function vendorToRow(v){
+  return {
+    name:v.name||'',gpo:v.gpo||'',category:v.category||'',sub_category:v.subCategory||'',
+    product:v.product||'',class_of_trade:v.classOfTrade||'',markets:v.markets||'',
+    added_value:v.addedValue||'',website:v.website||'',contract_name:v.contractName||'',
+    assignment:v.assignment||'',exclusivity:v.exclusivity||'',termination_notice:v.terminationNotice||'',
+    proc_contact:v.procContact||'',title:v.title||'',biz_phone:v.bizPhone||'',
+    mobile:v.mobile||'',email:v.email||'',
+    in_contract_since:fixDate(v.inContractSince),effective_date:fixDate(v.effectiveDate),
+    expiry:fixDate(v.expiry),last_comm:fixDate(v.lastComm),follow_up:fixDate(v.followUp),
+    auto_renew:v.autoRenew||'',auto_renew_type:v.autoRenewType||'',status:v.status||'',
+    contract_term:v.contractTerm||'',current_term:v.currentTerm||'',
+    admin_fee:v.adminFee||'',admin_fee_notes:v.adminFeeNotes||'',
+    tiers:v.tiers||'',perpetuity:v.perpetuity||'',tail:v.tail||'',
+    contract_no:v.contractNo||'',agreement_type:v.agreementType||'',
+    comments:v.comments||'',notes:v.notes||'',about:v.about||'',aka:v.aka||'',
+    sf_account_id:v.sfAccountId||'',vendor_aliases:v.vendorAliases||'',
+    score:Math.round(v.score||0),tier:v.tier||'',source:v.source||'psd'
+  };
+}
+
+// Fire-and-forget audit log write
+function auditLog(vendorName, fieldName, oldVal, newVal, changeType){
+  if(!SB.ready()) return;
+  const row={
+    vendor_name:vendorName||'',field_name:fieldName||'',
+    old_value:oldVal!=null?String(oldVal):'',new_value:newVal!=null?String(newVal):'',
+    change_type:changeType||'update',
+    changed_by_email:USER&&USER.email?USER.email:'',
+    changed_by_name:USER&&USER.name?USER.name:'',
+    source:'vcs'
+  };
+  SB.upsert('vendor_audit',[row]).catch(()=>{});
+}
 
 // Google Drive OAuth token (set after user authorizes)
 let GDriveToken = null;
@@ -5781,71 +5868,134 @@ async function saveToSupabase(vendor) {
 async function seedSupabase() {
   if(!SB.ready()){toast('Supabase not configured','#ef4444');return;}
   if(!S.vendors||!S.vendors.length){toast('No vendors loaded — load from Drive first','#f59e0b');return;}
-  // Clear existing data first via DELETE
-  try {
-    await fetch(SB.url()+'/rest/v1/vendors?source=eq.psd',{
-      method:'DELETE',
-      headers:{'apikey':SB.key(),'Authorization':'Bearer '+SB.key(),'Prefer':'return=minimal'}
-    });
-  } catch(e) { console.warn('[VCS SB] Pre-seed clear failed (ok if table empty):',e); }
-  toast('Seeding Supabase... 0/'+S.vendors.length,'#6366f1',3000);
   const BATCH=50;
   let done=0,errors=0;
+
+  // ── 1. Vendors ──────────────────────────────────────────────────────────────
+  toast('Seeding vendors... 0/'+S.vendors.length,'#6366f1',3000);
+  try { await SB.delete('vendors','source=eq.psd'); } catch(_){}
   for(let i=0;i<S.vendors.length;i+=BATCH){
     const batch=S.vendors.slice(i,i+BATCH);
-    const rows=batch.map(v=>({
-      name:v.name||'',gpo:v.gpo||'',category:v.category||'',
-      sub_category:v.subCategory||'',product:v.product||'',
-      class_of_trade:v.classOfTrade||'',markets:v.markets||'',
-      added_value:v.addedValue||'',website:v.website||'',
-      contract_name:v.contractName||'',assignment:v.assignment||'',
-      exclusivity:v.exclusivity||'',termination_notice:v.terminationNotice||'',
-      proc_contact:v.procContact||'',title:v.title||'',
-      biz_phone:v.bizPhone||'',mobile:v.mobile||'',email:v.email||'',
-      in_contract_since:v.inContractSince||null,effective_date:v.effectiveDate||null,
-      expiry:v.expiry||null,auto_renew:v.autoRenew||'',
-      auto_renew_type:v.autoRenewType||'',status:v.status||'',
-      contract_term:v.contractTerm||'',current_term:v.currentTerm||'',
-      admin_fee:v.adminFee||'',admin_fee_notes:v.adminFeeNotes||'',
-      tiers:v.tiers||'',perpetuity:v.perpetuity||'',tail:v.tail||'',
-      contract_no:v.contractNo||'',agreement_type:v.agreementType||'',
-      comments:v.comments||'',notes:v.notes||'',last_comm:v.lastComm||null,
-      about:v.about||'',follow_up:v.followUp||null,aka:v.aka||'',
-      sf_account_id:v.sfAccountId||'',vendor_aliases:v.vendorAliases||'',
-      score:Math.round(v.score||0),tier:v.tier||'',source:'psd',updated_at:'now()'
-    }));
-    // Convert Excel serial dates to ISO strings, strip empty dates to null
-    rows.forEach(r=>{
-      ['in_contract_since','effective_date','expiry','last_comm','follow_up'].forEach(f=>{
-        const v=r[f];
-        if(!v||String(v).trim()===''){r[f]=null;return;}
-        // Excel serial number (e.g. 45824) → ISO date string
-        if(typeof v==='number'||(/^\d{4,5}$/.test(String(v).trim()))){
-          try{
-            const n=parseInt(v);
-            // Excel epoch: Jan 1 1900 = day 1 (with leap year bug: day 60 = Feb 29 1900 never existed)
-            const d=new Date(Date.UTC(1899,11,30)+n*86400000);
-            r[f]=d.toISOString().split('T')[0]; // YYYY-MM-DD
-          }catch(e){r[f]=null;}
-          return;
-        }
-        // Already a date string - validate format
-        const s=String(v).trim();
-        if(/^\d{4}-\d{2}-\d{2}/.test(s)){r[f]=s.slice(0,10);return;}
-        r[f]=null; // unrecognized format — null is safer than 400 error
+    const rows=batch.map(v=>vendorToRow(v));
+    const result=await SB.upsert('vendors',rows);
+    if(result) done+=batch.length; else errors+=batch.length;
+    toast('Vendors: '+Math.min(i+BATCH,S.vendors.length)+'/'+S.vendors.length,'#6366f1',3000);
+  }
+  console.log('[VCS SB] Vendors seeded:',done,'errors:',errors);
+
+  // ── 2. Contacts ─────────────────────────────────────────────────────────────
+  const contactRows=[];
+  S.vendors.forEach(v=>{
+    if(v.procContact||v.email||v.bizPhone||v.mobile){
+      contactRows.push({
+        vendor_name:v.name||'',contact_type:'primary',name:v.procContact||'',
+        title:v.title||'',is_primary:true,is_active:true,
+        phones:JSON.stringify([
+          ...(v.bizPhone?[{type:'office',number:v.bizPhone}]:[]),
+          ...(v.mobile?[{type:'mobile',number:v.mobile}]:[])
+        ]),
+        emails:JSON.stringify(v.email?[{type:'work',address:v.email}]:[]),
+        created_by:'seed'
+      });
+    }
+    if(v.shared2||v.email2||v.mobile2){
+      contactRows.push({
+        vendor_name:v.name||'',contact_type:'secondary',name:v.shared2||'',
+        title:v.title2||'',display_order:1,is_primary:false,is_active:true,
+        phones:JSON.stringify(v.mobile2?[{type:'mobile',number:v.mobile2}]:[]),
+        emails:JSON.stringify(v.email2?[{type:'work',address:v.email2}]:[]),
+        created_by:'seed'
+      });
+    }
+    if(v.extraContacts&&v.extraContacts.length){
+      v.extraContacts.forEach((c,idx)=>{
+        contactRows.push({
+          vendor_name:v.name||'',contact_type:c.type||'',name:c.name||'',title:c.title||'',
+          display_order:idx+2,is_primary:false,is_active:true,
+          phones:JSON.stringify([
+            ...(c.phone?[{type:'office',number:c.phone}]:[]),
+            ...(c.mobile?[{type:'mobile',number:c.mobile}]:[])
+          ]),
+          emails:JSON.stringify(c.email?[{type:'work',address:c.email}]:[]),
+          created_by:'seed'
+        });
+      });
+    }
+  });
+  if(contactRows.length){
+    toast('Seeding '+contactRows.length+' contacts...','#6366f1',2000);
+    for(let i=0;i<contactRows.length;i+=BATCH){
+      await SB.upsert('vendor_contacts',contactRows.slice(i,i+BATCH));
+    }
+    console.log('[VCS SB] Contacts seeded:',contactRows.length);
+  }
+
+  // ── 3. Notes ─────────────────────────────────────────────────────────────────
+  const noteRows=[];
+  S.vendors.forEach(v=>{
+    const rawNotes=v.notes||'';
+    if(!rawNotes.trim()) return;
+    const entries=parseNoteEntries(rawNotes);
+    entries.forEach(e=>{
+      const plain=e.content||'';
+      if(!plain.trim()) return;
+      const bodyHtml='<p>'+plain.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>')+'</p>';
+      noteRows.push({
+        vendor_name:v.name||'',note_type:e.tag||'general',
+        body_html:bodyHtml,body_plain:plain,tag:e.tag||'',
+        author_name:e.author||'',note_date:e.date||null,
+        source:'excel',created_by:'seed'
       });
     });
-    try{
-      const result=await SB.upsert('vendors',rows);
-      if(result) done+=batch.length; else errors+=batch.length;
-    }catch(e){errors+=batch.length;console.warn('[VCS SB] Seed batch error:',e);}
-    toast('Seeding... '+Math.min(i+BATCH,S.vendors.length)+'/'+S.vendors.length,'#6366f1',3000);
+  });
+  if(noteRows.length){
+    toast('Seeding '+noteRows.length+' notes...','#6366f1',2000);
+    for(let i=0;i<noteRows.length;i+=BATCH){
+      await SB.upsert('vendor_notes',noteRows.slice(i,i+BATCH));
+    }
+    console.log('[VCS SB] Notes seeded:',noteRows.length);
   }
-  if(errors===0){
-    toast('✅ Seeded '+done+' vendors to Supabase successfully!','#10b981',6000);
+
+  // ── 4. ITW vendors ───────────────────────────────────────────────────────────
+  if(S.itw&&S.itw.length){
+    toast('Seeding '+S.itw.length+' ITW vendors...','#6366f1',2000);
+    const itwRows=S.itw.map(v=>({
+      name:v.name||'',category:v.category||'',sub_category:v.subCategory||'',
+      product:v.product||'',status:v.status||'',assignment:v.assignment||'',
+      proc_contact:v.procContact||'',title:v.title||'',
+      biz_phone:v.bizPhone||'',mobile:v.mobile||'',email:v.email||'',
+      website:v.website||'',about:v.about||'',notes:v.notes||'',
+      follow_up:fixDate(v.followUp),last_comm:fixDate(v.lastComm),
+      sf_account_id:v.sfAccountId||'',score:Math.round(v.score||0),tier:v.tier||''
+    }));
+    for(let i=0;i<itwRows.length;i+=BATCH){
+      await SB.upsert('itw_vendors',itwRows.slice(i,i+BATCH));
+    }
+    console.log('[VCS SB] ITW seeded:',itwRows.length);
+  }
+
+  // ── 5. Reviews ────────────────────────────────────────────────────────────────
+  if(S.reviews&&S.reviews.length){
+    toast('Seeding '+S.reviews.length+' reviews...','#6366f1',2000);
+    const rvRows=S.reviews.map(r=>({
+      vendor_name:r.vendor||r.vendorName||'',reviewer:r.reviewer||'',
+      review_date:fixDate(r.reviewDate||r.date),next_review:fixDate(r.nextReview),
+      status:r.status||'',notes:r.notes||r.progressNotes||'',
+      contract_notes:r.contractNotes||'',sf_notes:r.sfNotes||'',
+      score:Math.round(r.score||0)
+    }));
+    for(let i=0;i<rvRows.length;i+=BATCH){
+      await SB.upsert('reviews',rvRows.slice(i,i+BATCH));
+    }
+    console.log('[VCS SB] Reviews seeded:',rvRows.length);
+  }
+
+  const totalErrors=errors;
+  if(totalErrors===0){
+    toast('✅ Database seeded: '+done+' vendors, '+contactRows.length+' contacts, '+noteRows.length+' notes','#10b981',7000);
     S._sbHealthy=true;
   } else {
-    toast('⚠ Seeded '+done+' vendors, '+errors+' errors — check console','#f59e0b',6000);
+    toast('⚠ Seeded with '+totalErrors+' vendor errors — check console','#f59e0b',6000);
   }
 }
 
@@ -5855,6 +6005,8 @@ async function loadFromSupabase() {
   S._sbLoading = true;
   try {
     toast('Loading from Supabase...','#6366f1');
+
+    // ── 1. Vendors ────────────────────────────────────────────────────────────
     const data=await SB.query('vendors','select=*&source=eq.psd&limit=10000');
     if(!data||!data.length){toast('No vendors in Supabase yet — use Drive load first','#f59e0b');return false;}
     S.vendors=data.map(function(r){return {
@@ -5871,8 +6023,74 @@ async function loadFromSupabase() {
       agreementType:r.agreement_type||'', comments:r.comments||'', notes:r.notes||'',
       lastComm:r.last_comm||'', about:r.about||'', followUp:r.follow_up||'', aka:r.aka||'',
       sfAccountId:r.sf_account_id||'', vendorAliases:r.vendor_aliases||'',
-      score:r.score||0, tier:r.tier||'', source:'psd', _sbId:r.id
+      score:r.score||0, tier:r.tier||'', source:'psd', _sbId:r.id,
+      _sbExtraFields:r.extra_fields||{}
     };});
+
+    // Build name→vendor index for fast merge
+    const vendorIdx={};
+    S.vendors.forEach(v=>{if(v.name) vendorIdx[v.name.toLowerCase()]=v;});
+
+    // ── 2. Contacts ───────────────────────────────────────────────────────────
+    const contacts=await SB.query('vendor_contacts','select=*&order=display_order.asc&limit=50000');
+    if(contacts&&contacts.length){
+      contacts.forEach(c=>{
+        const v=vendorIdx[(c.vendor_name||'').toLowerCase()];
+        if(!v) return;
+        if(!v._sbContacts) v._sbContacts=[];
+        v._sbContacts.push({
+          id:c.id, vendorName:c.vendor_name, type:c.contact_type||'',
+          name:c.name||'', title:c.title||'', department:c.department||'',
+          phones:c.phones||[], emails:c.emails||[], other:c.other||[],
+          isPrimary:!!c.is_primary, isActive:c.is_active!==false,
+          notes:c.notes||'', displayOrder:c.display_order||0
+        });
+      });
+      console.log('[VCS SB] Contacts loaded:',contacts.length);
+    }
+
+    // ── 3. Notes ──────────────────────────────────────────────────────────────
+    const notes=await SB.query('vendor_notes','select=*&deleted_at=is.null&order=note_date.desc&limit=100000');
+    if(notes&&notes.length){
+      notes.forEach(n=>{
+        const v=vendorIdx[(n.vendor_name||'').toLowerCase()];
+        if(!v) return;
+        if(!v._sbNotes) v._sbNotes=[];
+        v._sbNotes.push({
+          id:n.id, vendorName:n.vendor_name, noteType:n.note_type||'general',
+          bodyHtml:n.body_html||'', bodyPlain:n.body_plain||'',
+          tag:n.tag||'', isPinned:!!n.is_pinned, isPrivate:!!n.is_private,
+          authorEmail:n.author_email||'', authorName:n.author_name||'',
+          source:n.source||'vcs', noteDate:n.note_date||'',
+          createdAt:n.created_at||''
+        });
+      });
+      console.log('[VCS SB] Notes loaded:',notes.length);
+    }
+
+    // ── 4. Activity log (recent 90 days per vendor) ───────────────────────────
+    const cutoff=new Date(Date.now()-90*24*60*60*1000).toISOString().split('T')[0];
+    const activities=await SB.query('activity_log','select=*&activity_date=gte.'+cutoff+'&order=activity_date.desc&limit=50000');
+    if(activities&&activities.length){
+      activities.forEach(a=>{
+        const v=vendorIdx[(a.vendor_name||'').toLowerCase()];
+        if(!v) return;
+        if(!v._sbActivity) v._sbActivity=[];
+        v._sbActivity.push({
+          id:a.id, activityType:a.activity_type||'', direction:a.direction||'',
+          contactName:a.contact_name||'', psUserEmail:a.ps_user_email||'',
+          psUserName:a.ps_user_name||'', activityDate:a.activity_date||'',
+          durationMinutes:a.duration_minutes||0, subject:a.subject||'',
+          summary:a.summary||'', bodyHtml:a.body_html||'',
+          outcome:a.outcome||'', nextAction:a.next_action||'',
+          followUpDate:a.follow_up_date||'', source:a.source||'manual',
+          sourceUrl:a.source_url||'', recordingUrl:a.recording_url||'',
+          tags:a.tags||[], createdBy:a.created_by||''
+        });
+      });
+      console.log('[VCS SB] Activity loaded:',activities.length);
+    }
+
     S.loaded=true;
     S.source='supabase';
     toast('✅ Loaded '+S.vendors.length+' vendors from Supabase','#10b981');
@@ -7778,6 +7996,28 @@ function renderContactsSection(body, vendor) {
       toast('Contact row added — fill in and it saves automatically');
     }}, '+ Add Contact');
     hdr.appendChild(addBtn);
+    if(SB.ready()){
+      const syncBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick:async function(){
+        const contacts=getAllContacts(vendor);
+        if(!contacts.length){toast('No contacts to sync','#f59e0b');return;}
+        syncBtn.disabled=true;syncBtn.textContent='Syncing...';
+        const rows=contacts.map((c,idx)=>({
+          vendor_name:vendor.name||'',contact_type:c.type||'',name:c.name||'',title:c.title||'',
+          display_order:idx,is_primary:idx===0,is_active:true,
+          phones:JSON.stringify([
+            ...(c.phone?[{type:'office',number:c.phone}]:[]),
+            ...(c.mobile?[{type:'mobile',number:c.mobile}]:[])
+          ]),
+          emails:JSON.stringify(c.email?[{type:'work',address:c.email}]:[]),
+          created_by:USER&&USER.email?USER.email:'vcs'
+        }));
+        const ok=await SB.upsert('vendor_contacts',rows);
+        syncBtn.disabled=false;syncBtn.textContent='🗄 Sync';
+        if(ok) toast('✅ '+contacts.length+' contacts synced to database','#10b981');
+        else toast('Sync failed — check console','#ef4444');
+      }},'🗄 Sync');
+      hdr.appendChild(syncBtn);
+    }
   }
   sec.appendChild(hdr);
 
@@ -8193,6 +8433,7 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
   if(hasPermission('editNotes')){
     const btnGrp=el('div',{style:{display:'flex',gap:'3px',marginLeft:'auto'}});
     btnGrp.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){openAddNoteModal(vendor);}},'+ Add Note'));
+    if(SB.ready()) btnGrp.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--blue)'},onclick(){openLogActivityModal(vendor);}},'📞 Log Activity'));
     btnGrp.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){openEditNotesModal(vendor);}}, 'Edit'));
     hdr.appendChild(btnGrp);
   }
@@ -8208,11 +8449,23 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
     'Review':'rgba(168,85,247,.12)', 'SF Notes':'rgba(79,124,255,.15)',
   };
 
-  // PSD notes — prefer _notesLog (full structured history) over raw vendor.notes cell
-  const _psdSrc = (vendor._notesLog && vendor._notesLog.length)
-    ? vendor._notesLog.map(function(e){return {date:e.date,tag:e.type,author:e.user,content:e.text,legacy:false};})
-    : parseNoteEntries(vendor.notes);
-  _psdSrc.forEach(function(e){allEntries.push(Object.assign({},e,{_source:'Contract',_vendor:vendor}));});
+  // Supabase notes (_sbNotes) — rich text from vendor_notes table
+  if(vendor._sbNotes && vendor._sbNotes.length){
+    vendor._sbNotes.forEach(function(n){
+      allEntries.push({
+        date:n.noteDate||n.createdAt||'',tag:n.tag||n.noteType||'',
+        author:n.authorName||n.authorEmail||'',
+        content:n.bodyPlain||'',_bodyHtml:n.bodyHtml||'',
+        _source:'Contract',_vendor:vendor,_sbNote:true,_sbId:n.id
+      });
+    });
+  } else {
+    // PSD notes — prefer _notesLog (full structured history) over raw vendor.notes cell
+    const _psdSrc = (vendor._notesLog && vendor._notesLog.length)
+      ? vendor._notesLog.map(function(e){return {date:e.date,tag:e.type,author:e.user,content:e.text,legacy:false};})
+      : parseNoteEntries(vendor.notes);
+    _psdSrc.forEach(function(e){allEntries.push(Object.assign({},e,{_source:'Contract',_vendor:vendor}));});
+  }
 
   // vendor.comments (spreadsheet Comments column — shown here not as standalone section)
   if(vendor.comments && String(vendor.comments).trim()){
@@ -8304,17 +8557,26 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
     if(entry.author) entryHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',flexShrink:'0'}},entry.author));
 
     // Preview
-    const previewText=entry.content.split('\n')[0].slice(0,75)+(entry.content.length>75||entry.content.includes('\n')?'…':'');
-    entryHdr.appendChild(el('span',{style:{fontSize:'10px',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},previewText));
+    const previewSrc=entry._bodyHtml
+      ? (entry.content||'').split('\n')[0].slice(0,75)
+      : entry.content.split('\n')[0].slice(0,75)+(entry.content.length>75||entry.content.includes('\n')?'…':'');
+    entryHdr.appendChild(el('span',{style:{fontSize:'10px',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},previewSrc));
 
     const chevron=el('span',{style:{fontSize:'9px',color:'var(--muted)',flexShrink:'0'}},isFirst?'▼':'▶');
     entryHdr.appendChild(chevron);
 
     // Body
     const entryBody=el('div',{style:{padding:'7px 10px',background:'var(--bg)',display:isFirst?'block':'none'}});
-    const nd=el('div',{class:'notes-area',style:{fontSize:'10px',lineHeight:'1.6'}});
-    renderNotesStr(nd, entry.content);
-    entryBody.appendChild(nd);
+    if(entry._bodyHtml){
+      // Rich text from Supabase — render as HTML
+      const rd=el('div',{class:'notes-area',style:{fontSize:'10px',lineHeight:'1.6'}});
+      rd.innerHTML=entry._bodyHtml;
+      entryBody.appendChild(rd);
+    } else {
+      const nd=el('div',{class:'notes-area',style:{fontSize:'10px',lineHeight:'1.6'}});
+      renderNotesStr(nd, entry.content);
+      entryBody.appendChild(nd);
+    }
 
     // Edit button for own-source entries
     if(hasPermission('editNotes') && entry._vendor){
@@ -8339,6 +8601,8 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
   }
 
   sec.appendChild(list);
+  // Activity timeline (from Supabase activity_log)
+  renderActivityTimeline(body, vendor);
 }
 
 function addNotesSection(body, vendor, title) {
@@ -8535,10 +8799,48 @@ function openStructuredNoteModal(vendor) {
     });
     body.appendChild(tagRow);
 
-    // Note content
+    // Rich text toolbar
     body.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'4px'}},'Note:'));
-    const ta=el('textarea',{class:'modal-textarea',style:{height:'120px'},placeholder:'What happened? Key points, outcomes, next steps...'});
-    body.appendChild(ta);
+    const toolbar=el('div',{style:{display:'flex',gap:'3px',flexWrap:'wrap',marginBottom:'4px',padding:'4px',background:'var(--card)',border:'1px solid var(--border)',borderBottom:'none',borderRadius:'4px 4px 0 0'}});
+    const COLORS=['#ef4444','#f59e0b','#22c55e','#3b82f6','#a855f7','#64748b'];
+    const COLOR_LABELS=['Red','Amber','Green','Blue','Purple','Gray'];
+    function rtCmd(cmd,val){document.execCommand(cmd,false,val||null);editor.focus();}
+    [
+      {lbl:'B',cmd:'bold',style:'font-weight:700',title:'Bold'},
+      {lbl:'I',cmd:'italic',style:'font-style:italic',title:'Italic'},
+      {lbl:'U',cmd:'underline',style:'text-decoration:underline',title:'Underline'},
+      {lbl:'•',cmd:'insertUnorderedList',title:'Bullet list'},
+    ].forEach(t=>{
+      toolbar.appendChild(el('button',{type:'button',title:t.title,
+        style:'padding:2px 7px;font-size:11px;'+( t.style||''),
+        onclick(){rtCmd(t.cmd);}
+      },t.lbl));
+    });
+    // Color picker swatches
+    toolbar.appendChild(el('span',{style:'margin:0 3px;color:var(--muted);font-size:9px;align-self:center'},'A'));
+    COLORS.forEach((c,i)=>{
+      toolbar.appendChild(el('button',{type:'button',title:'Color: '+COLOR_LABELS[i],
+        style:'width:14px;height:14px;border-radius:50%;background:'+c+';border:1px solid rgba(0,0,0,.2);padding:0;flex-shrink:0',
+        onclick(){rtCmd('foreColor',c);}
+      },''));
+    });
+    // Clear formatting
+    toolbar.appendChild(el('button',{type:'button',title:'Clear formatting',
+      style:'padding:2px 6px;font-size:9px;margin-left:4px',
+      onclick(){rtCmd('removeFormat');}
+    },'✕'));
+    body.appendChild(toolbar);
+
+    // Contenteditable editor
+    const editor=el('div',{contenteditable:'true',
+      style:'min-height:110px;max-height:260px;overflow-y:auto;padding:8px 10px;'+
+        'border:1px solid var(--border);border-radius:0 0 4px 4px;background:var(--bg);'+
+        'color:var(--text);font-size:11px;line-height:1.6;outline:none'});
+    editor.setAttribute('placeholder','What happened? Key points, outcomes, next steps...');
+    // Placeholder via CSS trick
+    const phStyle=el('style',{},'[contenteditable]:empty:before{content:attr(placeholder);color:var(--muted);pointer-events:none;display:block}');
+    body.appendChild(phStyle);
+    body.appendChild(editor);
 
     // Follow-up date
     const fuRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginTop:'8px',marginBottom:'4px'}});
@@ -8549,21 +8851,253 @@ function openStructuredNoteModal(vendor) {
     body.appendChild(fuRow);
 
     const btns=el('div',{class:'modal-btns',style:{marginTop:'10px'}});
-    btns.appendChild(el('button',{class:'btn-primary',onclick(){
-      const content=ta.value.trim();
-      if(!content){toast('Enter a note first','#f59e0b');return;}
-      prependStructuredNote(vendor, content, selectedTag);
+    btns.appendChild(el('button',{class:'btn-primary',onclick:async function(){
+      const bodyHtml=editor.innerHTML.trim();
+      const bodyPlain=(editor.textContent||editor.innerText||'').trim();
+      if(!bodyPlain){toast('Enter a note first','#f59e0b');return;}
+
+      // Save to Supabase vendor_notes if connected
+      if(SB.ready()){
+        const noteRow={
+          vendor_name:vendor.name||'',note_type:selectedTag||'general',
+          body_html:bodyHtml,body_plain:bodyPlain,tag:selectedTag||'',
+          author_email:USER&&USER.email?USER.email:'',
+          author_name:USER&&USER.name?USER.name:'',
+          note_date:isoDate(new Date()),source:'vcs'
+        };
+        const ok=await SB.upsert('vendor_notes',[noteRow]);
+        if(ok){
+          if(!vendor._sbNotes) vendor._sbNotes=[];
+          vendor._sbNotes.unshift(Object.assign({},noteRow,{createdAt:new Date().toISOString()}));
+        }
+      }
+
+      // Also update the vendor.notes string (backward compat + Excel sync)
+      prependStructuredNote(vendor, bodyPlain, selectedTag);
       if(fuIn.value){vendor.followUp=new Date(fuIn.value+'T12:00:00');}
       if(vendor.source==='itw'){vendor._dirty=true;if(!S.dirtyITW)S.dirtyITW=new Set();S.dirtyITW.add(vendor._row);}
       else{markDirty(vendor);}
-      logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendor.name,action:'Note Added ['+selectedTag+']',note:content.slice(0,60)});
+      logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendor.name,action:'Note Added ['+selectedTag+']',note:bodyPlain.slice(0,60)});
       saveSessionState(); updateSidebar(); closeModal(); requestAnimationFrame(()=>refreshDetailIfOpen(vendor));
-      toast('📝 '+selectedTag+' note saved');
+      toast('📝 '+selectedTag+' note saved'+(SB.ready()?' to database':''));
     }},'Save Note'));
     btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
     body.appendChild(btns);
-    setTimeout(()=>ta.focus(),50);
+    setTimeout(()=>editor.focus(),50);
   });
+}
+
+// ── Log Activity Modal ────────────────────────────────────────────────────────
+const ACTIVITY_TYPES=[
+  {value:'call_phone',label:'📞 Phone Call'},
+  {value:'call_video',label:'📹 Video Call'},
+  {value:'email_sent',label:'📤 Email Sent'},
+  {value:'email_received',label:'📥 Email Received'},
+  {value:'meeting_inperson',label:'🤝 In-Person Meeting'},
+  {value:'meeting_virtual',label:'💻 Virtual Meeting'},
+  {value:'text_sms',label:'💬 Text/SMS'},
+  {value:'note_logged',label:'📝 Note Logged'},
+  {value:'other',label:'📌 Other'},
+];
+const ACTIVITY_OUTCOMES=[
+  {value:'positive',label:'✅ Positive'},
+  {value:'neutral',label:'➡ Neutral'},
+  {value:'negative',label:'❌ Negative'},
+  {value:'follow_up_needed',label:'🔔 Follow-up Needed'},
+];
+const ACTIVITY_ICONS={
+  call_phone:'📞',call_video:'📹',email_sent:'📤',email_received:'📥',
+  meeting_inperson:'🤝',meeting_virtual:'💻',text_sms:'💬',
+  note_logged:'📝',fathom_recording:'🎙',sf_task:'☁',
+  sf_activity:'☁',outlook_email:'📧',other:'📌',manual:'📌'
+};
+
+function openLogActivityModal(vendor) {
+  openModal(body=>{
+    body.appendChild(el('h3',{style:{marginTop:'0',marginBottom:'8px'}},'📞 Log Activity — '+vendor.name));
+
+    // Type selector
+    const typeRow=el('div',{style:{marginBottom:'8px'}});
+    typeRow.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'3px'}},'Activity Type'));
+    const typeSel=el('select',{style:{width:'100%',padding:'5px 8px',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--bg)',color:'var(--text)',fontSize:'11px'}});
+    ACTIVITY_TYPES.forEach(t=>{
+      const opt=document.createElement('option');
+      opt.value=t.value; opt.textContent=t.label;
+      typeSel.appendChild(opt);
+    });
+    typeRow.appendChild(typeSel);
+    body.appendChild(typeRow);
+
+    // Date + Duration row
+    const dateRow=el('div',{style:{display:'flex',gap:'8px',marginBottom:'8px'}});
+    const dateWrap=el('div',{style:{flex:'2'}});
+    dateWrap.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'2px'}},'Date'));
+    const dateIn=el('input',{type:'date',style:{width:'100%',padding:'5px 8px',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--bg)',color:'var(--text)',fontSize:'11px'}});
+    dateIn.value=isoDate(new Date());
+    dateWrap.appendChild(dateIn);
+    dateRow.appendChild(dateWrap);
+    const durWrap=el('div',{style:{flex:'1'}});
+    durWrap.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'2px'}},'Duration (min)'));
+    const durIn=el('input',{type:'number',min:'0',placeholder:'30',style:{width:'100%',padding:'5px 8px',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--bg)',color:'var(--text)',fontSize:'11px'}});
+    durWrap.appendChild(durIn);
+    dateRow.appendChild(durWrap);
+    body.appendChild(dateRow);
+
+    // Contact
+    const contactRow=el('div',{style:{marginBottom:'8px'}});
+    contactRow.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'2px'}},'Contact (vendor side)'));
+    const contactIn=el('input',{type:'text',placeholder:vendor.procContact||'Name, title...',style:{width:'100%',padding:'5px 8px',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--bg)',color:'var(--text)',fontSize:'11px'}});
+    contactRow.appendChild(contactIn);
+    body.appendChild(contactRow);
+
+    // Subject
+    const subjectRow=el('div',{style:{marginBottom:'8px'}});
+    subjectRow.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'2px'}},'Subject'));
+    const subjectIn=el('input',{type:'text',placeholder:'e.g. Q3 contract renewal discussion',style:{width:'100%',padding:'5px 8px',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--bg)',color:'var(--text)',fontSize:'11px'}});
+    subjectRow.appendChild(subjectIn);
+    body.appendChild(subjectRow);
+
+    // Summary / Notes
+    body.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'2px'}},'Summary / Notes'));
+    const summaryIn=el('textarea',{class:'modal-textarea',style:{height:'80px'},placeholder:'Key points, outcomes, decisions...'});
+    body.appendChild(summaryIn);
+
+    // Outcome + Next Action row
+    const outRow=el('div',{style:{display:'flex',gap:'8px',marginTop:'8px',marginBottom:'8px'}});
+    const outWrap=el('div',{style:{flex:'1'}});
+    outWrap.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'2px'}},'Outcome'));
+    const outSel=el('select',{style:{width:'100%',padding:'5px 8px',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--bg)',color:'var(--text)',fontSize:'11px'}});
+    const optBlank=document.createElement('option');optBlank.value='';optBlank.textContent='Select...';outSel.appendChild(optBlank);
+    ACTIVITY_OUTCOMES.forEach(o=>{const opt=document.createElement('option');opt.value=o.value;opt.textContent=o.label;outSel.appendChild(opt);});
+    outWrap.appendChild(outSel);
+    outRow.appendChild(outWrap);
+    const fuWrap=el('div',{style:{flex:'1'}});
+    fuWrap.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'2px'}},'Follow-up Date'));
+    const fuIn=el('input',{type:'date',style:{width:'100%',padding:'5px 8px',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--bg)',color:'var(--text)',fontSize:'11px'}});
+    fuWrap.appendChild(fuIn);
+    outRow.appendChild(fuWrap);
+    body.appendChild(outRow);
+
+    // Next Action
+    const nextRow=el('div',{style:{marginBottom:'8px'}});
+    nextRow.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'2px'}},'Next Action'));
+    const nextIn=el('input',{type:'text',placeholder:'What happens next?',style:{width:'100%',padding:'5px 8px',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--bg)',color:'var(--text)',fontSize:'11px'}});
+    nextRow.appendChild(nextIn);
+    body.appendChild(nextRow);
+
+    const btns=el('div',{class:'modal-btns'});
+    btns.appendChild(el('button',{class:'btn-primary',onclick:async function(){
+      const actDate=dateIn.value||isoDate(new Date());
+      const summary=summaryIn.value.trim();
+      const subject=subjectIn.value.trim();
+      if(!summary&&!subject){toast('Enter at least a subject or summary','#f59e0b');return;}
+
+      const actRow={
+        vendor_name:vendor.name||'',activity_type:typeSel.value||'other',
+        direction:'outbound',contact_name:contactIn.value.trim(),
+        ps_user_email:USER&&USER.email?USER.email:'',
+        ps_user_name:USER&&USER.name?USER.name:'',
+        activity_date:actDate,
+        duration_minutes:parseInt(durIn.value)||null,
+        subject:subject,summary:summary,
+        body_html:summary?'<p>'+summary.replace(/\n/g,'<br>')+'</p>':'',
+        outcome:outSel.value||null,
+        next_action:nextIn.value.trim()||null,
+        follow_up_date:fuIn.value||null,
+        source:'manual',created_by:USER&&USER.email?USER.email:''
+      };
+
+      if(SB.ready()){
+        const ok=await SB.upsert('activity_log',[actRow]);
+        if(ok){
+          if(!vendor._sbActivity) vendor._sbActivity=[];
+          vendor._sbActivity.unshift(Object.assign({},actRow,{
+            id:'local-'+Date.now(),activityType:actRow.activity_type,
+            activityDate:actRow.activity_date,durationMinutes:actRow.duration_minutes,
+            psUserEmail:actRow.ps_user_email,psUserName:actRow.ps_user_name,
+            contactName:actRow.contact_name,bodyHtml:actRow.body_html,
+            nextAction:actRow.next_action,followUpDate:actRow.follow_up_date
+          }));
+        }
+      }
+
+      // Update vendor follow-up if set
+      if(fuIn.value){vendor.followUp=new Date(fuIn.value+'T12:00:00');markDirty(vendor);}
+      logHistory({date:actDate,time:new Date().toLocaleTimeString(),vendor:vendor.name,
+        action:'Activity: '+typeSel.value+(subject?' — '+subject:''),note:summary.slice(0,60)});
+      saveSessionState(); closeModal(); requestAnimationFrame(()=>refreshDetailIfOpen(vendor));
+      toast('✅ Activity logged'+(SB.ready()?' to database':''));
+    }},'Log Activity'));
+    btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
+    body.appendChild(btns);
+    setTimeout(()=>subjectIn.focus(),50);
+  });
+}
+
+// ── Activity Timeline (rendered inside vendor panel) ──────────────────────────
+function renderActivityTimeline(body, vendor) {
+  const activities=vendor._sbActivity||[];
+  if(!activities.length) return;
+
+  const sec=el('div',{class:'detail-section'});
+  const hdr=el('div',{class:'detail-sec-hdr'});
+  hdr.appendChild(el('h4',{class:'detail-sec-title',style:{marginBottom:'0'}},'📞 Activity ('+activities.length+')'));
+  if(hasPermission('editNotes')){
+    hdr.appendChild(el('button',{class:'btn-xs btn-blue',style:{marginLeft:'auto'},onclick(){openLogActivityModal(vendor);}},'+ Log'));
+  }
+  sec.appendChild(hdr);
+
+  const list=el('div',{style:{display:'flex',flexDirection:'column',gap:'4px',marginTop:'4px'}});
+  const shown=activities.slice(0,20);
+  shown.forEach(a=>{
+    const icon=ACTIVITY_ICONS[a.activityType||a.source]||'📌';
+    const card=el('div',{style:{padding:'6px 10px',background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',borderLeft:'3px solid var(--blue)'}});
+    // Header row
+    const cardHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'2px'}});
+    cardHdr.appendChild(el('span',{style:{fontSize:'12px'}},icon));
+    cardHdr.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'600',flex:'1'}},a.subject||(a.activityType||'').replace(/_/g,' ')));
+    if(a.activityDate) cardHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},a.activityDate));
+    if(a.durationMinutes) cardHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},a.durationMinutes+'m'));
+    card.appendChild(cardHdr);
+    // Source badge + contact
+    const meta=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',marginBottom:a.summary?'4px':'0'}});
+    if(a.source&&a.source!=='manual'){
+      meta.appendChild(el('span',{style:{fontSize:'8px',padding:'1px 5px',borderRadius:'3px',background:'rgba(99,102,241,.12)',color:'#818cf8'}},a.source));
+    }
+    if(a.contactName) meta.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},a.contactName));
+    if(a.psUserName||a.psUserEmail){
+      meta.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'→ '+(a.psUserName||a.psUserEmail)));
+    }
+    if(meta.children.length) card.appendChild(meta);
+    // Summary
+    if(a.summary){
+      const sum=el('div',{style:{fontSize:'10px',color:'var(--text)',lineHeight:'1.5'}});
+      sum.textContent=a.summary.slice(0,200)+(a.summary.length>200?'…':'');
+      card.appendChild(sum);
+    }
+    // Outcome + next action
+    if(a.outcome||a.nextAction){
+      const footer=el('div',{style:{display:'flex',gap:'6px',marginTop:'3px',flexWrap:'wrap'}});
+      if(a.outcome){
+        const oc={positive:'#22c55e',negative:'#ef4444',follow_up_needed:'#f59e0b',neutral:'var(--muted)'};
+        footer.appendChild(el('span',{style:{fontSize:'9px',color:oc[a.outcome]||'var(--muted)'}},
+          {positive:'✅',negative:'❌',follow_up_needed:'🔔',neutral:'→'}[a.outcome]||'',' '+(a.outcome||'').replace(/_/g,' ')));
+      }
+      if(a.nextAction) footer.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Next: '+a.nextAction.slice(0,60)));
+      card.appendChild(footer);
+    }
+    if(a.sourceUrl){
+      const lnk=el('a',{href:a.sourceUrl,target:'_blank',style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none',display:'block',marginTop:'2px'}},'↗ Open source');
+      card.appendChild(lnk);
+    }
+    list.appendChild(card);
+  });
+  if(activities.length>20){
+    list.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',textAlign:'center',padding:'4px 0'}},
+      '+'+(activities.length-20)+' more activities in database'));
+  }
+  sec.appendChild(list);
+  body.appendChild(sec);
 }
 
 function showDetailPanel() {
@@ -23381,40 +23915,201 @@ function renderSettings(c) {
   supaBtnRow.appendChild(el('button',{class:'btn-xs btn-blue',style:{background:'var(--green)'},onclick:async function(){
     if(!SB.ready()){toast('Configure Supabase URL and key first','#f59e0b');return;}
     if(!S.vendors||!S.vendors.length){toast('Load vendors from Drive first','#f59e0b');return;}
-    if(!confirm('Export all '+S.vendors.length+' vendors to Supabase? This will overwrite existing data.')) return;
+    if(!confirm('Seed all tables (vendors, contacts, notes, ITW, reviews) to Supabase? This overwrites existing data.')) return;
     await seedSupabase();
-  }},'🌱 Seed Database (export all vendors)'));
+  }},'🌱 Seed Database'));
+  // Record counts
+  const countsDiv=el('div',{style:{fontSize:'10px',color:'var(--muted)',marginTop:'6px',padding:'6px 8px',background:'var(--card)',borderRadius:'4px',border:'1px solid var(--border)',display:'none'}});
+  const checkCountsBtn=el('button',{class:'btn-xs btn-ghost',onclick:async function(){
+    if(!SB.ready()){toast('Configure Supabase first','#f59e0b');return;}
+    checkCountsBtn.disabled=true;checkCountsBtn.textContent='Checking...';
+    const tables=['vendors','vendor_contacts','vendor_notes','vendor_documents','vendor_audit','itw_vendors','reviews','channel_partners','activity_log'];
+    const counts=await Promise.all(tables.map(t=>SB.count(t)));
+    countsDiv.style.display='block';
+    countsDiv.innerHTML='<b>Record counts:</b><br>'+tables.map((t,i)=>{
+      const n=counts[i];
+      return '<span style="display:inline-block;min-width:180px">'+t+':</span> <b>'+(n===null?'table missing':n)+'</b>';
+    }).join('<br>');
+    checkCountsBtn.disabled=false;checkCountsBtn.textContent='📊 Check Record Counts';
+  }},'📊 Check Record Counts');
+  supaBtnRow.appendChild(checkCountsBtn);
   secSupa.appendChild(supaBtnRow);
+  secSupa.appendChild(countsDiv);
   // SQL schema
   const schemaDetails=el('details',{style:{marginTop:'4px'}});
   schemaDetails.appendChild(el('summary',{style:{cursor:'pointer',fontSize:'10px',color:'var(--muted)',userSelect:'none'}},'View SQL Schema (run in Supabase SQL editor)'));
   const sqlBox=el('textarea',{readonly:true,style:{width:'100%',height:'200px',marginTop:'6px',padding:'6px',
     fontSize:'9px',fontFamily:'monospace',background:'var(--sb)',color:'var(--text)',
     border:'1px solid var(--border)',borderRadius:'4px',resize:'vertical',boxSizing:'border-box'}});
-  sqlBox.value='CREATE TABLE vendors (\n'+
-    '  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,\n'+
-    '  name TEXT NOT NULL, gpo TEXT, category TEXT, sub_category TEXT,\n'+
-    '  product TEXT, class_of_trade TEXT, markets TEXT, added_value TEXT,\n'+
-    '  website TEXT, contract_name TEXT, assignment TEXT, exclusivity TEXT,\n'+
-    '  termination_notice TEXT, proc_contact TEXT, title TEXT,\n'+
-    '  biz_phone TEXT, mobile TEXT, email TEXT,\n'+
-    '  in_contract_since DATE, effective_date DATE, expiry DATE,\n'+
-    '  auto_renew TEXT, auto_renew_type TEXT, status TEXT,\n'+
-    '  contract_term TEXT, current_term TEXT, admin_fee TEXT,\n'+
-    '  admin_fee_notes TEXT, tiers TEXT, perpetuity TEXT, tail TEXT,\n'+
-    '  contract_no TEXT, report_frequency TEXT, agreement_type TEXT,\n'+
-    '  comments TEXT, notes TEXT, last_comm DATE, about TEXT,\n'+
-    '  follow_up DATE, aka TEXT, sf_account_id TEXT, vendor_aliases TEXT,\n'+
-    '  score INTEGER, tier TEXT, source TEXT DEFAULT \'psd\',\n'+
-    '  created_at TIMESTAMPTZ DEFAULT NOW(),\n'+
-    '  updated_at TIMESTAMPTZ DEFAULT NOW()\n'+
-    ');\n'+
-    'CREATE INDEX vendors_name_idx ON vendors(name);\n'+
-    'CREATE INDEX vendors_category_idx ON vendors(category);\n'+
-    'CREATE INDEX vendors_status_idx ON vendors(status);\n'+
-    'ALTER TABLE vendors ENABLE ROW LEVEL SECURITY;\n'+
-    'CREATE POLICY "anon read" ON vendors FOR SELECT USING (true);\n'+
-    'CREATE POLICY "anon write" ON vendors FOR ALL USING (true);';
+  sqlBox.value=`-- VCS Database Schema v2.0 — run in Supabase SQL Editor
+-- Drop existing tables first if re-running (comment out if you want to keep data)
+-- DROP TABLE IF EXISTS activity_log, vendor_audit, vendor_documents, vendor_notes, vendor_contacts, schema_fields, channel_partners, reviews, itw_vendors, vendors CASCADE;
+
+CREATE OR REPLACE FUNCTION update_updated_at()
+RETURNS TRIGGER AS $$ BEGIN NEW.updated_at = NOW(); RETURN NEW; END; $$ LANGUAGE plpgsql;
+
+CREATE TABLE IF NOT EXISTS vendors (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT NOT NULL, aka TEXT, gpo TEXT, source TEXT DEFAULT 'psd',
+  category TEXT, sub_category TEXT, product TEXT, class_of_trade TEXT, markets TEXT, added_value TEXT,
+  contract_name TEXT, contract_no TEXT, agreement_type TEXT, assignment TEXT, exclusivity TEXT,
+  termination_notice TEXT, in_contract_since DATE, effective_date DATE, expiry DATE,
+  auto_renew TEXT, auto_renew_type TEXT, status TEXT, contract_term TEXT, current_term TEXT,
+  admin_fee TEXT, admin_fee_notes TEXT, tiers TEXT, perpetuity TEXT, tail TEXT, report_frequency TEXT,
+  proc_contact TEXT, title TEXT, biz_phone TEXT, mobile TEXT, email TEXT,
+  shared2 TEXT, title2 TEXT, mobile2 TEXT, email2 TEXT,
+  last_comm DATE, follow_up DATE, website TEXT, about TEXT, comments TEXT, notes TEXT,
+  trainual_url TEXT, vendor_alias_of TEXT, sf_account_id TEXT, vendor_aliases JSONB,
+  score NUMERIC DEFAULT 0, tier TEXT, extra_fields JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_by TEXT, excel_row INTEGER, last_synced_from_excel TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS vendors_name_idx ON vendors(name);
+CREATE INDEX IF NOT EXISTS vendors_source_idx ON vendors(source);
+CREATE INDEX IF NOT EXISTS vendors_status_idx ON vendors(status);
+CREATE TRIGGER tr_vendors_updated_at BEFORE UPDATE ON vendors FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TABLE IF NOT EXISTS vendor_contacts (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  vendor_id UUID REFERENCES vendors(id) ON DELETE CASCADE,
+  vendor_name TEXT NOT NULL, display_order INTEGER DEFAULT 0,
+  contact_type TEXT, name TEXT, title TEXT, department TEXT, company TEXT,
+  phones JSONB DEFAULT '[]', emails JSONB DEFAULT '[]', other JSONB DEFAULT '[]',
+  photo_url TEXT, notes TEXT, is_primary BOOLEAN DEFAULT false, is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(), created_by TEXT
+);
+CREATE INDEX IF NOT EXISTS contacts_vendor_name_idx ON vendor_contacts(vendor_name);
+CREATE TRIGGER tr_contacts_updated_at BEFORE UPDATE ON vendor_contacts FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TABLE IF NOT EXISTS vendor_notes (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  vendor_id UUID REFERENCES vendors(id) ON DELETE CASCADE,
+  vendor_name TEXT NOT NULL, note_type TEXT NOT NULL DEFAULT 'general',
+  body_html TEXT NOT NULL, body_plain TEXT, tag TEXT,
+  is_pinned BOOLEAN DEFAULT false, is_private BOOLEAN DEFAULT false,
+  author_email TEXT, author_name TEXT, author_role TEXT,
+  source TEXT DEFAULT 'vcs', source_id TEXT, source_url TEXT,
+  note_date DATE, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
+  deleted_at TIMESTAMPTZ, version INTEGER DEFAULT 1, previous_version_id UUID
+);
+CREATE INDEX IF NOT EXISTS notes_vendor_name_idx ON vendor_notes(vendor_name);
+CREATE INDEX IF NOT EXISTS notes_date_idx ON vendor_notes(note_date DESC);
+CREATE TRIGGER tr_notes_updated_at BEFORE UPDATE ON vendor_notes FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TABLE IF NOT EXISTS vendor_documents (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  vendor_id UUID REFERENCES vendors(id) ON DELETE CASCADE,
+  vendor_name TEXT NOT NULL, document_type TEXT NOT NULL,
+  file_name TEXT NOT NULL, file_size INTEGER, mime_type TEXT, file_extension TEXT,
+  storage_type TEXT DEFAULT 'supabase', storage_path TEXT, public_url TEXT,
+  title TEXT, description TEXT, version TEXT, is_current_version BOOLEAN DEFAULT true,
+  supersedes_id UUID REFERENCES vendor_documents(id),
+  contract_effective_date DATE, contract_expiry_date DATE, signed_by_vendor TEXT, signed_by_ps TEXT,
+  uploaded_by TEXT, uploaded_at TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(), deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS docs_vendor_name_idx ON vendor_documents(vendor_name);
+
+CREATE TABLE IF NOT EXISTS vendor_audit (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
+  vendor_name TEXT NOT NULL, table_name TEXT DEFAULT 'vendors', record_id UUID,
+  field_name TEXT NOT NULL, old_value TEXT, new_value TEXT,
+  change_type TEXT DEFAULT 'update', changed_by_email TEXT, changed_by_name TEXT,
+  changed_by_role TEXT, changed_at TIMESTAMPTZ DEFAULT NOW(),
+  source TEXT DEFAULT 'vcs', session_id TEXT, ip_address TEXT
+);
+CREATE INDEX IF NOT EXISTS audit_vendor_name_idx ON vendor_audit(vendor_name);
+CREATE INDEX IF NOT EXISTS audit_changed_at_idx ON vendor_audit(changed_at DESC);
+
+CREATE TABLE IF NOT EXISTS itw_vendors (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT NOT NULL, category TEXT, sub_category TEXT, product TEXT,
+  status TEXT, assignment TEXT, proc_contact TEXT, title TEXT,
+  biz_phone TEXT, mobile TEXT, email TEXT, website TEXT, about TEXT, notes TEXT,
+  follow_up DATE, last_comm DATE, sf_account_id TEXT, sf_opportunity_id TEXT,
+  psd_vendor_id UUID REFERENCES vendors(id), psd_name TEXT,
+  extra_fields JSONB DEFAULT '{}', score NUMERIC DEFAULT 0, tier TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_by TEXT, excel_row INTEGER
+);
+CREATE INDEX IF NOT EXISTS itw_name_idx ON itw_vendors(name);
+CREATE TRIGGER tr_itw_updated_at BEFORE UPDATE ON itw_vendors FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TABLE IF NOT EXISTS reviews (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  vendor_name TEXT NOT NULL, vendor_id UUID REFERENCES vendors(id),
+  reviewer TEXT, reviewer_email TEXT, review_date DATE, next_review DATE,
+  status TEXT, notes TEXT, progress_notes TEXT, contract_notes TEXT, sf_notes TEXT,
+  talking_points JSONB, score NUMERIC DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_by TEXT, excel_row INTEGER
+);
+CREATE INDEX IF NOT EXISTS reviews_vendor_name_idx ON reviews(vendor_name);
+CREATE TRIGGER tr_reviews_updated_at BEFORE UPDATE ON reviews FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TABLE IF NOT EXISTS channel_partners (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT NOT NULL, gpo TEXT, category TEXT, sub_category TEXT,
+  product TEXT, website TEXT, about TEXT, aka TEXT,
+  score NUMERIC DEFAULT 0, tier TEXT, source TEXT DEFAULT 'channel',
+  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS schema_fields (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  table_name TEXT NOT NULL, field_key TEXT NOT NULL, field_label TEXT NOT NULL,
+  field_type TEXT NOT NULL, field_options JSONB,
+  is_core BOOLEAN DEFAULT false, is_searchable BOOLEAN DEFAULT true,
+  is_visible_by_default BOOLEAN DEFAULT true, display_order INTEGER DEFAULT 100,
+  section TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), created_by TEXT,
+  UNIQUE(table_name, field_key)
+);
+
+CREATE TABLE IF NOT EXISTS activity_log (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
+  vendor_name TEXT NOT NULL,
+  itw_vendor_id UUID REFERENCES itw_vendors(id) ON DELETE SET NULL,
+  activity_type TEXT NOT NULL,
+  direction TEXT, contact_name TEXT, contact_email TEXT, contact_phone TEXT, contact_title TEXT,
+  vendor_contact_id UUID REFERENCES vendor_contacts(id) ON DELETE SET NULL,
+  ps_user_email TEXT, ps_user_name TEXT,
+  activity_date DATE NOT NULL, activity_time TIMETZ, duration_minutes INTEGER,
+  subject TEXT, summary TEXT, transcript TEXT, body_html TEXT,
+  outcome TEXT, next_action TEXT, follow_up_date DATE,
+  source TEXT DEFAULT 'manual', source_id TEXT, source_url TEXT,
+  recording_url TEXT, recording_transcript_url TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
+  created_by TEXT, is_private BOOLEAN DEFAULT false, tags JSONB DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS activity_vendor_name_idx ON activity_log(vendor_name);
+CREATE INDEX IF NOT EXISTS activity_date_idx ON activity_log(activity_date DESC);
+CREATE INDEX IF NOT EXISTS activity_type_idx ON activity_log(activity_type);
+CREATE INDEX IF NOT EXISTS activity_ps_user_idx ON activity_log(ps_user_email);
+CREATE TRIGGER tr_activity_updated_at BEFORE UPDATE ON activity_log FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- RLS: allow anon key full access (VCS manages its own auth)
+ALTER TABLE vendors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vendor_contacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vendor_notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vendor_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vendor_audit ENABLE ROW LEVEL SECURITY;
+ALTER TABLE itw_vendors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reviews ENABLE ROW LEVEL SECURITY;
+ALTER TABLE channel_partners ENABLE ROW LEVEL SECURITY;
+ALTER TABLE schema_fields ENABLE ROW LEVEL SECURITY;
+ALTER TABLE activity_log ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "anon_all" ON vendors FOR ALL USING (true);
+CREATE POLICY "anon_all" ON vendor_contacts FOR ALL USING (true);
+CREATE POLICY "anon_all" ON vendor_notes FOR ALL USING (true);
+CREATE POLICY "anon_all" ON vendor_documents FOR ALL USING (true);
+CREATE POLICY "anon_all" ON vendor_audit FOR ALL USING (true);
+CREATE POLICY "anon_all" ON itw_vendors FOR ALL USING (true);
+CREATE POLICY "anon_all" ON reviews FOR ALL USING (true);
+CREATE POLICY "anon_all" ON channel_partners FOR ALL USING (true);
+CREATE POLICY "anon_all" ON schema_fields FOR ALL USING (true);
+CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
   const copyBtn=el('button',{class:'btn-xs btn-ghost',style:{marginTop:'4px'},
     onclick:function(){navigator.clipboard.writeText(sqlBox.value);toast('SQL copied','#10b981');}
   },'Copy SQL');
