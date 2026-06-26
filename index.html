@@ -26711,6 +26711,9 @@ function init() {
     }
     loadFromGoogleDrive();
   });
+  // Google Drive fallback button — always loads from Drive regardless of Supabase
+  const _gdriveBtn=$('gdrive-load-btn');
+  if(_gdriveBtn) _gdriveBtn.addEventListener('click',function(){ loadFromGoogleDrive(); });
   $('file-input').addEventListener('change',e=>{const f=e.target.files[0];if(f)loadFile(f);e.target.value='';});
   $('reload-btn').addEventListener('click',()=>{const inp=document.createElement('input');inp.type='file';inp.accept='.xlsm,.xlsx';inp.addEventListener('change',e=>{if(e.target.files[0])loadFile(e.target.files[0]);});inp.click();});
 
