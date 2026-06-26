@@ -1178,7 +1178,7 @@ const SB = {
     if (!SB.ready()) return null;
     try {
       params=params||{};
-      const qs=Object.entries(params).map(function(kv){return kv[0]+'='+encodeURIComponent(kv[1]);}).join('&');
+      const qs=typeof params==='string'?params:Object.entries(params||{}).map(function(kv){return kv[0]+'='+encodeURIComponent(kv[1]);}).join('&');
       const r=await fetch(SB.url()+'/rest/v1/'+table+(qs?'?'+qs:''),{
         headers:{'apikey':SB.key(),'Authorization':'Bearer '+SB.key(),'Content-Type':'application/json','Prefer':'return=representation'}
       });
@@ -1191,7 +1191,7 @@ const SB = {
     try {
       const r=await fetch(SB.url()+'/rest/v1/'+table,{
         method:'POST',
-        headers:{'apikey':SB.key(),'Authorization':'Bearer '+SB.key(),'Content-Type':'application/json','Prefer':'resolution=merge-duplicates,return=representation'},
+        headers:{'apikey':SB.key(),'Authorization':'Bearer '+SB.key(),'Content-Type':'application/json','Prefer':'return=minimal'},
         body:JSON.stringify(Array.isArray(data)?data:[data])
       });
       if(!r.ok){console.warn('[VCS SB] upsert failed:',r.status);return null;}
@@ -5756,7 +5756,14 @@ async function saveToSupabase(vendor) {
 async function seedSupabase() {
   if(!SB.ready()){toast('Supabase not configured','#ef4444');return;}
   if(!S.vendors||!S.vendors.length){toast('No vendors loaded — load from Drive first','#f59e0b');return;}
-  toast('Seeding Supabase... 0/'+S.vendors.length,'#6366f1',0);
+  // Clear existing data first via DELETE
+  try {
+    await fetch(SB.url()+'/rest/v1/vendors?source=eq.psd',{
+      method:'DELETE',
+      headers:{'apikey':SB.key(),'Authorization':'Bearer '+SB.key(),'Prefer':'return=minimal'}
+    });
+  } catch(e) { console.warn('[VCS SB] Pre-seed clear failed (ok if table empty):',e); }
+  toast('Seeding Supabase... 0/'+S.vendors.length,'#6366f1',3000);
   const BATCH=50;
   let done=0,errors=0;
   for(let i=0;i<S.vendors.length;i+=BATCH){
@@ -5791,7 +5798,7 @@ async function seedSupabase() {
       const result=await SB.upsert('vendors',rows);
       if(result) done+=batch.length; else errors+=batch.length;
     }catch(e){errors+=batch.length;console.warn('[VCS SB] Seed batch error:',e);}
-    toast('Seeding... '+Math.min(i+BATCH,S.vendors.length)+'/'+S.vendors.length,'#6366f1',0);
+    toast('Seeding... '+Math.min(i+BATCH,S.vendors.length)+'/'+S.vendors.length,'#6366f1',3000);
   }
   if(errors===0){
     toast('✅ Seeded '+done+' vendors to Supabase successfully!','#10b981',6000);
