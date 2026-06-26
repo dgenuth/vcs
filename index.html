@@ -5789,9 +5789,25 @@ async function seedSupabase() {
       sf_account_id:v.sfAccountId||'',vendor_aliases:v.vendorAliases||'',
       score:v.score||0,tier:v.tier||'',source:'psd',updated_at:'now()'
     }));
+    // Convert Excel serial dates to ISO strings, strip empty dates to null
     rows.forEach(r=>{
       ['in_contract_since','effective_date','expiry','last_comm','follow_up'].forEach(f=>{
-        if(!r[f]||String(r[f]).trim()==='') r[f]=null;
+        const v=r[f];
+        if(!v||String(v).trim()===''){r[f]=null;return;}
+        // Excel serial number (e.g. 45824) → ISO date string
+        if(typeof v==='number'||(/^\d{4,5}$/.test(String(v).trim()))){
+          try{
+            const n=parseInt(v);
+            // Excel epoch: Jan 1 1900 = day 1 (with leap year bug: day 60 = Feb 29 1900 never existed)
+            const d=new Date(Date.UTC(1899,11,30)+n*86400000);
+            r[f]=d.toISOString().split('T')[0]; // YYYY-MM-DD
+          }catch(e){r[f]=null;}
+          return;
+        }
+        // Already a date string - validate format
+        const s=String(v).trim();
+        if(/^\d{4}-\d{2}-\d{2}/.test(s)){r[f]=s.slice(0,10);return;}
+        r[f]=null; // unrecognized format — null is safer than 400 error
       });
     });
     try{
@@ -6596,7 +6612,7 @@ async function loadGlobalSettingsViaProxy() {
     // Apply global settings (admin-configured values shared across all users)
     if (cfg.globalSettings) {
       const gs = cfg.globalSettings;
-      const SAFE_GLOBAL_KEYS = ['apiKey','renzoApiKey','driveFileId','aiKeyShared'];
+      const SAFE_GLOBAL_KEYS = ['apiKey','renzoApiKey','driveFileId','aiKeyShared','supabaseUrl','supabaseKey'];
       SAFE_GLOBAL_KEYS.forEach(k => {
         if (gs[k] !== undefined && !S.settings[k]) {
           S.settings[k] = gs[k];
