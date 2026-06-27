@@ -3326,14 +3326,32 @@ function markDirty(vendor, fieldChanged, oldVal, newVal) {
   vendor._dirty = true;
   if (!S.dirtyRows) S.dirtyRows = new Map();
   if (vendor._row) S.dirtyRows.set(vendor._row, vendor.name);
-  // History log
+  // In-memory history log
   if(!S.changeHistory) S.changeHistory=[];
-  S.changeHistory.push({
-    ts:new Date().toISOString(),user:USER.email||'',
-    vendor:vendor.name,field:fieldChanged||'',
+  const entry = {
+    ts:new Date().toISOString(), user:USER.email||'',
+    vendor:vendor.name, field:fieldChanged||'',
     from:oldVal!==undefined?String(oldVal):'',
     to:newVal!==undefined?String(newVal):'edit'
-  });
+  };
+  S.changeHistory.push(entry);
+  // Debounced real-time save to Supabase
+  if(SB.ready()) {
+    clearTimeout(vendor._sbSaveTimer);
+    vendor._sbSaveTimer = setTimeout(()=>{
+      saveToSupabase(vendor);
+    }, 1500); // save 1.5s after last change
+  }
+  // Write to Supabase audit log (fire-and-forget)
+  if(SB.ready() && fieldChanged) {
+    auditLog(
+      vendor.name,
+      fieldChanged,
+      oldVal!==undefined?String(oldVal):null,
+      newVal!==undefined?String(newVal):null,
+      'update'
+    );
+  }
 }
 
 // ─── Structured Notes System ──────────────────────────────────────────────────
@@ -5852,32 +5870,16 @@ async function getGDriveToken() {
 async function saveToSupabase(vendor) {
   if (!SB.ready()||!vendor) return;
   try {
-    const row={
-      name:vendor.name, gpo:vendor.gpo||'', category:vendor.category||'',
-      sub_category:vendor.subCategory||'', product:vendor.product||'',
-      class_of_trade:vendor.classOfTrade||'', markets:vendor.markets||'',
-      added_value:vendor.addedValue||'', website:vendor.website||'',
-      contract_name:vendor.contractName||'', assignment:vendor.assignment||'',
-      exclusivity:vendor.exclusivity||'', termination_notice:vendor.terminationNotice||'',
-      proc_contact:vendor.procContact||'', title:vendor.title||'',
-      biz_phone:vendor.bizPhone||'', mobile:vendor.mobile||'', email:vendor.email||'',
-      in_contract_since:vendor.inContractSince||null, effective_date:vendor.effectiveDate||null,
-      expiry:vendor.expiry||null, auto_renew:vendor.autoRenew||'',
-      auto_renew_type:vendor.autoRenewType||'', status:vendor.status||'',
-      contract_term:vendor.contractTerm||'', current_term:vendor.currentTerm||'',
-      admin_fee:vendor.adminFee||'', admin_fee_notes:vendor.adminFeeNotes||'',
-      tiers:vendor.tiers||'', perpetuity:vendor.perpetuity||'', tail:vendor.tail||'',
-      contract_no:vendor.contractNo||'', agreement_type:vendor.agreementType||'',
-      comments:vendor.comments||'', notes:vendor.notes||'',
-      last_comm:vendor.lastComm||null, about:vendor.about||'',
-      follow_up:vendor.followUp||null, aka:vendor.aka||'',
-      sf_account_id:vendor.sfAccountId||'', vendor_aliases:vendor.vendorAliases||'',
-      score:vendor.score||0, tier:vendor.tier||'', source:'psd',
-      updated_at:'now()'
-    };
+    const row = vendorToRow(vendor, USER.email||'');
     if (vendor._sbId) row.id=vendor._sbId;
-    await SB.upsert('vendors',row);
-  } catch(e){console.warn('[VCS SB] saveToSupabase error:',e.message);}
+    SB.upsert('vendors',[row]).catch(e=>
+      console.warn('[VCS SB] saveToSupabase failed:',e.message)
+    );
+    // Also write a 'save' audit entry
+    auditLog(vendor.name, '_save', null, new Date().toISOString(), 'update');
+  } catch(e) {
+    console.warn('[VCS SB] saveToSupabase error:',e);
+  }
 }
 
 async function seedSupabase() {
@@ -6122,6 +6124,33 @@ async function loadFromSupabase() {
         });
       });
       console.log('[VCS SB] Activity loaded:',activities.length);
+    }
+
+    // ── 5. Activity log index (last 180 days, by vendor) ─────────────────────
+    const activityCutoff = new Date(Date.now()-180*24*60*60*1000).toISOString().split('T')[0];
+    const actData = await SB.query('activity_log',
+      'select=*&activity_date=gte.'+activityCutoff+'&order=activity_date.desc&limit=2000');
+    if(actData&&actData.length) {
+      S._activityByVendor = {};
+      actData.forEach(a=>{
+        const key = (a.vendor_name||'').toLowerCase();
+        if(!S._activityByVendor[key]) S._activityByVendor[key]=[];
+        S._activityByVendor[key].push(a);
+      });
+      console.log('[VCS SB] Activity index built:',Object.keys(S._activityByVendor).length,'vendors');
+    }
+
+    // ── 6. Channel partners ───────────────────────────────────────────────────
+    const cpData = await SB.query('channel_partners','select=*&limit=10000');
+    if(cpData&&cpData.length) {
+      S.channelVendors = cpData.map(r=>({
+        name:r.name||'', gpo:r.gpo||'', category:r.category||'',
+        subCategory:r.sub_category||'', product:r.product||'',
+        website:r.website||'', about:r.about||'', aka:r.aka||'',
+        score:r.score||0, tier:r.tier||'', source:'channel', _sbId:r.id
+      }));
+      S.allVendors = [...S.vendors, ...S.channelVendors];
+      console.log('[VCS SB] Channel partners loaded:',S.channelVendors.length);
     }
 
     S.loaded=true;
@@ -8891,12 +8920,15 @@ function openStructuredNoteModal(vendor) {
           body_html:bodyHtml,body_plain:bodyPlain,tag:selectedTag||'',
           author_email:USER&&USER.email?USER.email:'',
           author_name:USER&&USER.name?USER.name:'',
-          note_date:isoDate(new Date()),source:'vcs'
+          author_role:USER&&USER.role?USER.role:'',
+          note_date:isoDate(new Date()),source:'vcs',
+          created_at:new Date().toISOString()
         };
         const ok=await SB.upsert('vendor_notes',[noteRow]);
         if(ok){
           if(!vendor._sbNotes) vendor._sbNotes=[];
           vendor._sbNotes.unshift(Object.assign({},noteRow,{createdAt:new Date().toISOString()}));
+          auditLog(vendor.name, 'note_added', null, bodyPlain.slice(0,100), 'update');
         }
       }
 
@@ -9022,17 +9054,22 @@ function openLogActivityModal(vendor) {
 
       const actRow={
         vendor_name:vendor.name||'',activity_type:typeSel.value||'other',
+        itw_vendor_id:vendor._itwId||null,
         direction:'outbound',contact_name:contactIn.value.trim(),
+        contact_email:vendor.email||'',
         ps_user_email:USER&&USER.email?USER.email:'',
         ps_user_name:USER&&USER.name?USER.name:'',
         activity_date:actDate,
+        activity_time:new Date().toTimeString().slice(0,8)||null,
         duration_minutes:parseInt(durIn.value)||null,
         subject:subject,summary:summary,
         body_html:summary?'<p>'+summary.replace(/\n/g,'<br>')+'</p>':'',
         outcome:outSel.value||null,
         next_action:nextIn.value.trim()||null,
         follow_up_date:fuIn.value||null,
-        source:'manual',created_by:USER&&USER.email?USER.email:''
+        source:'manual',source_id:null,source_url:null,
+        created_by:USER&&USER.email?USER.email:'',
+        tags:[]
       };
 
       if(SB.ready()){
@@ -22012,7 +22049,31 @@ function exportSummaryEmail(since, notesVendors, vs, recentHistory) {
   });
 }
 
-function renderHistory(c) {
+async function renderHistory(c) {
+  // ── Supabase audit log ──────────────────────────────────────────────────
+  if(SB.ready()) {
+    try {
+      const auditData = await SB.query('vendor_audit',
+        'select=*&order=changed_at.desc&limit=200');
+      if(auditData&&auditData.length) {
+        const auditTable = buildTable(
+          ['When','User','Vendor','Field','From','To'],
+          auditData.map(a=>[
+            new Date(a.changed_at).toLocaleDateString(),
+            a.changed_by_name||a.changed_by_email||'',
+            a.vendor_name||'',
+            a.field_name||'',
+            (a.old_value||'').slice(0,40),
+            (a.new_value||'').slice(0,40)
+          ]),
+          {compact:true}
+        );
+        c.appendChild(el('h3',{style:{margin:'8px 0 4px',fontSize:'11px'}},'📋 Supabase Change Log'));
+        c.appendChild(auditTable);
+      }
+    } catch(e) { console.warn('[VCS] audit history load failed',e); }
+  }
+
   // ── Session change log ──────────────────────────────────────────────────
   const changes=S.changeHistory||[];
   if(changes.length>0){
