@@ -6280,6 +6280,9 @@ async function loadFromSupabase() {
     }
 
     toast('✅ Loaded from Supabase — '+S.vendors.length+' vendors · '+(S.channelVendors||[]).length+' partners · '+(S.itw||[]).length+' pipeline · '+(S.reviews||[]).length+' reviews','#10b981',6000);
+    S.loaded = true;
+    $('upload-screen').style.display='none';
+    $('app').style.display='flex';
     render();
     return true;
   } catch(e){console.warn('[VCS SB] loadFromSupabase error:',e);return false;}
