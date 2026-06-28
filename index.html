@@ -22931,10 +22931,12 @@ function renderVCSHealth(c) {
           body:JSON.stringify({action:'claudePing',apiKey:key})
         });
         const dp=await rp.json().catch(()=>({}));
-        if(dp.status==='ok') return 'Connected — key valid';
-        if(dp.error&&dp.error.includes('401')) throw new Error('Invalid API key (401)');
-        if(dp.error&&dp.error.includes('429')) return 'Rate limited but key is valid';
-      } catch(pe) { if(pe.message.includes('401')) throw pe; }
+        console.log('[VCS Claude Ping] proxy response:',JSON.stringify(dp));
+        if(dp.status==='ok'||dp.code===200) return 'Connected — key valid';
+        if(dp.code===429) return 'Rate limited but key is valid';
+        if((dp.error||'').includes('401')||(dp.error||'').includes('HTTP 401')) throw new Error('Invalid API key (401)');
+        if(dp.status==='error') throw new Error(dp.error||'GAS proxy error');
+      } catch(pe) { if(pe.message&&pe.message.includes('401')) throw pe; console.warn('[VCS Claude Ping] proxy failed:',pe.message); }
       // Fallback: direct browser call
       const r=await fetch('https://api.anthropic.com/v1/messages',{
         method:'POST',
@@ -22950,11 +22952,12 @@ function renderVCSHealth(c) {
       const key=S.settings?.renzoApiKey||'';
       if(!key) throw new Error('No Renzo API key — set in Settings → Renzo');
       const r=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
-        body:JSON.stringify({action:'renzoPing'})});
+        body:JSON.stringify({action:'renzoPing',renzoKey:key,renzoUrl:S.settings?.renzoConnectorUrl||'https://api.renzo.ai/v1'})});
       const d=await r.json();
-      if(d.status==='ok') return 'Connected';
-      if(d.status==='error'&&d.message?.includes('401')) throw new Error('Invalid Renzo key (401)');
-      return d.message||'Connected';
+      if(d.status==='ok') return 'Connected — '+( d.version||d.message||'Renzo live');
+      if(d.message&&d.message.toLowerCase().includes('working')) return d.message;
+      if(d.status==='error'&&(d.message||'').includes('401')) throw new Error('Invalid Renzo key (401)');
+      return d.message||d.status||'Connected';
     });
     await runPing('Watcher Status',async()=>{
       try{
