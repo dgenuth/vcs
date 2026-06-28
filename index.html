@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1187,14 +1187,6 @@ async function completeLogin() {
       notice.innerHTML = '<strong>⚠ Unsaved session found</strong> from ' + ageMin + ' minute' + (ageMin!==1?'s':'') + ' ago with ' + saved.dirtyVendors.length + ' changed vendor' + (saved.dirtyVendors.length!==1?'s':'') + '. Load your file to restore it.';
       $('upload-user-info').appendChild(notice);
     }
-  }
-  // Silent MS token refresh
-  if(localStorage.getItem('vcs_ms_refresh')) {
-    refreshMSToken().then(()=>{
-      console.log('[VCS] MS token refreshed silently');
-    }).catch(()=>{
-      console.log('[VCS] MS silent refresh failed — user will need to reconnect manually');
-    });
   }
 }
 
@@ -8641,78 +8633,73 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
     'Review':'rgba(168,85,247,.12)', 'SF Notes':'rgba(79,124,255,.15)',
   };
 
-  // 1. Supabase structured notes
-  if(vendor._sbNotes && vendor._sbNotes.length) {
-    vendor._sbNotes.forEach(n=>{
-      const content = n.bodyPlain || (n.bodyHtml||'').replace(/<[^>]+>/g,'').trim();
+  // Supabase notes (_sbNotes) — rich text from vendor_notes table
+  if(vendor._sbNotes && vendor._sbNotes.length){
+    vendor._sbNotes.forEach(function(n){
+      const content = n.bodyPlain || (n.bodyHtml ? n.bodyHtml.replace(/<[^>]+>/g,'') : '');
+      if(!content && !n.bodyHtml) return; // skip truly empty notes
       allEntries.push({
-        date: n.noteDate||n.createdAt||'',
-        tag: n.tag||n.noteType||'general',
-        author: n.authorName||n.authorEmail||'',
-        content: content,
-        _bodyHtml: n.bodyHtml||'',
-        _source: 'DB',
-        _sbNote: true,
-        _sbId: n.id,
-        _ts: new Date(n.createdAt||n.noteDate||0).getTime()
+        date:n.noteDate||n.createdAt||'',tag:n.tag||n.noteType||'',
+        author:n.authorName||n.authorEmail||'',
+        content:content,_bodyHtml:n.bodyHtml||'',
+        _source:'Contract',_vendor:vendor,_sbNote:true,_sbId:n.id
       });
     });
   }
+  // Always also show legacy notes from vendor.notes string and _notesLog
+  {
+    const _psdSrc = (vendor._notesLog && vendor._notesLog.length)
+      ? vendor._notesLog.map(function(e){return {date:e.date,tag:e.type,author:e.user,content:e.text,legacy:false};})
+      : parseNoteEntries(vendor.notes);
+    _psdSrc.forEach(function(e){
+      // Avoid duplicates with _sbNotes
+      const alreadyIn = allEntries.some(x=>x.content===e.content&&x.date===e.date);
+      if(!alreadyIn) allEntries.push(Object.assign({},e,{_source:'Contract',_vendor:vendor}));
+    });
+  }
 
-  // 2. Excel/legacy notes from vendor.notes string
-  if(vendor.notes && String(vendor.notes).trim()) {
-    if(typeof parseNoteEntries === 'function') {
-      parseNoteEntries(String(vendor.notes)).forEach(e=>{
-        const isDupe = allEntries.some(x=>x.content===e.content||x.content===e.text);
-        if(!isDupe) allEntries.push({...e, _source:'Excel', _ts: new Date(e.date||0).getTime()});
-      });
+  // vendor.comments (spreadsheet Comments column — shown here not as standalone section)
+  if(vendor.comments && String(vendor.comments).trim()){
+    const _cParsed=parseNoteEntries(String(vendor.comments));
+    if(_cParsed.length){
+      _cParsed.forEach(e=>allEntries.push(Object.assign({},e,{_source:'Contract',_vendor:vendor})));
+    } else {
+      allEntries.push({date:'',tag:'',author:'',content:String(vendor.comments).trim(),_source:'Contract',_vendor:vendor});
     }
   }
 
-  // 3. _notesLog structured entries
-  if(vendor._notesLog && vendor._notesLog.length) {
-    vendor._notesLog.forEach(e=>{
-      const isDupe = allEntries.some(x=>x.content===(e.text||e.content));
-      if(!isDupe) allEntries.push({
-        date:e.date||'', tag:e.type||'', author:e.user||'',
-        content:e.text||e.content||'', _source:'Log',
-        _ts: new Date(e.ts||e.date||0).getTime()
-      });
-    });
-  }
-
-  // 4. ITW/Pipeline notes for this vendor
-  const itwMatchV = (S.itw||[]).find(i=>
-    (i.name||'').toLowerCase()===(vendor.name||'').toLowerCase()
+  // ITW notes — passed directly OR auto-matched from S.itwVendors
+  const _itwSrc=itwVendor||(S.itw||S.itwVendors||S._itwData||[]).find(itw=>
+    itw.name===vendor.name||(itw.vendorId&&itw.vendorId===vendor.id)
   );
-  if(itwMatchV && itwMatchV.notes && String(itwMatchV.notes).trim()) {
-    if(typeof parseNoteEntries === 'function') {
-      parseNoteEntries(String(itwMatchV.notes)).forEach(e=>{
-        const isDupe = allEntries.some(x=>x.content===e.content||x.content===e.text);
-        if(!isDupe) allEntries.push({...e, _source:'Pipeline', _ts: new Date(e.date||0).getTime()});
-      });
-    }
+  if(_itwSrc && _itwSrc.notes){
+    parseNoteEntries(_itwSrc.notes).forEach(e=>{
+      allEntries.push({...e, _source:'Pipeline', _vendor:_itwSrc});
+    });
   }
 
-  // 5. Review notes for this vendor
-  (S.reviews||[])
-    .filter(r=>(r.vendor||r.vendorName||'').toLowerCase()===(vendor.name||'').toLowerCase())
-    .forEach(r=>{
-      ['notes','progressNotes','contractNotes','sfNotes'].forEach(field=>{
-        if(r[field] && String(r[field]).trim()) {
-          const label = {notes:'Review',progressNotes:'Progress',contractNotes:'Contract',sfNotes:'SF'}[field];
-          const isDupe = allEntries.some(x=>x.content===r[field]);
-          if(!isDupe) allEntries.push({
-            date:r.date||'', tag:label, author:r.reviewer||'',
-            content:String(r[field]), _source:'Review',
-            _ts: new Date(r.date||0).getTime()
-          });
-        }
+  // Review progress notes on vendor object
+  const _rvNotes=vendor.progressNotes||vendor.reviewNotes||'';
+  if(_rvNotes.trim()){
+    allEntries.push({date:'',tag:'Review',author:'',content:_rvNotes,_source:'Review',_vendor:vendor});
+  }
+
+  // Review records from S.reviews
+  if(S.reviews&&S.reviews.length){
+    const vName=(vendor.name||'').toLowerCase();
+    S.reviews.filter(r=>(r.vendor||r.vendorName||'').toLowerCase()===vName).forEach(r=>{
+      const rText=r.notes||r.progressNotes||'';
+      if(rText.trim()) allEntries.push({
+        date:r.date||'',tag:'Review',author:r.reviewer||'',content:rText,_source:'Review',_vendor:null
+      });
+      if(r.contractNotes&&r.contractNotes.trim()) allEntries.push({
+        date:r.reviewDate||r.date||'',tag:'Contract',author:r.reviewer||'',content:'[Contract] '+r.contractNotes.trim(),_source:'Review',_vendor:null
+      });
+      if(r.sfNotes&&r.sfNotes.trim()) allEntries.push({
+        date:r.reviewDate||r.date||'',tag:'SF Notes',author:r.reviewer||'',content:'[SF] '+r.sfNotes.trim(),_source:'Review',_vendor:null
       });
     });
-
-  // 6. Sort newest first
-  allEntries.sort((a,b)=>(b._ts||0)-(a._ts||0));
+  }
 
   if(!allEntries.length){
     sec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',padding:'6px 0',fontStyle:'italic'}},'No notes yet.'));
@@ -22937,6 +22924,18 @@ function renderVCSHealth(c) {
     await runPing('Claude AI API',async()=>{
       const key=S.settings?.apiKey||localStorage.getItem('vcs_api_key')||'';
       if(!key) throw new Error('No API key configured — go to Settings → AI');
+      // Route through GAS proxy first to avoid domain blocking
+      try {
+        const rp=await fetch(VCS_PROXY_URL,{
+          method:'POST',headers:{'Content-Type':'text/plain'},
+          body:JSON.stringify({action:'claudePing',apiKey:key})
+        });
+        const dp=await rp.json().catch(()=>({}));
+        if(dp.status==='ok') return 'Connected — key valid';
+        if(dp.error&&dp.error.includes('401')) throw new Error('Invalid API key (401)');
+        if(dp.error&&dp.error.includes('429')) return 'Rate limited but key is valid';
+      } catch(pe) { if(pe.message.includes('401')) throw pe; }
+      // Fallback: direct browser call
       const r=await fetch('https://api.anthropic.com/v1/messages',{
         method:'POST',
         headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
@@ -22951,7 +22950,7 @@ function renderVCSHealth(c) {
       const key=S.settings?.renzoApiKey||'';
       if(!key) throw new Error('No Renzo API key — set in Settings → Renzo');
       const r=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
-        body:JSON.stringify({action:'renzoTest'})});
+        body:JSON.stringify({action:'renzoPing'})});
       const d=await r.json();
       if(d.status==='ok') return 'Connected';
       if(d.status==='error'&&d.message?.includes('401')) throw new Error('Invalid Renzo key (401)');
@@ -23363,60 +23362,7 @@ function buildFieldAccess(container, userEmail) {
     container.appendChild(renzoToggleRow);
   }
 
-
-
-async function refreshMSToken() {
-  const msRefresh = localStorage.getItem('vcs_ms_refresh');
-  if(!msRefresh) throw new Error('No refresh token');
-  const tenantId = (S.settings&&S.settings.msTenantId)||'8363e2da-e1a6-4296-98df-020abbd50ab4';
-  const clientId = (S.settings&&S.settings.msClientId)||'717ba339-9c8f-4521-b86d-b3e91dcaed4a';
-  const resp = await fetch(
-    'https://login.microsoftonline.com/'+tenantId+'/oauth2/v2.0/token',
-    {
-      method:'POST',
-      headers:{'Content-Type':'application/x-www-form-urlencoded'},
-      body:new URLSearchParams({
-        grant_type:'refresh_token',
-        client_id:clientId,
-        refresh_token:msRefresh,
-        scope:'openid profile email Calendars.Read Mail.Read offline_access'
-      })
-    }
-  );
-  if(!resp.ok) throw new Error('Refresh failed: '+resp.status);
-  const data = await resp.json();
-  if(data.access_token) {
-    localStorage.setItem('vcs_ms_token', data.access_token);
-    if(data.refresh_token) localStorage.setItem('vcs_ms_refresh', data.refresh_token);
-    S._msTokenValid = true;
-    return data.access_token;
-  }
-  throw new Error('No access token in response');
-}
-
-async function getConnectionStatuses() {
-  const statuses = {};
-  statuses.supabase = SB.ready() && S._sbHealthy ? 'connected' : 
-    SB.ready() ? 'configured' : 'disconnected';
-  statuses.salesforce = (S.sfToken && S.sfInstance) ? 'connected' : 'disconnected';
-  statuses.microsoft = S._msTokenValid ? 'connected' : 
-    localStorage.getItem('vcs_ms_token') ? 'expired' : 'disconnected';
-  statuses.claude = S.settings&&S.settings.apiKey ? 'configured' : 'disconnected';
-  statuses.renzo = (S.settings&&S.settings.renzoApiKey&&S.settings.renzoConnectorUrl) ? 'configured' : 'disconnected';
-  statuses.fathom = S.settings&&S.settings.fathomApiKey ? 'configured' : 'disconnected';
-  statuses.drive = S._driveToken ? 'connected' : 'disconnected';
-  return statuses;
-}
-
-function statusDot(status) {
-  const colors = {connected:'#10b981',configured:'#f59e0b',expired:'#ef4444',disconnected:'#6b7280'};
-  const labels = {connected:'Connected',configured:'Configured',expired:'Expired — reconnect',disconnected:'Not connected'};
-  return '<span style="display:inline-flex;align-items:center;gap:4px;font-size:9px;color:'+(colors[status]||'#6b7280')+'">'
-    +'<span style="width:7px;height:7px;border-radius:50%;background:'+(colors[status]||'#6b7280')+';flex-shrink:0"></span>'
-    +(labels[status]||status)+'</span>';
-}
-
-async function renderSettings(c) {
+function renderSettings(c) {
   c.innerHTML = ''; // CRITICAL: clear before re-rendering
   // Handle jump-to from VCS Health Fix It buttons
   const _jumpTo = S._settingsJumpTo;
@@ -23517,68 +23463,6 @@ async function renderSettings(c) {
   const _settingsSpacer=el('div',{style:{height:'0px'}});
   c.appendChild(_settingsSpacer);
   requestAnimationFrame(()=>{const h=syncSec.getBoundingClientRect().height;if(h>0)_settingsSpacer.style.height=h+'px';});
-  // ── CONNECTED APPS HUB ────────────────────────────────────────────────────
-  const statuses = await getConnectionStatuses();
-
-  const statusBar = el('div',{style:{
-    display:'flex',gap:'8px',flexWrap:'wrap',padding:'6px 10px',
-    background:'var(--card)',borderRadius:'6px',marginBottom:'4px',
-    border:'1px solid var(--border)',fontSize:'9px'
-  }});
-  statusBar.innerHTML = '<span style="color:var(--muted);font-weight:600;margin-right:4px">Connections:</span>'
-    +'<span>SF '+statusDot(statuses.salesforce)+'</span>'
-    +'<span>MS '+statusDot(statuses.microsoft)+'</span>'
-    +'<span>AI '+statusDot(statuses.claude)+'</span>'
-    +'<span>Renzo '+statusDot(statuses.renzo)+'</span>'
-    +'<span>Fathom '+statusDot(statuses.fathom)+'</span>'
-    +'<span>Supabase '+statusDot(statuses.supabase)+'</span>';
-  c.appendChild(statusBar);
-
-  const connectAllBtn = el('button',{
-    class:'btn-xs',
-    style:{width:'100%',background:'var(--blue)',color:'#fff',
-      marginBottom:'6px',padding:'7px',fontWeight:'600'},
-    onclick: async () => {
-      connectAllBtn.textContent = '⏳ Connecting...';
-      connectAllBtn.disabled = true;
-      try {
-        if(SB.ready()) {
-          try {
-            const v = await SB.query('vendors','select=id&limit=1');
-            S._sbHealthy = !!(v&&v.length);
-            toast('✅ Supabase '+(S._sbHealthy?'connected':'no data'),'#10b981');
-          } catch(e) {}
-        }
-        if(S.settings&&S.settings.sfClientId) {
-          try { await connectSalesforce(); } catch(e) {}
-        }
-        if(localStorage.getItem('vcs_ms_refresh')) {
-          try { await refreshMSToken(); toast('✅ Microsoft reconnected','#10b981'); }
-          catch(e) { toast('⚠ Microsoft needs manual reconnect','#f59e0b'); }
-        }
-        if(S.settings&&S.settings.apiKey) {
-          try {
-            const r = await fetch('https://api.anthropic.com/v1/messages',{
-              method:'POST',
-              headers:{'x-api-key':S.settings.apiKey,'anthropic-version':'2023-06-01',
-                'content-type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
-              body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:10,
-                messages:[{role:'user',content:'ping'}]})
-            });
-            if(r.ok||r.status===429) toast('✅ Claude AI connected','#10b981');
-            else toast('❌ Claude AI: check API key','#ef4444');
-          } catch(e) {}
-        }
-      } finally {
-        connectAllBtn.textContent = '🔌 Connect All';
-        connectAllBtn.disabled = false;
-        const sc = document.getElementById('settings-content');
-        if(sc) renderSettings(sc);
-      }
-    }
-  },'🔌 Connect All');
-  c.appendChild(connectAllBtn);
-
 
   // S3: Quick Setup Checklist — progress bar + 6 items, collapsed when all complete
   if(USER.role==='admin'||USER.role==='procurement'){
@@ -24844,8 +24728,8 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
         body:JSON.stringify({action:'fathomProxy',fathomKey:key,fathomAction:'test'})
       });
       const d=await r.json().catch(()=>({}));
-      if(r.ok&&(d.status==='ok'||d.success||d.meetings!==undefined)) toast('✅ Fathom connected!','#10b981');
-      else if(r.status===401||d.error==='Unauthorized') toast('❌ Fathom auth failed — check API key','#ef4444');
+      if(r.ok&&(d.status==='ok'||(d.result&&(d.result.items||d.result.meetings)!==undefined))) toast('✅ Fathom connected!','#10b981');
+      else if(d.error&&d.error.toLowerCase().includes('unauthorized')) toast('❌ Fathom auth failed — check API key','#ef4444');
       else toast('⚠ Fathom: '+(d.error||'HTTP '+r.status),'#f59e0b');
     }catch(e){toast('❌ Fathom connection failed: '+e.message,'#ef4444');}
   }},'Test'));
@@ -28033,7 +27917,3 @@ try {
 </script>
 </body>
 </html>
-
-
-
-
