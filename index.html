@@ -6224,7 +6224,7 @@ async function loadFromSupabase() {
       S._schemaFields = [];
       S._customFields = [];
     }
-    toast('✅ Loaded '+S.vendors.length+' vendors from Supabase','#10b981');
+    toast('✅ Loaded from Supabase — '+S.vendors.length+' vendors · '+(S.channelVendors||[]).length+' partners · '+(S.itw||[]).length+' pipeline · '+(S.reviews||[]).length+' reviews','#10b981',6000);
     render();
     return true;
   } catch(e){console.warn('[VCS SB] loadFromSupabase error:',e);return false;}
