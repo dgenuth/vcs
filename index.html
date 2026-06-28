@@ -8843,6 +8843,14 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
     }
   }
 
+  // vendor.hoverNotes (hover tooltip notes)
+  if(vendor.hoverNotes && String(vendor.hoverNotes).trim()){
+    parseNoteEntries(String(vendor.hoverNotes)).forEach(function(e){
+      const alreadyIn = allEntries.some(x=>x.content===e.content&&x.date===e.date);
+      if(!alreadyIn) allEntries.push(Object.assign({},e,{_source:'Contract',_vendor:vendor}));
+    });
+  }
+
   // ITW notes — passed directly OR auto-matched from S.itwVendors
   const _itwSrc=itwVendor||(S.itw||S.itwVendors||S._itwData||[]).find(itw=>
     itw.name===vendor.name||(itw.vendorId&&itw.vendorId===vendor.id)
