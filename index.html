@@ -6279,16 +6279,32 @@ async function loadFromSupabase() {
     S.vendors.forEach(v=>{if(v.name) vendorIdx[v.name.toLowerCase()]=v;});
 
     // ── 2. Contacts ───────────────────────────────────────────────────────────
-    const contacts=await SB.query('vendor_contacts','select=*&order=display_order.asc&limit=50000');
+    // Paginate contacts — Supabase caps at 1000 per request
+    let allContacts=[], cOffset=0;
+    while(true){
+      const cPage=await SB.query('vendor_contacts',
+        'select=*&order=display_order.asc&limit=1000&offset='+cOffset);
+      if(!cPage||!cPage.length) break;
+      allContacts=allContacts.concat(cPage);
+      if(cPage.length<1000) break;
+      cOffset+=1000;
+    }
+    const contacts=allContacts;
     if(contacts&&contacts.length){
       contacts.forEach(c=>{
         const v=vendorIdx[(c.vendor_name||'').toLowerCase()];
         if(!v) return;
         if(!v._sbContacts) v._sbContacts=[];
+        // Parse JSONB fields — Supabase may return them as strings
+        function parseJ(val){
+          if(Array.isArray(val)) return val;
+          if(typeof val==='string'){try{return JSON.parse(val);}catch(_){return [];}}
+          return [];
+        }
         v._sbContacts.push({
           id:c.id, vendorName:c.vendor_name, type:c.contact_type||'',
           name:c.name||'', title:c.title||'', department:c.department||'',
-          phones:c.phones||[], emails:c.emails||[], other:c.other||[],
+          phones:parseJ(c.phones), emails:parseJ(c.emails), other:parseJ(c.other),
           isPrimary:!!c.is_primary, isActive:c.is_active!==false,
           notes:c.notes||'', displayOrder:c.display_order||0
         });
@@ -9425,9 +9441,12 @@ async function loadFathomMeetings(vendor) {
     const vendorEmails=[
       vendor.email, vendor.email2,
       ...(vendor._sbContacts||[]).flatMap(function(c){
-        return (c.emails||[]).map(function(e){return e.address||'';});
+        // emails may be a JSON string (from Supabase) or array
+        let emails = c.emails||[];
+        if(typeof emails==='string'){try{emails=JSON.parse(emails);}catch(_){emails=[];}}
+        return emails.map(function(e){return e.address||e||'';});
       })
-    ].filter(Boolean).map(function(e){return e.toLowerCase();});
+    ].filter(Boolean).map(function(e){return String(e).toLowerCase();});
 
     const matched=meetings.filter(function(m){
       const titleMatch=(m.title||'').toLowerCase().includes(vendorName);
@@ -22388,6 +22407,7 @@ async function renderHistory(c) {
             (a.old_value||'').slice(0,40),
             (a.new_value||'').slice(0,40)
           ]),
+          function(r){return r;},
           {compact:true}
         );
         c.appendChild(el('h3',{style:{margin:'8px 0 4px',fontSize:'11px'}},'📋 Supabase Change Log'));
@@ -27358,6 +27378,8 @@ function init() {
 
   $('upload-btn').addEventListener('click',()=>$('file-input').click());
   $('drive-load-btn').addEventListener('click',async function(){
+    // Always load global settings first (API keys, credentials) then data
+    try { await loadGlobalSettingsViaProxy(); } catch(_){}
     if(SB.ready()){
       const ok=await loadFromSupabase();
       if(ok) return;
