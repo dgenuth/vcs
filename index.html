@@ -5952,41 +5952,48 @@ async function seedSupabase() {
   console.log('[VCS SB] Vendors seeded:',done,'errors:',errors);
 
   // ── 2. Contacts ─────────────────────────────────────────────────────────────
+  // Canonical contact row — ALL rows must have IDENTICAL keys for Supabase batch upsert
+  function makeContactRow(overrides){
+    return Object.assign({
+      vendor_name:'',contact_type:'primary',name:'',title:'',
+      department:null,company:null,display_order:0,
+      is_primary:false,is_active:true,
+      phones:'[]',emails:'[]',other:'[]',
+      photo_url:null,notes:null,created_by:'seed'
+    }, overrides);
+  }
   const contactRows=[];
   S.vendors.forEach(v=>{
     if(v.procContact||v.email||v.bizPhone||v.mobile){
-      contactRows.push({
+      contactRows.push(makeContactRow({
         vendor_name:v.name||'',contact_type:'primary',name:v.procContact||'',
-        title:v.title||'',is_primary:true,is_active:true,
+        title:v.title||'',display_order:0,is_primary:true,
         phones:JSON.stringify([
           ...(v.bizPhone?[{type:'office',number:v.bizPhone}]:[]),
           ...(v.mobile?[{type:'mobile',number:v.mobile}]:[])
         ]),
-        emails:JSON.stringify(v.email?[{type:'work',address:v.email}]:[]),
-        created_by:'seed'
-      });
+        emails:JSON.stringify(v.email?[{type:'work',address:v.email}]:[])
+      }));
     }
     if(v.shared2||v.email2||v.mobile2){
-      contactRows.push({
+      contactRows.push(makeContactRow({
         vendor_name:v.name||'',contact_type:'secondary',name:v.shared2||'',
-        title:v.title2||'',display_order:1,is_primary:false,is_active:true,
+        title:v.title2||'',display_order:1,is_primary:false,
         phones:JSON.stringify(v.mobile2?[{type:'mobile',number:v.mobile2}]:[]),
-        emails:JSON.stringify(v.email2?[{type:'work',address:v.email2}]:[]),
-        created_by:'seed'
-      });
+        emails:JSON.stringify(v.email2?[{type:'work',address:v.email2}]:[])
+      }));
     }
     if(v.extraContacts&&v.extraContacts.length){
       v.extraContacts.forEach((c,idx)=>{
-        contactRows.push({
-          vendor_name:v.name||'',contact_type:c.type||'',name:c.name||'',title:c.title||'',
-          display_order:idx+2,is_primary:false,is_active:true,
+        contactRows.push(makeContactRow({
+          vendor_name:v.name||'',contact_type:c.type||'additional',
+          name:c.name||'',title:c.title||'',display_order:idx+2,is_primary:false,
           phones:JSON.stringify([
             ...(c.phone?[{type:'office',number:c.phone}]:[]),
             ...(c.mobile?[{type:'mobile',number:c.mobile}]:[])
           ]),
-          emails:JSON.stringify(c.email?[{type:'work',address:c.email}]:[]),
-          created_by:'seed'
-        });
+          emails:JSON.stringify(c.email?[{type:'work',address:c.email}]:[])
+        }));
       });
     }
   });
