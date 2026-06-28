@@ -6224,6 +6224,61 @@ async function loadFromSupabase() {
       S._schemaFields = [];
       S._customFields = [];
     }
+
+    // ── ITW/Pipeline ──────────────────────────────────────────────────────────
+    const itwData = await SB.query('itw_vendors','select=*&limit=2000');
+    if(itwData&&itwData.length){
+      S.itw = itwData.map(r=>({
+        name:r.name||'',category:r.category||'',subCategory:r.sub_category||'',
+        product:r.product||'',status:r.status||'',assignment:r.assignment||'',
+        procContact:r.proc_contact||'',title:r.title||'',
+        bizPhone:r.biz_phone||'',mobile:r.mobile||'',email:r.email||'',
+        website:r.website||'',notes:r.notes||'',about:r.about||'',
+        followUp:r.follow_up||'',lastComm:r.last_comm||'',
+        sfAccountId:r.sf_account_id||'',sfOpportunityId:r.sf_opportunity_id||'',
+        score:r.score||0,tier:r.tier||'',_sbId:r.id,_row:r.excel_row
+      }));
+      console.log('[VCS SB] ITW loaded:',S.itw.length);
+    }
+
+    // ── Reviews ───────────────────────────────────────────────────────────────
+    const revData = await SB.query('reviews','select=*&limit=1000');
+    if(revData&&revData.length){
+      S.reviews = revData.map(r=>({
+        vendor:r.vendor_name||'',vendorName:r.vendor_name||'',
+        reviewer:r.reviewer||'',date:r.review_date||'',
+        nextReview:r.next_review||'',status:r.status||'',
+        notes:r.notes||'',progressNotes:r.progress_notes||'',
+        contractNotes:r.contract_notes||'',sfNotes:r.sf_notes||'',
+        talkingPoints:r.talking_points||[],
+        score:r.score||0,_sbId:r.id,_row:r.excel_row
+      }));
+      console.log('[VCS SB] Reviews loaded:',S.reviews.length);
+    }
+
+    // ── Channel partners — paginated to get all 4209 ───────────────────────
+    {
+      let allCp=[], cpOffset=0, cpBatch=1000;
+      while(true){
+        const cpPage = await SB.query('channel_partners',
+          'select=*&limit='+cpBatch+'&offset='+cpOffset);
+        if(!cpPage||!cpPage.length) break;
+        allCp = allCp.concat(cpPage);
+        if(cpPage.length < cpBatch) break;
+        cpOffset += cpBatch;
+      }
+      if(allCp.length){
+        S.channelVendors = allCp.map(r=>({
+          name:r.name||'',gpo:r.gpo||'',category:r.category||'',
+          subCategory:r.sub_category||'',product:r.product||'',
+          website:r.website||'',about:r.about||'',aka:r.aka||'',
+          score:r.score||0,tier:r.tier||'',source:'channel',_sbId:r.id
+        }));
+        S.allVendors=[...S.vendors,...S.channelVendors];
+        console.log('[VCS SB] Channel partners loaded:',S.channelVendors.length);
+      }
+    }
+
     toast('✅ Loaded from Supabase — '+S.vendors.length+' vendors · '+(S.channelVendors||[]).length+' partners · '+(S.itw||[]).length+' pipeline · '+(S.reviews||[]).length+' reviews','#10b981',6000);
     render();
     return true;
@@ -8578,19 +8633,26 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
   // Supabase notes (_sbNotes) — rich text from vendor_notes table
   if(vendor._sbNotes && vendor._sbNotes.length){
     vendor._sbNotes.forEach(function(n){
+      const content = n.bodyPlain || (n.bodyHtml ? n.bodyHtml.replace(/<[^>]+>/g,'') : '');
+      if(!content && !n.bodyHtml) return; // skip truly empty notes
       allEntries.push({
         date:n.noteDate||n.createdAt||'',tag:n.tag||n.noteType||'',
         author:n.authorName||n.authorEmail||'',
-        content:n.bodyPlain||'',_bodyHtml:n.bodyHtml||'',
+        content:content,_bodyHtml:n.bodyHtml||'',
         _source:'Contract',_vendor:vendor,_sbNote:true,_sbId:n.id
       });
     });
-  } else {
-    // PSD notes — prefer _notesLog (full structured history) over raw vendor.notes cell
+  }
+  // Always also show legacy notes from vendor.notes string and _notesLog
+  {
     const _psdSrc = (vendor._notesLog && vendor._notesLog.length)
       ? vendor._notesLog.map(function(e){return {date:e.date,tag:e.type,author:e.user,content:e.text,legacy:false};})
       : parseNoteEntries(vendor.notes);
-    _psdSrc.forEach(function(e){allEntries.push(Object.assign({},e,{_source:'Contract',_vendor:vendor}));});
+    _psdSrc.forEach(function(e){
+      // Avoid duplicates with _sbNotes
+      const alreadyIn = allEntries.some(x=>x.content===e.content&&x.date===e.date);
+      if(!alreadyIn) allEntries.push(Object.assign({},e,{_source:'Contract',_vendor:vendor}));
+    });
   }
 
   // vendor.comments (spreadsheet Comments column — shown here not as standalone section)
