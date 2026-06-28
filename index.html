@@ -4783,6 +4783,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
             saveSessionState();
             toast('"'+vendor.name+'" unlinked from "'+linkedName+'"');
             render();
+            setTimeout(()=>openDetail(vendor),50);
           }
         }, '✕ Unlink'));
         linkBanner.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--blue)',fontSize:'8px',border:'1px solid rgba(59,130,246,.3)'},
