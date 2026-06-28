@@ -5293,7 +5293,9 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
   // Notes always visible — Add/Edit gated inside addUnifiedNotesSection
   try {
-    addUnifiedNotesSection(body, vendor, itwVendor, null);
+    const _itw = (typeof itwVendor !== 'undefined') ? itwVendor : 
+      (S.itw||[]).find(i=>(i.name||'').toLowerCase()===(vendor.name||'').toLowerCase()) || null;
+    addUnifiedNotesSection(body, vendor, _itw, null);
     // Review notes shown separately — three distinct categories, each collapsible
     if (reviewRecord) addReviewNotesSection(body, reviewRecord, vendor);
   } catch(noteErr) {
@@ -8856,47 +8858,7 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
     allEntries.push({date:'',tag:'Review',author:'',content:_rvNotes,_source:'Review',_vendor:vendor});
   }
 
-  // Review records from S.reviews — ALL note types, matched by any name field
-  if(S.reviews&&S.reviews.length){
-    const vName=(vendor.name||'').toLowerCase().trim();
-    S.reviews.filter(r=>{
-      const rName=(r.name||r.vendor||r.vendorName||'').toLowerCase().trim();
-      return rName===vName && rName!=='';
-    }).forEach(r=>{
-      // Progress Notes
-      if(r.progressNotes&&String(r.progressNotes).trim()){
-        allEntries.push({
-          date:r.date||'',tag:'Progress',author:r.reviewer||'',
-          content:String(r.progressNotes).trim(),
-          _source:'Review',_vendor:null,_ts:new Date(r.date||0).getTime()
-        });
-      }
-      // General review notes
-      if(r.notes&&String(r.notes).trim()){
-        allEntries.push({
-          date:r.date||'',tag:'Review',author:r.reviewer||'',
-          content:String(r.notes).trim(),
-          _source:'Review',_vendor:null,_ts:new Date(r.date||0).getTime()
-        });
-      }
-      // Contract Notes
-      if(r.contractNotes&&String(r.contractNotes).trim()){
-        allEntries.push({
-          date:r.reviewDate||r.date||'',tag:'Contract',author:r.reviewer||'',
-          content:String(r.contractNotes).trim(),
-          _source:'Review',_vendor:null,_ts:new Date(r.date||0).getTime()
-        });
-      }
-      // SF Notes
-      if(r.sfNotes&&String(r.sfNotes).trim()){
-        allEntries.push({
-          date:r.reviewDate||r.date||'',tag:'Salesforce',author:r.reviewer||'',
-          content:String(r.sfNotes).trim(),
-          _source:'Review',_vendor:null,_ts:new Date(r.date||0).getTime()
-        });
-      }
-    });
-  }
+  // Review records handled by addReviewNotesSection separately — not duplicated here
 
   if(!allEntries.length){
     sec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',padding:'6px 0',fontStyle:'italic'}},'No notes yet.'));
