@@ -1312,11 +1312,54 @@ function vendorToRow(v,updatedBy){
     excel_row:v._row||null,
     extra_fields: (function(){
       const extras = {};
+      // 1. Schema_fields custom fields
       const customFields = S._customFields||[];
       customFields.forEach(function(f){
         const val = v[f.field_key];
-        if(val !== undefined && val !== null && val !== '') {
-          extras[f.field_key] = val;
+        if(val !== undefined && val !== null && val !== '') extras[f.field_key] = val;
+      });
+      // 2. Hover notes
+      if(v.hoverNotes) extras.hoverNotes = v.hoverNotes;
+      if(v._hoverDetails) extras.hoverDetails = v._hoverDetails;
+      // 3. Media links
+      if(v._mediaLinks && v._mediaLinks.length) extras.mediaLinks = v._mediaLinks;
+      // 4. Score and tier
+      if(v.score) extras.score = v.score;
+      if(v.tier) extras.tier = v.tier;
+      // 5. SF data
+      if(v.sfData) extras.sfData = v.sfData;
+      if(v.sfSpend) extras.sfSpend = v.sfSpend;
+      if(v.sfCases) extras.sfCases = v.sfCases;
+      if(v.sfOpportunities) extras.sfOpportunities = v.sfOpportunities;
+      // 6. Notes log summary (last 5)
+      if(v._notesLog && v._notesLog.length) {
+        extras.notesLogCount = v._notesLog.length;
+        extras.notesLogLatest = v._notesLog.slice(-5);
+      }
+      // 7. Compare data
+      if(v._compareData) extras.compareData = v._compareData;
+      // 8. Catch-all for non-null, non-dedicated fields
+      const DEDICATED = new Set([
+        'name','gpo','category','subCategory','product','classOfTrade','markets',
+        'addedValue','website','contractName','assignment','exclusivity',
+        'terminationNotice','procContact','title','bizPhone','mobile','email',
+        'shared2','title2','mobile2','email2','inContractSince','effectiveDate',
+        'expiry','lastComm','followUp','autoRenew','autoRenewType','status',
+        'contractTerm','currentTerm','adminFee','adminFeeNotes','tiers',
+        'perpetuity','tail','contractNo','agreementType','reportFrequency',
+        'comments','notes','about','aka','trainualUrl','vendorAliasOf',
+        'extraContacts','vendorRelationships','sfAccountId','vendorAliases',
+        'score','tier','source','_row','_dirty','_sbId','_sbNotes',
+        '_sbContacts','_sbActivity','_sbExtraFields','_sbSaveTimer',
+        'hoverNotes','_hoverDetails','_mediaLinks','_notesLog'
+      ]);
+      Object.keys(v).forEach(function(key){
+        if(!DEDICATED.has(key) && !key.startsWith('_') && v[key]!==undefined
+           && v[key]!==null && v[key]!=='') {
+          try {
+            const val = typeof v[key]==='object' ? JSON.stringify(v[key]) : v[key];
+            if(val) extras[key] = val;
+          } catch(_){}
         }
       });
       return Object.keys(extras).length ? JSON.stringify(extras) : null;
@@ -2041,6 +2084,20 @@ function parsePSD(sheet, sourceName) {
     };
     v.score = isDirect ? calcScore(v) : 0;
     v.tier = isDirect ? getActionTier(v) : 'CHANNEL';
+    // Capture hover notes from comments1.xml for this vendor row
+    const cm1 = S.commentsMap ? (S.commentsMap['1'] || {}) : {};
+    const excelRow = i + 1; // 0-indexed loop -> 1-indexed Excel row
+    const hoverParts = [];
+    ['BJ','BK','BL','BM','BN','BO','Z','AA','AB'].forEach(function(col) {
+      const cellRef = col + (excelRow + 1);
+      if (cm1[cellRef] && String(cm1[cellRef]).trim()) {
+        hoverParts.push({ col: col, text: String(cm1[cellRef]).trim() });
+      }
+    });
+    if (hoverParts.length) {
+      v.hoverNotes = hoverParts.map(function(p){ return p.text; }).join('\n---\n');
+      v._hoverDetails = hoverParts;
+    }
     vendors.push(v);
   }
   return vendors;
@@ -6005,30 +6062,86 @@ async function seedSupabase() {
     console.log('[VCS SB] Contacts seeded:',contactRows.length);
   }
 
-  // ── 3. Notes ─────────────────────────────────────────────────────────────────
-  const noteRows=[];
-  S.vendors.forEach(v=>{
-    const rawNotes=v.notes||'';
-    if(!rawNotes.trim()) return;
-    const entries=parseNoteEntries(rawNotes);
-    entries.forEach(e=>{
-      const plain=e.content||'';
-      if(!plain.trim()) return;
-      const bodyHtml='<p>'+plain.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>')+'</p>';
-      noteRows.push({
-        vendor_name:v.name||'',note_type:e.tag||'general',
-        body_html:bodyHtml,body_plain:plain,tag:e.tag||'',
-        author_name:e.author||'',note_date:e.date||null,
-        source:'excel',created_by:'seed'
-      });
-    });
-  });
-  if(noteRows.length){
-    toast('Seeding '+noteRows.length+' notes...','#6366f1',2000);
-    for(let i=0;i<noteRows.length;i+=BATCH){
-      await SB.upsert('vendor_notes',noteRows.slice(i,i+BATCH));
+  // ── 3. Notes — comprehensive capture from ALL sources ────────────────────────
+  const noteRows = [];
+  function htmlEscSeed(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+  S.vendors.forEach(function(v) {
+    // 3a. Raw notes column
+    if(v.notes && String(v.notes).trim()) {
+      let parsed = [];
+      try { parsed = typeof parseNoteEntries==='function' ? parseNoteEntries(String(v.notes)) : []; } catch(_){}
+      if(parsed.length > 1) {
+        parsed.forEach(function(e){
+          if((e.content||e.text||'').trim()) {
+            const body = (e.content||e.text||'').trim();
+            noteRows.push({
+              vendor_name:v.name, note_type:e.tag||'general',
+              body_html:'<p>'+htmlEscSeed(body)+'</p>', body_plain:body,
+              tag:e.tag||'notes', author_name:e.author||'',
+              note_date:e.date||null, source:'excel', source_id:'col_notes', created_by:'seed'
+            });
+          }
+        });
+      } else {
+        const body = String(v.notes).trim();
+        noteRows.push({
+          vendor_name:v.name, note_type:'general',
+          body_html:'<p>'+htmlEscSeed(body)+'</p>', body_plain:body,
+          tag:'notes', source:'excel', source_id:'col_notes', created_by:'seed'
+        });
+      }
     }
-    console.log('[VCS SB] Notes seeded:',noteRows.length);
+    // 3b. Comments column
+    if(v.comments && String(v.comments).trim()) {
+      const body = String(v.comments).trim();
+      noteRows.push({
+        vendor_name:v.name, note_type:'general',
+        body_html:'<p>'+htmlEscSeed(body)+'</p>', body_plain:body,
+        tag:'comments', source:'excel', source_id:'col_comments', created_by:'seed'
+      });
+    }
+    // 3c. Hover notes from PSD sheet
+    if(v.hoverNotes && String(v.hoverNotes).trim()) {
+      const body = String(v.hoverNotes).trim();
+      noteRows.push({
+        vendor_name:v.name, note_type:'general',
+        body_html:'<p>'+htmlEscSeed(body).replace(/\n---\n/g,'</p><hr><p>')+'</p>',
+        body_plain:body, tag:'hover', source:'excel', source_id:'col_hover', created_by:'seed'
+      });
+    }
+    // 3d. _notesLog structured entries
+    if(v._notesLog && v._notesLog.length) {
+      v._notesLog.forEach(function(n){
+        const body = (n.text||n.body||'').trim();
+        if(body) {
+          noteRows.push({
+            vendor_name:v.name, note_type:n.type||'general',
+            body_html:n.html||('<p>'+htmlEscSeed(body)+'</p>'), body_plain:body,
+            tag:n.tag||n.type||'general', author_name:n.user||n.author||'',
+            author_email:n.userEmail||'', note_date:n.date||null,
+            source:'vcs', created_by:n.user||'vcs'
+          });
+        }
+      });
+    }
+  });
+  // Deduplicate
+  const seenNotes = new Set();
+  const dedupedNotes = noteRows.filter(function(n){
+    const key = n.vendor_name+'|'+(n.body_plain||'').slice(0,100);
+    if(seenNotes.has(key)) return false;
+    seenNotes.add(key); return true;
+  });
+  if(dedupedNotes.length) {
+    toast('Seeding '+dedupedNotes.length+' notes...','#6366f1',2000);
+    try { await SB.delete('vendor_notes','source=eq.excel'); } catch(_){}
+    try { await SB.delete('vendor_notes','source=eq.vcs'); } catch(_){}
+    for(let i=0;i<dedupedNotes.length;i+=BATCH) {
+      await SB.upsert('vendor_notes', dedupedNotes.slice(i,i+BATCH));
+    }
+    console.log('[VCS SB] Notes seeded:', dedupedNotes.length);
   }
 
   // ── 4. ITW vendors ───────────────────────────────────────────────────────────
@@ -6148,8 +6261,14 @@ async function loadFromSupabase() {
       lastComm:r.last_comm||'', about:r.about||'', followUp:r.follow_up||'', aka:r.aka||'',
       sfAccountId:r.sf_account_id||'', vendorAliases:r.vendor_aliases||'',
       score:r.score||0, tier:r.tier||'', source:'psd', _sbId:r.id,
-      _sbExtraFields:r.extra_fields||{},
-      ...(r.extra_fields||{})
+      ...(()=>{let extra={};try{extra=typeof r.extra_fields==='string'?JSON.parse(r.extra_fields):(r.extra_fields||{});}catch(_){}return {
+        _sbExtraFields: extra,
+        // Restore VCS-only fields from extra_fields
+        ...(extra.hoverNotes ? {hoverNotes: extra.hoverNotes} : {}),
+        ...(extra.mediaLinks ? {_mediaLinks: extra.mediaLinks} : {}),
+        ...(extra.notesLogLatest ? {_notesLog: extra.notesLogLatest} : {}),
+        ...(extra.sfData ? {sfData: extra.sfData} : {})
+      };})()
     };});
 
     // Build name→vendor index for fast merge
@@ -15416,6 +15535,25 @@ function smartChunkContract(text, maxChars) {
   return result;
 }
 
+async function saveCompareResult(vendorNames, comparisonHtml) {
+  if(!SB || !SB.ready || !SB.ready()) return;
+  try {
+    const row = {
+      vendor_name: vendorNames.join(' vs '),
+      document_type: 'comparison',
+      file_name: 'Contract Comparison — '+vendorNames.join(' vs ')+' — '+new Date().toLocaleDateString(),
+      mime_type: 'text/html',
+      storage_type: 'inline',
+      title: 'Contract Comparison',
+      description: vendorNames.join(' vs '),
+      uploaded_by: USER&&USER.email ? USER.email : '',
+      uploaded_at: new Date().toISOString(),
+      extra_fields: JSON.stringify({comparisonHtml: (comparisonHtml||'').slice(0,50000)})
+    };
+    await SB.upsert('vendor_documents', [row]);
+  } catch(e) { console.warn('[VCS] saveCompareResult failed:', e.message); }
+}
+
 async function runContractComparison(vendorName) {
   if (!CMP.docAText || !CMP.docBText) { toast('Load both documents first','#f59e0b'); return; }
   const apiKey = S.settings?.apiKey || S.settings?.anthropicApiKey || localStorage.getItem('vcs_api_key') || '';
@@ -15552,6 +15690,7 @@ ${typeof CMP.docBText === 'string' ? smartChunkContract(CMP.docBText, 40000) : '
 
     CMP.result = parsed;
     CMP.loading = false;
+    saveCompareResult([vendorName||CMP.docAName||'Unknown', CMP.docBName||''], JSON.stringify(parsed)).catch(()=>{});
     logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendorName||'Unknown',action:'Contract comparison run',note:CMP.docAName+' vs '+CMP.docBName});
     try{const uk='vcs_ai_usage_'+(USER.email||'unknown').replace(/[^a-z0-9]/gi,'_');const u=JSON.parse(localStorage.getItem(uk)||'{}');u.user=USER.name;u.contractCompare=(u.contractCompare||0)+1;u.totalRequests=(u.totalRequests||0)+1;u.lastUsed=new Date().toISOString();localStorage.setItem(uk,JSON.stringify(u));}catch(e){}
   } catch(e) {
