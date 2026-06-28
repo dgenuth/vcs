@@ -1309,7 +1309,18 @@ function vendorToRow(v,updatedBy){
     score:Math.round(v.score||0),tier:v.tier||'',source:v.source||'psd',
     // Metadata
     updated_by:updatedBy||USER?.email||'seed',
-    excel_row:v._row||null
+    excel_row:v._row||null,
+    extra_fields: (function(){
+      const extras = {};
+      const customFields = S._customFields||[];
+      customFields.forEach(function(f){
+        const val = v[f.field_key];
+        if(val !== undefined && val !== null && val !== '') {
+          extras[f.field_key] = val;
+        }
+      });
+      return Object.keys(extras).length ? JSON.stringify(extras) : null;
+    })()
   };
 }
 
@@ -2282,6 +2293,16 @@ async function loadFile(file) {
     $('search').value = '';
     $('upload-screen').style.display='none';
     $('app').style.display='flex';
+    // Load schema_fields from Supabase even when data came from Drive
+    if(typeof SB !== 'undefined' && SB && SB.ready && SB.ready()) {
+      try {
+        const sf = await SB.query('schema_fields','select=*&order=display_order.asc&limit=500');
+        S._schemaFields = sf||[];
+        S._customFields = (sf||[]).filter(f=>!f.is_core);
+      } catch(e) {
+        S._schemaFields = []; S._customFields = [];
+      }
+    }
     updateSidebar(); render();
     const gpCount = S.channelVendors.length;
     // Rebuild vendorAliases from spreadsheet records (survives Drive config loss)
@@ -5183,6 +5204,36 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     body.appendChild(sfCard);
   }
 
+  // ── Custom fields from schema_fields registry ──────────────────────────────
+  const customFields = S._customFields||[];
+  if(customFields.length) {
+    const cfSection = el('div',{style:{margin:'8px 0'}});
+    cfSection.appendChild(el('p',{style:{fontSize:'9px',fontWeight:'600',
+      color:'var(--muted)',margin:'0 0 4px',textTransform:'uppercase',
+      letterSpacing:'.05em'}},'Custom Fields'));
+    customFields.forEach(f=>{
+      const row = el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'4px'}});
+      row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'110px',flexShrink:0}},f.field_label));
+      const val = vendor[f.field_key]||(vendor._sbExtraFields&&vendor._sbExtraFields[f.field_key])||'';
+      let inp;
+      if(f.field_type==='boolean') {
+        inp = el('input',{type:'checkbox'});
+        inp.checked = !!val;
+        inp.addEventListener('change',(e)=>{const old=vendor[f.field_key];vendor[f.field_key]=e.target.checked;markDirty(vendor,f.field_key,old,e.target.checked);});
+      } else if(f.field_type==='date') {
+        inp = el('input',{type:'date',class:'detail-edit-field',style:{fontSize:'10px',flex:'1'},value:val});
+        inp.addEventListener('change',(e)=>{const old=vendor[f.field_key];vendor[f.field_key]=e.target.value;markDirty(vendor,f.field_key,old,e.target.value);});
+      } else {
+        inp = el('input',{type:'text',class:'detail-edit-field',style:{fontSize:'10px',flex:'1'},
+          value:val,placeholder:f.field_label});
+        inp.addEventListener('change',(e)=>{const old=vendor[f.field_key];vendor[f.field_key]=e.target.value;markDirty(vendor,f.field_key,old,e.target.value);});
+      }
+      row.appendChild(inp);
+      cfSection.appendChild(row);
+    });
+    body.appendChild(cfSection);
+  }
+
   // Notes always visible — Add/Edit gated inside addUnifiedNotesSection
   try {
     addUnifiedNotesSection(body, vendor, itwVendor, null);
@@ -6059,7 +6110,8 @@ async function loadFromSupabase() {
       lastComm:r.last_comm||'', about:r.about||'', followUp:r.follow_up||'', aka:r.aka||'',
       sfAccountId:r.sf_account_id||'', vendorAliases:r.vendor_aliases||'',
       score:r.score||0, tier:r.tier||'', source:'psd', _sbId:r.id,
-      _sbExtraFields:r.extra_fields||{}
+      _sbExtraFields:r.extra_fields||{},
+      ...(r.extra_fields||{})
     };});
 
     // Build name→vendor index for fast merge
@@ -6155,6 +6207,16 @@ async function loadFromSupabase() {
 
     S.loaded=true;
     S.source='supabase';
+    // ── Load schema_fields registry ────────────────────────────────────────
+    const schemaData = await SB.query('schema_fields',
+      'select=*&order=display_order.asc&limit=500');
+    if(schemaData && schemaData.length) {
+      S._schemaFields = schemaData;
+      S._customFields = schemaData.filter(f => !f.is_core);
+    } else {
+      S._schemaFields = [];
+      S._customFields = [];
+    }
     toast('✅ Loaded '+S.vendors.length+' vendors from Supabase','#10b981');
     render();
     return true;
@@ -25228,8 +25290,214 @@ function out(o){return ContentService.createTextOutput(JSON.stringify(o)).setMim
     body.appendChild(handoverOut);
   });
   } // end admin-only handover
+
+  // ── Field Registry ──────────────────────────────────────────────────────────
+  if(USER.role==='admin'){
+    const frSec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
+    const frHdrRow=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'10px 14px',cursor:'pointer',background:'rgba(79,124,255,.06)'},onclick(){frBody.style.display=frBody.style.display==='none'?'':'none';frChev.textContent=frBody.style.display===''?'▼':'▶';}});
+    const frChev=el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'2px'}},'▼');
+    frHdrRow.appendChild(frChev);
+    frHdrRow.appendChild(el('span',{style:{fontSize:'14px'}},'🗂'));
+    frHdrRow.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1',color:'var(--blue)'}},'Field Registry'));
+    frHdrRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Custom vendor fields'));
+    frSec.appendChild(frHdrRow);
+    const frBody=el('div',{style:{padding:'10px',display:'flex',flexDirection:'column',gap:'8px'}});
+    const hdr=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'4px'}});
+    hdr.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',margin:0}},'Custom fields are stored in Supabase and appear in all vendor panels.'));
+    const btnRow2=el('div',{style:{display:'flex',gap:'4px'}});
+    btnRow2.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginRight:'4px'},onclick:async()=>{
+      await seedSchemaFields();
+      const sf=await SB.query('schema_fields','select=*&order=display_order.asc&limit=500');
+      S._schemaFields=sf||[]; S._customFields=(sf||[]).filter(f=>!f.is_core);
+      renderFieldRegistry(fieldList);
+    }},'Seed Core Fields'));
+    btnRow2.appendChild(el('button',{class:'btn-xs',style:{background:'var(--blue)',color:'#fff'},onclick:()=>openAddFieldModal()},'+ Add Field'));
+    hdr.appendChild(btnRow2);
+    frBody.appendChild(hdr);
+    const fieldList=el('div',{id:'field-registry-list'});
+    frBody.appendChild(fieldList);
+    renderFieldRegistry(fieldList);
+    frSec.appendChild(frBody);
+    c.appendChild(frSec);
+  }
 }
 
+
+// ─── Field Registry helpers ───────────────────────────────────────────────────
+function renderFieldRegistry(container) {
+  container.innerHTML = '';
+  const fields = S._schemaFields||[];
+  if(!fields.length) {
+    container.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',
+      textAlign:'center',padding:'12px 0'}},'No fields yet. Click + Add Field to create one.'));
+    return;
+  }
+  const tbl = el('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:'9px'}});
+  const thead = el('tr',{style:{borderBottom:'1px solid var(--border)'}});
+  ['Label','Key','Type','Section','Core',''].forEach(h=>{
+    const th = el('th',{style:{textAlign:'left',padding:'3px 6px',
+      color:'var(--muted)',fontWeight:'600'}},h);
+    thead.appendChild(th);
+  });
+  tbl.appendChild(thead);
+  fields.forEach(f=>{
+    const tr = el('tr',{style:{borderBottom:'1px solid var(--border-subtle)'}});
+    [f.field_label||'',f.field_key||'',f.field_type||'',f.section||'',f.is_core?'✓':''].forEach(val=>{
+      tr.appendChild(el('td',{style:{padding:'4px 6px',color:'var(--text)'}},val));
+    });
+    const actions = el('td',{style:{padding:'4px 6px',display:'flex',gap:'4px'}});
+    if(!f.is_core) {
+      actions.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:()=>openAddFieldModal(f)},'Edit'));
+      actions.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'},
+        onclick:async()=>{
+          if(!confirm('Delete field "'+f.field_label+'"?\nData in Supabase is preserved.')) return;
+          await SB.delete('schema_fields','id=eq.'+f.id);
+          S._schemaFields=(S._schemaFields||[]).filter(x=>x.id!==f.id);
+          S._customFields=(S._customFields||[]).filter(x=>x.id!==f.id);
+          renderFieldRegistry(container);
+          toast('Field deleted','#ef4444');
+        }
+      },'×'));
+    }
+    tr.appendChild(actions);
+    tbl.appendChild(tr);
+  });
+  container.appendChild(tbl);
+}
+
+function openAddFieldModal(existing) {
+  const isEdit = !!existing;
+  const overlay = el('div',{style:{
+    position:'fixed',inset:0,background:'rgba(0,0,0,.6)',
+    zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center'
+  }});
+  const box = el('div',{style:{
+    background:'var(--card)',border:'1px solid var(--border)',
+    borderRadius:'8px',padding:'24px',width:'360px',
+    display:'flex',flexDirection:'column',gap:'10px'
+  }});
+  box.appendChild(el('h3',{style:{margin:0,fontSize:'13px',color:'var(--text)'}},
+    (isEdit?'Edit':'Add')+' Custom Field'));
+
+  const fieldDefs = [
+    {key:'field_label',label:'Display Label',type:'text',ph:'e.g. Contract Value'},
+    {key:'field_key',label:'Field Key (camelCase)',type:'text',ph:'e.g. contractValue',
+     note:'Used in code. No spaces. Cannot be changed after creation.'},
+    {key:'field_type',label:'Field Type',type:'select',
+     options:['text','number','date','url','phone','email','boolean','select','richtext']},
+    {key:'section',label:'Panel Section',type:'select',
+     options:['Contract','Contacts','Communication','VCS','Custom']},
+    {key:'display_order',label:'Display Order',type:'number',ph:'100'},
+    {key:'is_searchable',label:'Searchable?',type:'boolean'},
+    {key:'is_visible_by_default',label:'Visible by default?',type:'boolean'},
+  ];
+
+  const inputs = {};
+  fieldDefs.forEach(f=>{
+    const row = el('div',{style:{display:'flex',flexDirection:'column',gap:'2px'}});
+    row.appendChild(el('label',{style:{fontSize:'9px',color:'var(--muted)',fontWeight:'600'}},f.label));
+    if(f.note) row.appendChild(el('p',{style:{fontSize:'8px',color:'var(--muted)',margin:'0 0 2px'}},f.note));
+    let inp;
+    const curVal = existing ? existing[f.key] : (f.type==='boolean'?true:f.key==='display_order'?100:'');
+    if(f.type==='select') {
+      inp = el('select',{class:'detail-edit-field',style:{fontSize:'10px'}});
+      f.options.forEach(o=>{
+        const opt = el('option',{value:o},o);
+        if(curVal===o) opt.selected=true;
+        inp.appendChild(opt);
+      });
+    } else if(f.type==='boolean') {
+      inp = el('input',{type:'checkbox'});
+      inp.checked = curVal===true||curVal==='true';
+    } else {
+      inp = el('input',{type:f.type==='number'?'number':'text',
+        class:'detail-edit-field',style:{fontSize:'10px'},
+        placeholder:f.ph||'',value:curVal||''});
+      if(f.key==='field_label'&&!isEdit) {
+        inp.addEventListener('input',()=>{
+          if(inputs['field_key']&&!inputs['field_key'].dataset.touched) {
+            inputs['field_key'].value=inp.value.replace(/[^a-zA-Z0-9 ]/g,'').trim()
+              .split(' ').map((w,i)=>i===0?w.toLowerCase():w[0].toUpperCase()+w.slice(1).toLowerCase()).join('');
+          }
+        });
+      }
+      if(f.key==='field_key') inp.addEventListener('input',()=>{inp.dataset.touched='1';});
+    }
+    inputs[f.key]=inp;
+    row.appendChild(inp);
+    box.appendChild(row);
+  });
+
+  const btnRow = el('div',{style:{display:'flex',gap:'8px',justifyContent:'flex-end',marginTop:'8px'}});
+  btnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:()=>document.body.removeChild(overlay)},'Cancel'));
+  btnRow.appendChild(el('button',{class:'btn-xs',style:{background:'var(--blue)',color:'#fff'},
+    onclick:async()=>{
+      const label=inputs['field_label'].value.trim();
+      const key=inputs['field_key'].value.trim();
+      if(!label||!key){toast('Label and key are required','#ef4444');return;}
+      if(!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(key)){toast('Key must start with a letter, letters/numbers/underscores only','#ef4444');return;}
+      if(!SB.ready()){toast('Supabase not connected','#ef4444');return;}
+      const record={
+        table_name:'vendors',field_key:key,field_label:label,
+        field_type:inputs['field_type'].value,section:inputs['section'].value,
+        display_order:parseInt(inputs['display_order'].value)||100,
+        is_core:false,
+        is_searchable:inputs['is_searchable'].checked,
+        is_visible_by_default:inputs['is_visible_by_default'].checked,
+        created_by:USER.email||''
+      };
+      if(isEdit) record.id=existing.id;
+      try {
+        await SB.upsert('schema_fields',[record]);
+        const sf=await SB.query('schema_fields','select=*&order=display_order.asc&limit=500');
+        S._schemaFields=sf||[]; S._customFields=(sf||[]).filter(f=>!f.is_core);
+        const list=document.getElementById('field-registry-list');
+        if(list) renderFieldRegistry(list);
+        document.body.removeChild(overlay);
+        toast((isEdit?'✅ Field updated':'✅ Field "'+label+'" added — appears in all vendor panels'),'#10b981',5000);
+      } catch(e){toast('❌ Save failed: '+e.message,'#ef4444');}
+    }
+  },isEdit?'Save Changes':'Add Field'));
+  box.appendChild(btnRow);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  setTimeout(()=>inputs['field_label'].focus(),50);
+}
+
+async function seedSchemaFields() {
+  if(!SB.ready()) return;
+  const coreFields = [
+    {field_key:'name',field_label:'Vendor Name',field_type:'text',section:'Identity',display_order:1,is_core:true},
+    {field_key:'gpo',field_label:'GPO',field_type:'text',section:'Identity',display_order:2,is_core:true},
+    {field_key:'category',field_label:'Category',field_type:'text',section:'Identity',display_order:3,is_core:true},
+    {field_key:'subCategory',field_label:'Sub-Category',field_type:'text',section:'Identity',display_order:4,is_core:true},
+    {field_key:'product',field_label:'Product/Description',field_type:'text',section:'Identity',display_order:5,is_core:true},
+    {field_key:'status',field_label:'Status',field_type:'select',section:'Contract',display_order:10,is_core:true},
+    {field_key:'expiry',field_label:'Contract Expiry',field_type:'date',section:'Contract',display_order:11,is_core:true},
+    {field_key:'effectiveDate',field_label:'Effective Date',field_type:'date',section:'Contract',display_order:12,is_core:true},
+    {field_key:'adminFee',field_label:'Admin Fee',field_type:'text',section:'Contract',display_order:13,is_core:true},
+    {field_key:'procContact',field_label:'Primary Contact',field_type:'text',section:'Contacts',display_order:20,is_core:true},
+    {field_key:'email',field_label:'Email',field_type:'email',section:'Contacts',display_order:21,is_core:true},
+    {field_key:'mobile',field_label:'Mobile',field_type:'phone',section:'Contacts',display_order:22,is_core:true},
+    {field_key:'sfAccountId',field_label:'SF Account ID',field_type:'text',section:'VCS',display_order:30,is_core:true},
+    {field_key:'trainualUrl',field_label:'Trainual URL',field_type:'url',section:'VCS',display_order:31,is_core:true},
+    {field_key:'website',field_label:'Website',field_type:'url',section:'Identity',display_order:6,is_core:true},
+    {field_key:'about',field_label:'About',field_type:'richtext',section:'Identity',display_order:7,is_core:true},
+    {field_key:'aka',field_label:'AKA / Also Known As',field_type:'text',section:'Identity',display_order:8,is_core:true},
+    {field_key:'score',field_label:'VCS Score',field_type:'number',section:'VCS',display_order:32,is_core:true},
+    {field_key:'tier',field_label:'Tier',field_type:'select',section:'VCS',display_order:33,is_core:true},
+    {field_key:'repName',field_label:'Rep Name',field_type:'text',section:'Contacts',display_order:23,is_core:true},
+    {field_key:'repEmail',field_label:'Rep Email',field_type:'email',section:'Contacts',display_order:24,is_core:true},
+    {field_key:'repPhone',field_label:'Rep Phone',field_type:'phone',section:'Contacts',display_order:25,is_core:true},
+  ];
+  const rows = coreFields.map(f=>({...f,table_name:'vendors',is_searchable:true,is_visible_by_default:true,created_by:'seed'}));
+  try {
+    await SB.upsert('schema_fields',rows);
+    toast('✅ Core fields registered in schema_fields','#10b981',4000);
+  } catch(e) {
+    toast('⚠ schema_fields seed error: '+e.message,'#f59e0b');
+  }
+}
 
 // ─── AI Assistant ─────────────────────────────────────────────────────────────
 let aiHistory = [];
