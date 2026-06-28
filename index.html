@@ -24689,13 +24689,18 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
     const apiInp=el('input',{type:'password',class:'modal-input',style:{flex:'1',maxWidth:'300px',marginBottom:'0'},placeholder:keyPlaceholder});
     apiInp.value=S.settings[settingsKey]||'';
     apiRow.appendChild(apiInp);
-    apiRow.appendChild(el('button',{class:'btn-xs btn-green',onclick(){
-      S.settings[settingsKey]=apiInp.value.trim();
-      localStorage.setItem(storageKey,apiInp.value.trim());
-      // Sync to Drive immediately so it's available on all devices
-      saveConfigToDrive()
-        .then(()=>toast('✓ API key saved & synced to Drive','#22c55e'))
-        .catch(()=>toast('✓ API key saved locally (Drive sync failed)','#f59e0b'));
+    apiRow.appendChild(el('button',{class:'btn-xs btn-green',onclick:async function(){
+      const k = apiInp.value.trim();
+      S.settings[settingsKey]=k;
+      localStorage.setItem(storageKey,k);
+      // Save via proxy (works without Google OAuth) + try Drive
+      try {
+        await saveUsersViaProxy();
+        toast('✓ API key saved & synced to Drive','#22c55e');
+      } catch(e) {
+        saveConfigToDrive().catch(()=>{});
+        toast('✓ API key saved locally','#f59e0b');
+      }
       renderSettings(c);
     }},'Save & Sync'));
     secAI.appendChild(apiRow);
