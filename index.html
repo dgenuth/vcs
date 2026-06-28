@@ -6034,6 +6034,8 @@ async function seedSupabase() {
   // ── 4. ITW vendors ───────────────────────────────────────────────────────────
   if(S.itw&&S.itw.length){
     toast('Seeding '+S.itw.length+' ITW vendors...','#6366f1',2000);
+    // Clear existing ITW data before re-seed to prevent stale rows
+    try { await SB.delete('itw_vendors','id=neq.00000000-0000-0000-0000-000000000000'); } catch(_){}
     const itwRows=S.itw.map(v=>({
       name:v.name||'',category:v.category||'',sub_category:v.subCategory||'',
       product:v.product||'',
@@ -6054,7 +6056,9 @@ async function seedSupabase() {
         section:v.section||'',
         vendorStatus:v.vendorStatus||'',
         isInactive:v.isInactive||false,
-        hasInitialMeeting:v.hasInitialMeeting||false
+        hasInitialMeeting:v.hasInitialMeeting||false,
+        services:v.services||'',
+        action:v.action||''
       })
     }));
     for(let i=0;i<itwRows.length;i+=BATCH){
@@ -6083,7 +6087,8 @@ async function seedSupabase() {
       // Talking points stored as JSONB
       talking_points:r.talkingPoints?JSON.stringify(r.talkingPoints):null,
       score:Math.round(r.score||0),
-      updated_by:'seed',excel_row:r._row||null
+      updated_by:'seed',excel_row:r._row||null,
+      extra_fields:JSON.stringify({services:r.services||'',action:r.action||''})
     })).filter(r=>r.vendor_name); // only rows with a vendor name
     for(let i=0;i<rvRows.length;i+=BATCH){
       await SB.upsert('reviews',rvRows.slice(i,i+BATCH));
@@ -6286,16 +6291,21 @@ async function loadFromSupabase() {
     // ── Reviews ───────────────────────────────────────────────────────────────
     const revData = await SB.query('reviews','select=*&limit=1000');
     if(revData&&revData.length){
-      S.reviews = revData.map(r=>({
-        name:r.vendor_name||'',  // matches parseReviews which uses r.name
-        vendor:r.vendor_name||'',vendorName:r.vendor_name||'',
-        reviewer:r.reviewer||'',date:r.review_date||'',
-        nextReview:r.next_review||'',status:r.status||'',
-        notes:r.notes||'',progressNotes:r.progress_notes||'',
-        contractNotes:r.contract_notes||'',sfNotes:r.sf_notes||'',
-        talkingPoints:r.talking_points||[],
-        score:r.score||0,_sbId:r.id,_row:r.excel_row
-      })).filter(r=>r.name); // skip blank vendor rows
+      S.reviews = revData.map(r=>{
+        let extra={};
+        try{extra=JSON.parse(r.extra_fields||'{}');}catch(_){}
+        return {
+          name:r.vendor_name||'',
+          vendor:r.vendor_name||'',vendorName:r.vendor_name||'',
+          reviewer:r.reviewer||'',date:r.review_date||'',
+          nextReview:r.next_review||'',status:r.status||'',
+          notes:r.notes||'',progressNotes:r.progress_notes||'',
+          contractNotes:r.contract_notes||'',sfNotes:r.sf_notes||'',
+          services:extra.services||'',action:extra.action||'',
+          talkingPoints:r.talking_points||[],
+          score:r.score||0,_sbId:r.id,_row:r.excel_row
+        };
+      }).filter(r=>r.name);
       console.log('[VCS SB] Reviews loaded:',S.reviews.length);
     }
 
