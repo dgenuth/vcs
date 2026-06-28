@@ -5293,14 +5293,14 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
   // Notes always visible — Add/Edit gated inside addUnifiedNotesSection
   try {
-    const _itw = (typeof itwVendor !== 'undefined') ? itwVendor : 
+    const _itw = (typeof itwVendor !== 'undefined') ? itwVendor :
       (S.itw||[]).find(i=>(i.name||'').toLowerCase()===(vendor.name||'').toLowerCase()) || null;
+    const _rev = (typeof reviewRecord !== 'undefined') ? reviewRecord :
+      (typeof findReviewRecord === 'function' ? findReviewRecord(vendor.name) : null);
     addUnifiedNotesSection(body, vendor, _itw, null);
-    // Review notes shown separately — three distinct categories, each collapsible
-    if (reviewRecord) addReviewNotesSection(body, reviewRecord, vendor);
+    if (_rev) addReviewNotesSection(body, _rev, vendor);
   } catch(noteErr) {
     console.error('[VCS] Notes section error:', noteErr);
-    // Fallback: show plain notes so detail panel still opens
     if (vendor.notes) {
       const fb=el('div',{class:'detail-section'});
       fb.appendChild(el('h4',{class:'detail-sec-title'},'📝 Notes'));
