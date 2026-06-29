@@ -23437,6 +23437,29 @@ function renderVCSHealth(c) {
         S._watcherHealthy=false;throw e;
       }
     });
+    await runPing('Fathom API',async()=>{
+      const key=(S.settings&&S.settings.fathomApiKey)||localStorage.getItem('vcs_fathom_key')||'';
+      if(!key) throw new Error('No Fathom key — set in Settings → Integrations');
+      const r=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
+        body:JSON.stringify({action:'fathomProxy',fathomKey:key,fathomAction:'test'})});
+      const d=await r.json();
+      if(d.status==='ok'){const cnt=d.result&&d.result.items?d.result.items.length:0;return cnt+' recording'+(cnt!==1?'s':'')+' accessible';}
+      throw new Error(d.error||'Fathom proxy error');
+    });
+    await runPing('Supabase Database',async()=>{
+      if(!SB||!SB.ready()) throw new Error('Not configured — check Settings');
+      const rows=await SB.query('vendors','select=id&limit=1');
+      if(rows&&rows.length) return 'Connected — '+(S.vendors&&S.vendors.length||0)+' vendors loaded';
+      throw new Error('Connected but vendors table empty');
+    });
+    await runPing('Microsoft 365',async()=>{
+      const tok=typeof getMSToken==='function'?getMSToken():null;
+      if(!tok) throw new Error('Not connected — go to Settings → Microsoft');
+      const r=await fetch('https://graph.microsoft.com/v1.0/me',{headers:{'Authorization':'Bearer '+tok}});
+      if(r.ok){const u=await r.json();return 'Connected as '+(u.displayName||u.mail||'user');}
+      if(r.status===401) throw new Error('Token expired — reconnect in Settings');
+      throw new Error('MS Graph error '+r.status);
+    });
     testBtn.disabled=false; testBtn.textContent='▶ Run Tests Again';
     // Rebuild status cards in-place with updated flags (_watcherHealthy, _renzoHealthy)
     const _sg=document.getElementById('vcs-status-grid');
