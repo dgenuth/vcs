@@ -1092,16 +1092,16 @@ function loginAs(userObj) {
 }
 
 function recordLogin() {
-  if (!USER.loggedIn || !USER.email) return;
   try {
-    const all = getApprovedUsers();
-    const idx = all.findIndex(u => u.email.toLowerCase() === USER.email.toLowerCase());
-    if (idx >= 0) {
-      all[idx].lastLogin = new Date().toISOString();
-      setApprovedUsers(all, true);
-      saveUsersViaProxy().catch(function(){});
+    if(!USER||!USER.email) return;
+    const all=typeof getApprovedUsers==='function'?getApprovedUsers():[];
+    const me=all.find(function(u){return (u.email||'').toLowerCase()===(USER.email||'').toLowerCase();});
+    if(me){
+      me.lastLogin=new Date().toISOString();
+      if(typeof setApprovedUsers==='function') setApprovedUsers(all,true);
+      if(typeof saveUsersViaProxy==='function') saveUsersViaProxy().catch(function(){});
     }
-  } catch(e) { console.warn('[VCS] recordLogin error:', e); }
+  } catch(_){}
 }
 
 async function completeLogin() {
@@ -1160,6 +1160,7 @@ async function completeLogin() {
       const sbOk = await loadFromSupabase();
       if(sbOk) {
         console.log('[VCS] ✅ Loaded from Supabase — skipping Drive');
+        recordLogin();
         return;
       }
       console.log('[VCS] Supabase load failed, falling through to Drive');
@@ -5459,6 +5460,24 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
         fathomBody.appendChild(el('button',{class:'btn-ghost btn-action',style:{fontSize:'10px'},onclick(){closeDetail();S.view='settings';updateSidebar();render();}},'→ Configure Fathom'));
       }
     }
+    if(S.settings&&S.settings.fathomApiKey&&typeof loadFathomMeetings==='function'){
+      const fLoadMsg=el('div',{style:{fontSize:'9px',color:'var(--muted)',padding:'4px 0'}},'⏳ Loading recordings...');
+      fathomBody.appendChild(fLoadMsg);
+      loadFathomMeetings(vendor).then(function(meetings){
+        if(fLoadMsg.parentNode) fLoadMsg.remove();
+        if(!meetings||!meetings.length){fathomBody.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',padding:'4px 0'}},'No Fathom recordings found.'));return;}
+        meetings.forEach(function(m){
+          const row=el('div',{style:{padding:'5px 0',borderBottom:'1px solid var(--border)',fontSize:'10px',display:'flex',gap:'8px',alignItems:'flex-start'}});
+          row.appendChild(el('span',{style:{fontSize:'13px'}},'🎙'));
+          const info=el('div',{style:{flex:'1'}});
+          info.appendChild(el('div',{style:{fontWeight:'600'}},m.subject||m.title||'Recording'));
+          info.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)'}},(m.activity_date||'')+(m.duration_minutes?' · '+m.duration_minutes+'min':'')+(m.contact_name?' · '+m.contact_name:'')));
+          if(m.source_url||m.url) info.appendChild(el('a',{href:m.source_url||m.url,target:'_blank',style:{fontSize:'8px',color:'var(--blue)'}},'▶ View Recording'));
+          row.appendChild(info);
+          fathomBody.appendChild(row);
+        });
+      }).catch(function(){if(fLoadMsg.parentNode) fLoadMsg.textContent='Could not load recordings.';});
+    }
     fathomSec.appendChild(fathomBody);
     body.appendChild(fathomSec);
   }
@@ -5822,15 +5841,27 @@ function renderCommPanel(body, vendor) {
   const _cpOpen=S._commPanelOpen[_cpKey]===true;
   const commSec=el('div',{style:{marginTop:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
   const commHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'6px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none',borderBottom:_cpOpen?'1px solid var(--border)':'none'},
-    onclick(e){e.stopPropagation();S._commPanelOpen[_cpKey]=!_cpOpen;refreshDetailIfOpen(vendor);}});
+    onclick(e){
+      e.stopPropagation();
+      const isOpen=S._commPanelOpen[_cpKey]===true;
+      S._commPanelOpen[_cpKey]=!isOpen;
+      const cbody=commSec.querySelector('.comm-body');
+      const ctab=commSec.querySelector('.comm-tabbar');
+      if(cbody) cbody.style.display=isOpen?'none':'';
+      if(ctab) ctab.style.display=isOpen?'none':'';
+      const carr=commHdr.querySelector('.comm-arrow');
+      if(carr) carr.textContent=isOpen?'▼':'▲';
+      commHdr.style.borderBottom=(!isOpen)?'1px solid var(--border)':'none';
+    }});
   commHdr.appendChild(el('span',{style:{fontSize:'11px'}},'📬'));
   commHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Communications'));
   commHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'collapsed — click to expand'));
-  commHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_cpOpen?'▲':'▼'));
+  commHdr.appendChild(el('span',{class:'comm-arrow',style:{fontSize:'9px',color:'var(--muted)'}},_cpOpen?'▲':'▼'));
   commSec.appendChild(commHdr);
-  if(_cpOpen){
+  {
     const _cpTab=S._commTab[_cpKey]||'emails';
-    const tabBar=el('div',{style:{display:'flex',gap:'2px',padding:'6px 10px 0',background:'var(--card)',borderBottom:'1px solid var(--border)'}});
+    const tabBar=el('div',{class:'comm-tabbar',style:{display:_cpOpen?'':'none',flexDirection:'row',gap:'2px',padding:'6px 10px 0',background:'var(--card)',borderBottom:'1px solid var(--border)'}});
+    tabBar.style.display=_cpOpen?'flex':'none';
     ['emails','calls','notes'].forEach(t=>{
       const lbl={emails:'Emails',calls:'Calls',notes:'Notes & Texts'}[t];
       const active=_cpTab===t;
@@ -5838,7 +5869,7 @@ function renderCommPanel(body, vendor) {
         onclick(e){e.stopPropagation();S._commTab[_cpKey]=t;refreshDetailIfOpen(vendor);}},lbl));
     });
     commSec.appendChild(tabBar);
-    const commBody=el('div',{style:{padding:'10px',maxHeight:'280px',overflowY:'auto'}});
+    const commBody=el('div',{class:'comm-body',style:{display:_cpOpen?'':'none',padding:'10px',maxHeight:'280px',overflowY:'auto'}});
     if(_cpTab==='emails'){
       const msToken=getMSToken();
       const msExpiry=getMSTokenExp();
@@ -8837,28 +8868,32 @@ function addReviewNotesSection(body, reviewRecord, vendor) {
   body.appendChild(sec);
 }
 
-function buildNoteSubsection(label, color, entries, vendor) {
-  const subSec = el('div', {style:{marginTop:'4px',border:'1px solid var(--border)',borderLeft:'3px solid '+color,borderRadius:'4px',overflow:'hidden'}});
-  const subHdr = el('div', {style:{display:'flex',gap:'6px',alignItems:'center',padding:'5px 8px',background:'var(--card)',cursor:'pointer',userSelect:'none'}});
-  subHdr.appendChild(el('span', {style:{fontSize:'10px',fontWeight:'600',color,flex:'1'}}, label));
-  const countBadge = el('span', {style:{fontSize:'9px',color:'var(--muted)'}}, entries.length + ' note' + (entries.length !== 1 ? 's' : ''));
-  subHdr.appendChild(countBadge);
-  const chevron = el('span', {style:{fontSize:'9px',color:'var(--muted)'}}, '▶');
-  subHdr.appendChild(chevron);
-  const subBody = el('div', {class:'notes-body', style:{padding:'7px 10px',background:'var(--bg)',display:'none'}});
-  entries.forEach(function(entry) {
-    const nd = el('div', {class:'notes-area', style:{fontSize:'10px',lineHeight:'1.6',marginBottom:'4px'}});
-    if (entry._bodyHtml) { nd.innerHTML = entry._bodyHtml; }
-    else { renderNotesStr(nd, entry.content); }
-    subBody.appendChild(nd);
+function buildNoteSubsection(label, entries, vendor) {
+  const wrap = el('div',{style:{marginBottom:'6px',border:'1px solid var(--border)',borderRadius:'3px',overflow:'hidden'}});
+  let subOpen = false;
+  const hdr = el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'4px 8px',background:'var(--bg)',cursor:'pointer',fontSize:'10px',fontWeight:'600',userSelect:'none'},
+    onclick:function(e){ e.stopPropagation(); subOpen=!subOpen; bdy.style.display=subOpen?'':'none'; arrow.textContent=subOpen?'▲':'▼'; }});
+  hdr.appendChild(el('span',{style:{flex:'1'}},label+' ('+entries.length+')'));
+  const arrow=el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'▼');
+  hdr.appendChild(arrow);
+  wrap.appendChild(hdr);
+  const bdy=el('div',{style:{display:'none',padding:'6px'}});
+  entries.forEach(function(e){
+    const card=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'3px',padding:'6px 8px',marginBottom:'4px',fontSize:'10px'}});
+    const meta=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'3px',fontSize:'8px',color:'var(--muted)'}});
+    if(e.date) meta.appendChild(el('span',{},String(e.date).split('T')[0]));
+    if(e.tag) meta.appendChild(el('span',{style:{background:'var(--bg)',padding:'1px 4px',borderRadius:'2px',border:'1px solid var(--border)'}},e.tag));
+    if(e.author) meta.appendChild(el('span',{},e.author));
+    card.appendChild(meta);
+    const content=el('div',{style:{lineHeight:'1.5',color:'var(--text)'}});
+    if(e._bodyHtml) content.innerHTML=e._bodyHtml;
+    else if(typeof renderNotesStr==='function'){ renderNotesStr(content, e.content||''); }
+    else content.textContent=e.content||'';
+    card.appendChild(content);
+    bdy.appendChild(card);
   });
-  subHdr.onclick = function() {
-    const open = subBody.style.display !== 'none';
-    subBody.style.display = open ? 'none' : 'block';
-    chevron.textContent = open ? '▶' : '▼';
-  };
-  subSec.appendChild(subHdr); subSec.appendChild(subBody);
-  return subSec;
+  wrap.appendChild(bdy);
+  return wrap;
 }
 
 function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
@@ -8895,7 +8930,7 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
         date:n.noteDate||n.createdAt||'',tag:n.tag||n.noteType||'',
         author:n.authorName||n.authorEmail||'',
         content:content,_bodyHtml:n.bodyHtml||'',
-        _source:'Contract',_vendor:vendor,_sbNote:true,_sbId:n.id
+        _source:'DB',_tag:'DB',_vendor:vendor,_sbNote:true,_sbId:n.id
       });
     });
   }
@@ -8907,7 +8942,7 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
     _psdSrc.forEach(function(e){
       // Avoid duplicates with _sbNotes
       const alreadyIn = allEntries.some(x=>x.content===e.content&&x.date===e.date);
-      if(!alreadyIn) allEntries.push(Object.assign({},e,{_source:'Contract',_vendor:vendor}));
+      if(!alreadyIn) allEntries.push(Object.assign({},e,{_source:'Contract',_tag:'Contract',_vendor:vendor}));
     });
   }
 
@@ -8915,9 +8950,9 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
   if(vendor.comments && String(vendor.comments).trim()){
     const _cParsed=parseNoteEntries(String(vendor.comments));
     if(_cParsed.length){
-      _cParsed.forEach(e=>allEntries.push(Object.assign({},e,{_source:'Contract',_vendor:vendor})));
+      _cParsed.forEach(e=>allEntries.push(Object.assign({},e,{_source:'Excel',_tag:'Excel',_vendor:vendor})));
     } else {
-      allEntries.push({date:'',tag:'',author:'',content:String(vendor.comments).trim(),_source:'Contract',_vendor:vendor});
+      allEntries.push({date:'',tag:'',author:'',content:String(vendor.comments).trim(),_source:'Excel',_tag:'Excel',_vendor:vendor});
     }
   }
 
@@ -8925,7 +8960,7 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
   if(vendor.hoverNotes && String(vendor.hoverNotes).trim()){
     parseNoteEntries(String(vendor.hoverNotes)).forEach(function(e){
       const alreadyIn = allEntries.some(x=>x.content===e.content&&x.date===e.date);
-      if(!alreadyIn) allEntries.push(Object.assign({},e,{_source:'Contract',_vendor:vendor}));
+      if(!alreadyIn) allEntries.push(Object.assign({},e,{_source:'Contract',_tag:'Contract',_vendor:vendor}));
     });
   }
 
@@ -8935,32 +8970,29 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
   );
   if(_itwSrc && _itwSrc.notes){
     parseNoteEntries(_itwSrc.notes).forEach(e=>{
-      allEntries.push({...e, _source:'Pipeline', _vendor:_itwSrc});
+      allEntries.push({...e, _source:'Pipeline', _tag:'Pipeline', _vendor:_itwSrc});
     });
   }
 
   // Review progress notes on vendor object
   const _rvNotes=vendor.progressNotes||vendor.reviewNotes||'';
   if(_rvNotes.trim()){
-    allEntries.push({date:'',tag:'Review',author:'',content:_rvNotes,_source:'Review',_vendor:vendor});
+    allEntries.push({date:'',tag:'Review',author:'',content:_rvNotes,_source:'Review',_tag:'Review',_vendor:vendor});
   }
 
   // Review records — pull from findReviewRecord into unified notes
-  {
-    const _rvRec = (typeof findReviewRecord === 'function') ? findReviewRecord(vendor.name) : null;
-    if (_rvRec) {
-      [
-        {key:'progressNotes', tag:'Review Progress'},
-        {key:'sfNotes', tag:'Review SF'},
-        {key:'contractNotes', tag:'Review Contract'},
-      ].forEach(function(sub){
-        const txt = _rvRec[sub.key];
-        if (txt && String(txt).trim()) {
-          allEntries.push({date:'',tag:sub.tag,author:'',content:String(txt).trim(),_source:'Review',_vendor:vendor});
-        }
+  try {
+    const _rvRec=(typeof findReviewRecord==='function')?findReviewRecord(vendor.name):null;
+    if(_rvRec){
+      const revFields=[['progressNotes','Progress','Review'],['sfNotes','SF Notes','SF'],['contractNotes','Contract','Contract'],['notes','Review','Review']];
+      revFields.forEach(function(rf){
+        if(_rvRec[rf[0]]&&String(_rvRec[rf[0]]).trim())
+          allEntries.push({date:_rvRec.date||'',tag:rf[1],author:_rvRec.reviewer||'',
+            content:String(_rvRec[rf[0]]).trim(),_source:rf[2],_tag:rf[2],
+            _ts:new Date(_rvRec.date||0).getTime()});
       });
     }
-  }
+  } catch(_){}
 
   if(!allEntries.length){
     sec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',padding:'6px 0',fontStyle:'italic'}},'No notes yet.'));
@@ -8977,107 +9009,44 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
 
   // Count badge in header
   hdr.querySelector('h4').textContent='📝 Notes & Activity ('+allEntries.length+')';
-  const list=el('div',{style:{marginTop:'4px',display:'flex',flexDirection:'column',gap:'4px'}});
 
-  // Group entries by source
-  const sourceGroups={};
-  const sourceOrder=['DB','Contract','Excel','Pipeline','Review','SF','Log'];
-  const sourceLabels={
-    'DB':'💾 Saved Notes','Contract':'📄 Contract Notes','Excel':'📋 Excel Notes',
-    'Pipeline':'💼 Pipeline Notes','Review':'🔍 Review Notes',
-    'SF':'☁ Salesforce Notes','Log':'📓 VCS Log'
-  };
-  allEntries.forEach(function(e){
-    const src=e._source||'Contract';
-    if(!sourceGroups[src]) sourceGroups[src]=[];
-    sourceGroups[src].push(e);
+  if(!S._notesOpen) S._notesOpen={};
+  const notesIsOpen=S._notesOpen[vendor.name]===true;
+  const notesSec=el('div',{style:{marginTop:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
+  const notesHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'6px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none',borderBottom:notesIsOpen?'1px solid var(--border)':'none'},
+    onclick:function(e){
+      e.stopPropagation();
+      S._notesOpen[vendor.name]=!S._notesOpen[vendor.name];
+      const nb=notesSec.querySelector('.notes-body-wrap');
+      if(nb) nb.style.display=S._notesOpen[vendor.name]?'':'none';
+      notesArrow.textContent=S._notesOpen[vendor.name]?'▲':'▼';
+      notesHdr.style.borderBottom=S._notesOpen[vendor.name]?'1px solid var(--border)':'none';
+    }});
+  notesHdr.appendChild(el('span',{style:{fontSize:'11px'}},'📝'));
+  notesHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Notes'+(allEntries.length?' ('+allEntries.length+')':'')));
+  if(typeof openAddNoteModal==='function')
+    notesHdr.appendChild(el('button',{class:'btn-xs',style:{background:'var(--blue)',color:'#fff',fontSize:'8px'},onclick:function(e){e.stopPropagation();openAddNoteModal(vendor);}},'+ Add Note'));
+  const notesArrow=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},notesIsOpen?'▲':'▼');
+  notesHdr.appendChild(notesArrow);
+  notesSec.appendChild(notesHdr);
+  const notesBodyEl=el('div',{class:'notes-body-wrap',style:{display:notesIsOpen?'':'none',padding:'8px'}});
+  [
+    {key:'Pipeline',label:'💼 Pipeline Notes'},
+    {key:'Review',label:'🔍 Progress / Review Notes'},
+    {key:'SF',label:'☁ SF / Meeting Notes'},
+    {key:'Contract',label:'📄 Contract Notes'},
+    {key:'DB',label:'💾 Saved Notes'},
+    {key:'Excel',label:'📋 Excel Notes'},
+    {key:'Log',label:'📓 Activity Log'},
+  ].forEach(function(sub){
+    const entries=allEntries.filter(function(e){return e._tag===sub.key||e._source===sub.key;});
+    if(entries.length) notesBodyEl.appendChild(buildNoteSubsection(sub.label,entries,vendor));
   });
-
-  // Render each non-empty group with a label header
-  let _globalIdx=0;
-  sourceOrder.forEach(function(src){
-    const groupEntries=sourceGroups[src];
-    if(!groupEntries||!groupEntries.length) return;
-    const grpHdr=el('p',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',
-      textTransform:'uppercase',letterSpacing:'.05em',margin:'8px 0 4px'}},
-      sourceLabels[src]||src);
-    list.appendChild(grpHdr);
-    groupEntries.forEach(function(entry){
-    const idx=_globalIdx++;
-    const isFirst=idx===0;
-    const sourceColor=SOURCE_COLORS[entry._source]||'rgba(148,163,184,.12)';
-    const tagColor=entry.tag?(NOTE_TAG_COLORS[entry.tag]||'var(--border)'):'var(--border)';
-
-    const card=el('div',{style:{
-      border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden',
-      borderLeft:'3px solid '+tagColor,
-    }});
-
-    const entryHdr=el('div',{style:{
-      display:'flex',gap:'5px',alignItems:'center',padding:'5px 8px',
-      background:isFirst?'rgba(34,197,94,.04)':'var(--sb)',cursor:'pointer',userSelect:'none',
-    }});
-
-    // Date
-    entryHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'65px',flexShrink:'0'}},entry.date||'(no date)'));
-
-    // Tag badge
-    if(entry.tag){
-      entryHdr.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',padding:'1px 4px',borderRadius:'3px',background:tagColor+'22',color:tagColor,flexShrink:'0'}},entry.tag));
-    }
-
-    // Source badge
-    entryHdr.appendChild(el('span',{style:{fontSize:'8px',padding:'1px 5px',borderRadius:'3px',background:sourceColor,color:'var(--muted)',flexShrink:'0'}},entry._source));
-
-    // Author
-    if(entry.author) entryHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',flexShrink:'0'}},entry.author));
-
-    // Preview
-    const previewSrc=entry._bodyHtml
-      ? (entry.content||'').split('\n')[0].slice(0,75)
-      : entry.content.split('\n')[0].slice(0,75)+(entry.content.length>75||entry.content.includes('\n')?'…':'');
-    entryHdr.appendChild(el('span',{style:{fontSize:'10px',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},previewSrc));
-
-    const chevron=el('span',{style:{fontSize:'9px',color:'var(--muted)',flexShrink:'0'}},isFirst?'▼':'▶');
-    entryHdr.appendChild(chevron);
-
-    // Body
-    const entryBody=el('div',{style:{padding:'7px 10px',background:'var(--bg)',display:isFirst?'block':'none'}});
-    if(entry._bodyHtml){
-      // Rich text from Supabase — render as HTML
-      const rd=el('div',{class:'notes-area',style:{fontSize:'10px',lineHeight:'1.6'}});
-      rd.innerHTML=entry._bodyHtml;
-      entryBody.appendChild(rd);
-    } else {
-      const nd=el('div',{class:'notes-area',style:{fontSize:'10px',lineHeight:'1.6'}});
-      renderNotesStr(nd, entry.content);
-      entryBody.appendChild(nd);
-    }
-
-    // Edit button for own-source entries
-    if(hasPermission('editNotes') && entry._vendor){
-      entryBody.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginTop:'5px',fontSize:'9px'},onclick(e){e.stopPropagation();openEditNotesModal(entry._vendor);}}, 'Edit'));
-    }
-
-    entryHdr.onclick=()=>{const open=entryBody.style.display!=='none';entryBody.style.display=open?'none':'block';chevron.textContent=open?'▶':'▼';};
-    card.appendChild(entryHdr); card.appendChild(entryBody);
-    list.appendChild(card);
-    }); // end groupEntries.forEach
-  }); // end sourceOrder.forEach
-
-  // Collapse all beyond first 5
-  if(allEntries.length>5){
-    const hidden=[...list.querySelectorAll('div[style*="border-left"]')].slice(5);
-    hidden.forEach(c=>c.style.display='none');
-    const showBtn=el('button',{class:'btn-xs btn-ghost',style:{width:'100%',marginTop:'2px',fontSize:'9px'},onclick(){
-      const anyHidden=hidden[0]?.style.display==='none';
-      hidden.forEach(c=>c.style.display=anyHidden?'':'none');
-      showBtn.textContent=anyHidden?'▲ Show less':'▼ Show '+(allEntries.length-5)+' more';
-    }},'▼ Show '+(allEntries.length-5)+' more');
-    list.appendChild(showBtn);
-  }
-
-  sec.appendChild(list);
+  const categorized=new Set(['Pipeline','Review','SF','Contract','DB','Excel','Log']);
+  const uncategorized=allEntries.filter(function(e){return !categorized.has(e._tag)&&!categorized.has(e._source);});
+  if(uncategorized.length) notesBodyEl.appendChild(buildNoteSubsection('📌 Other Notes',uncategorized,vendor));
+  notesSec.appendChild(notesBodyEl);
+  sec.appendChild(notesSec);
   // Activity timeline (from Supabase activity_log)
   renderActivityTimeline(body, vendor);
 }
