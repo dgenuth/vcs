@@ -9604,8 +9604,8 @@ async function loadFathomMeetings(vendor) {
     console.log('[VCS Fathom] proxy status:', proxyData&&proxyData.status);
     console.log('[VCS Fathom] meetings count:', meetings.length);
     if(meetings.length>0) console.log('[VCS Fathom] sample:', JSON.stringify(meetings[0]).slice(0,200));
-    console.log('[VCS Fathom] matching vendor:', vendorName);
     const vendorName=(vendor.name||'').toLowerCase();
+    console.log('[VCS Fathom] matching vendor:', vendorName);
     // Collect all known vendor contact emails for matching
     const vendorEmails=[
       vendor.email, vendor.email2,
