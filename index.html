@@ -3540,6 +3540,34 @@ function openEditNoteModal(vendor, noteEntry, currentText, onSave) {
   document.body.appendChild(overlay);
   setTimeout(function(){ta.focus();},50);
 }
+function openShareContactModal(contact,vendor) {
+  const phones=typeof contact.phones==='string'?(function(){try{return JSON.parse(contact.phones||'[]');}catch(_){return[];}}()):(contact.phones||[]);
+  const emails=typeof contact.emails==='string'?(function(){try{return JSON.parse(contact.emails||'[]');}catch(_){return[];}}()):(contact.emails||[]);
+  const cardLines=[contact.name||vendor.procContact||'',contact.title||vendor.title||'',vendor.name||'']
+    .concat(phones.map(function(p){return p.number||p;}))
+    .concat(emails.map(function(e){return e.address||e;}))
+    .concat([vendor.website||'']).filter(Boolean);
+  const cardText=cardLines.join('\n');
+  const vcardLines=['BEGIN:VCARD','VERSION:3.0','FN:'+(contact.name||vendor.procContact||''),
+    'ORG:'+vendor.name,'TITLE:'+(contact.title||vendor.title||'')]
+    .concat(phones.map(function(p){return 'TEL:'+(p.number||p);}))
+    .concat(emails.map(function(e){return 'EMAIL:'+(e.address||e);}))
+    .concat(['URL:'+(vendor.website||''),'END:VCARD']).join('\r\n');
+  const overlay=el('div',{style:{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center'}});
+  const box=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'8px',padding:'20px',width:'320px',display:'flex',flexDirection:'column',gap:'8px'}});
+  box.appendChild(el('h3',{style:{margin:0,fontSize:'13px'}},'📤 Share Contact'));
+  box.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',margin:0}},(contact.name||vendor.procContact||'Unknown')+' · '+vendor.name));
+  var acts=[
+    {icon:'📋',label:'Copy Contact Card',action:function(){navigator.clipboard&&navigator.clipboard.writeText(cardText);toast('✅ Copied to clipboard','#10b981');document.body.removeChild(overlay);}},
+    {icon:'📧',label:'Share via Email',action:function(){window.open('mailto:?subject='+encodeURIComponent('Contact: '+(contact.name||'')+' at '+vendor.name)+'&body='+encodeURIComponent(cardText));document.body.removeChild(overlay);}},
+    {icon:'📥',label:'Download vCard (.vcf)',action:function(){var blob=new Blob([vcardLines],{type:'text/vcard'});var url=URL.createObjectURL(blob);var a=document.createElement('a');a.href=url;a.download=(contact.name||'contact').replace(/\s+/g,'_')+'.vcf';a.click();URL.revokeObjectURL(url);document.body.removeChild(overlay);}}
+  ];
+  if(phones.length) acts.push({icon:'📞',label:'Copy Phone: '+(phones[0].number||phones[0]),action:function(){navigator.clipboard&&navigator.clipboard.writeText(phones[0].number||phones[0]);toast('✅ Phone copied','#10b981');document.body.removeChild(overlay);}});
+  if(emails.length) acts.push({icon:'✉',label:'Copy Email: '+(emails[0].address||emails[0]),action:function(){navigator.clipboard&&navigator.clipboard.writeText(emails[0].address||emails[0]);toast('✅ Email copied','#10b981');document.body.removeChild(overlay);}});
+  acts.forEach(function(a){box.appendChild(el('button',{class:'btn-xs btn-ghost',style:{width:'100%',textAlign:'left',padding:'8px 10px',fontSize:'11px'},onclick:a.action},a.icon+' '+a.label));});
+  box.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginTop:'4px'},onclick:function(){document.body.removeChild(overlay);}},'Cancel'));
+  overlay.appendChild(box);document.body.appendChild(overlay);
+}
 function openAddNoteModal(vendor) {
   openStructuredNoteModal(vendor);
 }
@@ -4567,7 +4595,10 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   // V4: Contact info always visible in header
   if(vendor.procContact||vendor.bizPhone||vendor.mobile||vendor.email){
     const contactRow=el('div',{style:{display:'flex',gap:'10px',flexWrap:'wrap',alignItems:'center',fontSize:'10px',padding:'2px 0 0 0',width:'100%'}});
-    if(vendor.procContact) contactRow.appendChild(el('span',{style:{color:'var(--text)',fontWeight:'600'}},vendor.procContact));
+    if(vendor.procContact) {
+      contactRow.appendChild(el('span',{style:{color:'var(--text)',fontWeight:'600'}},vendor.procContact));
+      contactRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick:function(e){e.stopPropagation();openShareContactModal({name:vendor.procContact,title:vendor.title,phones:[{number:vendor.mobile||vendor.bizPhone}],emails:[{address:vendor.email}]},vendor);}},'📤 Share'));
+    }
     const ph=vendor.bizPhone||vendor.mobile;
     if(ph) contactRow.appendChild(el('a',{href:'tel:'+ph.replace(/[^+\d]/g,''),style:{color:'var(--blue)',textDecoration:'none',fontSize:'10px'}},ph));
     if(vendor.email) contactRow.appendChild(el('a',{href:'#',style:{color:'var(--blue)',textDecoration:'none',fontSize:'10px'},onclick(e){e.preventDefault();e.stopPropagation();openEmailModal(vendor);}},vendor.email));
@@ -6595,6 +6626,7 @@ async function loadFromSupabase() {
 
     toast('✅ Loaded from Supabase — '+S.vendors.length+' vendors · '+(S.channelVendors||[]).length+' partners · '+(S.itw||[]).length+' pipeline · '+(S.reviews||[]).length+' reviews','#10b981',6000);
     S.loaded = true;
+    if(S.settings&&S.settings.apiKey) localStorage.setItem('vcs_api_key', S.settings.apiKey);
     $('upload-screen').style.display='none';
     $('app').style.display='flex';
     render();
@@ -9583,130 +9615,64 @@ function openLogActivityModal(vendor) {
 
 // ── Activity Timeline (rendered inside vendor panel) ──────────────────────────
 async function loadFathomMeetings(vendor) {
-  const fathomKey = S.settings?.fathomApiKey || localStorage.getItem('vcs_fathom_key') || '';
-  if(!fathomKey) return [];
-  
-  // 5-minute cache per vendor
-  const cacheKey = 'fathom_'+(vendor.name||'');
-  if(S._fathomCache && S._fathomCache[cacheKey] &&
-     Date.now()-S._fathomCache[cacheKey].ts < 5*60*1000) {
-    return S._fathomCache[cacheKey].data;
-  }
-  
+  if(!S.settings||(!S.settings.fathomApiKey&&!localStorage.getItem('vcs_fathom_key'))) return [];
+  const key=S.settings.fathomApiKey||localStorage.getItem('vcs_fathom_key');
   try {
-    const after = new Date(Date.now()-365*24*60*60*1000).toISOString();
-    const vendorName = (vendor.name||'').toLowerCase();
-    
-    // Collect contact emails for server-side filtering
-    const contactEmails = [vendor.email, vendor.email2,
-      ...(vendor._sbContacts||[]).flatMap(function(ct){
-        let emails = ct.emails||[];
-        if(typeof emails==='string'){try{emails=JSON.parse(emails);}catch(_){emails=[];}}
-        return emails.map(function(e){return e.address||e||'';});
+    const after=new Date(Date.now()-365*24*60*60*1000).toISOString();
+    const proxyUrl=typeof VCS_PROXY_URL!=='undefined'?VCS_PROXY_URL:(S.settings&&S.settings.gasProxyUrl)||'';
+    if(!proxyUrl) return [];
+    const resp=await fetch(proxyUrl,{method:'POST',headers:{'Content-Type':'text/plain'},
+      body:JSON.stringify({action:'fathomProxy',fathomKey:key,fathomAction:'meetings',after:after})});
+    if(!resp.ok) return [];
+    const proxyData=await resp.json();
+    const data=(proxyData.status==='ok'&&proxyData.result)?proxyData.result:proxyData;
+    const meetings=data.items||data.results||data.data||data.meetings||[];
+    console.log('[VCS Fathom] total meetings returned:',meetings.length);
+    if(meetings.length>0) console.log('[VCS Fathom] sample titles:',meetings.slice(0,5).map(function(m){return m.title||m.name||'(no title)';}));
+    const vendorName=(vendor.name||'').toLowerCase();
+    const vendorWords=vendorName.split(/[\s\-\/&]+/).filter(function(w){return w.length>=3&&!['the','and','for','inc','llc','ltd','corp'].includes(w);});
+    const contactEmails=[vendor.email,vendor.email2].concat(
+      (vendor._sbContacts||[]).flatMap(function(c){
+        let em=c.emails||[];
+        if(typeof em==='string'){try{em=JSON.parse(em);}catch(_){em=[];}}
+        return em.map(function(e){return e.address||e||'';});
       })
-    ].filter(Boolean).map(function(e){return String(e).toLowerCase();});
-    
-    const resp = await fetch(VCS_PROXY_URL, {
-      method:'POST',
-      headers:{'Content-Type':'text/plain'},
-      body:JSON.stringify({
-        action:'fathomProxy',
-        fathomKey: fathomKey,
-        fathomAction: 'meetings',
-        after: after,
-        contactEmails: contactEmails.slice(0,5)
-      })
-    });
-    
-    if(!resp.ok){console.warn('[VCS Fathom] proxy failed:',resp.status);return [];}
-    const proxyData = await resp.json();
-    
-    console.log('[VCS Fathom] proxy status:', proxyData.status);
-    
-    if(proxyData.status !== 'ok') {
-      console.warn('[VCS Fathom] proxy error:', proxyData.error||proxyData.detail);
-      return [];
-    }
-    
-    // Fathom response: {items:[...], next_cursor:...}
-    const data = proxyData.result || proxyData;
-    const meetings = data.items || data.results || data.data || data.meetings || [];
-    
-    console.log('[VCS Fathom] meetings returned:', meetings.length, 'for vendor:', vendorName);
-    if(meetings.length > 0) {
-      console.log('[VCS Fathom] sample meeting title:', meetings[0].title||meetings[0].name||'(no title)');
-      console.log('[VCS Fathom] sample fields:', Object.keys(meetings[0]).join(', '));
-    }
-    
-    // Build match criteria
-    const vendorWords = vendorName.split(/[\s\-\/&]+/)
-      .filter(function(w){ return w.length >= 3 && !['the','and','for','inc','llc','ltd','corp','llp'].includes(w); });
-    
-    // Contact names for attendee matching
-    const contactNames = [vendor.procContact, vendor.shared2,
-      ...(vendor._sbContacts||[]).map(function(ct){return ct.name||'';})
-    ].filter(Boolean).map(function(n){return n.toLowerCase();});
-    
-    const matched = meetings.filter(function(m) {
-      const title = (m.title||m.name||'').toLowerCase();
-      // Fathom uses calendar_invitees array
-      const invitees = m.calendar_invitees || m.attendees || m.participants || [];
-      const inviteeEmails = invitees.map(function(a){return (a.email||a||'').toLowerCase();});
-      const inviteeNames = invitees.map(function(a){return (a.name||a.display_name||'').toLowerCase();});
-      
-      // Match 1: vendor name in title
+    ).filter(Boolean).map(function(e){return String(e).toLowerCase();});
+    const contactNames=[vendor.procContact,vendor.shared2].concat(
+      (vendor._sbContacts||[]).map(function(c){return c.name||'';})
+    ).filter(Boolean).map(function(n){return n.toLowerCase();});
+    const matched=meetings.filter(function(m){
+      const title=(m.title||m.name||'').toLowerCase();
+      const attendees=m.attendees||m.participants||m.calendar_invitees||[];
+      const attendeeEmails=attendees.map(function(a){return (a.email||'').toLowerCase();});
+      const attendeeNames=attendees.map(function(a){return (a.name||a.display_name||'').toLowerCase();});
       if(title.includes(vendorName)) return true;
-      // Match 2: any significant vendor word in title
       if(vendorWords.some(function(w){return title.includes(w);})) return true;
-      // Match 3: contact email matches invitee email
-      if(contactEmails.some(function(e){
-        return e && inviteeEmails.some(function(ie){
-          return ie === e || (e.includes('@') && ie.includes(e.split('@')[0]));
-        });
-      })) return true;
-      // Match 4: contact name matches invitee name
-      if(contactNames.some(function(n){
-        return n.length > 3 && inviteeNames.some(function(iN){
-          return iN.includes(n) || n.includes(iN);
-        });
-      })) return true;
+      if(contactEmails.some(function(e){return e&&attendeeEmails.some(function(ae){return ae.includes(e.split('@')[0]);});})) return true;
+      if(contactNames.some(function(n){return n.length>3&&attendeeNames.some(function(an){return an.includes(n)||n.includes(an);});})) return true;
       return false;
     });
-    
-    console.log('[VCS Fathom] matched:', matched.length, 'meetings for', vendor.name);
-    
-    const results = matched.map(function(m) {
-      const invitees = m.calendar_invitees || m.attendees || m.participants || [];
-      const externalInvitees = invitees.filter(function(a){
-        const email = a.email||a||'';
-        return email && !email.includes('@primesourcex.com');
-      });
+    console.log('[VCS Fathom] matched:',matched.length,'for vendor:',vendorName);
+    console.log('[VCS Fathom] vendor words:',vendorWords);
+    return matched.map(function(m){
+      const matt=m.attendees||m.participants||m.calendar_invitees||[];
       return {
-        id: 'fathom_'+(m.recording_id||m.id||Math.random()),
-        activity_type: 'fathom_recording',
-        vendor_name: vendor.name,
-        subject: m.title||m.name||'Fathom Recording',
-        activity_date: (m.created_at||m.started_at||m.date||'').split('T')[0],
-        duration_minutes: m.duration_seconds ? Math.round(m.duration_seconds/60) : null,
-        contact_name: externalInvitees.map(function(a){return a.name||a.email||a;}).join(', '),
-        ps_user_name: invitees.filter(function(a){
-          return (a.email||'').includes('@primesourcex.com');
-        }).map(function(a){return a.name||a.email;}).join(', '),
-        source: 'fathom',
-        source_id: String(m.recording_id||m.id||''),
-        source_url: m.share_url||m.recording_url||m.meeting_url||'',
-        summary: m.summary||''
+        id:'fathom_'+m.id,
+        activity_type:'fathom_recording',
+        vendor_name:vendor.name,
+        title:m.title||m.name||'Fathom Recording',
+        subject:m.title||m.name||'Fathom Recording',
+        activity_date:(m.started_at||m.date||m.created_at||'').split('T')[0],
+        duration_minutes:m.duration_seconds?Math.round(m.duration_seconds/60):null,
+        contact_name:matt.filter(function(a){return !(a.email||'').includes('@primesourcex.com');}).map(function(a){return a.name||a.email;}).join(', '),
+        source:'fathom',
+        source_id:String(m.id),
+        source_url:m.recording_url||m.share_url||m.url||'',
+        summary:m.summary||''
       };
     });
-    
-    // Cache results
-    if(!S._fathomCache) S._fathomCache = {};
-    S._fathomCache[cacheKey] = {data:results, ts:Date.now()};
-    
-    return results;
-    
   } catch(e) {
-    console.warn('[VCS Fathom] load failed:', e.message);
+    console.warn('[VCS Fathom] load failed:',e.message);
     return [];
   }
 }
@@ -15792,6 +15758,46 @@ async function saveCompareResult(vendorNames, comparisonHtml) {
   } catch(e) { console.warn('[VCS] saveCompareResult failed:', e.message); }
 }
 
+function addContractAIChat(container,comparisonText,vendorNames) {
+  const chatSec=el('div',{style:{marginTop:'16px',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
+  const chatHdr=el('div',{style:{padding:'10px 14px',background:'var(--card)',fontWeight:'700',fontSize:'12px',display:'flex',gap:'8px',alignItems:'center'}});
+  chatHdr.appendChild(el('span',{},'🤖'));
+  chatHdr.appendChild(el('span',{style:{flex:'1'}},'Ask AI About This Comparison'));
+  chatSec.appendChild(chatHdr);
+  const suggestDiv=el('div',{style:{padding:'8px 12px',display:'flex',gap:'6px',flexWrap:'wrap',borderBottom:'1px solid var(--border)'}});
+  ['Which contract has better overall terms?','What are the key differences in admin fees?','Any concerning clauses I should know about?','Which vendor offers better renewal terms?','Summarize main advantages of each contract'].forEach(function(s){
+    suggestDiv.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick:function(){inputEl.value=s;inputEl.focus();}},s));
+  });
+  chatSec.appendChild(suggestDiv);
+  const chatHistory=el('div',{style:{maxHeight:'300px',overflowY:'auto',padding:'10px',display:'flex',flexDirection:'column',gap:'8px'}});
+  chatSec.appendChild(chatHistory);
+  const inputArea=el('div',{style:{display:'flex',gap:'8px',padding:'8px 12px',borderTop:'1px solid var(--border)'}});
+  const inputEl=el('input',{type:'text',class:'detail-edit-field',style:{flex:'1',fontSize:'11px'},placeholder:'Ask about this contract comparison...'});
+  const sendBtn=el('button',{class:'btn-xs',style:{background:'var(--blue)',color:'#fff'},onclick:function(){sendQ();}},'Ask');
+  inputEl.addEventListener('keydown',function(e){if(e.key==='Enter') sendQ();});
+  inputArea.appendChild(inputEl);inputArea.appendChild(sendBtn);chatSec.appendChild(inputArea);
+  async function sendQ(){
+    const question=inputEl.value.trim();if(!question) return;
+    const key=(S.settings&&S.settings.apiKey)||localStorage.getItem('vcs_api_key')||'';
+    if(!key){toast('Add Claude API key in Settings','#f59e0b');return;}
+    inputEl.value='';sendBtn.disabled=true;sendBtn.textContent='...';
+    const userMsg=el('div',{style:{alignSelf:'flex-end',background:'var(--blue)',color:'#fff',padding:'6px 10px',borderRadius:'8px',fontSize:'11px',maxWidth:'80%'}},question);
+    chatHistory.appendChild(userMsg);
+    const aiMsg=el('div',{style:{alignSelf:'flex-start',background:'var(--card)',border:'1px solid var(--border)',padding:'6px 10px',borderRadius:'8px',fontSize:'11px',maxWidth:'80%',color:'var(--muted)'}},'⏳ Thinking...');
+    chatHistory.appendChild(aiMsg);chatHistory.scrollTop=chatHistory.scrollHeight;
+    try{
+      const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+        headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
+        body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,
+          system:'You are a contract analyst for Prime Source Expense Experts, a healthcare GPO. Analyze vendor contracts concisely. Focus on practical implications. Keep answers under 200 words unless asked for detail.',
+          messages:[{role:'user',content:'Contract comparison:\n\n'+comparisonText.slice(0,8000)+'\n\nQuestion: '+question}]})});
+      if(r.ok){const d=await r.json();aiMsg.style.color='var(--text)';aiMsg.textContent=(d.content&&d.content[0]&&d.content[0].text)||'No response';}
+      else{aiMsg.textContent='Error: '+r.status;aiMsg.style.color='var(--red)';}
+    }catch(e){aiMsg.textContent='Error: '+e.message;aiMsg.style.color='var(--red)';}
+    finally{sendBtn.disabled=false;sendBtn.textContent='Ask';chatHistory.scrollTop=chatHistory.scrollHeight;}
+  }
+  container.appendChild(chatSec);
+}
 async function runContractComparison(vendorName) {
   if (!CMP.docAText || !CMP.docBText) { toast('Load both documents first','#f59e0b'); return; }
   const apiKey = S.settings?.apiKey || S.settings?.anthropicApiKey || localStorage.getItem('vcs_api_key') || '';
@@ -16291,6 +16297,12 @@ function renderContractCompare(c) {
     }
   }
 
+  // AI Chat for contract comparison
+  if(CMP.result) {
+    const _cmpPlainText=JSON.stringify(CMP.result,null,2);
+    const _cmpVnames=[CMP.result.vendorName||''];
+    addContractAIChat(wrap, _cmpPlainText, _cmpVnames);
+  }
   c.appendChild(wrap);
 }
 
