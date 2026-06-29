@@ -1091,20 +1091,37 @@ function loginAs(userObj) {
   return {ok:true};
 }
 
+function toRelativeTime(date) {
+  if(!date) return 'Never';
+  const diff=Date.now()-date.getTime();
+  if(diff<60000) return 'Just now';
+  if(diff<3600000) return Math.floor(diff/60000)+'m ago';
+  if(diff<86400000) return Math.floor(diff/3600000)+'h ago';
+  if(diff<604800000) return Math.floor(diff/86400000)+'d ago';
+  return date.toLocaleDateString();
+}
 function recordLogin() {
   try {
-    const email = (USER&&USER.email)||(S&&S.currentUser&&S.currentUser.email)||'';
-    if(!email){ setTimeout(recordLogin,1000); return; }
-    const all = typeof getApprovedUsers==='function'?getApprovedUsers():[];
-    const me = all.find(function(u){return (u.email||'').toLowerCase()===email.toLowerCase();});
-    if(me){
-      me.lastLogin=new Date().toISOString();
-      if(!me.added) me.added = new Date().toISOString();
-      if(typeof setApprovedUsers==='function') setApprovedUsers(all,true);
-      if(typeof saveUsersViaProxy==='function') saveUsersViaProxy().catch(function(){});
-      console.log('[VCS] lastLogin updated for',email);
+    const email=(USER&&USER.email)?USER.email:((S&&S.settings&&S.settings.currentUserEmail)?S.settings.currentUserEmail:'');
+    if(!email){
+      console.log('[VCS] recordLogin: no email yet, retrying...');
+      setTimeout(recordLogin,1500);
+      return;
     }
-  } catch(e){ console.warn('[VCS] recordLogin failed:',e.message); }
+    const all=typeof getApprovedUsers==='function'?getApprovedUsers():[];
+    const idx=all.findIndex(function(u){return (u.email||'').toLowerCase()===email.toLowerCase();});
+    if(idx>=0){
+      all[idx].lastLogin=new Date().toISOString();
+      if(!all[idx].added) all[idx].added=new Date().toISOString();
+      if(typeof setApprovedUsers==='function') setApprovedUsers(all,true);
+      if(typeof saveUsersViaProxy==='function') saveUsersViaProxy().catch(function(e){console.warn('[VCS] recordLogin save failed:',e.message);});
+      console.log('[VCS] lastLogin recorded for',email,'at',all[idx].lastLogin);
+    } else {
+      console.warn('[VCS] recordLogin: user not found:',email);
+    }
+  } catch(e){
+    console.warn('[VCS] recordLogin error:',e.message);
+  }
 }
 
 async function completeLogin() {
@@ -3488,6 +3505,40 @@ function parseNoteHistory(rawNotes) {
 }
 function serializeNoteHistory(entries) {
   return JSON.stringify(entries);
+}
+function openEditNoteModal(vendor, noteEntry, currentText, onSave) {
+  const overlay=el('div',{style:{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center'}});
+  const box=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'8px',padding:'20px',width:'460px',maxWidth:'90vw',display:'flex',flexDirection:'column',gap:'10px'}});
+  box.appendChild(el('h3',{style:{margin:0,fontSize:'13px',color:'var(--text)'}},'✏ Edit Note'));
+  box.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',margin:0}},'Vendor: '+vendor.name+(noteEntry.date?' · '+noteEntry.date:'')));
+  const ta=el('textarea',{style:{width:'100%',minHeight:'120px',background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'4px',padding:'8px',fontSize:'11px',color:'var(--text)',fontFamily:'inherit',resize:'vertical',boxSizing:'border-box'}});
+  ta.value=currentText;
+  box.appendChild(ta);
+  const btnRow=el('div',{style:{display:'flex',gap:'8px',justifyContent:'flex-end'}});
+  btnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){document.body.removeChild(overlay);}},'Cancel'));
+  btnRow.appendChild(el('button',{class:'btn-xs',style:{background:'var(--blue)',color:'#fff'},
+    onclick:async function(){
+      const newText=ta.value.trim();
+      if(!newText) return;
+      if(noteEntry._sbId&&SB&&SB.ready()){
+        try{
+          await SB.upsert('vendor_notes',[{id:noteEntry._sbId,body_plain:newText,
+            body_html:'<p>'+newText+'</p>',
+            updated_at:new Date().toISOString()}]);
+          toast('✅ Note updated','#10b981');
+        }catch(e){toast('⚠ Save failed: '+e.message,'#f59e0b');}
+      }
+      noteEntry.content=newText;
+      noteEntry._bodyHtml='<p>'+newText+'</p>';
+      if(typeof onSave==='function') onSave(newText);
+      document.body.removeChild(overlay);
+      if(typeof refreshDetailIfOpen==='function') refreshDetailIfOpen(vendor);
+    }
+  },'Save Changes'));
+  box.appendChild(btnRow);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  setTimeout(function(){ta.focus();},50);
 }
 function openAddNoteModal(vendor) {
   openStructuredNoteModal(vendor);
@@ -8911,18 +8962,26 @@ function buildNoteSubsection(label, entries, vendor) {
         }
       }
     },'✏ Edit'));
-    if(e._sbNote||e._source==='DB'||e._source==='Log'){
-      actions.appendChild(el('button',{class:'btn-xs btn-ghost',
-        style:{fontSize:'8px',color:'var(--red)'},
-        onclick:function(ev){
-          ev.stopPropagation();
-          if(!confirm('Delete this note?')) return;
-          if(e._sbId&&SB&&SB.ready()) SB.delete('vendor_notes','id=eq.'+e._sbId).catch(function(){});
+    const isDbNote=e._sbNote||e._source==='DB'||e._source==='Log';
+    actions.appendChild(el('button',{class:'btn-xs btn-ghost',
+      style:{fontSize:'8px',color:'var(--red)'},
+      onclick:function(ev){
+        ev.stopPropagation();
+        const lbl=isDbNote?'Delete this note?':'Hide this note? (Excel notes cannot be permanently deleted)';
+        if(!confirm(lbl)) return;
+        if(isDbNote&&e._sbId&&SB&&SB.ready()){
+          SB.upsert('vendor_notes',[{id:e._sbId,deleted_at:new Date().toISOString()}]).catch(function(){});
           if(vendor._sbNotes) vendor._sbNotes=vendor._sbNotes.filter(function(n){return n.id!==e._sbId;});
-          if(typeof refreshDetailIfOpen==='function') refreshDetailIfOpen(vendor);
+        } else {
+          if(!S._hiddenNotes) S._hiddenNotes={};
+          const hkey=vendor.name+'|'+(e.content||'').slice(0,50);
+          S._hiddenNotes[hkey]=true;
+          if(typeof saveSessionState==='function') saveSessionState();
         }
-      },'🗑 Delete'));
-    }
+        if(typeof refreshDetailIfOpen==='function') refreshDetailIfOpen(vendor);
+        toast('Note removed','#10b981');
+      }
+    },isDbNote?'🗑 Delete':'🙈 Hide'));
     card.appendChild(actions);
     bdy.appendChild(card);
   });
@@ -9542,6 +9601,10 @@ async function loadFathomMeetings(vendor) {
     // GAS proxy wraps in {status:'ok', result:{...}}
     const data=(proxyData.status==='ok'&&proxyData.result)?proxyData.result:proxyData;
     const meetings=data.items||data.results||data.data||data.meetings||[];
+    console.log('[VCS Fathom] proxy status:', proxyData&&proxyData.status);
+    console.log('[VCS Fathom] meetings count:', meetings.length);
+    if(meetings.length>0) console.log('[VCS Fathom] sample:', JSON.stringify(meetings[0]).slice(0,200));
+    console.log('[VCS Fathom] matching vendor:', vendorName);
     const vendorName=(vendor.name||'').toLowerCase();
     // Collect all known vendor contact emails for matching
     const vendorEmails=[
@@ -23785,22 +23848,30 @@ function renderSettings(c) {
     style:{width:'100%',background:'#10b981',color:'#fff',padding:'8px',fontWeight:'700',fontSize:'11px',marginBottom:'8px',borderRadius:'4px',border:'none',cursor:'pointer'},
     onclick:async function(){
       connectAllBtn.textContent='⏳ Connecting...';connectAllBtn.disabled=true;
+      const results=[];
       try{
-        if(SB&&SB.ready()){
-          const v=await SB.query('vendors','select=id&limit=1');
-          S._sbHealthy=!!(v&&v.length);
-          toast(S._sbHealthy?'✅ Supabase connected':'⚠ Supabase no data','#10b981');
-        }
-        if(S.settings&&S.settings.sfClientId){try{await connectSalesforce();}catch(_){}}
-        if(typeof refreshMSToken==='function'){
-          try{await refreshMSToken();toast('✅ Microsoft reconnected','#10b981');}
-          catch(_){toast('⚠ MS needs manual reconnect','#f59e0b');}
-        }
         if(typeof loadGlobalSettingsViaProxy==='function'){
-          try{await loadGlobalSettingsViaProxy();}catch(_){}
+          try{await loadGlobalSettingsViaProxy();results.push('✅ Settings');}catch(_){}
         }
-        toast('✅ All connections refreshed','#10b981',4000);
-      }finally{connectAllBtn.textContent='🔌 Connect All';connectAllBtn.disabled=false;}
+        if(SB&&SB.ready()){
+          try{const v=await SB.query('vendors','select=id&limit=1');S._sbHealthy=!!(v&&v.length);results.push(S._sbHealthy?'✅ Supabase':'⚠ Supabase empty');}catch(e){results.push('❌ SB:'+e.message);}
+        }
+        if(!S.sfToken&&sessionStorage.getItem('vcs_sf_token')){
+          S.sfToken=sessionStorage.getItem('vcs_sf_token');
+          S.sfInstance=sessionStorage.getItem('vcs_sf_instance')||'https://psgpo.my.salesforce.com';
+          results.push('✅ Salesforce (session)');
+        } else if(S.sfToken){results.push('✅ Salesforce (active)');}
+        else{results.push('⚠ SF needs login');}
+        if(typeof ensureMSToken==='function'){
+          try{await ensureMSToken();results.push('✅ Microsoft');}catch(e){results.push('⚠ MS:'+e.message);}
+        } else if(typeof refreshMSToken==='function'){
+          try{await refreshMSToken();results.push('✅ Microsoft');}catch(e){results.push('⚠ MS:'+e.message);}
+        }
+        const ck=S.settings&&S.settings.apiKey||localStorage.getItem('vcs_api_key');
+        results.push(ck?'✅ Claude AI':'❌ Claude key missing');
+        toast(results.join(' · '),'#10b981',8000);
+      }catch(e){toast('Connect All error: '+e.message,'#ef4444');}
+      finally{connectAllBtn.textContent='🔌 Connect All';connectAllBtn.disabled=false;}
     }
   },'🔌 Connect All');
   c.appendChild(connectAllBtn);
