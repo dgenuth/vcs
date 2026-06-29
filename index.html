@@ -1096,6 +1096,24 @@ async function completeLogin() {
   updateUserBadge();
   toast('Welcome, ' + USER.name + ' (' + ROLES[USER.role] + ')');
   loadSettings();
+
+  // Silent SF token restore
+  try {
+    const sfTok=localStorage.getItem('vcs_sf_token_ls');
+    if(sfTok){const sfPayload=JSON.parse(sfTok);if(sfPayload&&sfPayload.token&&(!sfPayload.expiry||Date.now()<sfPayload.expiry)){USER.sfToken=sfPayload.token;USER.sfInstance=sfPayload.instance||'';console.log('[VCS] SF token restored from session');}}
+  } catch(_) {}
+
+  // Silent MS token restore/refresh
+  try {
+    const msTok=typeof getMSToken==='function'?getMSToken():null;
+    const msExp=typeof getMSTokenExp==='function'?getMSTokenExp():0;
+    if(msTok&&msExp&&Date.now()<msExp){
+      console.log('[VCS] MS token valid on load');
+    } else if(typeof getMSRefresh==='function'&&getMSRefresh()){
+      if(typeof ensureMSToken==='function') ensureMSToken().catch(function(){});
+    }
+  } catch(_) {}
+
   // Pull settings + user list from Drive — source of truth across all devices
   // Do this BEFORE auto-loading file so Drive settings (fileId etc) are available
   try {
@@ -4782,6 +4800,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
               vendor:vendor.name,action:'Unlinked alias from "'+linkedName+'"',note:'Vendor alias removed'});
             saveSessionState();
             toast('"'+vendor.name+'" unlinked from "'+linkedName+'"');
+            if(typeof auditLog==='function'){auditLog(vendor.name,'vendorAlias',linkedName,'','update');}
             render();
             setTimeout(()=>openDetail(vendor),50);
           }
@@ -5395,7 +5414,10 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     const _fathomLinks=(vendor._mediaLinks||[]).filter(m=>m.type==='fathom'||(m.url&&(m.url.includes('fathom.video')||m.url.includes('app.fathom.ai'))));
     const _myFathomLinks=_isAdminFathom?_fathomLinks:_fathomLinks.filter(m=>!m._addedBy||m._addedBy===USER.email);
     const fathomHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'6px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none',borderBottom:_fathomIsOpen?'1px solid var(--border)':'none'},
-      onclick(e){e.stopPropagation();if(!S._fathomOpen)S._fathomOpen={};S._fathomOpen[vendor.name]=!S._fathomOpen[vendor.name];refreshDetailIfOpen(vendor);}
+      onclick(e){e.stopPropagation();if(!S._fathomOpen)S._fathomOpen={};S._fathomOpen[vendor.name]=!S._fathomOpen[vendor.name];
+        const fBody=fathomSec?fathomSec.querySelector('.fathom-body'):null;
+        if(fBody){const isOpen=fBody.style.display!=='none';fBody.style.display=isOpen?'none':'';}
+      }
       });
     fathomHdr.appendChild(el('span',{style:{fontSize:'11px'}},'📹'));
     fathomHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Meetings'));
@@ -5418,7 +5440,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     } else {
       const fathomConfigured=!!(S.settings?.fathomApiKey);
       if(fathomConfigured){
-        fathomBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',margin:'0'}},'No meeting recordings yet. Add a Fathom link in Media & Links below.'));
+        fathomBody.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',textAlign:'center',padding:'12px'}},'No recordings found for this vendor'));
       } else {
         fathomBody.appendChild(el('p',{style:{fontSize:'11px',color:'var(--text)',marginBottom:'10px'}},'Connect Fathom in Settings to see meeting recordings for this vendor.'));
         fathomBody.appendChild(el('button',{class:'btn-ghost btn-action',style:{fontSize:'10px'},onclick(){closeDetail();S.view='settings';updateSidebar();render();}},'→ Configure Fathom'));
@@ -5434,7 +5456,10 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     const _mediaIsOpen=S._mediaOpen?.[vendor.name]===true;
     const mediaSec=el('div',{style:{marginTop:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
     const mediaHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'6px 10px',background:'var(--card)',cursor:'pointer',userSelect:'none',borderBottom:_mediaIsOpen?'1px solid var(--border)':'none'},
-      onclick(e){e.stopPropagation();if(!S._mediaOpen)S._mediaOpen={};S._mediaOpen[vendor.name]=!S._mediaOpen[vendor.name];refreshDetailIfOpen(vendor);}
+      onclick(e){e.stopPropagation();if(!S._mediaOpen)S._mediaOpen={};S._mediaOpen[vendor.name]=!S._mediaOpen[vendor.name];
+        const mBody=mediaSec?mediaSec.querySelector('.media-body'):null;
+        if(mBody){const isOpen=mBody.style.display!=='none';mBody.style.display=isOpen?'none':'';}
+      }
       });
     mediaHdr.appendChild(el('span',{style:{fontSize:'11px'}},'📎'));
     mediaHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},'Media & Links'));
@@ -8902,7 +8927,31 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
   hdr.querySelector('h4').textContent='📝 Notes & Activity ('+allEntries.length+')';
   const list=el('div',{style:{marginTop:'4px',display:'flex',flexDirection:'column',gap:'4px'}});
 
-  allEntries.forEach((entry,idx)=>{
+  // Group entries by source
+  const sourceGroups={};
+  const sourceOrder=['DB','Contract','Excel','Pipeline','Review','SF','Log'];
+  const sourceLabels={
+    'DB':'💾 Saved Notes','Contract':'📄 Contract Notes','Excel':'📋 Excel Notes',
+    'Pipeline':'💼 Pipeline Notes','Review':'🔍 Review Notes',
+    'SF':'☁ Salesforce Notes','Log':'📓 VCS Log'
+  };
+  allEntries.forEach(function(e){
+    const src=e._source||'Contract';
+    if(!sourceGroups[src]) sourceGroups[src]=[];
+    sourceGroups[src].push(e);
+  });
+
+  // Render each non-empty group with a label header
+  let _globalIdx=0;
+  sourceOrder.forEach(function(src){
+    const groupEntries=sourceGroups[src];
+    if(!groupEntries||!groupEntries.length) return;
+    const grpHdr=el('p',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',
+      textTransform:'uppercase',letterSpacing:'.05em',margin:'8px 0 4px'}},
+      sourceLabels[src]||src);
+    list.appendChild(grpHdr);
+    groupEntries.forEach(function(entry){
+    const idx=_globalIdx++;
     const isFirst=idx===0;
     const sourceColor=SOURCE_COLORS[entry._source]||'rgba(148,163,184,.12)';
     const tagColor=entry.tag?(NOTE_TAG_COLORS[entry.tag]||'var(--border)'):'var(--border)';
@@ -8961,7 +9010,8 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
     entryHdr.onclick=()=>{const open=entryBody.style.display!=='none';entryBody.style.display=open?'none':'block';chevron.textContent=open?'▶':'▼';};
     card.appendChild(entryHdr); card.appendChild(entryBody);
     list.appendChild(card);
-  });
+    }); // end groupEntries.forEach
+  }); // end sourceOrder.forEach
 
   // Collapse all beyond first 5
   if(allEntries.length>5){
@@ -9434,8 +9484,9 @@ async function loadFathomMeetings(vendor) {
     });
     if(!resp.ok){console.warn('[VCS Fathom] proxy failed:',resp.status);return [];}
     const proxyData=await resp.json();
-    const data=proxyData.result||proxyData;
-    const meetings=data.items||data.results||data.data||[];
+    // GAS proxy wraps in {status:'ok', result:{...}}
+    const data=(proxyData.status==='ok'&&proxyData.result)?proxyData.result:proxyData;
+    const meetings=data.items||data.results||data.data||data.meetings||[];
     const vendorName=(vendor.name||'').toLowerCase();
     // Collect all known vendor contact emails for matching
     const vendorEmails=[
@@ -10090,6 +10141,7 @@ function openVendorAliasModal(vendor) {
       render();
       openDetail(selectedVendor, false, false);
       toast('✓ "'+vendor.name+'" linked to "'+selectedVendor.name+'" — link saved');
+      if(typeof auditLog==='function'){auditLog(vendor.name,'vendorAlias','',selectedVendor.name,'update');}
     }},'✓ Confirm Link');
     btns.appendChild(confirmBtn);
     btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
@@ -24051,7 +24103,7 @@ function renderSettings(c) {
       const metaLine=el('div',{style:{display:'flex',gap:'8px',fontSize:'8px',color:'var(--muted)',marginTop:'1px',flexWrap:'wrap'}});
       if(nameDisplay) metaLine.appendChild(el('span',{style:{color:'var(--text)',opacity:'0.7'}},nameDisplay));
       if(u.added) metaLine.appendChild(el('span',{},'Added: '+u.added.slice(0,10)));
-      if(u.lastLogin) metaLine.appendChild(el('span',{style:{color:'#4f7cff'}},'Last login: '+u.lastLogin.slice(0,10)));
+      if(u.lastLogin) metaLine.appendChild(el('span',{style:{color:'#4f7cff'}},'Last login: '+(function(iso){if(!iso)return'never';const d=new Date(iso),now=new Date();const diff=Math.floor((now-d)/1000);if(diff<3600)return Math.floor(diff/60)+'m ago';if(diff<86400)return Math.floor(diff/3600)+'h ago';return d.toLocaleDateString('en-US',{month:'short',day:'numeric'});})(u.lastLogin)));
       else metaLine.appendChild(el('span',{style:{opacity:'0.4'}},'Never logged in'));
       userInfo.appendChild(metaLine);
       mainLine.appendChild(userInfo);
