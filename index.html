@@ -1058,7 +1058,7 @@ function loginAs(userObj) {
   USER.role = userObj.role;
   USER.loggedIn = true;
   USER.loginTime = new Date();
-  if (typeof recordLogin === 'function') setTimeout(recordLogin, 500);
+  if (typeof recordLogin === 'function') setTimeout(recordLogin, 2000);
   // Always apply SC hidden fields — spreadsheet is source of truth
   var _scKey = (userObj.email || userObj.name || '').toLowerCase().trim();
   var _scPrefix = _scKey.split('@')[0];
@@ -1093,15 +1093,18 @@ function loginAs(userObj) {
 
 function recordLogin() {
   try {
-    if(!USER||!USER.email) return;
-    const all=typeof getApprovedUsers==='function'?getApprovedUsers():[];
-    const me=all.find(function(u){return (u.email||'').toLowerCase()===(USER.email||'').toLowerCase();});
+    const email = (USER&&USER.email)||(S&&S.currentUser&&S.currentUser.email)||'';
+    if(!email){ setTimeout(recordLogin,1000); return; }
+    const all = typeof getApprovedUsers==='function'?getApprovedUsers():[];
+    const me = all.find(function(u){return (u.email||'').toLowerCase()===email.toLowerCase();});
     if(me){
       me.lastLogin=new Date().toISOString();
+      if(!me.added) me.added = new Date().toISOString();
       if(typeof setApprovedUsers==='function') setApprovedUsers(all,true);
       if(typeof saveUsersViaProxy==='function') saveUsersViaProxy().catch(function(){});
+      console.log('[VCS] lastLogin updated for',email);
     }
-  } catch(_){}
+  } catch(e){ console.warn('[VCS] recordLogin failed:',e.message); }
 }
 
 async function completeLogin() {
@@ -7302,10 +7305,12 @@ async function loadGlobalSettingsViaProxy() {
       const gs = cfg.globalSettings;
       const SAFE_GLOBAL_KEYS = ['apiKey','renzoApiKey','driveFileId','aiKeyShared','supabaseUrl','supabaseKey','fathomApiKey'];
       SAFE_GLOBAL_KEYS.forEach(k => {
-        if (gs[k] !== undefined && !S.settings[k]) {
+        if (gs[k] !== undefined && gs[k] !== '' && gs[k] !== null) {
           S.settings[k] = gs[k];
         }
       });
+      if(S.settings.apiKey) localStorage.setItem('vcs_api_key', S.settings.apiKey);
+      if(S.settings.fathomApiKey) localStorage.setItem('vcs_fathom_key', S.settings.fathomApiKey);
     }
     // Merge approved users list (carries feature flags, roles, hiddenFields)
     if (cfg.users && Array.isArray(cfg.users)) {
@@ -8890,6 +8895,35 @@ function buildNoteSubsection(label, entries, vendor) {
     else if(typeof renderNotesStr==='function'){ renderNotesStr(content, e.content||''); }
     else content.textContent=e.content||'';
     card.appendChild(content);
+    const actions=el('div',{style:{display:'flex',gap:'4px',marginTop:'4px'}});
+    actions.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},
+      onclick:function(ev){
+        ev.stopPropagation();
+        const current=e._bodyHtml?(e._bodyHtml.replace(/<[^>]+>/g,'')):(e.content||'');
+        if(typeof openEditNoteModal==='function'){
+          openEditNoteModal(vendor,e,current,function(newText){
+            e.content=newText; e._bodyHtml='<p>'+newText+'</p>';
+            if(e._sbNote&&e._sbId&&SB&&SB.ready())
+              SB.upsert('vendor_notes',[{id:e._sbId,body_plain:newText,
+                body_html:'<p>'+newText+'</p>',updated_at:new Date().toISOString()}]).catch(function(){});
+            if(typeof refreshDetailIfOpen==='function') refreshDetailIfOpen(vendor);
+          });
+        }
+      }
+    },'✏ Edit'));
+    if(e._sbNote||e._source==='DB'||e._source==='Log'){
+      actions.appendChild(el('button',{class:'btn-xs btn-ghost',
+        style:{fontSize:'8px',color:'var(--red)'},
+        onclick:function(ev){
+          ev.stopPropagation();
+          if(!confirm('Delete this note?')) return;
+          if(e._sbId&&SB&&SB.ready()) SB.delete('vendor_notes','id=eq.'+e._sbId).catch(function(){});
+          if(vendor._sbNotes) vendor._sbNotes=vendor._sbNotes.filter(function(n){return n.id!==e._sbId;});
+          if(typeof refreshDetailIfOpen==='function') refreshDetailIfOpen(vendor);
+        }
+      },'🗑 Delete'));
+    }
+    card.appendChild(actions);
     bdy.appendChild(card);
   });
   wrap.appendChild(bdy);
@@ -9497,7 +9531,7 @@ async function loadFathomMeetings(vendor) {
     return S._fathomCache[cacheKey].data;
   }
   try {
-    const after=new Date(Date.now()-90*24*60*60*1000).toISOString();
+    const after=new Date(Date.now()-365*24*60*60*1000).toISOString();
     const resp=await fetch(VCS_PROXY_URL,{
       method:'POST',
       headers:{'Content-Type':'text/plain'},
@@ -9521,7 +9555,9 @@ async function loadFathomMeetings(vendor) {
     ].filter(Boolean).map(function(e){return String(e).toLowerCase();});
 
     const matched=meetings.filter(function(m){
-      const titleMatch=(m.title||'').toLowerCase().includes(vendorName);
+      const vendorWords=vendorName.split(/\s+/).filter(function(w){return w.length>3;});
+      const titleMatch=(m.title||'').toLowerCase().includes(vendorName)||
+        vendorWords.some(function(w){return (m.title||'').toLowerCase().includes(w);});
       const attendees=m.attendees||m.participants||[];
       const emailMatch=attendees.some(function(a){
         return vendorEmails.includes((a.email||'').toLowerCase());
@@ -23743,6 +23779,31 @@ function renderSettings(c) {
       '⚙ Admin tip: Global keys (API keys, SF credentials, Renzo key) sync for all users. Personal config (theme, dialer URL) syncs per device. Use "Sync All" after making changes you want other users to pick up.'));
   }
   c.appendChild(syncSec);
+  // Connect All button — refreshes all integrations + reloads global settings
+  const connectAllBtn=el('button',{
+    class:'btn-xs',
+    style:{width:'100%',background:'#10b981',color:'#fff',padding:'8px',fontWeight:'700',fontSize:'11px',marginBottom:'8px',borderRadius:'4px',border:'none',cursor:'pointer'},
+    onclick:async function(){
+      connectAllBtn.textContent='⏳ Connecting...';connectAllBtn.disabled=true;
+      try{
+        if(SB&&SB.ready()){
+          const v=await SB.query('vendors','select=id&limit=1');
+          S._sbHealthy=!!(v&&v.length);
+          toast(S._sbHealthy?'✅ Supabase connected':'⚠ Supabase no data','#10b981');
+        }
+        if(S.settings&&S.settings.sfClientId){try{await connectSalesforce();}catch(_){}}
+        if(typeof refreshMSToken==='function'){
+          try{await refreshMSToken();toast('✅ Microsoft reconnected','#10b981');}
+          catch(_){toast('⚠ MS needs manual reconnect','#f59e0b');}
+        }
+        if(typeof loadGlobalSettingsViaProxy==='function'){
+          try{await loadGlobalSettingsViaProxy();}catch(_){}
+        }
+        toast('✅ All connections refreshed','#10b981',4000);
+      }finally{connectAllBtn.textContent='🔌 Connect All';connectAllBtn.disabled=false;}
+    }
+  },'🔌 Connect All');
+  c.appendChild(connectAllBtn);
   // D2: Spacer so sticky settings bar never overlaps first card
   const _settingsSpacer=el('div',{style:{height:'0px'}});
   c.appendChild(_settingsSpacer);
