@@ -9583,83 +9583,134 @@ function openLogActivityModal(vendor) {
 
 // ── Activity Timeline (rendered inside vendor panel) ──────────────────────────
 async function loadFathomMeetings(vendor) {
-  if(!S.settings.fathomApiKey) return [];
+  const fathomKey = S.settings?.fathomApiKey || localStorage.getItem('vcs_fathom_key') || '';
+  if(!fathomKey) return [];
+  
   // 5-minute cache per vendor
-  const cacheKey='fathom_'+(vendor.name||'');
-  if(S._fathomCache&&S._fathomCache[cacheKey]&&Date.now()-S._fathomCache[cacheKey].ts<5*60*1000){
+  const cacheKey = 'fathom_'+(vendor.name||'');
+  if(S._fathomCache && S._fathomCache[cacheKey] &&
+     Date.now()-S._fathomCache[cacheKey].ts < 5*60*1000) {
     return S._fathomCache[cacheKey].data;
   }
+  
   try {
-    const after=new Date(Date.now()-365*24*60*60*1000).toISOString();
-    const resp=await fetch(VCS_PROXY_URL,{
-      method:'POST',
-      headers:{'Content-Type':'text/plain'},
-      body:JSON.stringify({action:'fathomProxy',fathomKey:S.settings.fathomApiKey,fathomAction:'meetings',after:after})
-    });
-    if(!resp.ok){console.warn('[VCS Fathom] proxy failed:',resp.status);return [];}
-    const proxyData=await resp.json();
-    // GAS proxy wraps in {status:'ok', result:{...}}
-    const data=(proxyData.status==='ok'&&proxyData.result)?proxyData.result:proxyData;
-    const meetings=data.items||data.results||data.data||data.meetings||[];
-    console.log('[VCS Fathom] proxy status:', proxyData&&proxyData.status);
-    console.log('[VCS Fathom] meetings count:', meetings.length);
-    if(meetings.length>0) console.log('[VCS Fathom] sample:', JSON.stringify(meetings[0]).slice(0,200));
-    const vendorName=(vendor.name||'').toLowerCase();
-    console.log('[VCS Fathom] matching vendor:', vendorName);
-    // Collect all known vendor contact emails for matching
-    const vendorEmails=[
-      vendor.email, vendor.email2,
-      ...(vendor._sbContacts||[]).flatMap(function(c){
-        // emails may be a JSON string (from Supabase) or array
-        let emails = c.emails||[];
+    const after = new Date(Date.now()-365*24*60*60*1000).toISOString();
+    const vendorName = (vendor.name||'').toLowerCase();
+    
+    // Collect contact emails for server-side filtering
+    const contactEmails = [vendor.email, vendor.email2,
+      ...(vendor._sbContacts||[]).flatMap(function(ct){
+        let emails = ct.emails||[];
         if(typeof emails==='string'){try{emails=JSON.parse(emails);}catch(_){emails=[];}}
         return emails.map(function(e){return e.address||e||'';});
       })
     ].filter(Boolean).map(function(e){return String(e).toLowerCase();});
-
-    const matched=meetings.filter(function(m){
-      const vendorWords=vendorName.split(/\s+/).filter(function(w){return w.length>3;});
-      const titleMatch=(m.title||'').toLowerCase().includes(vendorName)||
-        vendorWords.some(function(w){return (m.title||'').toLowerCase().includes(w);});
-      const attendees=m.attendees||m.participants||[];
-      const emailMatch=attendees.some(function(a){
-        return vendorEmails.includes((a.email||'').toLowerCase());
-      });
-      return titleMatch||emailMatch;
-    }).map(function(m){
-      const attendees=m.attendees||m.participants||[];
-      const vendorAttendees=attendees.filter(function(a){
-        const em=(a.email||'').toLowerCase();
-        return !em.includes('@primesourcex.com')&&!em.includes('@gmail.com')&&em!=='';
-      });
-      const psAttendee=attendees.find(function(a){
-        return (a.email||'').toLowerCase().includes('@primesourcex.com');
+    
+    const resp = await fetch(VCS_PROXY_URL, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain'},
+      body:JSON.stringify({
+        action:'fathomProxy',
+        fathomKey: fathomKey,
+        fathomAction: 'meetings',
+        after: after,
+        contactEmails: contactEmails.slice(0,5)
+      })
+    });
+    
+    if(!resp.ok){console.warn('[VCS Fathom] proxy failed:',resp.status);return [];}
+    const proxyData = await resp.json();
+    
+    console.log('[VCS Fathom] proxy status:', proxyData.status);
+    
+    if(proxyData.status !== 'ok') {
+      console.warn('[VCS Fathom] proxy error:', proxyData.error||proxyData.detail);
+      return [];
+    }
+    
+    // Fathom response: {items:[...], next_cursor:...}
+    const data = proxyData.result || proxyData;
+    const meetings = data.items || data.results || data.data || data.meetings || [];
+    
+    console.log('[VCS Fathom] meetings returned:', meetings.length, 'for vendor:', vendorName);
+    if(meetings.length > 0) {
+      console.log('[VCS Fathom] sample meeting title:', meetings[0].title||meetings[0].name||'(no title)');
+      console.log('[VCS Fathom] sample fields:', Object.keys(meetings[0]).join(', '));
+    }
+    
+    // Build match criteria
+    const vendorWords = vendorName.split(/[\s\-\/&]+/)
+      .filter(function(w){ return w.length >= 3 && !['the','and','for','inc','llc','ltd','corp','llp'].includes(w); });
+    
+    // Contact names for attendee matching
+    const contactNames = [vendor.procContact, vendor.shared2,
+      ...(vendor._sbContacts||[]).map(function(ct){return ct.name||'';})
+    ].filter(Boolean).map(function(n){return n.toLowerCase();});
+    
+    const matched = meetings.filter(function(m) {
+      const title = (m.title||m.name||'').toLowerCase();
+      // Fathom uses calendar_invitees array
+      const invitees = m.calendar_invitees || m.attendees || m.participants || [];
+      const inviteeEmails = invitees.map(function(a){return (a.email||a||'').toLowerCase();});
+      const inviteeNames = invitees.map(function(a){return (a.name||a.display_name||'').toLowerCase();});
+      
+      // Match 1: vendor name in title
+      if(title.includes(vendorName)) return true;
+      // Match 2: any significant vendor word in title
+      if(vendorWords.some(function(w){return title.includes(w);})) return true;
+      // Match 3: contact email matches invitee email
+      if(contactEmails.some(function(e){
+        return e && inviteeEmails.some(function(ie){
+          return ie === e || (e.includes('@') && ie.includes(e.split('@')[0]));
+        });
+      })) return true;
+      // Match 4: contact name matches invitee name
+      if(contactNames.some(function(n){
+        return n.length > 3 && inviteeNames.some(function(iN){
+          return iN.includes(n) || n.includes(iN);
+        });
+      })) return true;
+      return false;
+    });
+    
+    console.log('[VCS Fathom] matched:', matched.length, 'meetings for', vendor.name);
+    
+    const results = matched.map(function(m) {
+      const invitees = m.calendar_invitees || m.attendees || m.participants || [];
+      const externalInvitees = invitees.filter(function(a){
+        const email = a.email||a||'';
+        return email && !email.includes('@primesourcex.com');
       });
       return {
-        id:'fathom_'+m.id,
-        activityType:'fathom_recording',
-        vendorName:vendor.name,
-        subject:m.title||'Fathom Call',
-        activityDate:(m.started_at||m.date||'').split('T')[0],
-        durationMinutes:m.duration_seconds?Math.round(m.duration_seconds/60):null,
-        contactName:vendorAttendees.map(function(a){return a.name||a.email||'';}).join(', '),
-        source:'fathom',
-        sourceId:String(m.id),
-        sourceUrl:m.recording_url||m.share_url||'',
-        summary:m.summary||'',
-        psUserName:psAttendee?(psAttendee.name||psAttendee.email||''):'',
-        psUserEmail:psAttendee?(psAttendee.email||''):'',
-        tags:[]
+        id: 'fathom_'+(m.recording_id||m.id||Math.random()),
+        activity_type: 'fathom_recording',
+        vendor_name: vendor.name,
+        subject: m.title||m.name||'Fathom Recording',
+        activity_date: (m.created_at||m.started_at||m.date||'').split('T')[0],
+        duration_minutes: m.duration_seconds ? Math.round(m.duration_seconds/60) : null,
+        contact_name: externalInvitees.map(function(a){return a.name||a.email||a;}).join(', '),
+        ps_user_name: invitees.filter(function(a){
+          return (a.email||'').includes('@primesourcex.com');
+        }).map(function(a){return a.name||a.email;}).join(', '),
+        source: 'fathom',
+        source_id: String(m.recording_id||m.id||''),
+        source_url: m.share_url||m.recording_url||m.meeting_url||'',
+        summary: m.summary||''
       };
     });
-    if(!S._fathomCache) S._fathomCache={};
-    S._fathomCache[cacheKey]={data:matched,ts:Date.now()};
-    return matched;
-  } catch(e){
-    console.warn('[VCS Fathom] load failed:',e.message);
+    
+    // Cache results
+    if(!S._fathomCache) S._fathomCache = {};
+    S._fathomCache[cacheKey] = {data:results, ts:Date.now()};
+    
+    return results;
+    
+  } catch(e) {
+    console.warn('[VCS Fathom] load failed:', e.message);
     return [];
   }
 }
+
 
 function _buildActivityCard(a) {
   const icon=ACTIVITY_ICONS[a.activityType||a.source]||'📌';
