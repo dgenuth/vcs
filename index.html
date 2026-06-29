@@ -1058,6 +1058,7 @@ function loginAs(userObj) {
   USER.role = userObj.role;
   USER.loggedIn = true;
   USER.loginTime = new Date();
+  if (typeof recordLogin === 'function') setTimeout(recordLogin, 500);
   // Always apply SC hidden fields — spreadsheet is source of truth
   var _scKey = (userObj.email || userObj.name || '').toLowerCase().trim();
   var _scPrefix = _scKey.split('@')[0];
@@ -1088,6 +1089,19 @@ function loginAs(userObj) {
     tabOverrides: USER.tabOverrides||{}
   }));
   return {ok:true};
+}
+
+function recordLogin() {
+  if (!USER.loggedIn || !USER.email) return;
+  try {
+    const all = getApprovedUsers();
+    const idx = all.findIndex(u => u.email.toLowerCase() === USER.email.toLowerCase());
+    if (idx >= 0) {
+      all[idx].lastLogin = new Date().toISOString();
+      setApprovedUsers(all, true);
+      saveUsersViaProxy().catch(function(){});
+    }
+  } catch(e) { console.warn('[VCS] recordLogin error:', e); }
 }
 
 async function completeLogin() {
@@ -5318,7 +5332,6 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     const _rev = (typeof reviewRecord !== 'undefined') ? reviewRecord :
       (typeof findReviewRecord === 'function' ? findReviewRecord(vendor.name) : null);
     addUnifiedNotesSection(body, vendor, _itw, null);
-    if (_rev) addReviewNotesSection(body, _rev, vendor);
   } catch(noteErr) {
     console.error('[VCS] Notes section error:', noteErr);
     if (vendor.notes) {
@@ -8824,6 +8837,30 @@ function addReviewNotesSection(body, reviewRecord, vendor) {
   body.appendChild(sec);
 }
 
+function buildNoteSubsection(label, color, entries, vendor) {
+  const subSec = el('div', {style:{marginTop:'4px',border:'1px solid var(--border)',borderLeft:'3px solid '+color,borderRadius:'4px',overflow:'hidden'}});
+  const subHdr = el('div', {style:{display:'flex',gap:'6px',alignItems:'center',padding:'5px 8px',background:'var(--card)',cursor:'pointer',userSelect:'none'}});
+  subHdr.appendChild(el('span', {style:{fontSize:'10px',fontWeight:'600',color,flex:'1'}}, label));
+  const countBadge = el('span', {style:{fontSize:'9px',color:'var(--muted)'}}, entries.length + ' note' + (entries.length !== 1 ? 's' : ''));
+  subHdr.appendChild(countBadge);
+  const chevron = el('span', {style:{fontSize:'9px',color:'var(--muted)'}}, '▶');
+  subHdr.appendChild(chevron);
+  const subBody = el('div', {class:'notes-body', style:{padding:'7px 10px',background:'var(--bg)',display:'none'}});
+  entries.forEach(function(entry) {
+    const nd = el('div', {class:'notes-area', style:{fontSize:'10px',lineHeight:'1.6',marginBottom:'4px'}});
+    if (entry._bodyHtml) { nd.innerHTML = entry._bodyHtml; }
+    else { renderNotesStr(nd, entry.content); }
+    subBody.appendChild(nd);
+  });
+  subHdr.onclick = function() {
+    const open = subBody.style.display !== 'none';
+    subBody.style.display = open ? 'none' : 'block';
+    chevron.textContent = open ? '▶' : '▼';
+  };
+  subSec.appendChild(subHdr); subSec.appendChild(subBody);
+  return subSec;
+}
+
 function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
   const sec=el('div',{class:'detail-section'});
   const hdr=el('div',{class:'detail-sec-hdr'});
@@ -8908,7 +8945,22 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
     allEntries.push({date:'',tag:'Review',author:'',content:_rvNotes,_source:'Review',_vendor:vendor});
   }
 
-  // Review records handled by addReviewNotesSection separately — not duplicated here
+  // Review records — pull from findReviewRecord into unified notes
+  {
+    const _rvRec = (typeof findReviewRecord === 'function') ? findReviewRecord(vendor.name) : null;
+    if (_rvRec) {
+      [
+        {key:'progressNotes', tag:'Review Progress'},
+        {key:'sfNotes', tag:'Review SF'},
+        {key:'contractNotes', tag:'Review Contract'},
+      ].forEach(function(sub){
+        const txt = _rvRec[sub.key];
+        if (txt && String(txt).trim()) {
+          allEntries.push({date:'',tag:sub.tag,author:'',content:String(txt).trim(),_source:'Review',_vendor:vendor});
+        }
+      });
+    }
+  }
 
   if(!allEntries.length){
     sec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',padding:'6px 0',fontStyle:'italic'}},'No notes yet.'));
