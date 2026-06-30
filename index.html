@@ -1,4 +1,4 @@
-﻿﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -24637,7 +24637,8 @@ function buildUserSubSection(label,bodyBuilderFn){
   return wrap;
 }
 
-// ── User Management (Admin only) ──  if (hasPermission('manageUsers')) {
+// ── User Management (Admin only) ──
+  if (hasPermission('manageUsers')) {
     const secUsers=el('div',{class:'settings-section'});
     // Collapsible header
     const _umCollapsed = localStorage.getItem('vcs_um_collapsed') === '1';
@@ -24877,7 +24878,7 @@ function buildUserSubSection(label,bodyBuilderFn){
         details.appendChild(ffSec);
 
         // ── notesVisible + canEditVendors permission toggles ──────────────
-        async function _saveUserPerm(key,val){if(!u.permissions)u.permissions={};u.permissions[key]=val;const _pa=getApprovedUsers();const _pi=_pa.findIndex(x=>x.email===u.email);if(_pi>=0){_pa[_pi].permissions=u.permissions;setApprovedUsers(_pa,true);}await saveUsersViaProxy();toast('Updated for '+(u.name||u.email),'#10b981');}
+        const _saveUserPerm=async function(key,val){if(!u.permissions)u.permissions={};u.permissions[key]=val;const _pa=getApprovedUsers();const _pi=_pa.findIndex(x=>x.email===u.email);if(_pi>=0){_pa[_pi].permissions=u.permissions;setApprovedUsers(_pa,true);}await saveUsersViaProxy();toast('Updated for '+(u.name||u.email),'#10b981');};
         {
           const _rd=ROLE_PERMISSION_DEFAULTS[u.role||'rep']||ROLE_PERMISSION_DEFAULTS.rep;
           const notesCb=el('input',{type:'checkbox'});
@@ -28859,4 +28860,3 @@ try {
 </script>
 </body>
 </html>
-
