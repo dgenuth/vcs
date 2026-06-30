@@ -6261,14 +6261,22 @@ async function seedSupabase() {
     if(seenNotes.has(key)) return false;
     seenNotes.add(key); return true;
   });
-  if(dedupedNotes.length) {
-    toast('Seeding '+dedupedNotes.length+' notes...','#6366f1',2000);
+  if(dedupedNotes.length || true) {
+    if(dedupedNotes.length) toast('Seeding '+dedupedNotes.length+' notes...','#6366f1',2000);
+    // CRITICAL: preserve VCS-originated notes (added via + Add Note in the app)
+    // These do NOT come from Excel and would be permanently lost if we just
+    // delete-then-reseed without first capturing them.
+    let preservedVcsNotes = [];
+    try {
+      preservedVcsNotes = await SB.query('vendor_notes','select=*&source=eq.vcs&deleted_at=is.null&limit=5000');
+    } catch(_){ preservedVcsNotes = []; }
+    console.log('[VCS SB] Preserving',preservedVcsNotes.length,'VCS-originated notes through reseed');
     try { await SB.delete('vendor_notes','source=eq.excel'); } catch(_){}
-    try { await SB.delete('vendor_notes','source=eq.vcs'); } catch(_){}
+    // Do NOT delete source=eq.vcs — those are preserved as-is, never touched by reseed
     for(let i=0;i<dedupedNotes.length;i+=BATCH) {
       await SB.upsert('vendor_notes', dedupedNotes.slice(i,i+BATCH));
     }
-    console.log('[VCS SB] Notes seeded:', dedupedNotes.length);
+    console.log('[VCS SB] Notes seeded:', dedupedNotes.length, '+ ', preservedVcsNotes.length, 'preserved VCS notes untouched');
   }
 
   // ── 4. ITW vendors ───────────────────────────────────────────────────────────
