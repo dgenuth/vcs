@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+﻿﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -5019,7 +5019,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       body.appendChild(cSec);
     }
     // Unified notes section for ITW vendors
-    try { addUnifiedNotesSection(body, vendor, vendor, null); } catch(e) { console.warn('[VCS] Notes section error:', e); }
+    if(userCan('notesVisible')){ try { addUnifiedNotesSection(body, vendor, vendor, null); } catch(e) { console.warn('[VCS] Notes section error:', e); } }
     // ── Communications Intelligence — shown for all vendor types including ITW ──
     renderCommPanel(body, vendor);
     showDetailPanel(); return;
@@ -5050,10 +5050,12 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
           });
           mbody.appendChild(fg);
           const btns=el('div',{class:'modal-btns'});
-          btns.appendChild(el('button',{class:'btn-primary',onclick(){
+          const _saveVendorBtn=el('button',{class:'btn-primary',onclick(){
             _editFields.forEach(([,field])=>{const v=inputs[field].value.trim();if(v!==(vendor[field]||'')){vendor[field]=v;markDirty(vendor);}});
             saveSessionState(); closeModal(); toast('✓ Vendor info updated'); refreshDetailIfOpen(vendor);
-          }},'💾 Save'));
+          }},'💾 Save');
+          if(!userCan('canEditVendors')){_saveVendorBtn.style.display='none';}
+          btns.appendChild(_saveVendorBtn);
           btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
           mbody.appendChild(btns);
         });
@@ -5418,8 +5420,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     body.appendChild(cfSection);
   }
 
-  // Notes always visible — Add/Edit gated inside addUnifiedNotesSection
-  try {
+  // Notes gated by userCan('notesVisible')
+  if(userCan('notesVisible'))try {
     const _itw = (typeof itwVendor !== 'undefined') ? itwVendor :
       (S.itw||[]).find(i=>(i.name||'').toLowerCase()===(vendor.name||'').toLowerCase()) || null;
     const _rev = (typeof reviewRecord !== 'undefined') ? reviewRecord :
@@ -7024,9 +7026,24 @@ const PERSONAL_SETTING_KEYS = ['theme','fontSize','compactRows','defaultView','s
   'emailSignature','cols','dbHiddenCols','sidebarWidth','closedDays','oooDays','dialerUrl',
   'myPhone','sfClientId','aiProvider','fathomApiKey']; // sfClientId is per-user (each user has own SF credentials)
 // Global settings — org-wide, admin-controlled, apply to all sessions
-const GLOBAL_SETTING_KEYS = ['sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey','apiKey','grokKey','aiKeyShared','composioKey','roleDefaults','supabaseUrl','supabaseKey'];
+const GLOBAL_SETTING_KEYS = ['sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey','apiKey','grokKey','openaiKey','aiKeyShared','composioKey','roleDefaults','supabaseUrl','supabaseKey'];
 window.GLOBAL_SETTING_KEYS = GLOBAL_SETTING_KEYS;
 const PERSIST_KEYS = [...PERSONAL_SETTING_KEYS, ...GLOBAL_SETTING_KEYS];
+const ROLE_PERMISSION_DEFAULTS={
+  admin:{notesVisible:true,canEditVendors:true,canEditContacts:true},
+  procurement:{notesVisible:true,canEditVendors:true,canEditContacts:true},
+  cro:{notesVisible:true,canEditVendors:false,canEditContacts:false},
+  manager:{notesVisible:true,canEditVendors:false,canEditContacts:false},
+  ssa:{notesVisible:false,canEditVendors:false,canEditContacts:false},
+  rep:{notesVisible:false,canEditVendors:false,canEditContacts:false},
+};
+function userCan(permission){
+  const role=(USER&&USER.role||'rep').toLowerCase();
+  const defaults=ROLE_PERMISSION_DEFAULTS[role]||ROLE_PERMISSION_DEFAULTS.rep;
+  const userOverride=(USER&&USER.permissions||{})[permission];
+  if(typeof userOverride==='boolean')return userOverride;
+  return defaults[permission]!==false;
+}
 
 // Debounced Drive sync — fires 3s after any settings change
 let _driveSyncTimer = null;
@@ -23161,12 +23178,10 @@ function buildIntegrationSubsection(label,statusSummaryFn,bodyBuilderFn,isConnec
 }
 
 function refreshConnectionsSummary(){
-  // msToken, sfToken, fathomApiKey, apiKey live status
-  const $e=document.getElementById('vcs-connections-summary');if(!$e)return;
-  const msS=$e.querySelector('[data-conn-status="ms"]');if(msS) msS.textContent=USER&&USER.msToken?'Connected as '+(USER.msEmail||USER.email||''):'Not connected';
-  const sfS=$e.querySelector('[data-conn-status="sf"]');if(sfS) sfS.textContent=USER&&USER.sfToken?'Connected as '+(USER.sfEmail||USER.email||''):'Not connected';
-  const fS=$e.querySelector('[data-conn-status="fathom"]');if(fS) fS.textContent=(S.settings&&S.settings.fathomApiKey)||localStorage.getItem(getFathomKeyStorageKey())?'Configured':'Not configured';
-  const cS=$e.querySelector('[data-conn-status="claude"]');if(cS) cS.textContent=(S.settings&&S.settings.apiKey)||localStorage.getItem('vcs_api_key')?'Configured':'Not configured';
+  const existing=document.getElementById('vcs-connections-summary');
+  if(!existing||!existing.parentNode)return;
+  const fresh=_buildConnectionsSection();
+  existing.parentNode.replaceChild(fresh,existing);
 }
 
 function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
@@ -24021,7 +24036,9 @@ function renderSettings(c) {
   },'🔌 Connect All');
 
   // ── Connections & API Keys collapsible section ────────────────────────────
-  (function(){
+  c.appendChild(_buildConnectionsSection());
+
+function _buildConnectionsSection(){
     const _connKey='vcs_s_connections';
     const _connOpen=localStorage.getItem(_connKey)!=='1';
     const connWrap=el('div',{id:'vcs-connections-summary',style:{border:'1px solid var(--border)',borderRadius:'4px',marginBottom:'8px',overflow:'hidden'}});
@@ -24149,25 +24166,33 @@ function renderSettings(c) {
       function(){const msToken=getMSToken&&getMSToken();return !!(msToken&&Date.now()<(getMSTokenExp&&getMSTokenExp()||0));}
     ));
 
-    // Fathom (per-user)
+    // Fathom (per-user) — key stored per-user in localStorage
+    const _fathomStorageKey=getFathomKeyStorageKey(); // resolved once, used in closures below
+    const _fathomConnected=!!(S.settings&&S.settings.fathomApiKey)||!!localStorage.getItem(_fathomStorageKey);
     connBody.appendChild(buildIntegrationSubsection('Fathom',
-      function(){return (S.settings&&S.settings.fathomApiKey)||localStorage.getItem(getFathomKeyStorageKey())?'Configured':'Not configured';},
+      function(){return _fathomConnected?'Configured':'Not configured';},
       function(b){
         b.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'4px'}},'Your personal Fathom API key — shows YOUR meeting recordings'));
         const fRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
         fRow.appendChild(el('label',{style:{minWidth:'80px'}},'API Key'));
         fRow.appendChild(buildMaskedKeyField(
-          S.settings.fathomApiKey||localStorage.getItem(getFathomKeyStorageKey())||'',
-          async function(v){S.settings.fathomApiKey=v;localStorage.setItem(getFathomKeyStorageKey(),v);await saveConfigToDrive();toast('Fathom key saved','#10b981');refreshConnectionsSummary();},
+          S.settings.fathomApiKey||localStorage.getItem(_fathomStorageKey)||'',
+          async function(v){
+            S.settings.fathomApiKey=v;
+            localStorage.setItem(_fathomStorageKey,v);
+            await saveConfigToDrive();
+            toast('Fathom key saved','#10b981');
+            refreshConnectionsSummary();
+          },
           'Your Fathom API key'
         ));
         b.appendChild(fRow);
-        b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',marginTop:'4px'},title:'Clear your Fathom API key',onclick:async function(){
-          S.settings.fathomApiKey='';localStorage.removeItem(getFathomKeyStorageKey());
-          await saveConfigToDrive();refreshConnectionsSummary();toast('Fathom disconnected','#f59e0b');
+        b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',marginTop:'4px'},title:'Clear your Fathom API key',onclick:function(){
+          S.settings.fathomApiKey='';localStorage.removeItem(_fathomStorageKey);
+          refreshConnectionsSummary();toast('Fathom disconnected (this session only)','#f59e0b');
         }},'Disconnect'));
       },
-      function(){return !!((S.settings&&S.settings.fathomApiKey)||localStorage.getItem(getFathomKeyStorageKey()));}
+      function(){return !!((S.settings&&S.settings.fathomApiKey)||localStorage.getItem(_fathomStorageKey));}
     ));
 
     // Claude AI (admin only)
@@ -24185,7 +24210,7 @@ function renderSettings(c) {
           b.appendChild(cRow);
           b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',marginTop:'4px'},title:'Clear the Claude AI API key',onclick:async function(){
             S.settings.apiKey='';localStorage.removeItem('vcs_api_key');
-            await saveConfigToDrive();refreshConnectionsSummary();toast('Claude AI key cleared','#f59e0b');
+            refreshConnectionsSummary();toast('Claude AI key cleared (this session only)','#f59e0b');
           }},'Disconnect'));
         },
         function(){return !!((S.settings&&S.settings.apiKey)||localStorage.getItem('vcs_api_key'));}
@@ -24218,7 +24243,7 @@ function renderSettings(c) {
           }
           renzoActionRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'},title:'Clear Renzo credentials',onclick:async function(){
             S.settings.renzoApiKey='';S.settings.renzoConnectorUrl='';
-            await saveConfigToDrive();refreshConnectionsSummary();toast('Renzo disconnected','#f59e0b');
+            refreshConnectionsSummary();toast('Renzo disconnected (this session only)','#f59e0b');
           }},'Disconnect'));
           b.appendChild(renzoActionRow);
         },
@@ -24268,7 +24293,7 @@ function renderSettings(c) {
           }},'Check Record Counts'));
           dbBtns.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'},title:'Clear Supabase credentials (will break data loading)',onclick:async function(){
             S.settings.supabaseUrl='';S.settings.supabaseKey='';
-            await saveConfigToDrive();refreshConnectionsSummary();toast('Supabase disconnected — data will not load','#ef4444');
+            refreshConnectionsSummary();toast('Supabase disconnected — data will not load (this session only)','#ef4444');
           }},'Disconnect'));
           b.appendChild(dbBtns);
         },
@@ -24304,7 +24329,7 @@ function renderSettings(c) {
           }},'Save'));
           gdriveActionRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'},title:'Unlink Google Drive file',onclick:async function(){
             S.settings.driveFileId='';
-            await saveConfigToDrive();refreshConnectionsSummary();toast('Google Drive unlinked','#f59e0b');
+            refreshConnectionsSummary();toast('Google Drive unlinked (this session only)','#f59e0b');
           }},'Disconnect'));
           b.appendChild(gdriveActionRow);
         }
@@ -24313,8 +24338,8 @@ function renderSettings(c) {
     ));
 
     connWrap.appendChild(connBody);
-    c.appendChild(connWrap);
-  })();
+    return connWrap;
+}
 
   // D2: Spacer so sticky settings bar never overlaps first card
   const _settingsSpacer=el('div',{style:{height:'0px'}});
@@ -24598,8 +24623,21 @@ function renderSettings(c) {
     c.appendChild(secRoles);
   }
 
-// ── User Management (Admin only) ──
-  if (hasPermission('manageUsers')) {
+function buildUserSubSection(label,bodyBuilderFn){
+  const key='vcs_usr_sub_'+label.toLowerCase().replace(/\s+/g,'_');
+  const isOpen=localStorage.getItem(key)==='1';
+  const wrap=el('div',{style:{border:'1px solid var(--border)',borderRadius:'3px',marginBottom:'4px',overflow:'hidden'}});
+  const arrow=el('span',{style:{fontSize:'8px',color:'var(--muted)',marginRight:'6px'}},isOpen?'▼':'▶');
+  const hdr=el('div',{style:{padding:'4px 8px',cursor:'pointer',display:'flex',alignItems:'center',background:'var(--bg)',fontSize:'10px',fontWeight:'700'},onclick:function(){const open=subBody.style.display!=='none';subBody.style.display=open?'none':'';arrow.textContent=open?'▶':'▼';localStorage.setItem(key,open?'0':'1');}});
+  hdr.appendChild(arrow);hdr.appendChild(el('span',{},label));
+  wrap.appendChild(hdr);
+  const subBody=el('div',{style:{display:isOpen?'':'none',padding:'8px',flexDirection:'column',gap:'4px'}});
+  bodyBuilderFn(subBody);
+  wrap.appendChild(subBody);
+  return wrap;
+}
+
+// ── User Management (Admin only) ──  if (hasPermission('manageUsers')) {
     const secUsers=el('div',{class:'settings-section'});
     // Collapsible header
     const _umCollapsed = localStorage.getItem('vcs_um_collapsed') === '1';
@@ -24837,6 +24875,27 @@ function renderSettings(c) {
         });
         ffSec.appendChild(flagRow);
         details.appendChild(ffSec);
+
+        // ── notesVisible + canEditVendors permission toggles ──────────────
+        async function _saveUserPerm(key,val){if(!u.permissions)u.permissions={};u.permissions[key]=val;const _pa=getApprovedUsers();const _pi=_pa.findIndex(x=>x.email===u.email);if(_pi>=0){_pa[_pi].permissions=u.permissions;setApprovedUsers(_pa,true);}await saveUsersViaProxy();toast('Updated for '+(u.name||u.email),'#10b981');}
+        {
+          const _rd=ROLE_PERMISSION_DEFAULTS[u.role||'rep']||ROLE_PERMISSION_DEFAULTS.rep;
+          const notesCb=el('input',{type:'checkbox'});
+          notesCb.checked=typeof((u.permissions||{}).notesVisible)==='boolean'?(u.permissions||{}).notesVisible:_rd.notesVisible!==false;
+          notesCb.onchange=function(){_saveUserPerm('notesVisible',notesCb.checked);};
+          const notesToggle=el('label',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px',cursor:'pointer'}},' Can view Notes');
+          notesToggle.insertBefore(notesCb,notesToggle.firstChild);
+          details.appendChild(notesToggle);
+        }
+        {
+          const _rd2=ROLE_PERMISSION_DEFAULTS[u.role||'rep']||ROLE_PERMISSION_DEFAULTS.rep;
+          const editCb=el('input',{type:'checkbox'});
+          editCb.checked=typeof((u.permissions||{}).canEditVendors)==='boolean'?(u.permissions||{}).canEditVendors:_rd2.canEditVendors!==false;
+          editCb.onchange=function(){_saveUserPerm('canEditVendors',editCb.checked);};
+          const editToggle=el('label',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px',cursor:'pointer'}},' Can edit vendor records');
+          editToggle.insertBefore(editCb,editToggle.firstChild);
+          details.appendChild(editToggle);
+        }
       }
 
       // ── Per-user Fathom API Key (Admin only) ──────────────────────────────
@@ -25542,7 +25601,7 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
 
   // Provider selector
   const provRow=el('div',{style:{display:'flex',gap:'4px',marginBottom:'10px'}});
-  for (const [label,val] of [['Anthropic (Claude)','anthropic'],['Grok (xAI)','grok'],['None (disabled)','none']]) {
+  for (const [label,val] of [['Anthropic (Claude)','anthropic'],['Grok (xAI)','grok'],['OpenAI (ChatGPT)','openai'],['None (disabled)','none']]) {
     const active=(S.settings.aiProvider||'anthropic')===val;
     provRow.appendChild(el('button',{class:'col-toggle-btn'+(active?' on':''),onclick(){S.settings.aiProvider=val;localStorage.setItem('vcs_ai_provider',val);renderSettings(c);}},label));
   }
@@ -25551,10 +25610,10 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
 
   const provider=S.settings.aiProvider||'anthropic';
   if (provider!=='none') {
-    const keyLabel=provider==='grok'?'xAI / Grok API Key:':'Anthropic API Key:';
-    const keyPlaceholder=provider==='grok'?'xai-...':'sk-ant-api...';
-    const storageKey=provider==='grok'?'vcs_grok_key':'vcs_api_key';
-    const settingsKey=provider==='grok'?'grokKey':'apiKey';
+    const keyLabel=provider==='grok'?'xAI / Grok API Key:':provider==='openai'?'OpenAI API Key:':'Anthropic API Key:';
+    const keyPlaceholder=provider==='grok'?'xai-...':provider==='openai'?'sk-...':'sk-ant-api...';
+    const storageKey=provider==='grok'?'vcs_grok_key':provider==='openai'?'vcs_openai_key':'vcs_api_key';
+    const settingsKey=provider==='grok'?'grokKey':provider==='openai'?'openaiKey':'apiKey';
     secAI.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'4px'}},keyLabel));
     const apiRow=el('div',{class:'setting-row'});
     const apiInp=el('input',{type:'password',class:'modal-input',style:{flex:'1',maxWidth:'300px',marginBottom:'0'},placeholder:keyPlaceholder});
@@ -25580,7 +25639,7 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
     }
     const hasKey=!!(S.settings[settingsKey]);
     const statusEl=el('div',{style:{fontSize:'9px',marginTop:'4px',color:hasKey?'#22c55e':'#f59e0b'}});
-    statusEl.textContent=hasKey?`✓ ${provider==='grok'?'Grok':'Claude'} API key configured — AI assistant ready`:'⚠ No API key — AI assistant disabled';
+    statusEl.textContent=hasKey?`✓ ${provider==='grok'?'Grok':provider==='openai'?'OpenAI':'Claude'} API key configured — AI assistant ready`:'⚠ No API key — AI assistant disabled';
     secAI.appendChild(statusEl);
   }
   // ── Fathom call recordings ────────────────────────────────────────────────
@@ -28800,3 +28859,4 @@ try {
 </script>
 </body>
 </html>
+
