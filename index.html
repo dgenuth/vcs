@@ -9650,21 +9650,43 @@ async function loadFathomMeetings(vendor) {
     const meetings=data.items||data.results||data.data||data.meetings||[];
     console.log('[VCS Fathom] meetings returned:',meetings.length,'for:',vendor.name);
 
-    // If domain filter was used — all results are relevant
-    // If no domain — filter client-side by name in title/summary
-    let matched=meetings;
-    if(!vendorDomain && meetings.length>0){
-      const vendorWords=vendorName.split(/[\s\-\/&]+/).filter(function(w){
-        return w.length>=3&&!['the','and','for','inc','llc','ltd','corp'].includes(w);
-      });
+    // Title match is the PRIMARY, always-applied signal — never skip it.
+    // Domain match is a SECONDARY confirmation, not a free pass.
+    // We deliberately do NOT match against summary/transcript text — a
+    // vendor name being mentioned in conversation does not mean the call
+    // was actually about/with that vendor.
+    const vendorWords=vendorName.split(/[\s\-\/&]+/).filter(function(w){
+      return w.length>=3&&!['the','and','for','inc','llc','ltd','corp','llp','inc.'].includes(w);
+    });
+    const titleMatches=function(m){
+      const title=(m.title||m.meeting_title||'').toLowerCase();
+      if(!title) return false;
+      if(title.includes(vendorName)) return true;
+      // Require ALL significant vendor words to appear in title, not just one —
+      // prevents a single common word like "supply" or "services" from matching
+      // unrelated calls. Single-word vendor names still need an exact substring match.
+      if(vendorWords.length>1){
+        return vendorWords.every(function(w){return title.includes(w);});
+      }
+      return vendorWords.length===1 && title.includes(vendorWords[0]);
+    };
+
+    let matched=meetings.filter(titleMatches);
+    console.log('[VCS Fathom] title-matched:',matched.length,'of',meetings.length);
+
+    // If a domain filter was already applied server-side (GAS), the result
+    // set is already narrowed to this vendor's company — in that case OR in
+    // a real attendee-email match, allow it through even without a strict
+    // title match, since domain/email is a strong independent signal.
+    if(vendorDomain && matched.length===0 && meetings.length>0){
       matched=meetings.filter(function(m){
-        const title=(m.title||m.meeting_title||'').toLowerCase();
-        const summary=(m.default_summary&&m.default_summary.markdown_formatted||m.summary||'').toLowerCase();
-        if(title.includes(vendorName)||summary.includes(vendorName)) return true;
-        if(vendorWords.some(function(w){return title.includes(w);})) return true;
-        return false;
+        const invitees=m.calendar_invitees||[];
+        return invitees.some(function(a){
+          const email=(a.email||'').toLowerCase();
+          return email.endsWith('@'+vendorDomain);
+        });
       });
-      console.log('[VCS Fathom] client-side matched:',matched.length);
+      console.log('[VCS Fathom] domain-confirmed fallback matched:',matched.length);
     }
 
     const results=matched.map(function(m){
