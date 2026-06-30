@@ -24009,6 +24009,13 @@ function renderSettings(c) {
     localStorage.setItem('vcs_s_cal','1');
     S._apiSecOpen=false;
     S._setupChecklistOpen=false;
+    // Also collapse all integration sub-sections inside Connections & API Keys
+    document.querySelectorAll('[data-int-sub-body]').forEach(function(b){
+      b.style.display='none';
+      const k=b.getAttribute('data-int-key');
+      if(k) localStorage.setItem(k,'1');
+    });
+    document.querySelectorAll('[data-int-arrow]').forEach(function(a){a.textContent='▶';});
     render();
   }},'▶ Collapse All'));
   // A3: Keyboard shortcuts for expand/collapse all settings sections
@@ -24893,101 +24900,101 @@ function buildUserSubSection(label,bodyBuilderFn){
       detailsMeta.appendChild(pwRow);
       details.appendChild(detailsMeta);
 
-      // ── Field Access (all roles except admin/procurement) ──────────────────
-      if(true){ // Show for all roles — admin can control any user's access
-
-        const fieldAccessContainer=el('div');
-        fieldAccessContainer.dataset.bfaEmail=u.email;
-        buildFieldAccess(fieldAccessContainer,u.email);
-        details.appendChild(fieldAccessContainer);
+      // Helper: build a collapsible sub-section inside the user row
+      function _userSub(label, defaultOpen, builder) {
+        const sk='vcs_usub_'+u.email.split('@')[0]+'_'+label.toLowerCase().replace(/\s+/g,'_');
+        const isOpen=localStorage.getItem(sk)==='1'||defaultOpen&&localStorage.getItem(sk)!=='0';
+        const wrap=el('div',{style:{border:'1px solid var(--border)',borderRadius:'3px',marginTop:'6px',overflow:'hidden'}});
+        const arrow=el('span',{style:{fontSize:'8px',marginRight:'5px',color:'var(--muted)'}},isOpen?'▼':'▶');
+        const hdr=el('div',{style:{display:'flex',alignItems:'center',padding:'4px 8px',cursor:'pointer',background:'rgba(255,255,255,.03)',fontSize:'9px',fontWeight:'700'}});
+        hdr.onclick=function(){const o=body.style.display!=='none';body.style.display=o?'none':'';arrow.textContent=o?'▶':'▼';localStorage.setItem(sk,o?'0':'1');};
+        hdr.appendChild(arrow);
+        hdr.appendChild(document.createTextNode(label));
+        const body=el('div',{style:{display:isOpen?'':'none',padding:'8px'}});
+        wrap.appendChild(hdr);
+        wrap.appendChild(body);
+        builder(body);
+        return wrap;
       }
 
-      // ── Feature Flags ─────────────────────────────────────────────────────
-      {
-        const ffSec=el('div',{style:{marginTop:'8px',paddingTop:'6px',borderTop:'1px dashed rgba(255,255,255,.08)'}});
-        ffSec.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'5px',textTransform:'uppercase',letterSpacing:'.04em'}},'Feature Flags'));
-        const FF_DEFS=[['export','Allow Export (CSV/Excel)'],['addVendor','Allow Add Vendor'],['editContracts','Allow Edit Contracts'],['showFinancials','Show Financials (fees, spend)']];
-        const flagRow=el('div',{style:{display:'flex',gap:'12px',flexWrap:'wrap'}});
-        FF_DEFS.forEach(([ffKey,ffLabel])=>{
-          const ffCurVal=(u.featureFlags||{})[ffKey];
-          const ffEnabled=ffCurVal!==false;
-          const ffLbl=el('label',{style:{display:'flex',alignItems:'center',gap:'3px',cursor:'pointer',fontSize:'9px',color:ffEnabled?'var(--text)':'var(--muted)'}});
-          const ffCb=el('input',{type:'checkbox',style:{cursor:'pointer'}});
-          ffCb.checked=ffEnabled;
-          ffCb.addEventListener('change',()=>{
-            const _all=getApprovedUsers();const _i=_all.findIndex(x=>x.email===u.email);
-            if(_i>=0){
-              if(!_all[_i].featureFlags)_all[_i].featureFlags={};
-              _all[_i].featureFlags[ffKey]=ffCb.checked;
-              setApprovedUsers(_all);
-              ffLbl.style.color=ffCb.checked?'var(--text)':'var(--muted)';
-              if(u.email===USER.email){if(!USER.featureFlags)USER.featureFlags={};USER.featureFlags[ffKey]=ffCb.checked;}
-              toast('✓ Feature flag updated');
-            }
-          });
-          ffLbl.appendChild(ffCb);
-          ffLbl.appendChild(el('span',{},ffLabel));
-          flagRow.appendChild(ffLbl);
-        });
-        ffSec.appendChild(flagRow);
-        details.appendChild(ffSec);
-
-        // ── notesVisible + canEditVendors permission toggles ──────────────
+      // ── SUB-SECTION 1: Permissions ────────────────────────────────────────
+      details.appendChild(_userSub('🔐 Permissions', true, function(b) {
         const _saveUserPerm=async function(key,val){if(!u.permissions)u.permissions={};u.permissions[key]=val;const _pa=getApprovedUsers();const _pi=_pa.findIndex(x=>x.email===u.email);if(_pi>=0){_pa[_pi].permissions=u.permissions;setApprovedUsers(_pa,true);}await saveUsersViaProxy();toast('Updated for '+(u.name||u.email),'#10b981');};
-        {
-          const _rd=ROLE_PERMISSION_DEFAULTS[u.role||'rep']||ROLE_PERMISSION_DEFAULTS.rep;
-          const notesCb=el('input',{type:'checkbox'});
-          notesCb.checked=typeof((u.permissions||{}).notesVisible)==='boolean'?(u.permissions||{}).notesVisible:_rd.notesVisible!==false;
-          notesCb.onchange=function(){_saveUserPerm('notesVisible',notesCb.checked);};
-          const notesToggle=el('label',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px',cursor:'pointer'}},' Can view Notes');
-          notesToggle.insertBefore(notesCb,notesToggle.firstChild);
-          details.appendChild(notesToggle);
-        }
-        {
-          const _rd2=ROLE_PERMISSION_DEFAULTS[u.role||'rep']||ROLE_PERMISSION_DEFAULTS.rep;
-          const editCb=el('input',{type:'checkbox'});
-          editCb.checked=typeof((u.permissions||{}).canEditVendors)==='boolean'?(u.permissions||{}).canEditVendors:_rd2.canEditVendors!==false;
-          editCb.onchange=function(){_saveUserPerm('canEditVendors',editCb.checked);};
-          const editToggle=el('label',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px',cursor:'pointer'}},' Can edit vendor records');
-          editToggle.insertBefore(editCb,editToggle.firstChild);
-          details.appendChild(editToggle);
-        }
-        // ── Tab/page visibility overrides ──
+
+        // Notes + Edit toggles
+        const _rd=ROLE_PERMISSION_DEFAULTS[u.role||'rep']||ROLE_PERMISSION_DEFAULTS.rep;
+        [['notesVisible','Can view Notes',_rd.notesVisible!==false],
+         ['canEditVendors','Can edit vendor records',_rd.canEditVendors!==false]
+        ].forEach(function(row){
+          const key=row[0],label=row[1],defVal=row[2];
+          const cb=el('input',{type:'checkbox'});
+          cb.checked=typeof((u.permissions||{})[key])==='boolean'?(u.permissions||{})[key]:defVal;
+          cb.onchange=function(){_saveUserPerm(key,cb.checked);};
+          const lbl=el('label',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px',cursor:'pointer',marginBottom:'4px'}});
+          lbl.appendChild(cb);lbl.appendChild(document.createTextNode(label));
+          b.appendChild(lbl);
+        });
+
+        // Page/Tab visibility toggles
+        b.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:'var(--muted)',marginTop:'6px',marginBottom:'3px',textTransform:'uppercase'}},'Page & Tab Visibility'));
         const PAGE_TOGGLES=[['contracts','Contracts page'],['spend','Spend page'],['sfboard_finance','SF Board: Finance tab'],['analytics_revenue','Analytics: Revenue/Spend']];
         PAGE_TOGGLES.forEach(function(pair){
           const key=pair[0],label=pair[1];
           const roleDef=(TAB_PAGE_DEFAULTS[u.role||'rep']||{})[key]!==false;
           const cb=el('input',{type:'checkbox'});
           cb.checked=typeof((u.tabOverrides||{})[key])==='boolean'?(u.tabOverrides||{})[key]:roleDef;
-          cb.onchange=async function(){
-            if(!u.tabOverrides)u.tabOverrides={};
-            u.tabOverrides[key]=cb.checked;
-            const all=getApprovedUsers();
-            const idx=all.findIndex(function(x){return x.email===u.email;});
-            if(idx>=0){all[idx].tabOverrides=u.tabOverrides;setApprovedUsers(all,true);}
-            await saveUsersViaProxy();
-            toast('Updated: '+label,'#10b981');
-          };
-          const row=el('label',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px',cursor:'pointer',marginTop:'3px'}});
-          row.appendChild(cb);
-          row.appendChild(document.createTextNode(label));
-          details.appendChild(row);
+          cb.onchange=async function(){if(!u.tabOverrides)u.tabOverrides={};u.tabOverrides[key]=cb.checked;const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===u.email;});if(i>=0){all[i].tabOverrides=u.tabOverrides;setApprovedUsers(all,true);}await saveUsersViaProxy();toast('Updated: '+label,'#10b981');};
+          const row=el('label',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px',cursor:'pointer',marginBottom:'3px'}});
+          row.appendChild(cb);row.appendChild(document.createTextNode(label));
+          b.appendChild(row);
         });
-      }
 
-      // ── Per-user Fathom API Key (Admin only) ──────────────────────────────
+        // Feature Flags
+        b.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:'var(--muted)',marginTop:'6px',marginBottom:'3px',textTransform:'uppercase'}},'Feature Flags'));
+        const FF_DEFS=[['export','Allow Export'],['addVendor','Add Vendor'],['editContracts','Edit Contracts'],['showFinancials','See Financials']];
+        const flagRow=el('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap'}});
+        FF_DEFS.forEach(function(ff){
+          const ffKey=ff[0],ffLabel=ff[1];
+          const ffEnabled=(u.featureFlags||{})[ffKey]!==false;
+          const ffCb=el('input',{type:'checkbox',style:{cursor:'pointer'}});
+          ffCb.checked=ffEnabled;
+          ffCb.addEventListener('change',function(){
+            const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);
+            if(i>=0){if(!all[i].featureFlags)all[i].featureFlags={};all[i].featureFlags[ffKey]=ffCb.checked;setApprovedUsers(all);}
+            if(u.email===USER.email){if(!USER.featureFlags)USER.featureFlags={};USER.featureFlags[ffKey]=ffCb.checked;}
+            toast('✓ Feature flag updated');
+          });
+          const lbl=el('label',{style:{display:'flex',alignItems:'center',gap:'3px',cursor:'pointer',fontSize:'9px'}});
+          lbl.appendChild(ffCb);lbl.appendChild(el('span',{},ffLabel));
+          flagRow.appendChild(lbl);
+        });
+        b.appendChild(flagRow);
+      }));
+
+      // ── SUB-SECTION 2: Field Visibility ───────────────────────────────────
+      details.appendChild(_userSub('🔒 Field Visibility', false, function(b) {
+        const fieldAccessContainer=el('div');
+        fieldAccessContainer.dataset.bfaEmail=u.email;
+        buildFieldAccess(fieldAccessContainer,u.email);
+        b.appendChild(fieldAccessContainer);
+      }));
+
+      // ── SUB-SECTION 3: Connections ────────────────────────────────────────
       if(USER.role==='admin'){
-        const fRow=el('div',{class:'setting-row',style:{display:'flex',gap:'8px',alignItems:'center',marginTop:'6px'}});
-        fRow.appendChild(el('label',{style:{fontSize:'10px',minWidth:'100px'}},'Fathom API Key'));
-        const fInput=el('input',{type:'password',value:u.fathomApiKey||'',placeholder:"User's personal Fathom key",style:{flex:'1',fontSize:'10px'}});
-        fRow.appendChild(fInput);
-        fRow.appendChild(el('button',{class:'btn-xs btn-green',onclick:async function(){
-          const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);
-          if(i>=0){all[i].fathomApiKey=fInput.value.trim();setApprovedUsers(all,true);}
-          await saveUsersViaProxy();
-          toast('Fathom key updated for '+u.email,'#10b981');
-        }},'Save'));
-        details.appendChild(fRow);
+        details.appendChild(_userSub('🔌 Connections', false, function(b) {
+          const fRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap'}});
+          fRow.appendChild(el('label',{style:{fontSize:'10px',minWidth:'90px',color:'var(--muted)'}},'Fathom API Key'));
+          const fInput=el('input',{type:'password',value:u.fathomApiKey||'',placeholder:"User's personal Fathom key",style:{flex:'1',fontSize:'10px',minWidth:'150px'}});
+          fRow.appendChild(fInput);
+          fRow.appendChild(el('button',{class:'btn-xs btn-green',title:'Save this user\'s Fathom API key',onclick:async function(){
+            const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);
+            if(i>=0){all[i].fathomApiKey=fInput.value.trim();setApprovedUsers(all,true);}
+            await saveUsersViaProxy();
+            toast('Fathom key updated for '+u.email,'#10b981');
+          }},'Save'));
+          b.appendChild(fRow);
+          b.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px'}},'Each user enters their own Fathom key — their own recorded calls will show in VCS.'));
+        }));
       }
 
       row.appendChild(details);
