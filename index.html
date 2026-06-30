@@ -23131,7 +23131,7 @@ function buildMaskedKeyField(initialValue,onSaveCallback,placeholder){
   return wrap;
 }
 
-function buildIntegrationSubsection(label,statusSummaryFn,bodyBuilderFn){
+function buildIntegrationSubsection(label,statusSummaryFn,bodyBuilderFn,isConnectedFn){
   const key='vcs_conn_sub_'+label.toLowerCase().replace(/\s+/g,'_');
   const isOpen=localStorage.getItem(key)==='1';
   const wrap=el('div',{style:{border:'1px solid var(--border)',borderRadius:'3px',marginBottom:'6px',overflow:'hidden'}});
@@ -23139,7 +23139,9 @@ function buildIntegrationSubsection(label,statusSummaryFn,bodyBuilderFn){
   const hdr=el('div',{style:{padding:'6px 10px',cursor:'pointer',display:'flex',alignItems:'center',background:'var(--bg)',fontSize:'10px'},onclick:function(){const open=body.style.display!=='none';body.style.display=open?'none':'';arrow.textContent=open?'▼':'▲';localStorage.setItem(key,open?'0':'1');}});
   hdr.appendChild(arrow);
   hdr.appendChild(el('span',{style:{fontWeight:'700',minWidth:'90px'}},label));
-  const statusSpan=el('span',{style:{flex:'1',color:'var(--muted)',fontSize:'9px'}},statusSummaryFn());
+  const statusText=statusSummaryFn();
+  const statusConnected=typeof isConnectedFn==='function'?isConnectedFn():false;
+  const statusSpan=el('span',{style:{flex:'1',color:statusConnected?'var(--green)':'var(--muted)',fontSize:'9px'}},statusText);
   hdr.appendChild(statusSpan);
   wrap.appendChild(hdr);
   const body=el('div',{style:{display:isOpen?'':'none',padding:'10px',flexDirection:'column',gap:'6px'}});
@@ -24011,7 +24013,6 @@ function renderSettings(c) {
       finally{connectAllBtn.textContent='🔌 Connect All';connectAllBtn.disabled=false;}
     }
   },'🔌 Connect All');
-  c.appendChild(connectAllBtn);
 
   // ── Connections & API Keys collapsible section ────────────────────────────
   (function(){
@@ -24029,6 +24030,7 @@ function renderSettings(c) {
     connHdr.appendChild(el('span',{},'Connections & API Keys'));
     connWrap.appendChild(connHdr);
     const connBody=el('div',{style:{display:_connOpen?'':'none',padding:'12px',display:'flex',flexDirection:'column',gap:'8px'}});
+    connBody.appendChild(connectAllBtn);
 
     // Salesforce
     connBody.appendChild(buildIntegrationSubsection('Salesforce',
@@ -24059,7 +24061,8 @@ function renderSettings(c) {
           sfBtns.appendChild(el('button',{class:'btn-xs',style:{background:'#1a73e8',color:'#fff'},onclick:typeof connectSalesforce==='function'?connectSalesforce:function(){toast('Salesforce connect not available','#f59e0b');}},'Connect'));
         }
         b.appendChild(sfBtns);
-      }
+      },
+      function(){return !!(USER&&USER.sfToken);}
     ));
 
     // Microsoft 365
@@ -24112,7 +24115,8 @@ function renderSettings(c) {
           }},'Connect'));
         }
         b.appendChild(msBtns);
-      }
+      },
+      function(){const msTok=getMSToken&&getMSToken();return !!(msTok&&Date.now()<(getMSTokenExp&&getMSTokenExp()||0));}
     ));
 
     // Fathom (per-user)
@@ -24128,7 +24132,12 @@ function renderSettings(c) {
           'Your Fathom API key'
         ));
         b.appendChild(fRow);
-      }
+        b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',marginTop:'4px'},onclick:async function(){
+          S.settings.fathomApiKey='';localStorage.removeItem(getFathomKeyStorageKey());
+          await saveConfigToDrive();refreshConnectionsSummary();toast('Fathom disconnected','#f59e0b');
+        }},'Disconnect'));
+      },
+      function(){return !!((S.settings&&S.settings.fathomApiKey)||localStorage.getItem(getFathomKeyStorageKey()));}
     ));
 
     // Claude AI (admin only)
@@ -24144,7 +24153,12 @@ function renderSettings(c) {
             'sk-ant-...'
           ));
           b.appendChild(cRow);
-        }
+          b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',marginTop:'4px'},onclick:async function(){
+            S.settings.apiKey='';localStorage.removeItem('vcs_api_key');
+            await saveConfigToDrive();refreshConnectionsSummary();toast('Claude AI key cleared','#f59e0b');
+          }},'Disconnect'));
+        },
+        function(){return !!((S.settings&&S.settings.apiKey)||localStorage.getItem('vcs_api_key'));}
       ));
     }
 
@@ -24171,7 +24185,12 @@ function renderSettings(c) {
               window.open(S.settings.renzoConnectorUrl+'?action=getVCSRecords&apiKey='+(S.settings.renzoApiKey||'')+'&limit=5','_blank');
             }},'Preview Records'));
           }
-        }
+          b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',marginTop:'4px'},onclick:async function(){
+            S.settings.renzoApiKey='';S.settings.renzoConnectorUrl='';
+            await saveConfigToDrive();refreshConnectionsSummary();toast('Renzo disconnected','#f59e0b');
+          }},'Disconnect'));
+        },
+        function(){return !!(S.settings&&S.settings.renzoConnectorUrl);}
       ));
     }
 
@@ -24195,9 +24214,33 @@ function renderSettings(c) {
           b.appendChild(sbKeyRow);
           b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginTop:'4px'},onclick:async function(){
             if(!S.settings.supabaseUrl){toast('No Supabase URL configured','#f59e0b');return;}
-            try{const r=await fetch(S.settings.supabaseUrl+'/rest/v1/',{headers:{'apikey':S.settings.supabaseKey||'','Authorization':'Bearer '+(S.settings.supabaseKey||'')}});toast(r.ok?'Supabase reachable':'Supabase error: '+r.status,r.ok?'#10b981':'#ef4444');}catch(e){toast('Supabase error: '+e.message,'#ef4444');}
+            try{
+              const r=await fetch((S.settings.supabaseUrl||'').replace(/\/+$/,'')+'/rest/v1/vendors?select=id&limit=1',{
+                headers:{
+                  'apikey':S.settings.supabaseKey||'',
+                  'Authorization':'Bearer '+(S.settings.supabaseKey||''),
+                  'Content-Type':'application/json'
+                }
+              });
+              toast(r.ok?'Supabase connected':'Supabase error: '+r.status,r.ok?'#10b981':'#ef4444');
+            }catch(e){toast('Supabase error: '+e.message,'#ef4444');}
           }},'Test Connection'));
-        }
+          const dbBtns=el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginTop:'4px'}});
+          dbBtns.appendChild(el('button',{class:'btn-xs',style:{background:'var(--blue)',color:'#fff'},onclick:function(){if(typeof loadFromSupabase==='function')loadFromSupabase();else toast('loadFromSupabase not found','#f59e0b');}},'Load from Database'));
+          dbBtns.appendChild(el('button',{class:'btn-xs btn-green',onclick:function(){if(typeof seedSupabase==='function')seedSupabase();else toast('seedSupabase not found','#f59e0b');}},'Seed ALL to Supabase'));
+          dbBtns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:async function(){
+            try{
+              const r=await SB.query('vendors','select=id');
+              toast('Vendors: '+(r||[]).length,'#10b981',5000);
+            }catch(e){toast('Count error: '+e.message,'#ef4444');}
+          }},'Check Record Counts'));
+          b.appendChild(dbBtns);
+          b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',marginTop:'4px'},onclick:async function(){
+            S.settings.supabaseUrl='';S.settings.supabaseKey='';
+            await saveConfigToDrive();refreshConnectionsSummary();toast('Supabase disconnected — data will not load','#ef4444');
+          }},'Disconnect'));
+        },
+        function(){return !!(S.settings&&S.settings.supabaseUrl);}
       ));
     }
 
@@ -24216,12 +24259,23 @@ function renderSettings(c) {
           const gdClientInp=el('input',{value:S.settings.googleClientId||'',style:{flex:'1',fontSize:'10px'}});
           gdClientRow.appendChild(gdClientInp);
           b.appendChild(gdClientRow);
+          const gdSyncRow=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginTop:'4px',fontSize:'10px'}});
+          const gdSyncCb=el('input',{type:'checkbox'});gdSyncCb.checked=S.settings.driveAutoSync||false;
+          gdSyncCb.addEventListener('change',function(){S.settings.driveAutoSync=gdSyncCb.checked;saveConfigToDrive();});
+          gdSyncRow.appendChild(gdSyncCb);
+          gdSyncRow.appendChild(el('label',{style:{fontSize:'10px',cursor:'pointer'}},'Auto-sync to Drive on Save'));
+          b.appendChild(gdSyncRow);
           b.appendChild(el('button',{class:'btn-xs btn-green',onclick:async function(){
             S.settings.driveFileId=gdFileInp.value.trim();S.settings.googleClientId=gdClientInp.value.trim();
             await saveConfigToDrive();toast('Google Drive settings saved','#10b981');
           }},'Save'));
+          b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',marginTop:'4px'},onclick:async function(){
+            S.settings.driveFileId='';
+            await saveConfigToDrive();refreshConnectionsSummary();toast('Google Drive unlinked','#f59e0b');
+          }},'Disconnect'));
         }
-      }
+      },
+      function(){return !!(S.settings&&S.settings.driveFileId);}
     ));
 
     connWrap.appendChild(connBody);
@@ -24249,6 +24303,7 @@ function renderSettings(c) {
       const setupSec=el('div',{style:{marginBottom:'12px',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
       const setupHdr=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'8px 12px',background:'var(--card)',cursor:'pointer'},
         onclick(){S._setupChecklistOpen=!S._setupChecklistOpen;render();}});
+      setupHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},(S._setupChecklistOpen?'▼':'▶')));
       setupHdr.appendChild(el('span',{style:{fontSize:'13px'}},allDone?'✅':'⚙'));
       setupHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1'}},allDone?'Setup Complete':'Quick Setup'));
       // Progress bar
@@ -24257,7 +24312,6 @@ function renderSettings(c) {
       setupHdr.appendChild(progWrap);
       setupHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',whiteSpace:'nowrap'}},doneCount+'/'+_setupItems.length));
       if(allDone)setupHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(e){e.stopPropagation();S._setupChecklistDismissed=true;render();}},'Dismiss'));
-      setupHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},(S._setupChecklistOpen?'▼':'▶')));
       setupSec.appendChild(setupHdr);
       if(S._setupChecklistOpen){
         const setupBody=el('div',{style:{padding:'8px 12px',display:'flex',flexDirection:'column',gap:'5px'}});
