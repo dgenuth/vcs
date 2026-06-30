@@ -9623,7 +9623,6 @@ async function loadFathomMeetings(vendor) {
   }
   if(!fathomKey){console.warn('[VCS Fathom] No key after retry');return [];}
 
-  // 5-min cache per vendor
   const cacheKey='fathom_'+(vendor.name||'');
   if(S._fathomCache&&S._fathomCache[cacheKey]&&Date.now()-S._fathomCache[cacheKey].ts<5*60*1000){
     return S._fathomCache[cacheKey].data;
@@ -9633,27 +9632,41 @@ async function loadFathomMeetings(vendor) {
   if(!proxyUrl) return [];
 
   const vendorName=(vendor.name||'').toLowerCase();
-  // Build search query — use vendor name which searches titles AND summaries
-  // This is equivalent to using the search box in Fathom
-  const searchQuery=vendor.name||'';
+
+  // Extract vendor email domain for server-side domain filter
+  const allEmails=[vendor.email,vendor.email2,
+    ...(vendor._sbContacts||[]).flatMap(function(ct){
+      let em=ct.emails||[];
+      if(typeof em==='string'){try{em=JSON.parse(em);}catch(_){em=[];}}
+      return em.map(function(e){return e.address||e||'';});
+    })
+  ].filter(Boolean);
+  const skipDomains=['gmail.com','yahoo.com','hotmail.com','outlook.com','icloud.com'];
+  const vendorDomain=(function(){
+    for(let i=0;i<allEmails.length;i++){
+      const d=(allEmails[i]||'').split('@')[1];
+      if(d&&!skipDomains.includes(d)) return d;
+    }
+    return '';
+  })();
+
+  console.log('[VCS Fathom] Searching for:',vendor.name,'domain:',vendorDomain||'(no domain)');
 
   try {
-    console.log('[VCS Fathom] Searching for:',searchQuery);
-
     const resp=await fetch(proxyUrl,{
       method:'POST',
       headers:{'Content-Type':'text/plain'},
       body:JSON.stringify({
         action:'fathomSearch',
         fathomKey:fathomKey,
-        query:searchQuery
+        query:vendor.name,
+        domain:vendorDomain
       })
     });
 
     if(!resp.ok){console.warn('[VCS Fathom] proxy HTTP error:',resp.status);return [];}
     const proxyData=await resp.json();
     console.log('[VCS Fathom] proxy status:',proxyData.status);
-    if(proxyData.fallback) console.log('[VCS Fathom] using fallback list (search endpoint unavailable)');
 
     if(proxyData.status!=='ok'){
       console.warn('[VCS Fathom] proxy error:',proxyData.error);
@@ -9662,46 +9675,45 @@ async function loadFathomMeetings(vendor) {
 
     const data=proxyData.result||{};
     const meetings=data.items||data.results||data.data||data.meetings||[];
-    console.log('[VCS Fathom] meetings returned:',meetings.length,'for query:',searchQuery);
-    if(meetings.length>0){
-      console.log('[VCS Fathom] sample:',meetings.slice(0,3).map(function(m){return m.title||'(no title)';}));
-    }
+    console.log('[VCS Fathom] meetings returned:',meetings.length,'for:',vendor.name);
 
-    // If search returned results — all are relevant (Fathom already filtered)
-    // If fallback list — filter client-side
+    // If domain filter was used — all results are relevant
+    // If no domain — filter client-side by name in title/summary
     let matched=meetings;
-    if(proxyData.fallback){
+    if(!vendorDomain && meetings.length>0){
       const vendorWords=vendorName.split(/[\s\-\/&]+/).filter(function(w){
         return w.length>=3&&!['the','and','for','inc','llc','ltd','corp'].includes(w);
       });
       matched=meetings.filter(function(m){
-        const title=(m.title||'').toLowerCase();
-        const summary=(m.summary||'').toLowerCase();
+        const title=(m.title||m.meeting_title||'').toLowerCase();
+        const summary=(m.default_summary&&m.default_summary.markdown_formatted||m.summary||'').toLowerCase();
         if(title.includes(vendorName)||summary.includes(vendorName)) return true;
-        if(vendorWords.some(function(w){return title.includes(w)||summary.includes(w);})) return true;
+        if(vendorWords.some(function(w){return title.includes(w);})) return true;
         return false;
       });
+      console.log('[VCS Fathom] client-side matched:',matched.length);
     }
 
-    console.log('[VCS Fathom] matched:',matched.length);
-
     const results=matched.map(function(m){
-      const invitees=m.calendar_invitees||m.attendees||m.participants||[];
+      const invitees=m.calendar_invitees||[];
       const external=invitees.filter(function(a){
-        return !(a.email||'').includes('@primesourcex.com');
+        const email=(a.email||'').toLowerCase();
+        return email&&!email.includes('@primesourcex.com');
       });
+      const durationSecs=m.recording_end_time&&m.recording_start_time?
+        (new Date(m.recording_end_time)-new Date(m.recording_start_time))/1000:null;
       return {
         id:'fathom_'+(m.recording_id||m.id||Math.random()),
         activity_type:'fathom_recording',
         vendor_name:vendor.name,
-        subject:m.title||m.name||'Fathom Recording',
-        activity_date:(m.created_at||m.started_at||m.date||'').split('T')[0],
-        duration_minutes:m.duration_seconds?Math.round(m.duration_seconds/60):null,
+        subject:m.title||m.meeting_title||'Fathom Recording',
+        activity_date:(m.created_at||m.recording_start_time||'').split('T')[0],
+        duration_minutes:durationSecs?Math.round(durationSecs/60):null,
         contact_name:external.map(function(a){return a.name||a.email||'';}).filter(Boolean).join(', '),
         source:'fathom',
         source_id:String(m.recording_id||m.id||''),
-        source_url:m.share_url||m.recording_url||m.url||'',
-        summary:m.summary||''
+        source_url:m.share_url||m.url||'',
+        summary:(m.default_summary&&m.default_summary.markdown_formatted)||m.summary||''
       };
     });
 
