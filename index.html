@@ -3848,6 +3848,7 @@ function updateSidebar() {
     if(tabId.startsWith('_div')) return true; // always include dividers
     if (tabId in _tabOverrides) return _tabOverrides[tabId]; // user override
     if (USER.role === 'admin' || USER.role === 'manager') return true;
+    if(typeof userCanSeeTab==='function'&&(tabId==='contracts'||tabId==='spend')){return userCanSeeTab(tabId);}
     return _roleBaseTabs.includes(tabId); // role default
   });
   for (const [id,icon,label] of NAV_DEFS) {
@@ -7044,6 +7045,22 @@ function userCan(permission){
   const userOverride=(USER&&USER.permissions||{})[permission];
   if(typeof userOverride==='boolean')return userOverride;
   return defaults[permission]!==false;
+}
+
+const TAB_PAGE_DEFAULTS={
+  rep:{sfboard_finance:false,sfboard_procurement:false,analytics_revenue:false,analytics_repperformance:true,contracts:false,spend:false,reviews:true,discovery:true},
+  ssa:{sfboard_finance:false,analytics_revenue:false,contracts:false,spend:false},
+  procurement:{sfboard_finance:false},
+  manager:{},
+  cro:{},
+  admin:{},
+};
+function userCanSeeTab(pageOrTab){
+  const role=(USER&&USER.role||'rep').toLowerCase();
+  const defaults=TAB_PAGE_DEFAULTS[role]||{};
+  const override=(USER&&USER.tabOverrides||{})[pageOrTab];
+  if(typeof override==='boolean')return override;
+  return defaults[pageOrTab]!==false;
 }
 
 // Debounced Drive sync — fires 3s after any settings change
@@ -23181,8 +23198,12 @@ function buildIntegrationSubsection(label,statusSummaryFn,bodyBuilderFn,isConnec
 function refreshConnectionsSummary(){
   const existing=document.getElementById('vcs-connections-summary');
   if(!existing||!existing.parentNode)return;
-  const fresh=_buildConnectionsSection();
-  existing.parentNode.replaceChild(fresh,existing);
+  setTimeout(function(){
+    const existing2=document.getElementById('vcs-connections-summary');
+    if(!existing2||!existing2.parentNode)return;
+    const fresh=_buildConnectionsSection();
+    existing2.parentNode.replaceChild(fresh,existing2);
+  },50);
 }
 
 function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
@@ -24099,9 +24120,10 @@ function _buildConnectionsSection(){
         }},'Save'));
         if(USER&&USER.sfToken){
           sfBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Sign out of Salesforce',onclick:function(){
-            USER.sfToken='';USER.sfInstance='';USER.sfEmail='';
-            localStorage.removeItem('vcs_sf_token');localStorage.removeItem('vcs_sf_instance');
-            toast('Salesforce disconnected','#f59e0b');refreshConnectionsSummary();
+            USER.sfToken=null;USER.sfInstance=null;USER.sfEmail='';
+            sessionStorage.removeItem('vcs_sf_token');sessionStorage.removeItem('vcs_sf_instance');
+            localStorage.removeItem('vcs_sf_token');localStorage.removeItem('vcs_sf_instance');localStorage.removeItem('vcs_sf_token_ls');
+            refreshConnectionsSummary();toast('Salesforce disconnected','#f59e0b');
           }},'Disconnect'));
         } else {
           sfBtns.appendChild(el('button',{class:'btn-xs',style:{background:'#1a73e8',color:'#fff'},title:'Sign in with Salesforce to sync data',onclick:function(){sfConnect();}},'Connect'));
@@ -24133,8 +24155,6 @@ function _buildConnectionsSection(){
         }
         const msBtns=el('div',{style:{display:'flex',gap:'6px',marginTop:'4px'}});
         const msToken=getMSToken&&getMSToken();
-        if(msToken) refreshConnectionsSummary(); // update msToken status on render
-        if(!msToken) refreshConnectionsSummary(); // update msToken status on render
         if(msToken&&Date.now()<(getMSTokenExp&&getMSTokenExp()||0)){
           msBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Sign out of Microsoft 365',onclick:function(){
             clearMSTokens&&clearMSTokens();
@@ -24188,10 +24208,23 @@ function _buildConnectionsSection(){
           'Your Fathom API key'
         ));
         b.appendChild(fRow);
-        b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',marginTop:'4px'},title:'Clear your Fathom API key',onclick:function(){
-          S.settings.fathomApiKey='';localStorage.removeItem(_fathomStorageKey);
-          refreshConnectionsSummary();toast('Fathom disconnected (this session only)','#f59e0b');
-        }},'Disconnect'));
+        const fKey=(S.settings&&S.settings.fathomApiKey)||localStorage.getItem(_fathomStorageKey)||'';
+        const fActionRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'6px'}});
+        if(fKey){
+          fActionRow.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Test your Fathom API key',onclick:async function(){
+            try{
+              const r=await loadFathomMeetings({name:'test',email:''});
+              toast(Array.isArray(r)?'Fathom reachable':'Fathom test failed','#10b981');
+            }catch(e){toast('Fathom error: '+e.message,'#ef4444');}
+          }},'Test'));
+          fActionRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'},title:'Clear Fathom key for this session (key preserved in config)',onclick:function(){
+            S.settings.fathomApiKey='';localStorage.removeItem(_fathomStorageKey);
+            refreshConnectionsSummary();toast('Fathom disconnected (session only)','#f59e0b');
+          }},'Disconnect'));
+        } else {
+          fActionRow.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},'Enter your personal Fathom API key above and click Save.'));
+        }
+        b.appendChild(fActionRow);
       },
       function(){return !!((S.settings&&S.settings.fathomApiKey)||localStorage.getItem(_fathomStorageKey));}
     ));
@@ -24201,6 +24234,23 @@ function _buildConnectionsSection(){
       connBody.appendChild(buildIntegrationSubsection('Claude AI',
         function(){return (S.settings&&S.settings.apiKey)||localStorage.getItem('vcs_api_key')?'Configured':'Not configured';},
         function(b){
+          const provRow=el('div',{style:{display:'flex',gap:'4px',marginBottom:'6px',flexWrap:'wrap'}});
+          b.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'2px'}},'AI Provider:'));
+          for(const [label,val] of [['Anthropic','anthropic'],['Grok','grok'],['OpenAI','openai'],['None','none']]){
+            const active=(S.settings.aiProvider||'anthropic')===val;
+            provRow.appendChild(el('button',{class:'col-toggle-btn'+(active?' on':''),style:{fontSize:'9px',padding:'3px 8px'},title:label+' as AI provider',onclick:function(){
+              S.settings.aiProvider=val;localStorage.setItem('vcs_ai_provider',val);
+              saveUsersViaProxy();refreshConnectionsSummary();
+            }},label));
+          }
+          b.appendChild(provRow);
+          const sharedRow=el('label',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'9px',marginBottom:'4px',cursor:'pointer'}});
+          const sharedCb=el('input',{type:'checkbox'});
+          sharedCb.checked=!!(S.settings&&S.settings.aiKeyShared);
+          sharedCb.onchange=async function(){S.settings.aiKeyShared=sharedCb.checked;await saveConfigToDrive();};
+          sharedRow.appendChild(sharedCb);
+          sharedRow.appendChild(document.createTextNode(' Share API key with all users'));
+          b.appendChild(sharedRow);
           const cRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
           cRow.appendChild(el('label',{style:{minWidth:'80px'}},'API Key'));
           cRow.appendChild(buildMaskedKeyField(
@@ -24209,10 +24259,17 @@ function _buildConnectionsSection(){
             'sk-ant-...'
           ));
           b.appendChild(cRow);
-          b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',marginTop:'4px'},title:'Clear the Claude AI API key',onclick:async function(){
-            S.settings.apiKey='';localStorage.removeItem('vcs_api_key');
-            refreshConnectionsSummary();toast('Claude AI key cleared (this session only)','#f59e0b');
-          }},'Disconnect'));
+          const _aiKey=(S.settings&&S.settings.apiKey)||localStorage.getItem('vcs_api_key')||'';
+          const _aiActionRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'6px'}});
+          if(_aiKey){
+            _aiActionRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'},title:'Clear the Claude AI API key',onclick:async function(){
+              S.settings.apiKey='';localStorage.removeItem('vcs_api_key');
+              refreshConnectionsSummary();toast('Claude AI key cleared (this session only)','#f59e0b');
+            }},'Disconnect'));
+          } else {
+            _aiActionRow.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},'Enter your API key above to enable AI features.'));
+          }
+          b.appendChild(_aiActionRow);
         },
         function(){return !!((S.settings&&S.settings.apiKey)||localStorage.getItem('vcs_api_key'));}
       ));
@@ -24895,6 +24952,27 @@ function buildUserSubSection(label,bodyBuilderFn){
           editToggle.insertBefore(editCb,editToggle.firstChild);
           details.appendChild(editToggle);
         }
+        // ── Tab/page visibility overrides ──
+        const PAGE_TOGGLES=[['contracts','Contracts page'],['spend','Spend page'],['sfboard_finance','SF Board: Finance tab'],['analytics_revenue','Analytics: Revenue/Spend']];
+        PAGE_TOGGLES.forEach(function(pair){
+          const key=pair[0],label=pair[1];
+          const roleDef=(TAB_PAGE_DEFAULTS[u.role||'rep']||{})[key]!==false;
+          const cb=el('input',{type:'checkbox'});
+          cb.checked=typeof((u.tabOverrides||{})[key])==='boolean'?(u.tabOverrides||{})[key]:roleDef;
+          cb.onchange=async function(){
+            if(!u.tabOverrides)u.tabOverrides={};
+            u.tabOverrides[key]=cb.checked;
+            const all=getApprovedUsers();
+            const idx=all.findIndex(function(x){return x.email===u.email;});
+            if(idx>=0){all[idx].tabOverrides=u.tabOverrides;setApprovedUsers(all,true);}
+            await saveUsersViaProxy();
+            toast('Updated: '+label,'#10b981');
+          };
+          const row=el('label',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px',cursor:'pointer',marginTop:'3px'}});
+          row.appendChild(cb);
+          row.appendChild(document.createTextNode(label));
+          details.appendChild(row);
+        });
       }
 
       // ── Per-user Fathom API Key (Admin only) ──────────────────────────────
