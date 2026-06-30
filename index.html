@@ -9650,11 +9650,13 @@ async function loadFathomMeetings(vendor) {
     const meetings=data.items||data.results||data.data||data.meetings||[];
     console.log('[VCS Fathom] meetings returned:',meetings.length,'for:',vendor.name);
 
-    // Title match is the PRIMARY, always-applied signal — never skip it.
-    // Domain match is a SECONDARY confirmation, not a free pass.
-    // We deliberately do NOT match against summary/transcript text — a
-    // vendor name being mentioned in conversation does not mean the call
-    // was actually about/with that vendor.
+    // MATCHING RULE (per David): a meeting is relevant if EITHER —
+    // (a) the vendor/customer name appears in the call TITLE, or
+    // (b) any known contact of this vendor/customer is a PARTICIPANT
+    //     (calendar invitee) on the call.
+    // Either signal alone is sufficient. We never match on summary/
+    // transcript text — a name being mentioned in conversation is not
+    // the same as the call actually being with/about that vendor.
     const vendorWords=vendorName.split(/[\s\-\/&]+/).filter(function(w){
       return w.length>=3&&!['the','and','for','inc','llc','ltd','corp','llp','inc.'].includes(w);
     });
@@ -9662,32 +9664,33 @@ async function loadFathomMeetings(vendor) {
       const title=(m.title||m.meeting_title||'').toLowerCase();
       if(!title) return false;
       if(title.includes(vendorName)) return true;
-      // Require ALL significant vendor words to appear in title, not just one —
-      // prevents a single common word like "supply" or "services" from matching
-      // unrelated calls. Single-word vendor names still need an exact substring match.
       if(vendorWords.length>1){
         return vendorWords.every(function(w){return title.includes(w);});
       }
       return vendorWords.length===1 && title.includes(vendorWords[0]);
     };
 
-    let matched=meetings.filter(titleMatches);
-    console.log('[VCS Fathom] title-matched:',matched.length,'of',meetings.length);
+    // Build the set of known contact emails AND names for this vendor/customer
+    const contactNames=(vendor._sbContacts||[]).map(function(ct){
+      return (ct.name||'').toLowerCase();
+    }).filter(function(n){return n.length>2;});
 
-    // If a domain filter was already applied server-side (GAS), the result
-    // set is already narrowed to this vendor's company — in that case OR in
-    // a real attendee-email match, allow it through even without a strict
-    // title match, since domain/email is a strong independent signal.
-    if(vendorDomain && matched.length===0 && meetings.length>0){
-      matched=meetings.filter(function(m){
-        const invitees=m.calendar_invitees||[];
-        return invitees.some(function(a){
-          const email=(a.email||'').toLowerCase();
-          return email.endsWith('@'+vendorDomain);
-        });
+    const participantMatches=function(m){
+      const invitees=m.calendar_invitees||[];
+      if(!invitees.length) return false;
+      return invitees.some(function(a){
+        const email=(a.email||'').toLowerCase();
+        const name=(a.name||'').toLowerCase();
+        if(email&&allEmails.some(function(ce){return ce.toLowerCase()===email;})) return true;
+        if(name&&contactNames.some(function(cn){return cn===name||name.includes(cn)||cn.includes(name);})) return true;
+        return false;
       });
-      console.log('[VCS Fathom] domain-confirmed fallback matched:',matched.length);
-    }
+    };
+
+    let matched=meetings.filter(function(m){
+      return titleMatches(m) || participantMatches(m);
+    });
+    console.log('[VCS Fathom] matched (title OR participant):',matched.length,'of',meetings.length);
 
     const results=matched.map(function(m){
       const invitees=m.calendar_invitees||[];
