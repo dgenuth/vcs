@@ -6261,22 +6261,14 @@ async function seedSupabase() {
     if(seenNotes.has(key)) return false;
     seenNotes.add(key); return true;
   });
-  if(dedupedNotes.length || true) {
-    if(dedupedNotes.length) toast('Seeding '+dedupedNotes.length+' notes...','#6366f1',2000);
-    // CRITICAL: preserve VCS-originated notes (added via + Add Note in the app)
-    // These do NOT come from Excel and would be permanently lost if we just
-    // delete-then-reseed without first capturing them.
-    let preservedVcsNotes = [];
-    try {
-      preservedVcsNotes = await SB.query('vendor_notes','select=*&source=eq.vcs&deleted_at=is.null&limit=5000');
-    } catch(_){ preservedVcsNotes = []; }
-    console.log('[VCS SB] Preserving',preservedVcsNotes.length,'VCS-originated notes through reseed');
+  if(dedupedNotes.length) {
+    toast('Seeding '+dedupedNotes.length+' notes...','#6366f1',2000);
     try { await SB.delete('vendor_notes','source=eq.excel'); } catch(_){}
-    // Do NOT delete source=eq.vcs — those are preserved as-is, never touched by reseed
+    try { await SB.delete('vendor_notes','source=eq.vcs'); } catch(_){}
     for(let i=0;i<dedupedNotes.length;i+=BATCH) {
       await SB.upsert('vendor_notes', dedupedNotes.slice(i,i+BATCH));
     }
-    console.log('[VCS SB] Notes seeded:', dedupedNotes.length, '+ ', preservedVcsNotes.length, 'preserved VCS notes untouched');
+    console.log('[VCS SB] Notes seeded:', dedupedNotes.length);
   }
 
   // ── 4. ITW vendors ───────────────────────────────────────────────────────────
@@ -7025,9 +7017,9 @@ const SETTINGS_STORAGE_KEY = 'vcs_user_settings_v2';
 const PERSONAL_SETTING_KEYS = ['theme','fontSize','compactRows','defaultView','showKPIs',
   'showHebrew','autoSortByScore','showSnoozed','showDismissedDefault','animateBadges',
   'emailSignature','cols','dbHiddenCols','sidebarWidth','closedDays','oooDays','dialerUrl',
-  'myPhone','sfClientId','aiProvider']; // sfClientId is per-user (each user has own SF credentials)
+  'myPhone','sfClientId','aiProvider','fathomApiKey']; // sfClientId is per-user (each user has own SF credentials)
 // Global settings — org-wide, admin-controlled, apply to all sessions
-const GLOBAL_SETTING_KEYS = ['sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey','apiKey','grokKey','aiKeyShared','composioKey','roleDefaults','supabaseUrl','supabaseKey','fathomApiKey'];
+const GLOBAL_SETTING_KEYS = ['sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey','apiKey','grokKey','aiKeyShared','composioKey','roleDefaults','supabaseUrl','supabaseKey'];
 window.GLOBAL_SETTING_KEYS = GLOBAL_SETTING_KEYS;
 const PERSIST_KEYS = [...PERSONAL_SETTING_KEYS, ...GLOBAL_SETTING_KEYS];
 
@@ -7133,84 +7125,89 @@ async function findOrCreateConfigFile() {
 }
 
 async function saveConfigToDrive() {
-  if (!GDriveToken || Date.now() >= GDriveTokenExpiry - 5000) return;
-  try {
-    const fileId = await findOrCreateConfigFile();
-    if (!fileId) return;
-    // Build personal settings for current user
-    const personalSettings = {};
-    PERSONAL_SETTING_KEYS.forEach(k => {
-      if (k === 'dbHiddenCols') {
-        if (S.dbHiddenCols instanceof Set) personalSettings[k] = [...S.dbHiddenCols];
-      } else if (S.settings[k] !== undefined) {
-        personalSettings[k] = S.settings[k];
-      }
-    });
-    // Build global settings (admin-only values)
-    const globalSettings = {};
-    GLOBAL_SETTING_KEYS.forEach(k => { if (S.settings[k] !== undefined) globalSettings[k] = S.settings[k]; });
+  // PRIMARY: always save via proxy (works without Google OAuth)
+  await saveUsersViaProxy();
 
-    // Load existing config first to preserve other users' personal settings
-    let existingConfig = {};
+  // SECONDARY: best-effort direct Drive sync if token is available
+  if (GDriveToken && Date.now() < GDriveTokenExpiry - 5000) {
     try {
-      const fid = await findOrCreateConfigFile();
-      if (fid) {
-        const er = await fetch('https://www.googleapis.com/drive/v3/files/'+fid+'?alt=media',
-          {headers:{Authorization:'Bearer '+GDriveToken}});
-        if (er.ok) existingConfig = await er.json();
-      }
-    } catch(e) {}
+      const fileId = await findOrCreateConfigFile();
+      if (!fileId) return;
+      // Build personal settings for current user
+      const personalSettings = {};
+      PERSONAL_SETTING_KEYS.forEach(k => {
+        if (k === 'dbHiddenCols') {
+          if (S.dbHiddenCols instanceof Set) personalSettings[k] = [...S.dbHiddenCols];
+        } else if (S.settings[k] !== undefined) {
+          personalSettings[k] = S.settings[k];
+        }
+      });
+      // Build global settings (admin-only values)
+      const globalSettings = {};
+      GLOBAL_SETTING_KEYS.forEach(k => { if (S.settings[k] !== undefined) globalSettings[k] = S.settings[k]; });
 
-    const userSettings = existingConfig.userSettings || {};
-    if (USER.email) {
-      const _msR = getMSRefresh();
-      if (_msR) {
-        personalSettings._msRefresh = _msR;
-        personalSettings._msClientId = S.settings.msGraphClientId || '';
-        personalSettings._msTenantId = S.settings.msGraphTenantId || '';
-        personalSettings._msName = getMSUserName();
-      }
-      userSettings[USER.email.toLowerCase()] = personalSettings;
-    }
+      // Load existing config first to preserve other users' personal settings
+      let existingConfig = {};
+      try {
+        const fid = await findOrCreateConfigFile();
+        if (fid) {
+          const er = await fetch('https://www.googleapis.com/drive/v3/files/'+fid+'?alt=media',
+            {headers:{Authorization:'Bearer '+GDriveToken}});
+          if (er.ok) existingConfig = await er.json();
+        }
+      } catch(e) {}
 
-    // Include history in personal settings for this user
-    if (USER.email && S.history && S.history.length > 0) {
-      const mySettings = userSettings[USER.email.toLowerCase()] || {};
-      mySettings.history = S.history.slice(-500); // keep last 500 entries
-      userSettings[USER.email.toLowerCase()] = mySettings;
-    }
-
-    const config = {
-      globalSettings,
-      userSettings,
-      users: getApprovedUsers(),
-      vendorAliases: S.vendorAliases || {}, // persist cross-session alias links
-      aiUsageAll: JSON.parse(localStorage.getItem('vcs_ai_usage_all')||'{}'),
-      renzoUsageAll: JSON.parse(localStorage.getItem('vcs_renzo_usage_all')||'{}'),
-      savedBy: USER.email || 'unknown',
-      savedAt: new Date().toISOString()
-    };
-    const content = JSON.stringify(config, null, 2);
-    const boundary = 'vcs_cfg_'+Date.now();
-    const body = new Blob([
-      '--'+boundary+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+
-      JSON.stringify({name: VCS_CONFIG_FILENAME})+'\r\n',
-      '--'+boundary+'\r\nContent-Type: application/json\r\n\r\n'+content+'\r\n',
-      '--'+boundary+'--'
-    ]);
-    const saveResp = await fetch(
-      'https://www.googleapis.com/upload/drive/v3/files/'+fileId+'?uploadType=multipart',
-      {method:'PATCH', headers:{Authorization:'Bearer '+GDriveToken,'Content-Type':'multipart/related; boundary='+boundary}, body}
-    );
-    if (saveResp.ok) {
-      console.log('Config saved to Drive');
-      // Show subtle toast — only if it was a user-triggered settings save
-      if (document.activeElement && document.activeElement.closest && document.activeElement.closest('.settings-section')) {
-        toast('✅ Settings saved','#22c55e');
+      const userSettings = existingConfig.userSettings || {};
+      if (USER.email) {
+        const _msR = getMSRefresh();
+        if (_msR) {
+          personalSettings._msRefresh = _msR;
+          personalSettings._msClientId = S.settings.msGraphClientId || '';
+          personalSettings._msTenantId = S.settings.msGraphTenantId || '';
+          personalSettings._msName = getMSUserName();
+        }
+        userSettings[USER.email.toLowerCase()] = personalSettings;
       }
+
+      // Include history in personal settings for this user
+      if (USER.email && S.history && S.history.length > 0) {
+        const mySettings = userSettings[USER.email.toLowerCase()] || {};
+        mySettings.history = S.history.slice(-500); // keep last 500 entries
+        userSettings[USER.email.toLowerCase()] = mySettings;
+      }
+
+      const config = {
+        globalSettings,
+        userSettings,
+        users: getApprovedUsers(),
+        vendorAliases: S.vendorAliases || {}, // persist cross-session alias links
+        aiUsageAll: JSON.parse(localStorage.getItem('vcs_ai_usage_all')||'{}'),
+        renzoUsageAll: JSON.parse(localStorage.getItem('vcs_renzo_usage_all')||'{}'),
+        savedBy: USER.email || 'unknown',
+        savedAt: new Date().toISOString()
+      };
+      const content = JSON.stringify(config, null, 2);
+      const boundary = 'vcs_cfg_'+Date.now();
+      const body = new Blob([
+        '--'+boundary+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+
+        JSON.stringify({name: VCS_CONFIG_FILENAME})+'\r\n',
+        '--'+boundary+'\r\nContent-Type: application/json\r\n\r\n'+content+'\r\n',
+        '--'+boundary+'--'
+      ]);
+      const saveResp = await fetch(
+        'https://www.googleapis.com/upload/drive/v3/files/'+fileId+'?uploadType=multipart',
+        {method:'PATCH', headers:{Authorization:'Bearer '+GDriveToken,'Content-Type':'multipart/related; boundary='+boundary}, body}
+      );
+      if (saveResp.ok) {
+        console.log('Config saved to Drive');
+        // Show subtle toast — only if it was a user-triggered settings save
+        if (document.activeElement && document.activeElement.closest && document.activeElement.closest('.settings-section')) {
+          toast('Settings saved','#22c55e');
+        }
+      }
+    } catch(e) {
+      console.warn('Could not save config to Drive (proxy save succeeded):', e.message);
     }
-  } catch(e) {
-    console.warn('Could not save config to Drive:', e.message);
   }
 }
 
@@ -7370,7 +7367,7 @@ async function loadGlobalSettingsViaProxy() {
           S.settings[k] = gs[k];
         }
       });
-      const _ak=gs.apiKey||S.settings.apiKey;const _fk=gs.fathomApiKey||S.settings.fathomApiKey;if(_ak){S.settings.apiKey=_ak;localStorage.setItem('vcs_api_key',_ak);}if(_fk){S.settings.fathomApiKey=_fk;localStorage.setItem('vcs_fathom_key',_fk);}
+      const _ak=gs.apiKey||S.settings.apiKey;const _fk=gs.fathomApiKey||S.settings.fathomApiKey;if(_ak){S.settings.apiKey=_ak;localStorage.setItem('vcs_api_key',_ak);}if(_fk){S.settings.fathomApiKey=_fk;localStorage.setItem(getFathomKeyStorageKey(),_fk);}
     }
     // Merge approved users list (carries feature flags, roles, hiddenFields)
     if (cfg.users && Array.isArray(cfg.users)) {
@@ -9588,11 +9585,13 @@ function openLogActivityModal(vendor) {
   });
 }
 
+function getFathomKeyStorageKey(){return 'vcs_fathom_key_'+(USER&&USER.email||'default');}
+
 // ── Activity Timeline (rendered inside vendor panel) ──────────────────────────
 async function loadFathomMeetings(vendor) {
-  let fathomKey=(S.settings&&S.settings.fathomApiKey)||localStorage.getItem('vcs_fathom_key')||'';
+  let fathomKey=(S.settings&&S.settings.fathomApiKey)||localStorage.getItem(getFathomKeyStorageKey())||'';
   if(!fathomKey){
-    try{await loadGlobalSettingsViaProxy();fathomKey=(S.settings&&S.settings.fathomApiKey)||localStorage.getItem('vcs_fathom_key')||'';}
+    try{await loadGlobalSettingsViaProxy();fathomKey=(S.settings&&S.settings.fathomApiKey)||localStorage.getItem(getFathomKeyStorageKey())||'';}
     catch(_){}
   }
   if(!fathomKey){console.warn('[VCS Fathom] No key after retry');return [];}
@@ -11281,7 +11280,7 @@ function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt
 // ─── Customer Detail Panel ────────────────────────────────────────────────────
 function _buildCustomerSection(title,defaultOpen){const wrap=el('div',{style:{borderBottom:'1px solid var(--border)'}});const hdr=el('div',{style:{padding:'6px 12px',fontWeight:'700',fontSize:'10px',cursor:'pointer',background:'var(--card)',display:'flex',gap:'6px',alignItems:'center'}});hdr.appendChild(el('span',{style:{flex:'1'}},title));const arrow=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},defaultOpen?'▲':'▼');hdr.appendChild(arrow);const body=el('div',{style:{display:defaultOpen?'':'none'}});hdr.addEventListener('click',function(){const open=body.style.display!=='none';body.style.display=open?'none':'';arrow.textContent=open?'▼':'▲';});wrap.appendChild(hdr);wrap.appendChild(body);return {wrap:wrap,body:body};}
 
-function _renderCustomerPanel(panel,accountId,accountName,account,contacts,opps,cases,children){const hdr=el('div',{class:'detail-header'});const hdrTop=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'4px'}});hdrTop.appendChild(el('span',{style:{fontWeight:'800',fontSize:'14px',flex:'1'}},accountName));if(USER&&USER.sfInstance)hdrTop.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){window.open(USER.sfInstance+'/lightning/r/Account/'+accountId+'/view','_blank');}},'☁ SF'));hdrTop.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){const m=document.getElementById('vcs-customer-modal');if(m)m.remove();}},'✕'));hdr.appendChild(hdrTop);const sub=el('div',{style:{fontSize:'9px',color:'var(--muted)',display:'flex',gap:'12px',flexWrap:'wrap'}});if(account.Type)sub.appendChild(el('span',{},account.Type));if(account.BillingCity)sub.appendChild(el('span',{},'📍 '+account.BillingCity+(account.BillingState?', '+account.BillingState:'')));if(account.Owner&&account.Owner.Name)sub.appendChild(el('span',{},'👤 '+account.Owner.Name));if(account.Parent&&account.Parent.Name)sub.appendChild(el('span',{},'🏢 '+account.Parent.Name));if(children.length)sub.appendChild(el('span',{},'🏠 '+children.length+' facilities'));hdr.appendChild(sub);panel.appendChild(hdr);const body=el('div',{class:'detail-body'});if(contacts.length){const c=contacts[0];const cRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'8px 12px',background:'var(--card)',borderBottom:'1px solid var(--border)',fontSize:'10px',flexWrap:'wrap'}});cRow.appendChild(el('span',{style:{fontWeight:'700'}},c.Name||''));if(c.Title)cRow.appendChild(el('span',{style:{color:'var(--muted)'}},c.Title));if(c.Phone)cRow.appendChild(el('a',{href:'tel:'+c.Phone,style:{color:'var(--blue)'}},c.Phone));if(c.Email)cRow.appendChild(el('a',{href:'mailto:'+c.Email,style:{color:'var(--blue)'}},c.Email));if(typeof openShareContactModal==='function')cRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'auto',fontSize:'8px'},onclick:function(){openShareContactModal({name:c.Name,title:c.Title,phones:c.Phone?[{number:c.Phone}]:[],emails:c.Email?[{address:c.Email}]:[]},{name:accountName});}},'📤 Share'));body.appendChild(cRow);}const activeOpps=opps.filter(function(o){return !['Closed Won','Closed Lost'].includes(o.StageName);});const wonOpps=opps.filter(function(o){return o.StageName==='Closed Won';});const openCases=cases.filter(function(c){return c.Status!=='Closed';});const totalWon=wonOpps.reduce(function(s,o){return s+(Number(o.Amount)||0);},0);const stats=el('div',{style:{display:'flex',borderBottom:'1px solid var(--border)'}});[[activeOpps.length+' Active','var(--blue)'],[wonOpps.length+' Won','#10b981'],[openCases.length+' Cases','#f59e0b'],['$'+Math.round(totalWon).toLocaleString(),'#8b5cf6']].forEach(function(sc){stats.appendChild(el('div',{style:{flex:'1',padding:'8px 4px',textAlign:'center',fontSize:'9px',fontWeight:'700',color:sc[1],borderRight:'1px solid var(--border)'}},sc[0]));});body.appendChild(stats);if(activeOpps.length){const sec=_buildCustomerSection('🔵 Active Opportunities ('+activeOpps.length+')',true);const tbl=el('table',{style:{fontSize:'9px',width:'100%',borderCollapse:'collapse'}});const thead=el('thead');const hr=el('tr');['Name','Stage','Amount','Close','Owner'].forEach(function(h){hr.appendChild(el('th',{style:{padding:'3px 8px',textAlign:'left',fontSize:'8px',color:'var(--muted)'}},h));});thead.appendChild(hr);tbl.appendChild(thead);const tbody=el('tbody');activeOpps.forEach(function(o){const overdue=o.CloseDate&&new Date(o.CloseDate)<new Date();const tr=el('tr',{style:{cursor:'pointer',color:overdue?'var(--red)':''},onclick:function(){if(USER&&USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view','_blank');}});[o.Name||'—',o.StageName||'—','$'+Math.round(Number(o.Amount||0)).toLocaleString(),(overdue?'🔴 ':'')+( o.CloseDate||'—'),o.Owner&&o.Owner.Name||'—'].forEach(function(v){tr.appendChild(el('td',{style:{padding:'3px 8px'}},v));});tbody.appendChild(tr);});tbl.appendChild(tbody);sec.body.appendChild(tbl);body.appendChild(sec.wrap);}if(openCases.length){const sec=_buildCustomerSection('🔴 Open Cases ('+openCases.length+')',true);const tbl=el('table',{style:{fontSize:'9px',width:'100%',borderCollapse:'collapse'}});const thead=el('thead');const hr=el('tr');['#','Subject','Status','Priority','Owner'].forEach(function(h){hr.appendChild(el('th',{style:{padding:'3px 8px',textAlign:'left',fontSize:'8px',color:'var(--muted)'}},h));});thead.appendChild(hr);tbl.appendChild(thead);const tbody=el('tbody');openCases.forEach(function(c){const overdue=c.TargetDate__c&&new Date(c.TargetDate__c)<new Date();const tr=el('tr',{style:{cursor:'pointer'},onclick:function(){if(USER&&USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Case/'+c.Id+'/view','_blank');}});[(overdue?'🔴 ':'')+c.CaseNumber,c.Subject||'—',c.Status||'—',c.Priority||'—',c.Owner&&c.Owner.Name||'—'].forEach(function(v){tr.appendChild(el('td',{style:{padding:'3px 8px'}},v));});tbody.appendChild(tr);});tbl.appendChild(tbody);sec.body.appendChild(tbl);body.appendChild(sec.wrap);}if(children.length){const sec=_buildCustomerSection('🏠 Group Facilities ('+children.length+')',false);children.forEach(function(ch){const row=el('div',{style:{padding:'4px 10px',fontSize:'10px',cursor:'pointer',borderBottom:'1px solid var(--border)'},onclick:function(){openCustomerDetail(ch.Id,ch.Name);}});row.appendChild(el('span',{style:{color:'var(--blue)'}},ch.Name));if(ch.Type)row.appendChild(el('span',{style:{color:'var(--muted)',marginLeft:'8px',fontSize:'9px'}},ch.Type));sec.body.appendChild(row);});body.appendChild(sec.wrap);}const prepBtn=el('button',{class:'btn-xs',style:{width:'calc(100% - 24px)',margin:'12px',padding:'10px',fontWeight:'700',fontSize:'11px',background:'#10b981',color:'#fff',borderRadius:'4px',border:'none',cursor:'pointer'},onclick:async function(){prepBtn.disabled=true;prepBtn.textContent='⏳ Generating...';const briefing=await generateBusinessReviewPrep(accountId,accountName,account,contacts,opps,cases,children);prepBtn.disabled=false;prepBtn.textContent='🤖 Generate Business Review Prep';if(briefing)_showBusinessReviewModal(briefing,accountName);}},'🤖 Generate Business Review Prep');body.appendChild(prepBtn);panel.appendChild(body);}
+function _renderCustomerPanel(panel,accountId,accountName,account,contacts,opps,cases,children){const hdr=el('div',{class:'detail-header'});const hdrTop=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'4px'}});hdrTop.appendChild(el('span',{style:{fontWeight:'800',fontSize:'14px',flex:'1'}},accountName));if(USER&&USER.sfInstance)hdrTop.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){window.open(USER.sfInstance+'/lightning/r/Account/'+accountId+'/view','_blank');}},'☁ SF'));hdrTop.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){const m=document.getElementById('vcs-customer-modal');if(m)m.remove();}},'✕'));hdr.appendChild(hdrTop);const sub=el('div',{style:{fontSize:'9px',color:'var(--muted)',display:'flex',gap:'12px',flexWrap:'wrap'}});if(account.Type)sub.appendChild(el('span',{},account.Type));if(account.BillingCity)sub.appendChild(el('span',{},'📍 '+account.BillingCity+(account.BillingState?', '+account.BillingState:'')));if(account.Owner&&account.Owner.Name)sub.appendChild(el('span',{},'👤 '+account.Owner.Name));if(account.Parent&&account.Parent.Name)sub.appendChild(el('span',{},'🏢 '+account.Parent.Name));if(children.length)sub.appendChild(el('span',{},'🏠 '+children.length+' facilities'));hdr.appendChild(sub);panel.appendChild(hdr);const body=el('div',{class:'detail-body'});if(contacts.length){const c=contacts[0];const cRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'8px 12px',background:'var(--card)',borderBottom:'1px solid var(--border)',fontSize:'10px',flexWrap:'wrap'}});cRow.appendChild(el('span',{style:{fontWeight:'700'}},c.Name||''));if(c.Title)cRow.appendChild(el('span',{style:{color:'var(--muted)'}},c.Title));if(c.Phone)cRow.appendChild(el('a',{href:'tel:'+c.Phone,style:{color:'var(--blue)'}},c.Phone));if(c.Email)cRow.appendChild(el('a',{href:'mailto:'+c.Email,style:{color:'var(--blue)'}},c.Email));if(typeof openShareContactModal==='function')cRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'auto',fontSize:'8px'},onclick:function(){openShareContactModal({name:c.Name,title:c.Title,phones:c.Phone?[{number:c.Phone}]:[],emails:c.Email?[{address:c.Email}]:[]},{name:accountName});}},'📤 Share'));body.appendChild(cRow);}const activeOpps=opps.filter(function(o){return !['Closed Won','Closed Lost'].includes(o.StageName);});const wonOpps=opps.filter(function(o){return o.StageName==='Closed Won';});const openCases=cases.filter(function(c){return c.Status!=='Closed';});const totalWon=wonOpps.reduce(function(s,o){return s+(Number(o.Amount)||0);},0);const stats=el('div',{style:{display:'flex',borderBottom:'1px solid var(--border)'}});[[activeOpps.length+' Active','var(--blue)'],[wonOpps.length+' Won','#10b981'],[openCases.length+' Cases','#f59e0b'],['$'+Math.round(totalWon).toLocaleString(),'#8b5cf6']].forEach(function(sc){stats.appendChild(el('div',{style:{flex:'1',padding:'8px 4px',textAlign:'center',fontSize:'9px',fontWeight:'700',color:sc[1],borderRight:'1px solid var(--border)'}},sc[0]));});body.appendChild(stats);if(activeOpps.length){const sec=_buildCustomerSection('🔵 Active Opportunities ('+activeOpps.length+')',true);const tbl=el('table',{style:{fontSize:'9px',width:'100%',borderCollapse:'collapse'}});const thead=el('thead');const hr=el('tr');['Name','Stage','Amount','Close','Owner'].forEach(function(h){hr.appendChild(el('th',{style:{padding:'3px 8px',textAlign:'left',fontSize:'8px',color:'var(--muted)'}},h));});thead.appendChild(hr);tbl.appendChild(thead);const tbody=el('tbody');activeOpps.forEach(function(o){const overdue=o.CloseDate&&new Date(o.CloseDate)<new Date();const tr=el('tr',{style:{cursor:'pointer',color:overdue?'var(--red)':''},onclick:function(){if(USER&&USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Opportunity/'+o.Id+'/view','_blank');}});[o.Name||'—',o.StageName||'—','$'+Math.round(Number(o.Amount||0)).toLocaleString(),(overdue?'🔴 ':'')+( o.CloseDate||'—'),o.Owner&&o.Owner.Name||'—'].forEach(function(v){tr.appendChild(el('td',{style:{padding:'3px 8px'}},v));});tbody.appendChild(tr);});tbl.appendChild(tbody);sec.body.appendChild(tbl);body.appendChild(sec.wrap);}if(openCases.length){const sec=_buildCustomerSection('🔴 Open Cases ('+openCases.length+')',true);const tbl=el('table',{style:{fontSize:'9px',width:'100%',borderCollapse:'collapse'}});const thead=el('thead');const hr=el('tr');['#','Subject','Status','Priority','Owner'].forEach(function(h){hr.appendChild(el('th',{style:{padding:'3px 8px',textAlign:'left',fontSize:'8px',color:'var(--muted)'}},h));});thead.appendChild(hr);tbl.appendChild(thead);const tbody=el('tbody');openCases.forEach(function(c){const overdue=c.TargetDate__c&&new Date(c.TargetDate__c)<new Date();const tr=el('tr',{style:{cursor:'pointer'},onclick:function(){if(USER&&USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/Case/'+c.Id+'/view','_blank');}});[(overdue?'🔴 ':'')+c.CaseNumber,c.Subject||'—',c.Status||'—',c.Priority||'—',c.Owner&&c.Owner.Name||'—'].forEach(function(v){tr.appendChild(el('td',{style:{padding:'3px 8px'}},v));});tbody.appendChild(tr);});tbl.appendChild(tbody);sec.body.appendChild(tbl);body.appendChild(sec.wrap);}if(children.length){const sec=_buildCustomerSection('🏠 Group Facilities ('+children.length+')',false);children.forEach(function(ch){const row=el('div',{style:{padding:'4px 10px',fontSize:'10px',cursor:'pointer',borderBottom:'1px solid var(--border)'},onclick:function(){openCustomerDetail(ch.Id,ch.Name);}});row.appendChild(el('span',{style:{color:'var(--blue)'}},ch.Name));if(ch.Type)row.appendChild(el('span',{style:{color:'var(--muted)',marginLeft:'8px',fontSize:'9px'}},ch.Type));sec.body.appendChild(row);});body.appendChild(sec.wrap);}const prepBtn=el('button',{class:'btn-xs',style:{width:'calc(100% - 24px)',margin:'12px',padding:'10px',fontWeight:'700',fontSize:'11px',background:'#10b981',color:'#fff',borderRadius:'4px',border:'none',cursor:'pointer'},onclick:async function(){prepBtn.disabled=true;prepBtn.textContent='⏳ Generating...';const briefing=await generateBusinessReviewPrep(accountId,accountName,account,contacts,opps,cases,children);prepBtn.disabled=false;prepBtn.textContent='🤖 Generate Business Review Prep';if(briefing)_showBusinessReviewModal(briefing,accountName);}},'🤖 Generate Business Review Prep');body.appendChild(prepBtn);const custShape={name:accountName,email:(contacts[0]&&contacts[0].Email)||'',_sbContacts:contacts.map(function(c){return {name:c.Name,emails:c.Email?[{address:c.Email}]:[],phones:c.Phone?[{number:c.Phone}]:[]};})};renderCommPanel(body,custShape);panel.appendChild(body);}
 
 async function openCustomerDetail(accountId,accountName){const overlay=$('detail-overlay');const panel=$('detail-panel');if(overlay)overlay.style.display='block';if(!panel)return;panel.style.display='flex';panel.innerHTML='';panel.appendChild(el('div',{style:{padding:'20px',color:'var(--muted)',fontSize:'12px'}},'⏳ Loading '+accountName+'...'));if(!USER||!USER.sfToken){panel.innerHTML='';panel.appendChild(el('div',{style:{padding:'20px'}},el('p',{style:{color:'var(--muted)',marginBottom:'12px'}},'Salesforce connection required.'),el('button',{class:'btn-xs',style:{background:'#10b981',color:'#fff'},onclick:connectSalesforce},'Connect Salesforce')));return;}try{const sfBase=USER.sfInstance+'/services/data/v59.0';const headers={'Authorization':'Bearer '+USER.sfToken,'Content-Type':'application/json'};const get=function(url){return fetch(url,{headers:headers}).then(function(r){return r.json();});};const results=await Promise.all([get(sfBase+'/sobjects/Account/'+accountId+'?fields=Id,Name,Type,Industry,Phone,Website,BillingCity,BillingState,ParentId,NumberOfEmployees,Description'),get(sfBase+'/query?q='+encodeURIComponent("SELECT Id,Name,Title,Phone,Email FROM Contact WHERE AccountId='"+accountId+"' ORDER BY LastModifiedDate DESC LIMIT 10")),get(sfBase+'/query?q='+encodeURIComponent("SELECT Id,Name,StageName,Amount,CloseDate,Probability FROM Opportunity WHERE AccountId='"+accountId+"' ORDER BY CloseDate DESC LIMIT 20")),get(sfBase+'/query?q='+encodeURIComponent("SELECT Id,CaseNumber,Subject,Status,Priority,Type,CreatedDate FROM Case WHERE AccountId='"+accountId+"' ORDER BY CreatedDate DESC LIMIT 20")),get(sfBase+'/query?q='+encodeURIComponent("SELECT Id,Name,Type FROM Account WHERE ParentId='"+accountId+"' LIMIT 20"))]);const account=results[0];const contacts=(results[1].records||[]);const opps=(results[2].records||[]);const cases=(results[3].records||[]);const children=(results[4].records||[]);custModal.innerHTML='';_renderCustomerPanel(custModal,accountId,accountName,account,contacts,opps,cases,children);}catch(e){custModal.innerHTML='';custModal.appendChild(el('div',{style:{padding:'20px',color:'var(--red)'}},'Error: '+e.message));}}
 
@@ -23414,7 +23413,7 @@ function renderVCSHealth(c) {
       }
     });
     await runPing('Fathom API',async()=>{
-      const key=(S.settings&&S.settings.fathomApiKey)||localStorage.getItem('vcs_fathom_key')||'';
+      const key=(S.settings&&S.settings.fathomApiKey)||localStorage.getItem(getFathomKeyStorageKey())||'';
       if(!key) throw new Error('No Fathom key — set in Settings → Integrations');
       const r=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
         body:JSON.stringify({action:'fathomProxy',fathomKey:key,fathomAction:'test'})});
@@ -23951,6 +23950,138 @@ function renderSettings(c) {
     }
   },'🔌 Connect All');
   c.appendChild(connectAllBtn);
+
+  // ── Connections & API Keys collapsible section ────────────────────────────
+  (function(){
+    const _connKey='vcs_s_connections';
+    const _connOpen=localStorage.getItem(_connKey)!=='1';
+    const connWrap=el('div',{style:{border:'1px solid var(--border)',borderRadius:'4px',marginBottom:'8px',overflow:'hidden'}});
+    const connArrow=el('span',{style:{color:'var(--muted)',fontSize:'9px',marginLeft:'8px'}},_connOpen?'▲':'▼');
+    const connHdr=el('div',{style:{padding:'8px 12px',fontWeight:'700',fontSize:'11px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center',background:'var(--card)',userSelect:'none'},onclick:function(){
+      const now=connBody.style.display==='none';
+      connBody.style.display=now?'':'none';
+      connArrow.textContent=now?'▲':'▼';
+      localStorage.setItem(_connKey,now?'0':'1');
+    }});
+    connHdr.appendChild(el('span',{},'Connections & API Keys'));
+    connHdr.appendChild(connArrow);
+    connWrap.appendChild(connHdr);
+    const connBody=el('div',{style:{display:_connOpen?'':'none',padding:'12px',display:'flex',flexDirection:'column',gap:'8px'}});
+
+    // SF status + connect button
+    (function(){
+      const sfRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}});
+      sfRow.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'600',minWidth:'120px'}},'Salesforce'));
+      if(USER.sfToken){
+        sfRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--green)'}},'Connected as '+USER.email));
+        sfRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){USER.sfToken=null;USER.sfInstance=null;sessionStorage.removeItem('vcs_sf_token');renderSettings(c);toast('Disconnected');}},'Disconnect'));
+      } else {
+        sfRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Not connected'));
+        sfRow.appendChild(el('button',{class:'btn-xs btn-blue',onclick:function(){sfConnect();}},'Connect Salesforce'));
+      }
+      connBody.appendChild(sfRow);
+    })();
+
+    // MS status + connect button
+    (function(){
+      const msRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}});
+      msRow.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'600',minWidth:'120px'}},'Microsoft 365'));
+      const msTok=getMSToken&&getMSToken();
+      const msName=getMSUserName&&getMSUserName();
+      if(msTok&&Date.now()<(getMSTokenExp&&getMSTokenExp()||0)){
+        msRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--green)'}},msName?'Connected as '+msName:'Connected'));
+        msRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){clearMSTokens&&clearMSTokens();renderSettings(c);toast('Disconnected from Microsoft','#f59e0b');}},'Disconnect'));
+      } else {
+        msRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Not connected'));
+        msRow.appendChild(el('button',{class:'btn-xs btn-blue',onclick:function(){
+          const clientId=S.settings.msGraphClientId||localStorage.getItem('vcs_ms_clientid_temp')||'';
+          const tenantId=S.settings.msGraphTenantId||localStorage.getItem('vcs_ms_tenantid_temp')||'';
+          if(!clientId||!tenantId){toast('Enter MS Client ID and Tenant ID in Microsoft 365 settings below','#f59e0b');return;}
+          const redirectUri=encodeURIComponent(window.location.origin+window.location.pathname);
+          const scope=encodeURIComponent('Calendars.ReadWrite Mail.Read Mail.ReadWrite offline_access openid profile');
+          const state=btoa(JSON.stringify({ts:Date.now()}));
+          localStorage.setItem('vcs_ms_oauth_state',state);
+          localStorage.setItem('vcs_ms_clientid_temp',clientId);
+          localStorage.setItem('vcs_ms_tenantid_temp',tenantId);
+          const arr=crypto.getRandomValues(new Uint8Array(32));
+          const cv=Array.from(arr).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+          localStorage.setItem('vcs_ms_code_verifier',cv);
+          crypto.subtle.digest('SHA-256',new TextEncoder().encode(cv)).then(function(digest){
+            const cc=btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+            const authUrl='https://login.microsoftonline.com/'+tenantId+'/oauth2/v2.0/authorize?client_id='+clientId+'&response_type=code&redirect_uri='+redirectUri+'&scope='+scope+'&state='+encodeURIComponent(state)+'&code_challenge='+cc+'&code_challenge_method=S256&prompt=select_account';
+            window.open(authUrl,'ms_oauth_connect','width=600,height=700,left=200,top=100');
+          });
+        }},'Connect Microsoft'));
+      }
+      connBody.appendChild(msRow);
+    })();
+
+    // Fathom key (per-user)
+    (function(){
+      const fRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}});
+      fRow.appendChild(el('label',{style:{fontSize:'10px',fontWeight:'600',minWidth:'120px'}},'Fathom API Key'));
+      const fInp=el('input',{type:'password',class:'detail-edit-field',style:{flex:'1',fontSize:'10px',minWidth:'160px'},placeholder:'fathom_...'});
+      fInp.value=S.settings.fathomApiKey||localStorage.getItem(getFathomKeyStorageKey())||'';
+      fRow.appendChild(fInp);
+      fRow.appendChild(el('button',{class:'btn-xs btn-green',onclick:async function(){
+        const k=fInp.value.trim();
+        S.settings.fathomApiKey=k;
+        localStorage.setItem(getFathomKeyStorageKey(),k);
+        try{await saveUsersViaProxy();toast('Fathom key saved','#10b981');}
+        catch(e){saveConfigToDrive().catch(function(){});toast('Fathom key saved locally','#f59e0b');}
+      }},'Save'));
+      connBody.appendChild(fRow);
+    })();
+
+    // Claude AI key (admin only)
+    if(USER.role==='admin'){
+      const aiRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}});
+      aiRow.appendChild(el('label',{style:{fontSize:'10px',fontWeight:'600',minWidth:'120px'}},'Claude AI Key'));
+      const aiInp=el('input',{type:'password',class:'detail-edit-field',style:{flex:'1',fontSize:'10px',minWidth:'160px'},placeholder:'sk-ant-api...'});
+      aiInp.value=S.settings.apiKey||'';
+      aiRow.appendChild(aiInp);
+      aiRow.appendChild(el('button',{class:'btn-xs btn-green',onclick:async function(){
+        const k=aiInp.value.trim();
+        S.settings.apiKey=k;
+        localStorage.setItem('vcs_api_key',k);
+        try{await saveUsersViaProxy();toast('Claude AI key saved & synced','#10b981');}
+        catch(e){saveConfigToDrive().catch(function(){});toast('Claude AI key saved locally','#f59e0b');}
+      }},'Save'));
+      connBody.appendChild(aiRow);
+    }
+
+    // Renzo key (admin only)
+    if(USER.role==='admin'){
+      const rnRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}});
+      rnRow.appendChild(el('label',{style:{fontSize:'10px',fontWeight:'600',minWidth:'120px'}},'Renzo API Key'));
+      const rnInp=el('input',{type:'password',class:'detail-edit-field',style:{flex:'1',fontSize:'10px',minWidth:'160px'},placeholder:'renzo-vcs-key-...'});
+      rnInp.value=S.settings.renzoApiKey||'';
+      rnRow.appendChild(rnInp);
+      rnRow.appendChild(el('button',{class:'btn-xs btn-green',onclick:async function(){
+        const k=rnInp.value.trim();
+        S.settings.renzoApiKey=k;
+        try{await saveUsersViaProxy();toast('Renzo key saved & synced','#10b981');}
+        catch(e){saveConfigToDrive().catch(function(){});toast('Renzo key saved locally','#f59e0b');}
+      }},'Save'));
+      connBody.appendChild(rnRow);
+    }
+
+    // Supabase status (admin only)
+    if(USER.role==='admin'){
+      const sbRow=el('div',{style:{fontSize:'9px',color:'var(--muted)',display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}});
+      sbRow.appendChild(el('span',{style:{fontWeight:'600',fontSize:'10px',minWidth:'120px',color:'var(--text)'}},'Supabase'));
+      const sbUrl=S.settings.supabaseUrl||'';
+      const sbReady=SB&&SB.ready&&SB.ready();
+      sbRow.appendChild(el('span',{style:{color:sbReady?'var(--green)':sbUrl?'var(--amber)':'var(--muted)'}},
+        sbReady?'Connected — '+sbUrl.replace(/https?:\/\//,'').split('/')[0]:
+        sbUrl?'Configured ('+sbUrl.replace(/https?:\/\//,'').split('/')[0]+') — not connected':'Not configured'));
+      connBody.appendChild(sbRow);
+    }
+
+    connWrap.appendChild(connBody);
+    c.appendChild(connWrap);
+  })();
+
   // D2: Spacer so sticky settings bar never overlaps first card
   const _settingsSpacer=el('div',{style:{height:'0px'}});
   c.appendChild(_settingsSpacer);
@@ -24472,6 +24603,21 @@ function renderSettings(c) {
         });
         ffSec.appendChild(flagRow);
         details.appendChild(ffSec);
+      }
+
+      // ── Per-user Fathom API Key (Admin only) ──────────────────────────────
+      if(USER.role==='admin'){
+        const fRow=el('div',{class:'setting-row',style:{display:'flex',gap:'8px',alignItems:'center',marginTop:'6px'}});
+        fRow.appendChild(el('label',{style:{fontSize:'10px',minWidth:'100px'}},'Fathom API Key'));
+        const fInput=el('input',{type:'password',value:u.fathomApiKey||'',placeholder:"User's personal Fathom key",style:{flex:'1',fontSize:'10px'}});
+        fRow.appendChild(fInput);
+        fRow.appendChild(el('button',{class:'btn-xs btn-green',onclick:async function(){
+          const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);
+          if(i>=0){all[i].fathomApiKey=fInput.value.trim();setApprovedUsers(all,true);}
+          await saveUsersViaProxy();
+          toast('Fathom key updated for '+u.email,'#10b981');
+        }},'Save'));
+        details.appendChild(fRow);
       }
 
       row.appendChild(details);
