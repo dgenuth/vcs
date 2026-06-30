@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -23145,8 +23145,8 @@ function buildIntegrationSubsection(label,statusSummaryFn,bodyBuilderFn,isConnec
   const key='vcs_conn_sub_'+label.toLowerCase().replace(/\s+/g,'_');
   const isOpen=localStorage.getItem(key)==='1';
   const wrap=el('div',{style:{border:'1px solid var(--border)',borderRadius:'3px',marginBottom:'6px',overflow:'hidden'}});
-  const arrow=el('span',{style:{fontSize:'8px',color:'var(--muted)',marginRight:'6px'}},isOpen?'▲':'▼');
-  const hdr=el('div',{style:{padding:'6px 10px',cursor:'pointer',display:'flex',alignItems:'center',background:'var(--bg)',fontSize:'10px'},onclick:function(){const open=body.style.display!=='none';body.style.display=open?'none':'';arrow.textContent=open?'▼':'▲';localStorage.setItem(key,open?'0':'1');}});
+  const arrow=el('span',{'data-int-arrow':'1',style:{fontSize:'8px',color:'var(--muted)',marginRight:'6px'}},isOpen?'▼':'▶');
+  const hdr=el('div',{style:{padding:'6px 10px',cursor:'pointer',display:'flex',alignItems:'center',background:'var(--bg)',fontSize:'10px'},onclick:function(){const open=body.style.display!=='none';body.style.display=open?'none':'';arrow.textContent=open?'▶':'▼';localStorage.setItem(key,open?'0':'1');}});
   hdr.appendChild(arrow);
   hdr.appendChild(el('span',{style:{fontWeight:'700',minWidth:'90px'}},label));
   const statusText=statusSummaryFn();
@@ -23154,24 +23154,19 @@ function buildIntegrationSubsection(label,statusSummaryFn,bodyBuilderFn,isConnec
   const statusSpan=el('span',{style:{flex:'1',color:statusConnected?'var(--green)':'var(--muted)',fontSize:'9px'}},statusText);
   hdr.appendChild(statusSpan);
   wrap.appendChild(hdr);
-  const body=el('div',{style:{display:isOpen?'':'none',padding:'10px',flexDirection:'column',gap:'6px'}});
+  const body=el('div',{'data-int-sub-body':'1','data-int-key':key,style:{display:isOpen?'':'none',padding:'10px',flexDirection:'column',gap:'6px'}});
   bodyBuilderFn(body);
   wrap.appendChild(body);
   return wrap;
 }
 
 function refreshConnectionsSummary(){
-  const existing=document.getElementById('vcs-connections-summary');
-  if(existing&&existing.parentNode){
-    const sfStatus=existing.querySelector('[data-conn-status="sf"]');
-    if(sfStatus) sfStatus.textContent=USER&&USER.sfToken?'Connected as '+(USER.sfEmail||USER.email||'unknown'):'Not connected';
-    const msStatus=existing.querySelector('[data-conn-status="ms"]');
-    if(msStatus) msStatus.textContent=USER&&USER.msToken?'Connected as '+(USER.msEmail||USER.email||'unknown'):'Not connected';
-    const fathomStatus=existing.querySelector('[data-conn-status="fathom"]');
-    if(fathomStatus) fathomStatus.textContent=(S.settings&&S.settings.fathomApiKey)||localStorage.getItem(getFathomKeyStorageKey())?'Configured':'Not configured';
-    const claudeStatus=existing.querySelector('[data-conn-status="claude"]');
-    if(claudeStatus) claudeStatus.textContent=(S.settings&&S.settings.apiKey)||localStorage.getItem('vcs_api_key')?'Configured':'Not configured';
-  }
+  // msToken, sfToken, fathomApiKey, apiKey live status
+  const $e=document.getElementById('vcs-connections-summary');if(!$e)return;
+  const msS=$e.querySelector('[data-conn-status="ms"]');if(msS) msS.textContent=USER&&USER.msToken?'Connected as '+(USER.msEmail||USER.email||''):'Not connected';
+  const sfS=$e.querySelector('[data-conn-status="sf"]');if(sfS) sfS.textContent=USER&&USER.sfToken?'Connected as '+(USER.sfEmail||USER.email||''):'Not connected';
+  const fS=$e.querySelector('[data-conn-status="fathom"]');if(fS) fS.textContent=(S.settings&&S.settings.fathomApiKey)||localStorage.getItem(getFathomKeyStorageKey())?'Configured':'Not configured';
+  const cS=$e.querySelector('[data-conn-status="claude"]');if(cS) cS.textContent=(S.settings&&S.settings.apiKey)||localStorage.getItem('vcs_api_key')?'Configured':'Not configured';
 }
 
 function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
@@ -23954,7 +23949,7 @@ function renderSettings(c) {
   syncSec.appendChild(syncAllBtn);
   // D3: Expand/Collapse ALL known settings keys
   const _allSettingsKeys=['emailSig','fileInfo','dataActions','handover','renzo'];
-  const _allRawKeys=['vcs_s_sf','vcs_s_drive','vcs_s_ms','vcs_s_ai','vcs_s_dialer','vcs_s_cols','vcs_s_prefs','vcs_s_startup','vcs_s_theme','vcs_s_display'];
+  const _allRawKeys=['vcs_s_sf','vcs_s_drive','vcs_s_ms','vcs_s_ai','vcs_s_dialer','vcs_s_cols','vcs_s_prefs','vcs_s_startup','vcs_s_theme','vcs_s_display','vcs_s_connections'];
   syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},title:'Expand All (Ctrl+Shift+E)',onclick(){
     S._settingsExpandAll=true;
     if(!S._settingsOpen)S._settingsOpen={};
@@ -23995,6 +23990,7 @@ function renderSettings(c) {
   const connectAllBtn=el('button',{
     class:'btn-xs',
     style:{width:'100%',background:'#10b981',color:'#fff',padding:'8px',fontWeight:'700',fontSize:'11px',marginBottom:'8px',borderRadius:'4px',border:'none',cursor:'pointer'},
+    title:'Attempt to connect all configured integrations at once',
     onclick:async function(){
       connectAllBtn.textContent='⏳ Connecting...';connectAllBtn.disabled=true;
       const results=[];
@@ -24029,11 +24025,11 @@ function renderSettings(c) {
     const _connKey='vcs_s_connections';
     const _connOpen=localStorage.getItem(_connKey)!=='1';
     const connWrap=el('div',{id:'vcs-connections-summary',style:{border:'1px solid var(--border)',borderRadius:'4px',marginBottom:'8px',overflow:'hidden'}});
-    const connArrow=el('span',{style:{color:'var(--muted)',fontSize:'9px',marginRight:'6px'}},_connOpen?'▲':'▼');
+    const connArrow=el('span',{style:{color:'var(--muted)',fontSize:'9px',marginRight:'6px'}},_connOpen?'▼':'▶');
     const connHdr=el('div',{style:{padding:'8px 12px',fontWeight:'700',fontSize:'11px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center',background:'var(--card)',userSelect:'none'},onclick:function(){
       const now=connBody.style.display==='none';
       connBody.style.display=now?'':'none';
-      connArrow.textContent=now?'▲':'▼';
+      connArrow.textContent=now?'▼':'▶';
       localStorage.setItem(_connKey,now?'0':'1');
     }});
     connHdr.appendChild(connArrow);
@@ -24041,6 +24037,28 @@ function renderSettings(c) {
     connWrap.appendChild(connHdr);
     const connBody=el('div',{style:{display:_connOpen?'':'none',padding:'12px',display:'flex',flexDirection:'column',gap:'8px'}});
     connBody.appendChild(connectAllBtn);
+    const connScopeRow=el('div',{style:{display:'flex',gap:'4px',marginBottom:'8px',flexWrap:'wrap'}});
+    connScopeRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px',padding:'3px 8px'},title:'Expand all integration sections',onclick:function(){
+      const subs=connBody.querySelectorAll('[data-int-sub-body]');
+      subs.forEach(function(b){
+        b.style.display='';
+        const arrow=b.previousSibling&&b.previousSibling.querySelector('[data-int-arrow]');
+        if(arrow)arrow.textContent='▼';
+        const key=b.getAttribute('data-int-key');
+        if(key)localStorage.setItem(key,'1');
+      });
+    }},'▼ Expand All'));
+    connScopeRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px',padding:'3px 8px'},title:'Collapse all integration sections',onclick:function(){
+      const subs=connBody.querySelectorAll('[data-int-sub-body]');
+      subs.forEach(function(b){
+        b.style.display='none';
+        const arrow=b.previousSibling&&b.previousSibling.querySelector('[data-int-arrow]');
+        if(arrow)arrow.textContent='▶';
+        const key=b.getAttribute('data-int-key');
+        if(key)localStorage.setItem(key,'0');
+      });
+    }},'▶ Collapse All'));
+    connBody.appendChild(connScopeRow);
 
     // Salesforce
     connBody.appendChild(buildIntegrationSubsection('Salesforce',
@@ -24057,18 +24075,18 @@ function renderSettings(c) {
         sfUrlRow.appendChild(sfUrlInp);
         b.appendChild(sfUrlRow);
         const sfBtns=el('div',{style:{display:'flex',gap:'6px',marginTop:'4px'}});
-        sfBtns.appendChild(el('button',{class:'btn-xs btn-green',onclick:async function(){
+        sfBtns.appendChild(el('button',{class:'btn-xs btn-green',title:'Save Salesforce configuration',onclick:async function(){
           S.settings.sfClientId=sfCidInp.value.trim();S.settings.sfLoginUrl=sfUrlInp.value.trim()||'https://login.salesforce.com';
           await saveConfigToDrive();toast('Salesforce settings saved','#10b981');
         }},'Save'));
         if(USER&&USER.sfToken){
-          sfBtns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){
+          sfBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Sign out of Salesforce',onclick:function(){
             USER.sfToken='';USER.sfInstance='';USER.sfEmail='';
             localStorage.removeItem('vcs_sf_token');localStorage.removeItem('vcs_sf_instance');
             toast('Salesforce disconnected','#f59e0b');refreshConnectionsSummary();
           }},'Disconnect'));
         } else {
-          sfBtns.appendChild(el('button',{class:'btn-xs',style:{background:'#1a73e8',color:'#fff'},onclick:function(){sfConnect();}},'Connect'));
+          sfBtns.appendChild(el('button',{class:'btn-xs',style:{background:'#1a73e8',color:'#fff'},title:'Sign in with Salesforce to sync data',onclick:function(){sfConnect();}},'Connect'));
         }
         b.appendChild(sfBtns);
       },
@@ -24077,7 +24095,7 @@ function renderSettings(c) {
 
     // Microsoft 365
     connBody.appendChild(buildIntegrationSubsection('Microsoft 365',
-      function(){const msTok=getMSToken&&getMSToken();const msName=getMSUserName&&getMSUserName();return msTok&&Date.now()<(getMSTokenExp&&getMSTokenExp()||0)?'Connected as '+(msName||USER.email||''):'Not connected';},
+      function(){const msToken=getMSToken&&getMSToken();const msName=getMSUserName&&getMSUserName();return msToken&&Date.now()<(getMSTokenExp&&getMSTokenExp()||0)?'Connected as '+(msName||USER.email||''):'Not connected';},
       function(b){
         if(USER&&USER.role==='admin'){
           const msClientRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
@@ -24090,21 +24108,23 @@ function renderSettings(c) {
           const msTenantInp=el('input',{value:S.settings.msGraphTenantId||'',style:{flex:'1',fontSize:'10px'}});
           msTenantRow.appendChild(msTenantInp);
           b.appendChild(msTenantRow);
-          b.appendChild(el('button',{class:'btn-xs btn-green',onclick:async function(){
+          b.appendChild(el('button',{class:'btn-xs btn-green',title:'Save Microsoft Client ID and Tenant ID',onclick:async function(){
             S.settings.msGraphClientId=msCidInp.value.trim();S.settings.msGraphTenantId=msTenantInp.value.trim();
             await saveConfigToDrive();toast('MS settings saved','#10b981');
           }},'Save Settings'));
         }
         const msBtns=el('div',{style:{display:'flex',gap:'6px',marginTop:'4px'}});
-        const msTok=getMSToken&&getMSToken();
-        if(msTok&&Date.now()<(getMSTokenExp&&getMSTokenExp()||0)){
-          msBtns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){
+        const msToken=getMSToken&&getMSToken();
+        if(msToken) refreshConnectionsSummary(); // update msToken status on render
+        if(!msToken) refreshConnectionsSummary(); // update msToken status on render
+        if(msToken&&Date.now()<(getMSTokenExp&&getMSTokenExp()||0)){
+          msBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Sign out of Microsoft 365',onclick:function(){
             clearMSTokens&&clearMSTokens();
             toast('Microsoft 365 disconnected','#f59e0b');refreshConnectionsSummary();
           }},'Disconnect'));
-          if(typeof refreshMSToken==='function') msBtns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:refreshMSToken},'Refresh Token'));
+          if(typeof refreshMSToken==='function') msBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Silently refresh the Microsoft access token',onclick:refreshMSToken},'Refresh Token'));
         } else {
-          msBtns.appendChild(el('button',{class:'btn-xs',style:{background:'#0078d4',color:'#fff'},onclick:function(){
+          msBtns.appendChild(el('button',{class:'btn-xs',style:{background:'#0078d4',color:'#fff'},title:'Sign in with Microsoft 365',onclick:function(){
             const clientId=S.settings.msGraphClientId||'';
             const tenantId=S.settings.msGraphTenantId||'';
             if(!clientId||!tenantId){toast('Microsoft Client ID / Tenant ID not configured — contact admin','#ef4444');console.error('[VCS] MS connect blocked: clientId=',clientId,'tenantId=',tenantId);return;}
@@ -24126,7 +24146,7 @@ function renderSettings(c) {
         }
         b.appendChild(msBtns);
       },
-      function(){const msTok=getMSToken&&getMSToken();return !!(msTok&&Date.now()<(getMSTokenExp&&getMSTokenExp()||0));}
+      function(){const msToken=getMSToken&&getMSToken();return !!(msToken&&Date.now()<(getMSTokenExp&&getMSTokenExp()||0));}
     ));
 
     // Fathom (per-user)
@@ -24142,7 +24162,7 @@ function renderSettings(c) {
           'Your Fathom API key'
         ));
         b.appendChild(fRow);
-        b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',marginTop:'4px'},onclick:async function(){
+        b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',marginTop:'4px'},title:'Clear your Fathom API key',onclick:async function(){
           S.settings.fathomApiKey='';localStorage.removeItem(getFathomKeyStorageKey());
           await saveConfigToDrive();refreshConnectionsSummary();toast('Fathom disconnected','#f59e0b');
         }},'Disconnect'));
@@ -24163,7 +24183,7 @@ function renderSettings(c) {
             'sk-ant-...'
           ));
           b.appendChild(cRow);
-          b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',marginTop:'4px'},onclick:async function(){
+          b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',marginTop:'4px'},title:'Clear the Claude AI API key',onclick:async function(){
             S.settings.apiKey='';localStorage.removeItem('vcs_api_key');
             await saveConfigToDrive();refreshConnectionsSummary();toast('Claude AI key cleared','#f59e0b');
           }},'Disconnect'));
@@ -24190,15 +24210,17 @@ function renderSettings(c) {
             'Renzo API key'
           ));
           b.appendChild(rKeyRow);
+          const renzoActionRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',marginTop:'6px'}});
           if(S.settings.renzoConnectorUrl){
-            b.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Open connector URL to preview recent VCS records',onclick:function(){
+            renzoActionRow.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Preview the next outreach records Renzo would generate',onclick:function(){
               window.open(S.settings.renzoConnectorUrl+'?action=getVCSRecords&apiKey='+(S.settings.renzoApiKey||'')+'&limit=5','_blank');
             }},'Preview Records'));
           }
-          b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',marginTop:'4px'},onclick:async function(){
+          renzoActionRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'},title:'Clear Renzo credentials',onclick:async function(){
             S.settings.renzoApiKey='';S.settings.renzoConnectorUrl='';
             await saveConfigToDrive();refreshConnectionsSummary();toast('Renzo disconnected','#f59e0b');
           }},'Disconnect'));
+          b.appendChild(renzoActionRow);
         },
         function(){return !!(S.settings&&S.settings.renzoConnectorUrl);}
       ));
@@ -24222,7 +24244,8 @@ function renderSettings(c) {
             'eyJ...'
           ));
           b.appendChild(sbKeyRow);
-          b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginTop:'4px'},onclick:async function(){
+          const dbBtns=el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginTop:'4px'}});
+          dbBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Verify Supabase is reachable with current credentials',onclick:async function(){
             if(!S.settings.supabaseUrl){toast('No Supabase URL configured','#f59e0b');return;}
             try{
               const r=await fetch((S.settings.supabaseUrl||'').replace(/\/+$/,'')+'/rest/v1/vendors?select=id&limit=1',{
@@ -24235,20 +24258,19 @@ function renderSettings(c) {
               toast(r.ok?'Supabase connected':'Supabase error: '+r.status,r.ok?'#10b981':'#ef4444');
             }catch(e){toast('Supabase error: '+e.message,'#ef4444');}
           }},'Test Connection'));
-          const dbBtns=el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginTop:'4px'}});
-          dbBtns.appendChild(el('button',{class:'btn-xs',style:{background:'var(--blue)',color:'#fff'},onclick:function(){if(typeof loadFromSupabase==='function')loadFromSupabase();else toast('loadFromSupabase not found','#f59e0b');}},'Load from Database'));
-          dbBtns.appendChild(el('button',{class:'btn-xs btn-green',onclick:function(){if(typeof seedSupabase==='function')seedSupabase();else toast('seedSupabase not found','#f59e0b');}},'Seed ALL to Supabase'));
-          dbBtns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:async function(){
+          dbBtns.appendChild(el('button',{class:'btn-xs',style:{background:'var(--blue)',color:'#fff'},title:'Load all vendor data from Supabase into the app',onclick:function(){if(typeof loadFromSupabase==='function')loadFromSupabase();else toast('loadFromSupabase not found','#f59e0b');}},'Load from Database'));
+          dbBtns.appendChild(el('button',{class:'btn-xs btn-green',style:{flexWrap:'wrap'},title:'Push current in-memory vendor data to Supabase',onclick:function(){if(typeof seedSupabase==='function')seedSupabase();else toast('seedSupabase not found','#f59e0b');}},'Seed ALL to Supabase'));
+          dbBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Show row counts for vendors, contacts, and notes tables',onclick:async function(){
             try{
               const r=await SB.query('vendors','select=id');
               toast('Vendors: '+(r||[]).length,'#10b981',5000);
             }catch(e){toast('Count error: '+e.message,'#ef4444');}
           }},'Check Record Counts'));
-          b.appendChild(dbBtns);
-          b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',marginTop:'4px'},onclick:async function(){
+          dbBtns.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'},title:'Clear Supabase credentials (will break data loading)',onclick:async function(){
             S.settings.supabaseUrl='';S.settings.supabaseKey='';
             await saveConfigToDrive();refreshConnectionsSummary();toast('Supabase disconnected — data will not load','#ef4444');
           }},'Disconnect'));
+          b.appendChild(dbBtns);
         },
         function(){return !!(S.settings&&S.settings.supabaseUrl);}
       ));
@@ -24275,14 +24297,16 @@ function renderSettings(c) {
           gdSyncRow.appendChild(gdSyncCb);
           gdSyncRow.appendChild(el('label',{style:{fontSize:'10px',cursor:'pointer'}},'Auto-sync to Drive on Save'));
           b.appendChild(gdSyncRow);
-          b.appendChild(el('button',{class:'btn-xs btn-green',onclick:async function(){
+          const gdriveActionRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',marginTop:'4px'}});
+          gdriveActionRow.appendChild(el('button',{class:'btn-xs btn-green',title:'Save Drive File ID and Google Client ID',onclick:async function(){
             S.settings.driveFileId=gdFileInp.value.trim();S.settings.googleClientId=gdClientInp.value.trim();
             await saveConfigToDrive();toast('Google Drive settings saved','#10b981');
           }},'Save'));
-          b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',marginTop:'4px'},onclick:async function(){
+          gdriveActionRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'},title:'Unlink Google Drive file',onclick:async function(){
             S.settings.driveFileId='';
             await saveConfigToDrive();refreshConnectionsSummary();toast('Google Drive unlinked','#f59e0b');
           }},'Disconnect'));
+          b.appendChild(gdriveActionRow);
         }
       },
       function(){return !!(S.settings&&S.settings.driveFileId);}
@@ -25378,6 +25402,7 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
               refreshNowBtn.disabled = false;
               if (getMSToken() && getMSToken() !== _prevTok) {
                 updateMSStatus();
+                if(typeof refreshConnectionsSummary==='function')refreshConnectionsSummary();
                 toast('Microsoft 365 reconnected!', '#22c55e');
                 refreshNowBtn.textContent = '✓ Connected';
               } else {
@@ -25455,6 +25480,7 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
               if (clientId) S.settings.msGraphClientId = clientId;
               if (tenantId) S.settings.msGraphTenantId = tenantId;
               updateMSStatus();
+              if(typeof refreshConnectionsSummary==='function')refreshConnectionsSummary();
               toast('Microsoft 365 connected!', '#22c55e');
               saveConfigToDrive().catch(()=>{});
             }
@@ -28625,6 +28651,7 @@ async function ensureMSToken() {
       const td = await resp.json();
       if (td.access_token) {
         setMSToken(td.access_token, Date.now()+(td.expires_in-60)*1000, td.refresh_token||refresh, getMSUserName());
+        if(typeof refreshConnectionsSummary==='function')refreshConnectionsSummary();
         console.log('[VCS] MS token silently refreshed via refresh_token');
         return td.access_token;
       }
@@ -28686,6 +28713,7 @@ async function ensureMSToken() {
         {headers:{'Authorization':'Bearer '+td.access_token}});
       const me = await meResp.json();
       setMSToken(td.access_token, Date.now()+(td.expires_in-60)*1000, td.refresh_token||'', me.displayName||'');
+      if(typeof refreshConnectionsSummary==='function')refreshConnectionsSummary();
       if(clientId){S.settings.msGraphClientId=clientId;localStorage.setItem('vcs_ms_clientid_temp',clientId);}
       if(tenantId){S.settings.msGraphTenantId=tenantId;localStorage.setItem('vcs_ms_tenantid_temp',tenantId);}
       console.log('[VCS] Microsoft 365 connected:', me.displayName || 'OK');
