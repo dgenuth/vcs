@@ -6025,11 +6025,11 @@ function renderCommPanel(body, vendor) {
       commBody.appendChild(el('div',{style:{textAlign:'center',padding:'20px',color:'var(--muted)',fontSize:'10px'}},'📞 Fathom call transcripts — coming soon'));
       commBody.appendChild(el('div',{style:{textAlign:'center',fontSize:'9px',color:'var(--muted)',marginTop:'4px'}},'When Fathom integration is available, call transcripts will appear here'));
     } else if(_cpTab==='notes'){
-      // Notes timeline
-      if(!vendor.notes||!vendor.notes.trim()){commBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'No notes recorded for this vendor.'));}
-      else{
-        const notesWrap=el('div',{class:'notes-area'});renderNotesStr(notesWrap,vendor.notes);commBody.appendChild(notesWrap);
-      }
+      if(!userCan('notesVisible')){
+        commBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'8px 0',fontStyle:'italic'}},'Notes are not available for your role.'));
+      } else {
+        // Notes timeline
+        if(!vendor.notes||!vendor.notes.trim()){commBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'No notes recorded for this vendor.'));}
       const notesLog=(vendor._notesLog||[]).filter(function(n){const t=(n.type||'').toLowerCase();return !t.includes('text')&&!t.includes('sms');});
       if(notesLog.length){
         commBody.appendChild(el('div',{style:{fontWeight:'600',fontSize:'9px',color:'var(--muted)',marginTop:'8px',marginBottom:'4px'}},'Structured note log:'));
@@ -6044,6 +6044,7 @@ function renderCommPanel(body, vendor) {
           commBody.appendChild(row);
         });
       }
+      } // end userCan notesVisible else
     } else if(_cpTab==='texts'){
       const tDiv=el('div',{style:{padding:'8px'}});
       const textItems=(vendor._sbActivities||[]).filter(function(a){return (a.activity_type||'').toLowerCase().includes('text')||(a.activity_type||'').toLowerCase().includes('sms');});
@@ -24802,14 +24803,11 @@ function buildUserSubSection(label,bodyBuilderFn){
               '})()" style="background:rgba(0,0,0,.2);border:none;padding:2px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:700;">✕ Exit Preview</button>' +
               '</div>');
             document.body.style.paddingTop = '28px';
-            // Reload Drive data as the target user
+            // Reload from Supabase as the target user (never Drive — Drive is admin only)
             S.loaded = false;
-            S.vendors = []; S.allVendors = []; S.channelVendors = [];
             S.view = 'vendordb';
-            $('upload-screen').style.display = 'flex';
-            $('app').style.display = 'none';
             setTimeout(async () => {
-              try { await loadFromGoogleDrive(); }
+              try { await loadFromSupabase(); render(); }
               catch(e) { toast('Load failed: ' + e.message, '#ef4444'); }
             }, 400);
           })();
