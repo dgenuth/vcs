@@ -23100,6 +23100,46 @@ AG=Added Value, AH=Contact, AJ=Business#, AK=Mobile, AL=Email, BA=Notes (r[52])
   }
 }
 
+function buildMaskedKeyField(initialValue,onSaveCallback,placeholder){
+  const wrap=el('div',{style:{display:'flex',gap:'4px',alignItems:'center',flex:'1'}});
+  const inp=el('input',{type:'password',value:initialValue||'',placeholder:placeholder||'',style:{flex:'1',fontSize:'10px'}});
+  const eyeBtn=el('button',{class:'btn-xs btn-ghost',type:'button',style:{fontSize:'10px',padding:'2px 6px'},onclick:function(e){e.preventDefault();inp.type=inp.type==='password'?'text':'password';eyeBtn.textContent=inp.type==='password'?'👁':'🙈';}},'👁');
+  const saveBtn=el('button',{class:'btn-xs btn-green',onclick:function(){onSaveCallback(inp.value.trim());}},'Save');
+  wrap.appendChild(inp);wrap.appendChild(eyeBtn);wrap.appendChild(saveBtn);
+  return wrap;
+}
+
+function buildIntegrationSubsection(label,statusSummaryFn,bodyBuilderFn){
+  const key='vcs_conn_sub_'+label.toLowerCase().replace(/\s+/g,'_');
+  const isOpen=localStorage.getItem(key)==='1';
+  const wrap=el('div',{style:{border:'1px solid var(--border)',borderRadius:'3px',marginBottom:'6px',overflow:'hidden'}});
+  const arrow=el('span',{style:{fontSize:'8px',color:'var(--muted)',marginRight:'6px'}},isOpen?'▲':'▼');
+  const hdr=el('div',{style:{padding:'6px 10px',cursor:'pointer',display:'flex',alignItems:'center',background:'var(--bg)',fontSize:'10px'},onclick:function(){const open=body.style.display!=='none';body.style.display=open?'none':'';arrow.textContent=open?'▼':'▲';localStorage.setItem(key,open?'0':'1');}});
+  hdr.appendChild(arrow);
+  hdr.appendChild(el('span',{style:{fontWeight:'700',minWidth:'90px'}},label));
+  const statusSpan=el('span',{style:{flex:'1',color:'var(--muted)',fontSize:'9px'}},statusSummaryFn());
+  hdr.appendChild(statusSpan);
+  wrap.appendChild(hdr);
+  const body=el('div',{style:{display:isOpen?'':'none',padding:'10px',flexDirection:'column',gap:'6px'}});
+  bodyBuilderFn(body);
+  wrap.appendChild(body);
+  return wrap;
+}
+
+function refreshConnectionsSummary(){
+  const existing=document.getElementById('vcs-connections-summary');
+  if(existing&&existing.parentNode){
+    const sfStatus=existing.querySelector('[data-conn-status="sf"]');
+    if(sfStatus) sfStatus.textContent=USER&&USER.sfToken?'Connected as '+(USER.sfEmail||USER.email||'unknown'):'Not connected';
+    const msStatus=existing.querySelector('[data-conn-status="ms"]');
+    if(msStatus) msStatus.textContent=USER&&USER.msToken?'Connected as '+(USER.msEmail||USER.email||'unknown'):'Not connected';
+    const fathomStatus=existing.querySelector('[data-conn-status="fathom"]');
+    if(fathomStatus) fathomStatus.textContent=(S.settings&&S.settings.fathomApiKey)||localStorage.getItem(getFathomKeyStorageKey())?'Configured':'Not configured';
+    const claudeStatus=existing.querySelector('[data-conn-status="claude"]');
+    if(claudeStatus) claudeStatus.textContent=(S.settings&&S.settings.apiKey)||localStorage.getItem('vcs_api_key')?'Configured':'Not configured';
+  }
+}
+
 function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
   // Creates a collapsible settings card
   const card=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
@@ -23955,128 +23995,212 @@ function renderSettings(c) {
   (function(){
     const _connKey='vcs_s_connections';
     const _connOpen=localStorage.getItem(_connKey)!=='1';
-    const connWrap=el('div',{style:{border:'1px solid var(--border)',borderRadius:'4px',marginBottom:'8px',overflow:'hidden'}});
-    const connArrow=el('span',{style:{color:'var(--muted)',fontSize:'9px',marginLeft:'8px'}},_connOpen?'▲':'▼');
+    const connWrap=el('div',{id:'vcs-connections-summary',style:{border:'1px solid var(--border)',borderRadius:'4px',marginBottom:'8px',overflow:'hidden'}});
+    const connArrow=el('span',{style:{color:'var(--muted)',fontSize:'9px',marginRight:'6px'}},_connOpen?'▲':'▼');
     const connHdr=el('div',{style:{padding:'8px 12px',fontWeight:'700',fontSize:'11px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center',background:'var(--card)',userSelect:'none'},onclick:function(){
       const now=connBody.style.display==='none';
       connBody.style.display=now?'':'none';
       connArrow.textContent=now?'▲':'▼';
       localStorage.setItem(_connKey,now?'0':'1');
     }});
-    connHdr.appendChild(el('span',{},'Connections & API Keys'));
     connHdr.appendChild(connArrow);
+    connHdr.appendChild(el('span',{},'Connections & API Keys'));
     connWrap.appendChild(connHdr);
     const connBody=el('div',{style:{display:_connOpen?'':'none',padding:'12px',display:'flex',flexDirection:'column',gap:'8px'}});
 
-    // SF status + connect button
-    (function(){
-      const sfRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}});
-      sfRow.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'600',minWidth:'120px'}},'Salesforce'));
-      if(USER.sfToken){
-        sfRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--green)'}},'Connected as '+USER.email));
-        sfRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){USER.sfToken=null;USER.sfInstance=null;sessionStorage.removeItem('vcs_sf_token');renderSettings(c);toast('Disconnected');}},'Disconnect'));
-      } else {
-        sfRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Not connected'));
-        sfRow.appendChild(el('button',{class:'btn-xs btn-blue',onclick:function(){sfConnect();}},'Connect Salesforce'));
+    // Salesforce
+    connBody.appendChild(buildIntegrationSubsection('Salesforce',
+      function(){return USER&&USER.sfToken?'Connected as '+(USER.sfEmail||USER.email||''):'Not connected';},
+      function(b){
+        const sfRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
+        sfRow.appendChild(el('label',{style:{minWidth:'80px'}},'Client ID'));
+        const sfCidInp=el('input',{value:S.settings.sfClientId||'',style:{flex:'1',fontSize:'10px'}});
+        sfRow.appendChild(sfCidInp);
+        b.appendChild(sfRow);
+        const sfUrlRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
+        sfUrlRow.appendChild(el('label',{style:{minWidth:'80px'}},'Login URL'));
+        const sfUrlInp=el('input',{value:S.settings.sfLoginUrl||'https://login.salesforce.com',style:{flex:'1',fontSize:'10px'}});
+        sfUrlRow.appendChild(sfUrlInp);
+        b.appendChild(sfUrlRow);
+        const sfBtns=el('div',{style:{display:'flex',gap:'6px',marginTop:'4px'}});
+        sfBtns.appendChild(el('button',{class:'btn-xs btn-green',onclick:async function(){
+          S.settings.sfClientId=sfCidInp.value.trim();S.settings.sfLoginUrl=sfUrlInp.value.trim()||'https://login.salesforce.com';
+          await saveConfigToDrive();toast('Salesforce settings saved','#10b981');
+        }},'Save'));
+        if(USER&&USER.sfToken){
+          sfBtns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){
+            USER.sfToken='';USER.sfInstance='';USER.sfEmail='';
+            localStorage.removeItem('vcs_sf_token');localStorage.removeItem('vcs_sf_instance');
+            toast('Salesforce disconnected','#f59e0b');refreshConnectionsSummary();
+          }},'Disconnect'));
+        } else {
+          sfBtns.appendChild(el('button',{class:'btn-xs',style:{background:'#1a73e8',color:'#fff'},onclick:typeof connectSalesforce==='function'?connectSalesforce:function(){toast('Salesforce connect not available','#f59e0b');}},'Connect'));
+        }
+        b.appendChild(sfBtns);
       }
-      connBody.appendChild(sfRow);
-    })();
+    ));
 
-    // MS status + connect button
-    (function(){
-      const msRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}});
-      msRow.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'600',minWidth:'120px'}},'Microsoft 365'));
-      const msTok=getMSToken&&getMSToken();
-      const msName=getMSUserName&&getMSUserName();
-      if(msTok&&Date.now()<(getMSTokenExp&&getMSTokenExp()||0)){
-        msRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--green)'}},msName?'Connected as '+msName:'Connected'));
-        msRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){clearMSTokens&&clearMSTokens();renderSettings(c);toast('Disconnected from Microsoft','#f59e0b');}},'Disconnect'));
-      } else {
-        msRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Not connected'));
-        msRow.appendChild(el('button',{class:'btn-xs btn-blue',onclick:function(){
-          const clientId=S.settings.msGraphClientId||localStorage.getItem('vcs_ms_clientid_temp')||'';
-          const tenantId=S.settings.msGraphTenantId||localStorage.getItem('vcs_ms_tenantid_temp')||'';
-          if(!clientId||!tenantId){toast('Enter MS Client ID and Tenant ID in Microsoft 365 settings below','#f59e0b');return;}
-          const redirectUri=encodeURIComponent(window.location.origin+window.location.pathname);
-          const scope=encodeURIComponent('Calendars.ReadWrite Mail.Read Mail.ReadWrite offline_access openid profile');
-          const state=btoa(JSON.stringify({ts:Date.now()}));
-          localStorage.setItem('vcs_ms_oauth_state',state);
-          localStorage.setItem('vcs_ms_clientid_temp',clientId);
-          localStorage.setItem('vcs_ms_tenantid_temp',tenantId);
-          const arr=crypto.getRandomValues(new Uint8Array(32));
-          const cv=Array.from(arr).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
-          localStorage.setItem('vcs_ms_code_verifier',cv);
-          crypto.subtle.digest('SHA-256',new TextEncoder().encode(cv)).then(function(digest){
-            const cc=btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-            const authUrl='https://login.microsoftonline.com/'+tenantId+'/oauth2/v2.0/authorize?client_id='+clientId+'&response_type=code&redirect_uri='+redirectUri+'&scope='+scope+'&state='+encodeURIComponent(state)+'&code_challenge='+cc+'&code_challenge_method=S256&prompt=select_account';
-            window.open(authUrl,'ms_oauth_connect','width=600,height=700,left=200,top=100');
-          });
-        }},'Connect Microsoft'));
+    // Microsoft 365
+    connBody.appendChild(buildIntegrationSubsection('Microsoft 365',
+      function(){const msTok=getMSToken&&getMSToken();const msName=getMSUserName&&getMSUserName();return msTok&&Date.now()<(getMSTokenExp&&getMSTokenExp()||0)?'Connected as '+(msName||USER.email||''):'Not connected';},
+      function(b){
+        if(USER&&USER.role==='admin'){
+          const msClientRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
+          msClientRow.appendChild(el('label',{style:{minWidth:'80px'}},'Client ID'));
+          const msCidInp=el('input',{value:S.settings.msGraphClientId||'',style:{flex:'1',fontSize:'10px'}});
+          msClientRow.appendChild(msCidInp);
+          b.appendChild(msClientRow);
+          const msTenantRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
+          msTenantRow.appendChild(el('label',{style:{minWidth:'80px'}},'Tenant ID'));
+          const msTenantInp=el('input',{value:S.settings.msGraphTenantId||'',style:{flex:'1',fontSize:'10px'}});
+          msTenantRow.appendChild(msTenantInp);
+          b.appendChild(msTenantRow);
+          b.appendChild(el('button',{class:'btn-xs btn-green',onclick:async function(){
+            S.settings.msGraphClientId=msCidInp.value.trim();S.settings.msGraphTenantId=msTenantInp.value.trim();
+            await saveConfigToDrive();toast('MS settings saved','#10b981');
+          }},'Save Settings'));
+        }
+        const msBtns=el('div',{style:{display:'flex',gap:'6px',marginTop:'4px'}});
+        const msTok=getMSToken&&getMSToken();
+        if(msTok&&Date.now()<(getMSTokenExp&&getMSTokenExp()||0)){
+          msBtns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){
+            clearMSTokens&&clearMSTokens();
+            toast('Microsoft 365 disconnected','#f59e0b');refreshConnectionsSummary();
+          }},'Disconnect'));
+          if(typeof refreshMSToken==='function') msBtns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:refreshMSToken},'Refresh Token'));
+        } else {
+          msBtns.appendChild(el('button',{class:'btn-xs',style:{background:'#0078d4',color:'#fff'},onclick:function(){
+            const clientId=S.settings.msGraphClientId||'';
+            const tenantId=S.settings.msGraphTenantId||'';
+            if(!clientId||!tenantId){toast('Microsoft Client ID / Tenant ID not configured — contact admin','#ef4444');console.error('[VCS] MS connect blocked: clientId=',clientId,'tenantId=',tenantId);return;}
+            const redirectUri=encodeURIComponent(window.location.origin+window.location.pathname);
+            const scope=encodeURIComponent('Calendars.ReadWrite Mail.Read Mail.ReadWrite offline_access openid profile');
+            const state=btoa(JSON.stringify({ts:Date.now()}));
+            localStorage.setItem('vcs_ms_oauth_state',state);
+            localStorage.setItem('vcs_ms_clientid_temp',clientId);
+            localStorage.setItem('vcs_ms_tenantid_temp',tenantId);
+            const arr=crypto.getRandomValues(new Uint8Array(32));
+            const cv=Array.from(arr).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+            localStorage.setItem('vcs_ms_code_verifier',cv);
+            crypto.subtle.digest('SHA-256',new TextEncoder().encode(cv)).then(function(digest){
+              const cc=btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+              const authUrl='https://login.microsoftonline.com/'+tenantId+'/oauth2/v2.0/authorize?client_id='+clientId+'&response_type=code&redirect_uri='+redirectUri+'&scope='+scope+'&state='+encodeURIComponent(state)+'&code_challenge='+cc+'&code_challenge_method=S256&prompt=select_account';
+              window.open(authUrl,'ms_oauth_connect','width=600,height=700,left=200,top=100');
+            });
+          }},'Connect'));
+        }
+        b.appendChild(msBtns);
       }
-      connBody.appendChild(msRow);
-    })();
+    ));
 
-    // Fathom key (per-user)
-    (function(){
-      const fRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}});
-      fRow.appendChild(el('label',{style:{fontSize:'10px',fontWeight:'600',minWidth:'120px'}},'Fathom API Key'));
-      const fInp=el('input',{type:'password',class:'detail-edit-field',style:{flex:'1',fontSize:'10px',minWidth:'160px'},placeholder:'fathom_...'});
-      fInp.value=S.settings.fathomApiKey||localStorage.getItem(getFathomKeyStorageKey())||'';
-      fRow.appendChild(fInp);
-      fRow.appendChild(el('button',{class:'btn-xs btn-green',onclick:async function(){
-        const k=fInp.value.trim();
-        S.settings.fathomApiKey=k;
-        localStorage.setItem(getFathomKeyStorageKey(),k);
-        try{await saveUsersViaProxy();toast('Fathom key saved','#10b981');}
-        catch(e){saveConfigToDrive().catch(function(){});toast('Fathom key saved locally','#f59e0b');}
-      }},'Save'));
-      connBody.appendChild(fRow);
-    })();
+    // Fathom (per-user)
+    connBody.appendChild(buildIntegrationSubsection('Fathom',
+      function(){return (S.settings&&S.settings.fathomApiKey)||localStorage.getItem(getFathomKeyStorageKey())?'Configured':'Not configured';},
+      function(b){
+        b.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'4px'}},'Your personal Fathom API key — shows YOUR meeting recordings'));
+        const fRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
+        fRow.appendChild(el('label',{style:{minWidth:'80px'}},'API Key'));
+        fRow.appendChild(buildMaskedKeyField(
+          S.settings.fathomApiKey||localStorage.getItem(getFathomKeyStorageKey())||'',
+          async function(v){S.settings.fathomApiKey=v;localStorage.setItem(getFathomKeyStorageKey(),v);await saveConfigToDrive();toast('Fathom key saved','#10b981');refreshConnectionsSummary();},
+          'Your Fathom API key'
+        ));
+        b.appendChild(fRow);
+      }
+    ));
 
-    // Claude AI key (admin only)
-    if(USER.role==='admin'){
-      const aiRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}});
-      aiRow.appendChild(el('label',{style:{fontSize:'10px',fontWeight:'600',minWidth:'120px'}},'Claude AI Key'));
-      const aiInp=el('input',{type:'password',class:'detail-edit-field',style:{flex:'1',fontSize:'10px',minWidth:'160px'},placeholder:'sk-ant-api...'});
-      aiInp.value=S.settings.apiKey||'';
-      aiRow.appendChild(aiInp);
-      aiRow.appendChild(el('button',{class:'btn-xs btn-green',onclick:async function(){
-        const k=aiInp.value.trim();
-        S.settings.apiKey=k;
-        localStorage.setItem('vcs_api_key',k);
-        try{await saveUsersViaProxy();toast('Claude AI key saved & synced','#10b981');}
-        catch(e){saveConfigToDrive().catch(function(){});toast('Claude AI key saved locally','#f59e0b');}
-      }},'Save'));
-      connBody.appendChild(aiRow);
+    // Claude AI (admin only)
+    if(USER&&USER.role==='admin'){
+      connBody.appendChild(buildIntegrationSubsection('Claude AI',
+        function(){return (S.settings&&S.settings.apiKey)||localStorage.getItem('vcs_api_key')?'Configured':'Not configured';},
+        function(b){
+          const cRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
+          cRow.appendChild(el('label',{style:{minWidth:'80px'}},'API Key'));
+          cRow.appendChild(buildMaskedKeyField(
+            S.settings.apiKey||localStorage.getItem('vcs_api_key')||'',
+            async function(v){S.settings.apiKey=v;localStorage.setItem('vcs_api_key',v);await saveConfigToDrive();toast('Claude key saved','#10b981');refreshConnectionsSummary();},
+            'sk-ant-...'
+          ));
+          b.appendChild(cRow);
+        }
+      ));
     }
 
-    // Renzo key (admin only)
-    if(USER.role==='admin'){
-      const rnRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}});
-      rnRow.appendChild(el('label',{style:{fontSize:'10px',fontWeight:'600',minWidth:'120px'}},'Renzo API Key'));
-      const rnInp=el('input',{type:'password',class:'detail-edit-field',style:{flex:'1',fontSize:'10px',minWidth:'160px'},placeholder:'renzo-vcs-key-...'});
-      rnInp.value=S.settings.renzoApiKey||'';
-      rnRow.appendChild(rnInp);
-      rnRow.appendChild(el('button',{class:'btn-xs btn-green',onclick:async function(){
-        const k=rnInp.value.trim();
-        S.settings.renzoApiKey=k;
-        try{await saveUsersViaProxy();toast('Renzo key saved & synced','#10b981');}
-        catch(e){saveConfigToDrive().catch(function(){});toast('Renzo key saved locally','#f59e0b');}
-      }},'Save'));
-      connBody.appendChild(rnRow);
+    // Renzo (admin only)
+    if(USER&&USER.role==='admin'){
+      connBody.appendChild(buildIntegrationSubsection('Renzo',
+        function(){return S.settings&&S.settings.renzoConnectorUrl?'Configured':'Not configured';},
+        function(b){
+          const rUrlRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
+          rUrlRow.appendChild(el('label',{style:{minWidth:'80px'}},'Connector URL'));
+          const rUrlInp=el('input',{value:S.settings.renzoConnectorUrl||'',style:{flex:'1',fontSize:'10px'}});
+          rUrlRow.appendChild(rUrlInp);
+          b.appendChild(rUrlRow);
+          const rKeyRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
+          rKeyRow.appendChild(el('label',{style:{minWidth:'80px'}},'API Key'));
+          rKeyRow.appendChild(buildMaskedKeyField(
+            S.settings.renzoApiKey||'',
+            async function(v){S.settings.renzoConnectorUrl=rUrlInp.value.trim();S.settings.renzoApiKey=v;await saveConfigToDrive();toast('Renzo settings saved','#10b981');},
+            'Renzo API key'
+          ));
+          b.appendChild(rKeyRow);
+          if(S.settings.renzoConnectorUrl){
+            b.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Open connector URL to preview recent VCS records',onclick:function(){
+              window.open(S.settings.renzoConnectorUrl+'?action=getVCSRecords&apiKey='+(S.settings.renzoApiKey||'')+'&limit=5','_blank');
+            }},'Preview Records'));
+          }
+        }
+      ));
     }
 
-    // Supabase status (admin only)
-    if(USER.role==='admin'){
-      const sbRow=el('div',{style:{fontSize:'9px',color:'var(--muted)',display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'}});
-      sbRow.appendChild(el('span',{style:{fontWeight:'600',fontSize:'10px',minWidth:'120px',color:'var(--text)'}},'Supabase'));
-      const sbUrl=S.settings.supabaseUrl||'';
-      const sbReady=SB&&SB.ready&&SB.ready();
-      sbRow.appendChild(el('span',{style:{color:sbReady?'var(--green)':sbUrl?'var(--amber)':'var(--muted)'}},
-        sbReady?'Connected — '+sbUrl.replace(/https?:\/\//,'').split('/')[0]:
-        sbUrl?'Configured ('+sbUrl.replace(/https?:\/\//,'').split('/')[0]+') — not connected':'Not configured'));
-      connBody.appendChild(sbRow);
+    // Supabase (admin only)
+    if(USER&&USER.role==='admin'){
+      connBody.appendChild(buildIntegrationSubsection('Supabase',
+        function(){return S.settings&&S.settings.supabaseUrl?'Connected':'Not connected';},
+        function(b){
+          const sbUrlRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
+          sbUrlRow.appendChild(el('label',{style:{minWidth:'80px'}},'Project URL'));
+          const sbUrlInp=el('input',{value:S.settings.supabaseUrl||'',style:{flex:'1',fontSize:'10px'}});
+          sbUrlRow.appendChild(sbUrlInp);
+          b.appendChild(sbUrlRow);
+          const sbKeyRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
+          sbKeyRow.appendChild(el('label',{style:{minWidth:'80px'}},'Anon Key'));
+          sbKeyRow.appendChild(buildMaskedKeyField(
+            S.settings.supabaseKey||'',
+            async function(v){S.settings.supabaseUrl=sbUrlInp.value.trim();S.settings.supabaseKey=v;await saveConfigToDrive();toast('Supabase settings saved','#10b981');},
+            'eyJ...'
+          ));
+          b.appendChild(sbKeyRow);
+          b.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginTop:'4px'},onclick:async function(){
+            if(!S.settings.supabaseUrl){toast('No Supabase URL configured','#f59e0b');return;}
+            try{const r=await fetch(S.settings.supabaseUrl+'/rest/v1/',{headers:{'apikey':S.settings.supabaseKey||'','Authorization':'Bearer '+(S.settings.supabaseKey||'')}});toast(r.ok?'Supabase reachable':'Supabase error: '+r.status,r.ok?'#10b981':'#ef4444');}catch(e){toast('Supabase error: '+e.message,'#ef4444');}
+          }},'Test Connection'));
+        }
+      ));
     }
+
+    // Google Drive
+    connBody.appendChild(buildIntegrationSubsection('Google Drive',
+      function(){return S.settings&&S.settings.driveFileId?'Connected (file linked)':'Not connected';},
+      function(b){
+        const gdFileRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
+        gdFileRow.appendChild(el('label',{style:{minWidth:'80px'}},'File ID'));
+        const gdFileInp=el('input',{value:S.settings.driveFileId||'',style:{flex:'1',fontSize:'10px'}});
+        gdFileRow.appendChild(gdFileInp);
+        b.appendChild(gdFileRow);
+        if(USER&&USER.role==='admin'){
+          const gdClientRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
+          gdClientRow.appendChild(el('label',{style:{minWidth:'80px'}},'Google Client ID'));
+          const gdClientInp=el('input',{value:S.settings.googleClientId||'',style:{flex:'1',fontSize:'10px'}});
+          gdClientRow.appendChild(gdClientInp);
+          b.appendChild(gdClientRow);
+          b.appendChild(el('button',{class:'btn-xs btn-green',onclick:async function(){
+            S.settings.driveFileId=gdFileInp.value.trim();S.settings.googleClientId=gdClientInp.value.trim();
+            await saveConfigToDrive();toast('Google Drive settings saved','#10b981');
+          }},'Save'));
+        }
+      }
+    ));
 
     connWrap.appendChild(connBody);
     c.appendChild(connWrap);
