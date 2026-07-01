@@ -24375,6 +24375,14 @@ function buildTabAccessSection(container, userEmail) {
     }},'↺ Reset to role defaults'));
     container.appendChild(taHdr);
 
+    // Role default must come from the SAME persisted source the Role &
+    // Feature Defaults page itself uses (vcs_role_tab_overrides), not just
+    // the static ROLE_PERMS object -- ROLE_PERMS[role].tabs gets an
+    // in-memory patch when a role default changes, but that patch is lost
+    // on every reload, so this would otherwise compare against a stale
+    // pre-change value forever after the first role-default edit.
+    const _persistedRoleOverrides = (function(){ try{ return JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}'); }catch(_){ return {}; } })();
+    const _roleTabOv = _persistedRoleOverrides[cu.role] || {};
     const roleDefaultTabs=new Set(rolePerms.tabs||[]);
 
     // fallbackDefault lets child/sub-tab ids (which ROLE_PERMS.tabs never
@@ -24383,14 +24391,26 @@ function buildTabAccessSection(container, userEmail) {
     // granted a brand-new sub-permission id.
     function tabState(id, fallbackDefault){
       const ov=(cu.tabOverrides||{})[id];
-      const roleDefault=typeof fallbackDefault==='boolean'?fallbackDefault:roleDefaultTabs.has(id);
-      if(ov===undefined) return {view:roleDefault, edit:roleDefault, overridden:false};
+      // Check the persisted role-level override for this specific tab id
+      // first -- this is the CURRENT, real role default an admin may have
+      // set on the Role & Feature Defaults page. Only fall back to the
+      // static ROLE_PERMS set (or the given fallbackDefault) if no
+      // persisted role-level override exists for this id.
+      const _rOv = _roleTabOv[id];
+      const roleDefault = typeof fallbackDefault==='boolean' && _rOv===undefined ? fallbackDefault
+        : _rOv!==undefined
+          ? (typeof _rOv==='object' ? _rOv.view!==false : !!_rOv)
+          : roleDefaultTabs.has(id);
+      const roleDefaultEdit = _rOv!==undefined
+        ? (typeof _rOv==='object' ? _rOv.edit===true : !!_rOv)
+        : roleDefault;
+      if(ov===undefined) return {view:roleDefault, edit:roleDefaultEdit, overridden:false};
       if(typeof ov==='object'){
         const v=ov.view!==false, e=ov.edit===true;
         // Only genuinely overridden if the stored values actually differ from
         // the role default -- previously this was hardcoded true for any
         // object-shape override, even when the values matched the default.
-        const differs = (v !== roleDefault) || (e !== roleDefault);
+        const differs = (v !== roleDefault) || (e !== roleDefaultEdit);
         return {view:v, edit:e, overridden:differs};
       }
       return {view:!!ov, edit:!!ov, overridden:(!!ov!==roleDefault)}; // legacy bare boolean
