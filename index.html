@@ -967,7 +967,7 @@ async function signInWithMicrosoft() {
     });
     const email = response.account.username.toLowerCase();
     const name = response.account.name || email.split('@')[0];
-    return handleOAuthLogin(email, name, 'microsoft');
+    return await handleOAuthLogin(email, name, 'microsoft');
   } catch(e) {
     console.error('Microsoft login error:', e);
     const msg = e.errorCode === 'user_cancelled' ? 'Sign-in cancelled.' : 'Microsoft sign-in failed: ' + (e.errorMessage || e.message || e.errorCode);
@@ -1016,7 +1016,7 @@ async function signInWithGoogle() {
     const email = (profile.email || '').toLowerCase();
     const name = profile.name || email.split('@')[0];
     if (!email) throw new Error('No email returned from Google');
-    return handleOAuthLogin(email, name, 'google');
+    return await handleOAuthLogin(email, name, 'google');
   } catch(e) {
     console.error('Google login error:', e);
     $('login-error').textContent = 'Google sign-in failed: ' + e.message;
@@ -1070,10 +1070,29 @@ function verifyApprovedUser(email) {
   return found ? {status:'approved', user:found} : {status:'denied', email:email};
 }
 
-function handleOAuthLogin(email, name, provider) {
+async function handleOAuthLogin(email, name, provider) {
   // Check against approved users list
-  const users = getApprovedUsers();
-  const found = users.find(u => u.email.toLowerCase() === email);
+  let users = getApprovedUsers();
+  let found = users.find(u => u.email.toLowerCase() === email);
+
+  // CRITICAL FIX: localStorage is scoped per-origin. A brand-new domain
+  // (e.g. cms.primesourcex.com, which never shares storage with the
+  // sandbox at dgenuth.github.io) starts with a genuinely EMPTY approved-
+  // users list on every new browser -- indistinguishable, from this code's
+  // point of view, from "the server's real list is actually empty". Since
+  // production intentionally refuses to bootstrap-admin an empty list (see
+  // below), this was locking out EVERYONE on a fresh origin, including the
+  // real admin. Give the server one chance to sync the real list in before
+  // concluding it's actually empty.
+  if (users.length === 0 && CMS_PRODUCTION_MODE) {
+    try {
+      await loadGlobalSettingsViaProxy();
+      users = getApprovedUsers();
+      found = users.find(u => u.email.toLowerCase() === email);
+    } catch(e) {
+      console.warn('[VCS] Pre-auth server sync failed:', e.message);
+    }
+  }
 
   if (users.length > 0 && !found) {
     if (CMS_PRODUCTION_MODE) {
@@ -1089,6 +1108,8 @@ function handleOAuthLogin(email, name, provider) {
   // Disabled in production — an empty approved-users list in production would
   // silently hand admin to whoever logs in first. Production should always be
   // seeded with the real approved-users list before CMS_PRODUCTION_MODE flips on.
+  // (This now only fires if the server sync above ALSO came back empty --
+  // i.e. the list is genuinely empty, not just locally unsynced.)
   if (users.length === 0 && CMS_PRODUCTION_MODE) {
     showAccessDenied(email);
     return false;
