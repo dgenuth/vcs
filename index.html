@@ -941,7 +941,13 @@ async function getMsalInstance() {
     auth: {
       clientId: MS_CLIENT_ID,
       authority: MS_AUTHORITY,
-      redirectUri: 'https://dgenuth.github.io/vcs/'
+      // Compute dynamically based on wherever this is actually running --
+      // was hardcoded to the sandbox URL, which meant Microsoft login from
+      // production (cms.primesourcex.com) would authenticate successfully
+      // but then redirect the popup back to the SANDBOX instead, leaving
+      // the production tab stuck on "Connecting..." forever since it was
+      // waiting on a popup that landed on the wrong origin entirely.
+      redirectUri: window.location.origin + window.location.pathname
     },
     cache: { cacheLocation: 'localStorage', storeAuthStateInCookie: false }
   });
