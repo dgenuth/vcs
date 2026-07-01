@@ -7639,13 +7639,28 @@ async function loadConfigFromDrive() {
     const config = await resp.json();
     const localClientId = S.settings.googleClientId; // preserve device-specific key
 
-    // Apply global settings (admin config values)
+    // Apply global settings (admin config values) -- server/Drive values only
+    // fill in keys the user hasn't already set locally. A blind Object.assign
+    // here was unconditionally overwriting freshly-saved credentials (API
+    // keys, etc.) with whatever stale copy happened to be in the Drive file,
+    // every single login/refresh -- this was the real cause of the Claude AI
+    // key reverting after a hard refresh even after re-saving it correctly.
     if (config.globalSettings) {
-      Object.assign(S.settings, config.globalSettings);
+      Object.keys(config.globalSettings).forEach(function(k) {
+        const v = config.globalSettings[k];
+        if (v !== undefined && v !== '' && v !== null && !S.settings[k]) {
+          S.settings[k] = v;
+        }
+      });
     }
     // Legacy support for old config format
     if (config.settings && !config.globalSettings) {
-      Object.assign(S.settings, config.settings);
+      Object.keys(config.settings).forEach(function(k) {
+        const v = config.settings[k];
+        if (v !== undefined && v !== '' && v !== null && !S.settings[k]) {
+          S.settings[k] = v;
+        }
+      });
     }
 
     // Apply personal settings for current user
