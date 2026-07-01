@@ -27,8 +27,8 @@
   - Never develop directly in primesource-cms
 
   WHAT CMS_PRODUCTION_MODE DOES:
-  - Restricts the login screen to Microsoft sign-in only (hides Google and
-    the email/password fallback)
+  - Restricts the login screen to Microsoft + Google sign-in only (hides
+    the unverified email/password fallback)
   - Disables the email/password bootstrap-admin path in attemptLogin()
   - Shows a full-screen Access Denied takeover (showAccessDenied) instead of
     an inline error when an authenticated Microsoft/Google user is not on
@@ -28906,14 +28906,15 @@ function hideSearchDropdown() {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
-  // ── Production auth gate: Microsoft-only sign-in ──────────────────────────
-  // In production, restrict the login screen to Microsoft only — hide the
-  // Google button and the email/password fallback (and its bootstrap-admin
-  // path, disabled separately in attemptLogin/handleOAuthLogin above).
+  // ── Production auth gate: Microsoft + Google sign-in, no email/password ──
+  // Both OAuth providers stay available in production -- handleOAuthLogin's
+  // approved-users check is based purely on email address, independent of
+  // which provider authenticated it, so allowing Google here doesn't weaken
+  // the gate at all. Only the unverified email/password fallback (and its
+  // bootstrap-admin path, disabled separately in attemptLogin/handleOAuthLogin
+  // above) is hidden, since that path never proved the person owns the email.
   if (CMS_PRODUCTION_MODE) {
     try {
-      const _gBtn = document.getElementById('g-login-btn');
-      if (_gBtn) _gBtn.style.display = 'none';
       const _emailInput = document.getElementById('login-email');
       const _passInput = document.getElementById('login-pass');
       const _loginBtn = document.getElementById('login-btn');
