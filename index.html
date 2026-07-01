@@ -1565,7 +1565,7 @@ S = {
   tpChecked: new Set(), // track changed vendor names
   settings: {
     cols: { score:true, vendor:true, category:true, contact:true, phone:true, email:true, expiry:true, days:true, followup:true, tier:true, why:true, actions:true },
-    apiKey: localStorage.getItem('vcs_api_key') || '',
+    apiKey: (function(){const v=localStorage.getItem('vcs_api_key')||'';console.log('[VCS APIKEY DEBUG] 1. Initial S.settings.apiKey from localStorage:',v?v.slice(0,15)+'...':'(empty)');return v;})(),
     grokKey: localStorage.getItem('vcs_grok_key') || '',
     aiProvider: localStorage.getItem('vcs_ai_provider') || 'anthropic',
     theme: 'dark', compactRows: false, showScoreColor: true,
@@ -6730,7 +6730,7 @@ async function loadFromSupabase() {
 
     toast('✅ Loaded from Supabase — '+S.vendors.length+' vendors · '+(S.channelVendors||[]).length+' partners · '+(S.itw||[]).length+' pipeline · '+(S.reviews||[]).length+' reviews','#10b981',6000);
     S.loaded = true;
-    if(S.settings&&S.settings.apiKey) localStorage.setItem('vcs_api_key', S.settings.apiKey);
+    if(S.settings&&S.settings.apiKey) { console.log('[VCS APIKEY DEBUG] 4. loadFromSupabase re-persisting S.settings.apiKey to localStorage:',S.settings.apiKey.slice(0,15)+'...'); localStorage.setItem('vcs_api_key', S.settings.apiKey); }
     $('upload-screen').style.display='none';
     $('app').style.display='flex';
     render();
@@ -7646,12 +7646,14 @@ async function loadConfigFromDrive() {
     // every single login/refresh -- this was the real cause of the Claude AI
     // key reverting after a hard refresh even after re-saving it correctly.
     if (config.globalSettings) {
+      console.log('[VCS APIKEY DEBUG] 2. loadConfigFromDrive running. Current S.settings.apiKey:',S.settings.apiKey?S.settings.apiKey.slice(0,15)+'...':'(empty)','| Drive file has apiKey:',config.globalSettings.apiKey?config.globalSettings.apiKey.slice(0,15)+'...':'(none)');
       Object.keys(config.globalSettings).forEach(function(k) {
         const v = config.globalSettings[k];
         if (v !== undefined && v !== '' && v !== null && !S.settings[k]) {
           S.settings[k] = v;
         }
       });
+      if(config.globalSettings.apiKey) console.log('[VCS APIKEY DEBUG] 2b. After loadConfigFromDrive, S.settings.apiKey is now:',S.settings.apiKey?S.settings.apiKey.slice(0,15)+'...':'(empty)');
     }
     // Legacy support for old config format
     if (config.settings && !config.globalSettings) {
@@ -7791,6 +7793,7 @@ async function loadGlobalSettingsViaProxy() {
     // Apply global settings (admin-configured values shared across all users)
     if (cfg.globalSettings) {
       const gs = cfg.globalSettings;
+      console.log('[VCS APIKEY DEBUG] 3. loadGlobalSettingsViaProxy (GAS getConfig) running. Current S.settings.apiKey:',S.settings.apiKey?S.settings.apiKey.slice(0,15)+'...':'(empty)','| GAS returned apiKey:',gs.apiKey?gs.apiKey.slice(0,15)+'...':'(none)');
       const SAFE_GLOBAL_KEYS = ['apiKey','renzoApiKey','driveFileId','aiKeyShared','supabaseUrl','supabaseKey','fathomApiKey'];
       SAFE_GLOBAL_KEYS.forEach(k => {
         // Server value only fills in when local is empty -- local settings the
@@ -7802,6 +7805,7 @@ async function loadGlobalSettingsViaProxy() {
         }
       });
       if(!S.settings.apiKey && gs.apiKey){S.settings.apiKey=gs.apiKey;localStorage.setItem('vcs_api_key',gs.apiKey);}
+      console.log('[VCS APIKEY DEBUG] 3b. After loadGlobalSettingsViaProxy, S.settings.apiKey is now:',S.settings.apiKey?S.settings.apiKey.slice(0,15)+'...':'(empty)');
       if(!S.settings.fathomApiKey && gs.fathomApiKey){S.settings.fathomApiKey=gs.fathomApiKey;localStorage.setItem(getFathomKeyStorageKey(),gs.fathomApiKey);}
     }
     // Merge approved users list (carries feature flags, roles, hiddenFields)
@@ -24160,6 +24164,7 @@ function buildFieldAccess(container, userEmail) {
 
     const hf=cu.hiddenFields||[];
     const canRoleEdit=!!rolePerms.save;
+    const _roleDefaultHf=getDefaultHiddenFields(cu.role, cu.email)||[];
 
     Object.entries(FIELD_GROUPS).forEach(function(entry){
       const groupName=entry[0], groupKeys=entry[1];
@@ -24176,7 +24181,14 @@ function buildFieldAccess(container, userEmail) {
         const isViewable=!isHidden;
         const editOverride=(cu.fieldEditPerms||{})[f.key];
         const isEditChecked=typeof editOverride==='boolean'?editOverride:canRoleEdit;
-        const isOverridden=!!cu._customHiddenFields || (typeof editOverride==='boolean'&&editOverride!==canRoleEdit);
+        // Genuinely overridden only if THIS field's view or edit state differs
+        // from the role default -- previously any customization anywhere on
+        // the user (_customHiddenFields) marked every single field tile as
+        // overridden, even ones that still matched the default exactly.
+        const roleDefaultHidden=_roleDefaultHf.includes(f.key);
+        const viewDiffers=isHidden!==roleDefaultHidden;
+        const editDiffers=(typeof editOverride==='boolean'&&editOverride!==canRoleEdit);
+        const isOverridden=viewDiffers||editDiffers;
 
         const tile=buildPermTile({
           label:f.label, isViewable:isViewable, isOverridden:isOverridden,
@@ -24237,7 +24249,14 @@ function buildFieldAccess(container, userEmail) {
       const ov=(cu.tabOverrides||{})[id];
       const roleDefault=typeof fallbackDefault==='boolean'?fallbackDefault:roleDefaultTabs.has(id);
       if(ov===undefined) return {view:roleDefault, edit:roleDefault, overridden:false};
-      if(typeof ov==='object') return {view:ov.view!==false, edit:ov.edit===true, overridden:true};
+      if(typeof ov==='object'){
+        const v=ov.view!==false, e=ov.edit===true;
+        // Only genuinely overridden if the stored values actually differ from
+        // the role default -- previously this was hardcoded true for any
+        // object-shape override, even when the values matched the default.
+        const differs = (v !== roleDefault) || (e !== roleDefault);
+        return {view:v, edit:e, overridden:differs};
+      }
       return {view:!!ov, edit:!!ov, overridden:(!!ov!==roleDefault)}; // legacy bare boolean
     }
     function persistTabState(id, view, edit, showEdit){
@@ -24698,7 +24717,7 @@ function _buildConnectionsSection(){
             cRow.appendChild(el('label',{style:{minWidth:'80px'}},_aiKeyLabel));
             cRow.appendChild(buildMaskedKeyField(
               S.settings[_aiSettingsKey]||localStorage.getItem(_aiStorageKey)||'',
-              async function(v){S.settings[_aiSettingsKey]=v;localStorage.setItem(_aiStorageKey,v);await saveConfigToDrive();toast((_aiProvider==='grok'?'Grok':_aiProvider==='openai'?'OpenAI':'Claude')+' key saved','#10b981');refreshConnectionsSummary();},
+              async function(v){console.log('[VCS APIKEY DEBUG] 0. SAVE clicked. Saving to '+_aiStorageKey+':',v?v.slice(0,15)+'...':'(empty)');S.settings[_aiSettingsKey]=v;localStorage.setItem(_aiStorageKey,v);await saveConfigToDrive();console.log('[VCS APIKEY DEBUG] 0b. After saveConfigToDrive completed. localStorage now has:',localStorage.getItem(_aiStorageKey)?localStorage.getItem(_aiStorageKey).slice(0,15)+'...':'(empty)');toast((_aiProvider==='grok'?'Grok':_aiProvider==='openai'?'OpenAI':'Claude')+' key saved','#10b981');refreshConnectionsSummary();},
               _aiPlaceholder
             ));
             b.appendChild(cRow);
@@ -25484,6 +25503,13 @@ function buildUserSubSection(label,bodyBuilderFn){
                 all[i]._customHiddenFields=true;
               }
               setApprovedUsers(all,true);
+              // Fix: mutate the SAME 'u' object this panel's re-render reads
+              // from -- 'u' was captured once when the row was built and
+              // never refreshed, so the toggle persisted correctly but the
+              // tile's color never visibly updated on re-render.
+              if(!u.featureFlags)u.featureFlags={};
+              u.featureFlags[ffKey]=newVal;
+              if(ffKey==='showFinancials'){ u.hiddenFields=all[i].hiddenFields; u._customHiddenFields=true; }
               if(u.email===USER.email){if(!USER.featureFlags)USER.featureFlags={};USER.featureFlags[ffKey]=newVal;}
               setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
               toast('✓ Feature flag updated','#10b981');
