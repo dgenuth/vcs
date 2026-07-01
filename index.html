@@ -1,4 +1,41 @@
 <!DOCTYPE html>
+<!--
+  PRIME SOURCE CENTRAL MANAGEMENT SYSTEM
+  =======================================
+  SANDBOX:    https://dgenuth.github.io/vcs/  (CMS_PRODUCTION_MODE = false)
+  PRODUCTION: https://cms.primesourcex.com    (CMS_PRODUCTION_MODE = true)
+
+  TO DEPLOY TO PRODUCTION:
+  1. Copy this index.html to the primesource-cms GitHub repo
+  2. Change: const CMS_PRODUCTION_MODE = false;
+         to: const CMS_PRODUCTION_MODE = true;
+  3. Commit and push -- GitHub Pages deploys automatically in ~2 min
+
+  TO CREATE THE PRODUCTION REPO (one-time):
+  1. github.com/new -> name: primesource-cms -> Public -> Create
+  2. Settings -> Pages -> Source: main branch / root -> Save
+  3. Add custom domain: Settings -> Pages -> Custom domain -> cms.primesourcex.com
+  4. In your DNS (wherever primesourcex.com is managed):
+     Add CNAME record: cms -> dgenuth.github.io
+  5. Wait ~10 min for DNS propagation
+  6. GitHub will auto-provision HTTPS/SSL
+
+  DEVELOPMENT FLOW:
+  - All development happens in dgenuth/vcs repo
+  - When a build is ready for production: copy index.html -> primesource-cms
+    and flip CMS_PRODUCTION_MODE to true
+  - Never develop directly in primesource-cms
+
+  WHAT CMS_PRODUCTION_MODE DOES:
+  - Restricts the login screen to Microsoft sign-in only (hides Google and
+    the email/password fallback)
+  - Disables the email/password bootstrap-admin path in attemptLogin()
+  - Shows a full-screen Access Denied takeover (showAccessDenied) instead of
+    an inline error when an authenticated Microsoft/Google user is not on
+    the approved-users list (see handleOAuthLogin(), verifyApprovedUser())
+  - Blocks bootstrap-admin-on-empty-user-list in handleOAuthLogin() so a
+    misconfigured/empty approved-users list can't silently grant admin
+-->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -905,6 +942,11 @@ const MS_TENANT_ID = '8363e2da-e1a6-4296-98df-020abbd50ab4';
 const MS_AUTHORITY = 'https://login.microsoftonline.com/' + MS_TENANT_ID;
 const GOOGLE_CLIENT_ID_AUTH = '690262071158-vfuo0pm2rd1bkqnkj26ut5g6a5nhbqfd.apps.googleusercontent.com';
 
+// ─── Production Mode ──────────────────────────────────────────────────────────
+// Set to true ONLY in the production repo (primesource-cms).
+// Sandbox repo (vcs) keeps this false — no auth gate in development.
+const CMS_PRODUCTION_MODE = false;
+
 let msalInstance = null;
 
 async function getMsalInstance() {
@@ -1002,17 +1044,69 @@ async function signInWithGoogle() {
   }
 }
 
+// ─── Production auth gate ──────────────────────────────────────────────────
+// showAccessDenied: full-screen takeover shown when a non-approved user
+// authenticates successfully with Microsoft/Google but isn't on the
+// approved-users list. Only used when CMS_PRODUCTION_MODE is true — in
+// sandbox, handleOAuthLogin's inline login-error message is used instead so
+// development isn't interrupted by a hard block.
+function showAccessDenied(email) {
+  document.body.innerHTML = '';
+  const div = el('div',{style:{
+    position:'fixed',inset:'0',display:'flex',alignItems:'center',
+    justifyContent:'center',background:'#0a0e1a',fontFamily:'Arial,sans-serif'
+  }});
+  div.innerHTML = `
+    <div style="text-align:center;color:#fff;padding:40px;max-width:400px">
+      <div style="font-size:48px;margin-bottom:16px">🔒</div>
+      <h2 style="margin:0 0 8px;color:#ef4444">Access Denied</h2>
+      <p style="color:rgba(255,255,255,.5);margin:0 0 8px;font-size:13px">
+        ${email ? '<strong>'+email+'</strong> is' : 'Your account is'} not authorized to access Prime Source CMS.
+      </p>
+      <p style="color:rgba(255,255,255,.3);font-size:11px;margin:0 0 24px">
+        Contact your administrator to request access.
+      </p>
+      <button onclick="location.reload()" style="padding:8px 20px;background:#4F7CFF;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px">
+        Try a different account
+      </button>
+    </div>
+  `;
+  document.body.appendChild(div);
+}
+
+// verifyApprovedUser: re-checks the approved-users list for an email that
+// just authenticated via OAuth. getApprovedUsers() reads synchronously from
+// localStorage (kept in sync with Drive/Supabase elsewhere in the app), so
+// this doesn't need a network round-trip the way a fresh install would.
+function verifyApprovedUser(email) {
+  const approved = getApprovedUsers() || [];
+  const found = approved.find(function(u){ return (u.email||'').toLowerCase() === email.toLowerCase(); });
+  return found ? {status:'approved', user:found} : {status:'denied', email:email};
+}
+
 function handleOAuthLogin(email, name, provider) {
   // Check against approved users list
   const users = getApprovedUsers();
   const found = users.find(u => u.email.toLowerCase() === email);
 
   if (users.length > 0 && !found) {
+    if (CMS_PRODUCTION_MODE) {
+      logLoginAttempt(email, false, 'not in approved list (production gate)');
+      showAccessDenied(email);
+      return false;
+    }
     $('login-error').textContent = 'Access denied — ' + email + ' is not an approved user. Contact your administrator.';
     return false;
   }
 
-  // Bootstrap admin on first ever login (empty user list)
+  // Bootstrap admin on first ever login (empty user list).
+  // Disabled in production — an empty approved-users list in production would
+  // silently hand admin to whoever logs in first. Production should always be
+  // seeded with the real approved-users list before CMS_PRODUCTION_MODE flips on.
+  if (users.length === 0 && CMS_PRODUCTION_MODE) {
+    showAccessDenied(email);
+    return false;
+  }
   if (users.length === 0) {
     // Pre-populate full employee directory on first ever login
     // Employee directory — only confirmed users from User Accounts tab in Vendor_Catalogue.xlsm
@@ -7753,6 +7847,12 @@ function logLoginAttempt(email,success,reason){
 function attemptLogin(email, password){
   email=String(email||'').trim().toLowerCase();
   if(!email||!email.includes('@')){return{ok:false,msg:'Enter a valid email address'};}
+  // Production mode requires Microsoft sign-in — the email/password fallback
+  // (and its bootstrap-admin path) is a sandbox-only convenience.
+  if(CMS_PRODUCTION_MODE){
+    logLoginAttempt(email,false,'email/password login disabled in production');
+    return{ok:false,msg:'Password sign-in is disabled. Please sign in with your Prime Source Microsoft account.'};
+  }
   const users=getApprovedUsers();
   // Bootstrap: first ever login becomes admin with no password required
   if(!users.length){
@@ -28066,6 +28166,24 @@ function hideSearchDropdown() {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 function init() {
+  // ── Production auth gate: Microsoft-only sign-in ──────────────────────────
+  // In production, restrict the login screen to Microsoft only — hide the
+  // Google button and the email/password fallback (and its bootstrap-admin
+  // path, disabled separately in attemptLogin/handleOAuthLogin above).
+  if (CMS_PRODUCTION_MODE) {
+    try {
+      const _gBtn = document.getElementById('g-login-btn');
+      if (_gBtn) _gBtn.style.display = 'none';
+      const _emailInput = document.getElementById('login-email');
+      const _passInput = document.getElementById('login-pass');
+      const _loginBtn = document.getElementById('login-btn');
+      [_emailInput, _passInput, _loginBtn].forEach(function(elx){ if(elx) elx.style.display='none'; });
+      // Hide the "or use email" divider (the div immediately before the email input)
+      if (_emailInput && _emailInput.previousElementSibling) {
+        _emailInput.previousElementSibling.style.display = 'none';
+      }
+    } catch(e) { console.warn('[VCS] Production login UI restriction failed:', e.message); }
+  }
   // ── Attach login handlers FIRST — before anything that could throw ──
   // ── Impersonation handler (admin Login As feature) ──
   // Wrapped in try/catch so errors here don't break login buttons
