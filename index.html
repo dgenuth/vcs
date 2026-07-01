@@ -24515,17 +24515,39 @@ function renderSettings(c) {
         if(!USER.sfToken&&sfLs&&sfLs.token){USER.sfToken=sfLs.token;USER.sfInstance=sfLs.instance||'';}
         results.push('✅ Salesforce (cached session)');
       }
+      // S48 Part L: MS 365 check must also happen before any await that could
+      // consume the click's gesture context, same reasoning as the SF fix
+      // above. ensureMSToken() only attempts a silent reconnect (direct
+      // refresh_token fetch, which fails via CORS in most environments, then
+      // an invisible prompt=none popup that can get blocked or come back
+      // under-scoped) — connectMicrosoft365() is the full interactive
+      // OAuth2+PKCE popup flow already confirmed to reliably establish a
+      // working, correctly-scoped Calendar/Mail session (same flow used by
+      // the "Connect Microsoft Account" button below). Note this is NOT
+      // signInWithMicrosoft() — that's a separate MSAL flow that only signs
+      // into VCS itself (User.Read scope) and never touches the MS Graph
+      // Calendar/Mail token.
+      const msTok=getMSToken();
+      const msExp=getMSTokenExp();
+      const msValid=msTok&&Date.now()<msExp-60000;
+      const msClientId=S.settings.msGraphClientId||localStorage.getItem('vcs_ms_clientid_temp')||'';
+      const msTenantId=S.settings.msGraphTenantId||localStorage.getItem('vcs_ms_tenantid_temp')||'';
+      if(!msValid){
+        if(msClientId&&msTenantId&&typeof connectMicrosoft365==='function'){
+          connectMicrosoft365(msClientId,msTenantId);
+          results.push('⚠ Microsoft 365 popup opened — complete login there');
+        } else {
+          results.push('❌ Microsoft 365 not configured');
+        }
+      } else {
+        results.push('✅ Microsoft 365 (cached session)');
+      }
       try{
         if(typeof loadGlobalSettingsViaProxy==='function'){
           try{await loadGlobalSettingsViaProxy();results.push('✅ Settings');}catch(_){}
         }
         if(SB&&SB.ready()){
           try{const v=await SB.query('vendors','select=id&limit=1');S._sbHealthy=!!(v&&v.length);results.push(S._sbHealthy?'✅ Supabase':'⚠ Supabase empty');}catch(e){results.push('❌ SB:'+e.message);}
-        }
-        if(typeof ensureMSToken==='function'){
-          try{await ensureMSToken();results.push('✅ Microsoft');}catch(e){results.push('⚠ MS:'+e.message);}
-        } else if(typeof refreshMSToken==='function'){
-          try{await refreshMSToken();results.push('✅ Microsoft');}catch(e){results.push('⚠ MS:'+e.message);}
         }
         const ck=S.settings&&S.settings.apiKey||localStorage.getItem('vcs_api_key');
         results.push(ck?'✅ Claude AI':'❌ Claude key missing');
@@ -26236,60 +26258,37 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
     } else if (hasRefresh) {
       msStatus.innerHTML = '';
       const refreshMsg = document.createElement('span');
-      refreshMsg.textContent = '🔄 Token expired' + (name ? ' (' + name + ')' : '') + ' — click to reconnect silently';
+      refreshMsg.textContent = '🔄 Token expired' + (name ? ' (' + name + ')' : '') + ' — click to reconnect';
       refreshMsg.style.color = 'var(--amber)';
       msStatus.appendChild(refreshMsg);
       const refreshNowBtn = document.createElement('button');
       refreshNowBtn.className = 'btn-xs btn-primary';
       refreshNowBtn.style.cssText = 'margin-left:8px;font-size:8px;';
       refreshNowBtn.textContent = '⚡ Refresh Now';
-      refreshNowBtn.onclick = async (e) => {
+      refreshNowBtn.onclick = function(e) {
         e.stopPropagation();
-        // Use silent popup re-auth (prompt=none) — refresh_token direct call is CORS-blocked by MS
+        // S48 Part L: was a silent prompt=none popup re-auth (refresh_token
+        // direct call is CORS-blocked by MS) — prone to being blocked or
+        // coming back under-scoped. Now reuses the same interactive
+        // connectMicrosoft365() flow as "Connect Microsoft Account", which
+        // reliably establishes a genuinely working, correctly-scoped session.
         const clientId = S.settings.msGraphClientId || localStorage.getItem('vcs_ms_clientid_temp') || '';
         const tenantId = S.settings.msGraphTenantId || localStorage.getItem('vcs_ms_tenantid_temp') || '';
         if (!clientId || !tenantId) {
           toast('Enter MS Client ID and Tenant ID in settings first', '#f59e0b');
           return;
         }
-        refreshNowBtn.textContent = '⏳ Refreshing...';
+        refreshNowBtn.textContent = '⏳ Reconnecting...';
         refreshNowBtn.disabled = true;
-        const redirectUri = encodeURIComponent(window.location.origin + window.location.pathname);
-        const scope = encodeURIComponent('Calendars.ReadWrite Mail.Read Mail.ReadWrite offline_access openid profile');
-        const state = btoa(JSON.stringify({ ts: Date.now() }));
-        localStorage.setItem('vcs_ms_oauth_state', state);
-        localStorage.setItem('vcs_ms_clientid_temp', clientId);
-        localStorage.setItem('vcs_ms_tenantid_temp', tenantId);
-        const arr = crypto.getRandomValues(new Uint8Array(32));
-        const codeVerifier = Array.from(arr).map(b=>b.toString(16).padStart(2,'0')).join('');
-        localStorage.setItem('vcs_ms_code_verifier', codeVerifier);
-        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(codeVerifier));
-        const codeChallenge = btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-        const authUrl = 'https://login.microsoftonline.com/' + tenantId +
-          '/oauth2/v2.0/authorize?client_id=' + clientId +
-          '&response_type=code&redirect_uri=' + redirectUri +
-          '&scope=' + scope + '&state=' + encodeURIComponent(state) +
-          '&code_challenge=' + codeChallenge + '&code_challenge_method=S256&prompt=none';
-        const _prevTok = getMSToken();
-        const _pop = window.open(authUrl, 'ms_silent_refresh', 'width=600,height=700,left=200,top=100');
-        if (!_pop) { toast('Popup blocked — allow popups and try again','#f59e0b'); refreshNowBtn.textContent='⚡ Refresh Now'; refreshNowBtn.disabled=false; return; }
-        const _poll = setInterval(() => {
-          try {
-            if (_pop.closed) {
-              clearInterval(_poll);
-              refreshNowBtn.disabled = false;
-              if (getMSToken() && getMSToken() !== _prevTok) {
-                updateMSStatus();
-                if(typeof refreshConnectionsSummary==='function')refreshConnectionsSummary();
-                toast('Microsoft 365 reconnected!', '#22c55e');
-                refreshNowBtn.textContent = '✓ Connected';
-              } else {
-                toast('Silent refresh failed — use Connect Microsoft Account below', '#f59e0b');
-                refreshNowBtn.textContent = '⚡ Refresh Now';
-              }
-            }
-          } catch(e) {}
-        }, 500);
+        connectMicrosoft365(clientId, tenantId, function(ok){
+          refreshNowBtn.disabled = false;
+          if (ok) {
+            updateMSStatus();
+            refreshNowBtn.textContent = '✓ Connected';
+          } else {
+            refreshNowBtn.textContent = '⚡ Refresh Now';
+          }
+        });
       };
       msStatus.appendChild(refreshNowBtn);
       msStatus.style.color = 'var(--amber)';
@@ -26323,48 +26322,12 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
     const clientId = S.settings.msGraphClientId || cidIn.value.trim();
     const tenantId = S.settings.msGraphTenantId || tidIn.value.trim();
     if (!clientId || !tenantId) { toast('Enter Client ID and Tenant ID first','#f59e0b'); return; }
-    const redirectUri = encodeURIComponent(window.location.origin + window.location.pathname);
-    const scope = encodeURIComponent('Calendars.ReadWrite Mail.Read Mail.ReadWrite offline_access openid profile');
-    const state = btoa(JSON.stringify({ ts: Date.now() }));
-    localStorage.setItem('vcs_ms_oauth_state', state);
-    localStorage.setItem('vcs_ms_clientid_temp', clientId);
-    localStorage.setItem('vcs_ms_tenantid_temp', tenantId);
-    // PKCE: generate code verifier and challenge
-    const arr = crypto.getRandomValues(new Uint8Array(32));
-    const codeVerifier = Array.from(arr).map(b=>b.toString(16).padStart(2,'0')).join('');
-    localStorage.setItem('vcs_ms_code_verifier', codeVerifier);
-    crypto.subtle.digest('SHA-256', new TextEncoder().encode(codeVerifier)).then(digest => {
-      const codeChallenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
-        .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-      const authUrl =
-        'https://login.microsoftonline.com/' + tenantId +
-        '/oauth2/v2.0/authorize?client_id=' + clientId +
-        '&response_type=code&redirect_uri=' + redirectUri +
-        '&scope=' + scope +
-        '&state=' + encodeURIComponent(state) +
-        '&code_challenge=' + codeChallenge +
-        '&code_challenge_method=S256' +
-        '&prompt=select_account';
-      // Use popup so the main page keeps S.loaded and avoids a redirect loop
-      const _msPop = window.open(authUrl, 'ms_oauth_connect', 'width=600,height=700,left=200,top=100');
-      if (!_msPop) { toast('Popup blocked — allow popups for this page','#f59e0b'); return; }
-      const _prevMsTok = getMSToken();
-      const _msPoll = setInterval(() => {
-        try {
-          if (_msPop.closed) {
-            clearInterval(_msPoll);
-            // handleMSCallback in popup saved the token — detect it
-            if (getMSToken() && getMSToken() !== _prevMsTok) {
-              if (clientId) S.settings.msGraphClientId = clientId;
-              if (tenantId) S.settings.msGraphTenantId = tenantId;
-              updateMSStatus();
-              if(typeof refreshConnectionsSummary==='function')refreshConnectionsSummary();
-              toast('Microsoft 365 connected!', '#22c55e');
-              saveConfigToDrive().catch(()=>{});
-            }
-          }
-        } catch(e) {}
-      }, 500);
+    connectMicrosoft365(clientId, tenantId, function(ok){
+      if(ok){
+        S.settings.msGraphClientId = clientId;
+        S.settings.msGraphTenantId = tenantId;
+        updateMSStatus();
+      }
     });
   }},'🔗 Connect Microsoft Account'));
   msBtns.appendChild(el('button',{class:'btn-xs btn-ghost', onclick() {
@@ -29341,6 +29304,53 @@ function clearMSTokens() {
   });
   // Also clear legacy keys
   ['vcs_ms_token','vcs_ms_token_exp','vcs_ms_refresh_token','vcs_ms_user_name'].forEach(k => localStorage.removeItem(k));
+}
+
+// S48 Part L: shared interactive MS 365 (Calendar/Mail) connect flow — the
+// full OAuth2+PKCE popup with prompt=select_account, extracted from the
+// "Connect Microsoft Account" button (confirmed reliable — emails/meetings
+// load correctly after using it) so Connect All and "Refresh Now" reuse the
+// SAME working path instead of the silent prompt=none popup, which can get
+// blocked by the browser or come back without the full Calendar/Mail scopes.
+async function connectMicrosoft365(clientId, tenantId, onDone){
+  if (!clientId || !tenantId) {
+    toast('Enter MS Client ID and Tenant ID in Settings first', '#f59e0b');
+    if(onDone) onDone(false);
+    return;
+  }
+  const redirectUri = encodeURIComponent(window.location.origin + window.location.pathname);
+  const scope = encodeURIComponent('Calendars.ReadWrite Mail.Read Mail.ReadWrite offline_access openid profile');
+  const state = btoa(JSON.stringify({ ts: Date.now() }));
+  localStorage.setItem('vcs_ms_oauth_state', state);
+  localStorage.setItem('vcs_ms_clientid_temp', clientId);
+  localStorage.setItem('vcs_ms_tenantid_temp', tenantId);
+  const arr = crypto.getRandomValues(new Uint8Array(32));
+  const codeVerifier = Array.from(arr).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+  localStorage.setItem('vcs_ms_code_verifier', codeVerifier);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(codeVerifier));
+  const codeChallenge = btoa(String.fromCharCode.apply(null, new Uint8Array(digest))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  const authUrl = 'https://login.microsoftonline.com/' + tenantId +
+    '/oauth2/v2.0/authorize?client_id=' + clientId +
+    '&response_type=code&redirect_uri=' + redirectUri +
+    '&scope=' + scope + '&state=' + encodeURIComponent(state) +
+    '&code_challenge=' + codeChallenge + '&code_challenge_method=S256&prompt=select_account';
+  const _prevTok = getMSToken();
+  const _pop = window.open(authUrl, 'ms_oauth_connect', 'width=600,height=700,left=200,top=100');
+  if (!_pop) { toast('Popup blocked — allow popups for this page','#f59e0b'); if(onDone) onDone(false); return; }
+  const _poll = setInterval(function(){
+    try {
+      if (_pop.closed) {
+        clearInterval(_poll);
+        const ok = !!(getMSToken() && getMSToken() !== _prevTok);
+        if (ok) {
+          if(typeof refreshConnectionsSummary==='function') refreshConnectionsSummary();
+          toast('Microsoft 365 connected!', '#22c55e');
+          saveConfigToDrive().catch(function(){});
+        }
+        if(onDone) onDone(ok);
+      }
+    } catch(e) {}
+  }, 500);
 }
 
 // Auto-refresh MS token silently using stored refresh token
