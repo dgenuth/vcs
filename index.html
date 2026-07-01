@@ -23178,7 +23178,9 @@ function buildMaskedKeyField(initialValue,onSaveCallback,placeholder){
 
 function buildIntegrationSubsection(label,statusSummaryFn,bodyBuilderFn,isConnectedFn){
   const key='vcs_conn_sub_'+label.toLowerCase().replace(/\s+/g,'_');
-  const isOpen=localStorage.getItem(key)==='1';
+  // '0' = explicitly collapsed by user, '1' = explicitly opened by user, null = default (closed)
+  const stored = localStorage.getItem(key);
+  const isOpen = stored === '1';
   const wrap=el('div',{style:{border:'1px solid var(--border)',borderRadius:'3px',marginBottom:'6px',overflow:'hidden'}});
   const arrow=el('span',{'data-int-arrow':'1',style:{fontSize:'8px',color:'var(--muted)',marginRight:'6px'}},isOpen?'▼':'▶');
   const hdr=el('div',{style:{padding:'6px 10px',cursor:'pointer',display:'flex',alignItems:'center',background:'var(--bg)',fontSize:'10px'},onclick:function(){const open=body.style.display!=='none';body.style.display=open?'none':'';arrow.textContent=open?'▶':'▼';localStorage.setItem(key,open?'0':'1');}});
@@ -24013,7 +24015,7 @@ function renderSettings(c) {
     document.querySelectorAll('[data-int-sub-body]').forEach(function(b){
       b.style.display='none';
       const k=b.getAttribute('data-int-key');
-      if(k) localStorage.setItem(k,'1');
+      if(k) localStorage.setItem(k,'0'); // '0' = closed in buildIntegrationSubsection
     });
     document.querySelectorAll('[data-int-arrow]').forEach(function(a){a.textContent='▶';});
     render();
