@@ -502,7 +502,7 @@ body.ps-light-theme .tbl-wrap .data-table thead th{background:#0078b8!important;
 /* Detail Panel */
 .detail-panel-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:1000}
 .detail-panel{position:fixed;right:0;top:0;width:390px;min-width:280px;max-width:780px;height:100vh;background:var(--sb);border-left:1px solid var(--border);z-index:1100;overflow-y:auto;padding-bottom:24px;transition:none}
-.detail-resize-handle{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:col-resize;background:transparent;z-index:10;transition:background .15s}
+.detail-resize-handle{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:col-resize;background:transparent;z-index:40;transition:background .15s}
 .detail-resize-handle:hover,.detail-resize-handle.dragging{background:rgba(79,124,255,.4)}
 .detail-close{position:sticky;top:0;float:right;margin:7px 7px 0 0;background:rgba(255,255,255,.08);border:none;color:var(--text);width:22px;height:22px;border-radius:4px;cursor:pointer;font-size:11px;z-index:1}
 .detail-body{padding:11px}
@@ -23572,8 +23572,8 @@ async function renderFeedback(c) {
           onclick:async function(){
             if(!confirm('Delete this '+row.type+' permanently? This cannot be undone.')) return;
             const ok = await SB.delete('feedback','id=eq.'+row.id);
-            if (ok !== false) { toast('🗑 Deleted','#f59e0b'); renderFeedback(c); }
-            else { toast('Failed to delete','#ef4444'); }
+            if (ok === true) { toast('🗑 Deleted','#f59e0b'); renderFeedback(c); }
+            else { toast('Delete failed — check the feedback table\'s RLS delete policy in Supabase','#ef4444'); }
           }
         }, '🗑 Delete'));
         card.appendChild(adminRow);
