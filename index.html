@@ -1177,7 +1177,9 @@ function loginAs(userObj) {
   // canView/canEdit's USER.perms check) never actually saw saved overrides.
   USER.permissions = userObj.permissions || {};
   USER.perms = userObj.perms || {};
-  USER.fieldGroupPerms = userObj.fieldGroupPerms || {};
+  USER.fieldGroupPerms = userObj.fieldGroupPerms || {}; // S46, retired by S47's per-field model — left harmless
+  USER.fieldEditPerms = userObj.fieldEditPerms || {};
+  USER.requireSearchToList = typeof userObj.requireSearchToList==='boolean' ? userObj.requireSearchToList : undefined;
   USER._impersonating = userObj._impersonating || false;
   // Always hide tier and days for non-admin roles — hard rule, not spreadsheet-dependent
   if (USER.role !== 'admin') {
@@ -7213,6 +7215,17 @@ const PAGE_CAPABILITIES={
   history:{editable:false}, datacheck:{editable:true,adminOnly:true},
   settings:{editable:true,adminOnly:true}, health:{editable:true,adminOnly:true},
 };
+// S47: per-user/per-role override for Vendor DB's "must search before
+// listing" behavior. Real current behavior (verified in getFiltered() /
+// renderVendorDB) gates on role === 'restricted' or 'sales_rep' specifically
+// — NOT the generic 'rep'/'ssa' placeholder names the spec used, which
+// don't match any real assignable role in this app.
+function userRequiresSearchToList(){
+  const override=USER.requireSearchToList;
+  if(typeof override==='boolean') return override;
+  const role=(USER.role||'restricted').toLowerCase();
+  return ['restricted','sales_rep'].includes(role);
+}
 function userCanEditTab(pageOrTab){
   if(!userCanSeeTab(pageOrTab)) return false;
   const cap=PAGE_CAPABILITIES[pageOrTab];
@@ -7221,6 +7234,71 @@ function userCanEditTab(pageOrTab){
   if(override&&typeof override==='object') return override.edit===true;
   return canEdit('vendor.name'); // legacy boolean override or no override — fall back to global edit perm
 }
+
+// S47: real page/sub-section hierarchy for the unified Tab Access UI.
+// Verified directly against render functions rather than trusting the
+// original spec list as-is:
+//  - Today's own object array (urgent/call/email/review/pipeline/stats)
+//    plus 3 separately-coded sections (Rated Vendors, Relationship
+//    Follow-ups, Outreach Intelligence) = 9 as originally specced, PLUS a
+//    10th real section found during verification: "☁ Salesforce — Action
+//    Required Today" (its own S._todayOpen.sfboard toggle) — added here as
+//    today_sfboard since it was missing from the given list.
+//  - Spot-checked Vendor DB, Customers, Contracts, Spend, In The Works for
+//    comparable internal sub-structure (repeated collapsible section
+//    headers like Today uses) — found none; these remain flat/childless.
+//  - IDs below intentionally match the REAL keys already used by
+//    PAGE_CAPABILITIES/TAB_PAGE_DEFAULTS/ROLE_PERMS.tabs ('tiers' not
+//    'tiertracker', 'network' not 'networkintel', 'economics' not
+//    'contractecon', 'analytics_repperformance' not 'analytics_repperf') —
+//    the original spec draft used invented ids that didn't match anything
+//    real, which would have silently defaulted those tiles' role-default
+//    baseline to always-hidden (no ROLE_PERMS.tabs entry ever matches an
+//    id nothing else uses) regardless of actual role permissions.
+const PAGE_HIERARCHY=[
+  {id:'today',label:'Today',editable:true,children:[
+    {id:'today_urgent',label:'Urgent Actions'},
+    {id:'today_call',label:'Call Queue'},
+    {id:'today_email',label:'Email Queue'},
+    {id:'today_review',label:'Business Reviews Due'},
+    {id:'today_pipeline',label:'Pipeline Opportunities'},
+    {id:'today_stats',label:'Quick Stats'},
+    {id:'today_rated',label:'Rated Vendors'},
+    {id:'today_followups',label:'Relationship Follow-ups'},
+    {id:'today_outreach',label:'Outreach Intelligence'},
+    {id:'today_sfboard',label:'Salesforce Actions'},
+  ]},
+  {id:'callsheet',label:'Call Sheet',editable:true},
+  {id:'expiring',label:'Expiring',editable:true},
+  {id:'calendar',label:'Calendar',editable:false},
+  {id:'vendordb',label:'Vendor DB',editable:true},
+  {id:'itw',label:'In The Works',editable:true},
+  {id:'reviews',label:'Reviews',editable:true},
+  {id:'tiers',label:'Tier Tracker',editable:false},
+  {id:'contracts',label:'Contracts',editable:true},
+  {id:'compare',label:'Compare',editable:true},
+  {id:'checklist',label:'Checklist',editable:true},
+  {id:'discovery',label:'Discovery',editable:false},
+  {id:'sfboard',label:'SF Board',editable:false,children:[
+    {id:'sfboard_sales',label:'Sales'},
+    {id:'sfboard_procurement',label:'Procurement'},
+    {id:'sfboard_finance',label:'Finance'},
+  ]},
+  {id:'customers',label:'Customers',editable:true},
+  {id:'spend',label:'Spend',editable:false},
+  {id:'network',label:'Network Intel',editable:false},
+  {id:'economics',label:'Contract Econ',editable:false},
+  {id:'analytics',label:'Analytics',editable:false,children:[
+    {id:'analytics_pipeline',label:'Pipeline'},
+    {id:'analytics_revenue',label:'Revenue/Spend'},
+    {id:'analytics_repperformance',label:'Rep Performance'},
+    {id:'analytics_contracthealth',label:'Contract Health'},
+  ]},
+  {id:'forecast',label:'Forecast',editable:false},
+  {id:'reports',label:'Reports',editable:false},
+  {id:'summary',label:'Summary',editable:false},
+  {id:'history',label:'History',editable:false},
+];
 
 // ─── S44: Unified canView/canEdit permission layer ──────────────────────────
 // New capability, additive on top of the existing hiddenFields/tabOverrides/
@@ -7344,19 +7422,20 @@ function fieldGroupOf(fieldKey){
   return null;
 }
 function canViewField(fieldKey){
-  const group=fieldGroupOf(fieldKey);
-  if(!group) return true;
-  const perm=(USER.fieldGroupPerms||{})[group];
-  if(perm) return perm.view!==false;
+  // S47: reverted to individual per-field visibility (hiddenFields) — the
+  // S46 group-level fieldGroupPerms view collapse is retired. hiddenFields
+  // is the single source of truth for view state, matching the rebuilt
+  // buildFieldAccess UI below which toggles it directly per field.
   return !(USER.hiddenFields||[]).includes(fieldKey);
 }
 function canEditField(fieldKey){
+  // S47: per-field edit override (fieldEditPerms) replaces the S46
+  // group-level fieldGroupPerms edit flag.
   if(!canViewField(fieldKey)) return false;
-  const group=fieldGroupOf(fieldKey);
-  if(!group) return canEdit('vendor.name');
-  const perm=(USER.fieldGroupPerms||{})[group];
-  if(perm) return perm.edit===true;
-  return canEdit('vendor.name');
+  const override=(USER.fieldEditPerms||{})[fieldKey];
+  if(typeof override==='boolean') return override;
+  const rolePerms=ROLE_PERMS[USER.role]||ROLE_PERMS.restricted;
+  return !!rolePerms.save;
 }
 
 // Debounced Drive sync — fires 3s after any settings change
@@ -7976,9 +8055,18 @@ function getApprovedUsers(){
     // (all-hidden or empty for roles that should have partial access)
     let migrated = false;
     users.forEach(u => {
-      // Always refresh hiddenFields from SC data on every load
-      u.hiddenFields = getDefaultHiddenFields(u.role, u.email || u.name);
-      migrated = true;
+      // S47 fix: this used to refresh EVERY user's hiddenFields from SC/role
+      // defaults on every single call, unconditionally — silently discarding
+      // any admin customization made via the Field Visibility tiles the very
+      // next time anything called getApprovedUsers() (which is constant).
+      // _customHiddenFields was already being set by the toggle UI and
+      // checked by "Reset to role defaults", but never actually consulted
+      // here, so customization never really persisted. Only auto-refresh
+      // when the user has NOT been manually customized.
+      if (!u._customHiddenFields) {
+        u.hiddenFields = getDefaultHiddenFields(u.role, u.email || u.name);
+        migrated = true;
+      }
     });
     if (migrated) { S._usersChanged = true; localStorage.setItem(AUTH_KEY, JSON.stringify(users)); } // skip Drive sync during migration
     return users;
@@ -8193,7 +8281,14 @@ function setRoleFeatureDefault(role, feature, value){
   S.settings.roleDefaults[role].features[feature]=value;
 }
 function applyCopyProtection() {
-  var canCopy = (ROLE_PERMS[USER.role||'restricted']||{}).canCopy;
+  // S47: copy/paste is now tied to the export feature flag, not the
+  // separate static ROLE_PERMS.canCopy value — export-capable users are
+  // never copy-restricted. Falls back to the legacy role flag only if
+  // featureFlags.export was never set on this user object at all.
+  var hasExport = USER.featureFlags && typeof USER.featureFlags.export==='boolean'
+    ? USER.featureFlags.export
+    : (ROLE_PERMS[USER.role||'restricted']||{}).canCopy;
+  var canCopy = hasExport;
   if (window._vcsCopyHandler) { document.removeEventListener('keydown', window._vcsCopyHandler, true); }
   if (window._vcsContextHandler) { document.removeEventListener('contextmenu', window._vcsContextHandler, true); }
   var oldStyle = document.getElementById('vcs-copy-protection');
@@ -10974,13 +11069,14 @@ function renderVendorDB(c) {
     let vs = VENDOR_POOL.slice();
     if (S.search) {
       const q=S.search.toLowerCase();
-      // Restricted role: require minimum 3 chars — no browsing full list
-      if ((USER.role === 'restricted' || USER.role === 'sales_rep') && q.length < 3) {
+      // S47: role check replaced with userRequiresSearchToList() (per-user
+      // override, falls back to the same restricted/sales_rep role default)
+      if (userRequiresSearchToList() && q.length < 3) {
         return []; // show nothing until 3+ chars typed
       }
       vs=vs.filter(v=>searchMatch(v,q));
-    } else if (USER.role === 'restricted' || USER.role === 'sales_rep') {
-      return []; // restricted users see nothing without searching
+    } else if (userRequiresSearchToList()) {
+      return []; // must search before browsing the full list
     }
     if(S._dbNoContactFilter) vs=vs.filter(v=>!v.lastComm||!parseDate(v.lastComm));
     COLS.forEach(col=>{
@@ -11112,7 +11208,7 @@ function renderVendorDB(c) {
   const tbody=el('tbody');
   if (!vendors.length) {
     const tr=el('tr'); const td=el('td',{colspan:COLS.length+1,style:{textAlign:'center',padding:'20px',color:'var(--muted)'}});
-    if (USER.role === 'restricted' || USER.role === 'sales_rep') {
+    if (userRequiresSearchToList()) {
         td.textContent = S.search && S.search.length < 3
           ? '🔍 Type at least 3 characters to search vendors.'
           : S.search ? 'No vendors match your search.' : '🔍 Use the search bar to find vendors (minimum 3 characters).';
@@ -23972,66 +24068,52 @@ function renderVCSHealth(c) {
 // style below, but this one writes to u.tabOverrides (the SAME storage
 // userCanSeeTab() and buildFieldAccess's own tab-toggle section both read),
 // not a separate permission namespace. See the call site's comment for why.
-function buildPageAccess(container, userEmail) {
-  container.innerHTML='';
-  const all=getApprovedUsers();
-  const u=all.find(function(x){return x.email===userEmail;});
-  if(!u) return;
-  const roleDefs=TAB_PAGE_DEFAULTS[u.role||'rep']||{};
-  const PAGE_GROUPS=[
-    {group:'Pages',items:[
-      {key:'today',label:'Today'},{key:'vendordb',label:'Vendor DB'},{key:'customers',label:'Customers'},
-      {key:'contracts',label:'Contracts'},{key:'spend',label:'Spend'},{key:'network',label:'Network Intel'},
-      {key:'economics',label:'Contract Econ'},{key:'tiers',label:'Tier Tracker'},{key:'itw',label:'In The Works'},
-      {key:'reviews',label:'Reviews'},{key:'forecast',label:'Forecast'},{key:'reports',label:'Reports'},
-      {key:'discovery',label:'Discovery'},{key:'calendar',label:'Calendar'},{key:'callsheet',label:'Call Sheet'},
-      {key:'history',label:'History'},{key:'analytics',label:'Analytics'},{key:'compare',label:'Compare'},
-    ]},
-    {group:'SF Board Tabs',items:[
-      {key:'sfboard_sales',label:'Sales'},{key:'sfboard_procurement',label:'Procurement'},{key:'sfboard_finance',label:'Finance'},
-    ]},
-    {group:'Analytics Tabs',items:[
-      {key:'analytics_pipeline',label:'Pipeline'},{key:'analytics_revenue',label:'Revenue/Spend'},
-      {key:'analytics_repperformance',label:'Rep Performance'},{key:'analytics_contracthealth',label:'Contract Health'},
-    ]},
-  ];
-  function persist(tabOverrides){
-    u.tabOverrides=tabOverrides;
-    const all2=getApprovedUsers();
-    const i=all2.findIndex(function(x){return x.email===userEmail;});
-    if(i>=0){all2[i].tabOverrides=tabOverrides;setApprovedUsers(all2,true);}
-    saveUsersViaProxy().catch(function(){});
+// S47: buildPageAccess (S44) is retired — its one call site (the separate
+// "🗂 Page & Tab Access" _userSub in User Management) is removed in favor
+// of a single unified Tab Access section rebuilt inside buildFieldAccess
+// below, using the shared buildPermTile pattern (Part A) instead of a
+// second, differently-styled tile implementation.
+//
+// buildPermTile: the ONE tile renderer used for every permission surface in
+// this session — individual field tiles, and page/tab tiles (with children
+// indented beneath their parent). Not used for the 6 field-group headers
+// themselves, which remain plain section labels (no tile — a group is a
+// visual heading, not a togglable unit, now that Part B reverted per-field
+// control).
+function buildPermTile(opts) {
+  const tile = el('div',{style:{
+    display:'inline-flex', alignItems:'center', gap:'5px',
+    padding:'3px 8px', borderRadius:'4px', fontSize:'9px', fontWeight:'600',
+    cursor:'pointer', userSelect:'none',
+    border:'1px solid '+(opts.isViewable?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)'),
+    background:opts.isViewable?'rgba(34,197,94,.12)':'rgba(239,68,68,.12)',
+    color:opts.isViewable?'#4ade80':'#f87171',
+    outline:opts.isOverridden?'1px dashed #f59e0b':'none',
+    outlineOffset:'1px'
+  }});
+  tile.title = (opts.isViewable?'Visible — click to hide':'Hidden — click to show')
+    + (opts.isOverridden?' (overriding role default)':'');
+  tile.onclick = function(e) {
+    // Ignore clicks that originated on the checkbox itself (it has its own
+    // onclick/onchange handlers below) so toggling Edit doesn't also flip View.
+    if (e.target.tagName === 'INPUT') return;
+    opts.onToggleView();
+  };
+  const labelSpan = el('span',{}, opts.label);
+  tile.appendChild(labelSpan);
+
+  if (opts.showEditCheckbox) {
+    const editCb = el('input',{type:'checkbox'});
+    editCb.checked = !!opts.isEditChecked;
+    editCb.disabled = !opts.isViewable; // real disabled state — see canEdit() gate too
+    editCb.title = !opts.isViewable ? 'Enable View first to allow Edit' : 'Can edit';
+    editCb.style.cssText = 'cursor:'+(opts.isViewable?'pointer':'not-allowed')
+      +';opacity:'+(opts.isViewable?'1':'.4')+';margin-left:2px';
+    editCb.onclick = function(e) { e.stopPropagation(); };
+    editCb.onchange = function() { opts.onToggleEdit(editCb.checked); };
+    tile.appendChild(editCb);
   }
-  PAGE_GROUPS.forEach(function(group){
-    container.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:'var(--muted)',marginTop:'8px',marginBottom:'4px',textTransform:'uppercase',letterSpacing:'.04em'}},group.group));
-    const grid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px'}});
-    group.items.forEach(function(item){
-      const tabOverrides=u.tabOverrides||{};
-      const hasOverride=item.key in tabOverrides;
-      const roleDefault=roleDefs[item.key]!==false;
-      const isVisible=hasOverride?tabOverrides[item.key]:roleDefault;
-      const isOverridden=hasOverride&&(tabOverrides[item.key]!==roleDefault);
-      const tile=el('div',{style:{padding:'3px 6px',borderRadius:'3px',fontSize:'8px',cursor:'pointer',fontWeight:'500',background:isVisible?'rgba(34,197,94,.1)':'rgba(239,68,68,.1)',border:'1px solid '+(isVisible?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)'),color:isVisible?'#4ade80':'#f87171',outline:isOverridden?'1px dashed #f59e0b':''}});
-      tile.textContent=item.label+' '+(isVisible?'✅':'🚫');
-      tile.title=(isOverridden?'⚠ Overriding role default. ':'')+(isVisible?'Click to hide':'Click to show');
-      tile.onclick=function(){
-        const cur=u.tabOverrides||{};
-        const next=Object.assign({},cur);
-        next[item.key]=!isVisible;
-        persist(next);
-        buildPageAccess(container,userEmail);
-        toast('Updated: '+item.label,'#10b981');
-      };
-      grid.appendChild(tile);
-    });
-    container.appendChild(grid);
-  });
-  const resetBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',marginTop:'6px'},onclick:function(){
-    persist({});
-    buildPageAccess(container,userEmail);
-  }},'↺ Reset all to role defaults');
-  container.appendChild(resetBtn);
-  container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px'}},'Dashed amber outline = overriding role default · Changes save automatically'));
+  return tile;
 }
 
 // Field access builder — standalone so role tab toggle can call it for any user
@@ -24040,208 +24122,193 @@ function buildFieldAccess(container, userEmail) {
     const currentUsers=getApprovedUsers();
     const cu=currentUsers.find(x=>x.email===userEmail);
     if(!cu) return;
-    if(!cu.fieldGroupPerms) cu.fieldGroupPerms=migrateFieldGroupPerms(cu);
 
-    // S46: section-level View/Edit — replaces the old 40+ individual
-    // per-field toggle buttons. FIELD_GROUPS is now module-level (see
-    // migrateFieldGroupPerms/canViewField above) so it's shared here.
-    container.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginBottom:'8px'}},'🔒 Field Visibility — per section, View and/or Edit:'));
     const GROUP_COLORS={'Vendor Info':'#4f7cff','Contacts':'#22c55e','Contract':'#f59e0b','Financials':'#8b5cf6','Docs & Pricing':'#06b6d4','Activity':'#ec4899'};
-
-    Object.keys(FIELD_GROUPS).forEach(function(groupName){
-      const perm=cu.fieldGroupPerms[groupName]||{view:true,edit:true};
-      const row=el('div',{style:{display:'flex',alignItems:'center',gap:'10px',
-        padding:'6px 8px',borderRadius:'4px',marginBottom:'3px',
-        background:'rgba(255,255,255,.02)',borderLeft:'3px solid '+(GROUP_COLORS[groupName]||'var(--muted)')}});
-      row.appendChild(el('div',{style:{flex:'1',fontSize:'10px',fontWeight:'600'}},groupName));
-
-      function saveGroupPerm(){
-        const all=getApprovedUsers();
-        const i=all.findIndex(function(x){return x.email===userEmail;});
-        if(i<0) return;
-        if(!all[i].fieldGroupPerms) all[i].fieldGroupPerms={};
-        all[i].fieldGroupPerms[groupName]=perm;
-        setApprovedUsers(all,true);
-        setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
-      }
-
-      const viewCb=el('input',{type:'checkbox'});
-      viewCb.checked=perm.view!==false;
-      viewCb.onchange=function(){
-        perm.view=viewCb.checked;
-        if(!perm.view){perm.edit=false;editCb.checked=false;}
-        saveGroupPerm();
-      };
-      const viewLbl=el('label',{style:{display:'flex',gap:'4px',alignItems:'center',fontSize:'9px',cursor:'pointer'}});
-      viewLbl.appendChild(viewCb);viewLbl.appendChild(document.createTextNode('View'));
-
-      const editCb=el('input',{type:'checkbox'});
-      editCb.checked=perm.edit===true;
-      editCb.onchange=function(){
-        perm.edit=editCb.checked;
-        if(perm.edit){perm.view=true;viewCb.checked=true;}
-        saveGroupPerm();
-      };
-      const editLbl=el('label',{style:{display:'flex',gap:'4px',alignItems:'center',fontSize:'9px',cursor:'pointer'}});
-      editLbl.appendChild(editCb);editLbl.appendChild(document.createTextNode('Edit'));
-
-      row.appendChild(viewLbl);
-      row.appendChild(editLbl);
-      container.appendChild(row);
-    });
-
-    const fgBulkRow=el('div',{style:{display:'flex',gap:'4px',marginTop:'6px',marginBottom:'8px'}});
-    fgBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick:function(){
-      Object.keys(FIELD_GROUPS).forEach(function(g){cu.fieldGroupPerms[g]={view:true,edit:true};});
-      const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});
-      if(i>=0){all[i].fieldGroupPerms=cu.fieldGroupPerms;setApprovedUsers(all,true);}
-      saveUsersViaProxy();buildFieldAccess(container,userEmail);
-    }},'All: View + Edit'));
-    fgBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick:function(){
-      Object.keys(FIELD_GROUPS).forEach(function(g){cu.fieldGroupPerms[g]={view:true,edit:false};});
-      const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});
-      if(i>=0){all[i].fieldGroupPerms=cu.fieldGroupPerms;setApprovedUsers(all,true);}
-      saveUsersViaProxy();buildFieldAccess(container,userEmail);
-    }},'All: View Only'));
-    container.appendChild(fgBulkRow);
-
-    // Tab access — toggleable per user (overrides role default)
-    container.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginBottom:'4px',marginTop:'8px'}},'📑 Tab Access (click to toggle):'));
     const rolePerms=ROLE_PERMS[cu.role]||ROLE_PERMS.restricted;
-    const roleDefaultTabs=new Set(rolePerms.tabs||[]);
-    const tabOverrides=cu.tabOverrides||{}; // {tabId: true/false} overrides role default
-    // Derive groups from NAV_DEFS — stays in sync automatically
-    const TAB_GROUPS_DISPLAY=getNavTabGroups();
-    TAB_GROUPS_DISPLAY.forEach(grp=>{
-      container.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:grp.color,
-        marginTop:'6px',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.04em',
-        borderBottom:'1px solid '+grp.color+'33',paddingBottom:'2px'}},grp.label));
-      const tabGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',marginBottom:'4px',paddingLeft:'8px'}});
-      const allTabs=grp.tabs;
-    const virtualTabDefaults={
-      '_statsbar':['admin','procurement','manager'].includes(cu.role),
-      '_savebtn':(ROLE_PERMS[cu.role]||{}).save||false,
-    };
-    allTabs.forEach(t=>{
-      const hasOverride=t.id in tabOverrides;
-      const existingOverride=tabOverrides[t.id];
-      const roleDefault=t.id.startsWith('_')?(virtualTabDefaults[t.id]||false):roleDefaultTabs.has(t.id);
-      // S46: tabOverrides[t.id] may be a legacy bare boolean or the new
-      // {view,edit} object — normalize to a {view,edit} working value either way.
-      const overrideIsObj=hasOverride&&existingOverride&&typeof existingOverride==='object';
-      const curView=hasOverride?(overrideIsObj?existingOverride.view!==false:!!existingOverride):roleDefault;
-      const cap=PAGE_CAPABILITIES[t.id];
-      const showEdit=!!(cap&&cap.editable);
-      const curEdit=overrideIsObj?existingOverride.edit===true:curView; // legacy boolean override implied edit=view
-      const isOverridden=hasOverride && (curView!==roleDefault || (overrideIsObj&&existingOverride.edit!==undefined&&existingOverride.edit!==curView));
 
-      const tile=el('div',{style:{display:'flex',alignItems:'center',gap:'5px',
-        padding:'2px 6px',borderRadius:'4px',fontSize:'8px',
-        border:'1px solid '+(curView?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)'),
-        background:curView?'rgba(34,197,94,.08)':'rgba(239,68,68,.08)',
-        outline:isOverridden?'1px dashed #f59e0b':''
-      },title:isOverridden?'⚠ Overriding role default':''});
-      tile.appendChild(el('span',{style:{color:curView?'#4ade80':'#f87171'}},t.label));
-
-      function persistTabPerm(view,edit){
-        const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
-        if(!all[i].tabOverrides) all[i].tabOverrides={};
-        all[i].tabOverrides[t.id]=showEdit?{view:view,edit:edit}:{view:view};
-        localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-        setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
-      }
-
-      const vCb=el('input',{type:'checkbox',title:'View'});
-      vCb.checked=curView;
-      vCb.onclick=function(e){e.stopPropagation();};
-      vCb.onchange=function(){
-        const newView=vCb.checked;
-        const newEdit=newView?curEdit:false;
-        persistTabPerm(newView,newEdit);
-        requestAnimationFrame(()=>buildFieldAccess(container,userEmail));
-      };
-      tile.appendChild(vCb);
-
-      if(showEdit){
-        const eCb=el('input',{type:'checkbox',title:'Edit'});
-        eCb.checked=curEdit&&curView;
-        eCb.onclick=function(e){e.stopPropagation();};
-        eCb.onchange=function(){
-          const newEdit=eCb.checked;
-          const newView=newEdit?true:curView;
-          persistTabPerm(newView,newEdit);
-          requestAnimationFrame(()=>buildFieldAccess(container,userEmail));
-        };
-        tile.appendChild(eCb);
-      }
-      tabGrid.appendChild(tile);
-    });
-    container.appendChild(tabGrid);
-    }); // end TAB_GROUPS_DISPLAY.forEach
-    const resetTabsBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(){
-      const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
-      delete all[i].tabOverrides;
-      localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-      setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
-      buildFieldAccess(container,userEmail);
-    }},'↺ Reset tabs to role defaults');
-    const resetFieldsBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(){
-      const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
+    // ── Field Visibility: individual field tiles under 6 group headers ──────
+    // S47: reverted the S46 group-level collapse — each field gets its own
+    // buildPermTile (Part A), grouped under the same 6 headers as before.
+    const fvHdr=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'6px'}});
+    fvHdr.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600'}},'🔒 Field Visibility'));
+    fvHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick:function(){
+      const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});if(i<0)return;
       all[i].hiddenFields=getDefaultHiddenFields(all[i].role);
       all[i]._customHiddenFields=false;
-      // S46: also reset the new section-level perms so they don't silently
-      // override the just-reset hiddenFields (fieldGroupPerms takes priority
-      // in canViewField/canEditField when present).
-      all[i].fieldGroupPerms=migrateFieldGroupPerms(all[i]);
-      localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-      setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
+      delete all[i].fieldEditPerms;
+      setApprovedUsers(all,true);
+      setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
       buildFieldAccess(container,userEmail);
-    }},'↺ Reset fields to role defaults');
-    container.appendChild(el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginTop:'4px'}},resetTabsBtn,resetFieldsBtn));
-    container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'2px'}},'⚡ = overriding role default · Click any field or tab to toggle · Changes save automatically'));
+      toast('Fields reset to role defaults','#10b981');
+    }},'↺ Reset to role defaults'));
+    container.appendChild(fvHdr);
 
-    // Per-user AI toggle
-    const _cuFresh=getApprovedUsers().find(x=>x.email===userEmail);
-    const _aiOn=_cuFresh?.featureFlags?.aiEnabled!==false;
-    const _renzoOn=_cuFresh?.featureFlags?.renzoEnabled!==false;
-    const aiToggleRow=el('div',{style:{marginTop:'10px',display:'flex',alignItems:'center',gap:'8px',paddingLeft:'8px'}});
-    aiToggleRow.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)'}},'🤖 AI Assistant:'));
-    const aiBtn=el('button',{
-      style:{fontSize:'8px',padding:'3px 10px',borderRadius:'4px',cursor:'pointer',
-        border:'1px solid '+(_aiOn?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)'),
-        background:_aiOn?'rgba(34,197,94,.1)':'rgba(239,68,68,.1)',
-        color:_aiOn?'#4ade80':'#f87171'},
-      onclick(e){
-        e.stopPropagation();
-        const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
+    const hf=cu.hiddenFields||[];
+    const canRoleEdit=!!rolePerms.save;
+
+    Object.entries(FIELD_GROUPS).forEach(function(entry){
+      const groupName=entry[0], groupKeys=entry[1];
+      const groupColor=GROUP_COLORS[groupName]||'var(--muted)';
+      container.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:groupColor,
+        marginTop:'8px',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.05em',
+        borderBottom:'1px solid '+groupColor+'44',paddingBottom:'2px'}},groupName));
+
+      const grid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',paddingLeft:'8px'}});
+      const groupFields=ALL_RESTRICTABLE_FIELDS.filter(function(f){return groupKeys.includes(f.key);});
+
+      groupFields.forEach(function(f){
+        const isHidden=hf.includes(f.key);
+        const isViewable=!isHidden;
+        const editOverride=(cu.fieldEditPerms||{})[f.key];
+        const isEditChecked=typeof editOverride==='boolean'?editOverride:canRoleEdit;
+        const isOverridden=!!cu._customHiddenFields || (typeof editOverride==='boolean'&&editOverride!==canRoleEdit);
+
+        const tile=buildPermTile({
+          label:f.label, isViewable:isViewable, isOverridden:isOverridden,
+          showEditCheckbox:true, isEditChecked:isEditChecked,
+          onToggleView:function(){
+            const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});if(i<0)return;
+            let newHf=[...(all[i].hiddenFields||[])];
+            if(isHidden) newHf=newHf.filter(function(k){return k!==f.key;});
+            else if(!newHf.includes(f.key)) newHf.push(f.key);
+            all[i].hiddenFields=newHf;
+            all[i]._customHiddenFields=true;
+            setApprovedUsers(all,true);
+            setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
+            buildFieldAccess(container,userEmail);
+          },
+          onToggleEdit:function(checked){
+            const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});if(i<0)return;
+            if(!all[i].fieldEditPerms) all[i].fieldEditPerms={};
+            all[i].fieldEditPerms[f.key]=checked;
+            setApprovedUsers(all,true);
+            setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
+            buildFieldAccess(container,userEmail);
+          }
+        });
+        grid.appendChild(tile);
+      });
+      container.appendChild(grid);
+    });
+
+    container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'6px'}},
+      'Green = visible · Red = hidden · Checkbox = can edit (grayed out when hidden)'));
+
+    // ── Tab Access: ONE unified, hierarchical section ────────────────────────
+    // S47: replaces both the old flat per-tab button list that used to live
+    // here AND the separate buildPageAccess (S44) tile UI in its own
+    // "🗂 Page & Tab Access" sub-section (removed) — pages with real
+    // sub-structure (Today, SF Board, Analytics) show their children
+    // indented directly beneath the parent tile.
+    const taHdr=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:'14px',marginBottom:'4px'}});
+    taHdr.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600'}},'📑 Tab Access'));
+    taHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick:function(){
+      const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});if(i<0)return;
+      delete all[i].tabOverrides;
+      setApprovedUsers(all,true);
+      setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
+      buildFieldAccess(container,userEmail);
+      toast('Tabs reset to role defaults','#10b981');
+    }},'↺ Reset to role defaults'));
+    container.appendChild(taHdr);
+
+    const roleDefaultTabs=new Set(rolePerms.tabs||[]);
+
+    // fallbackDefault lets child/sub-tab ids (which ROLE_PERMS.tabs never
+    // lists — it's a page-level list) default to "visible" instead of
+    // silently defaulting to hidden just because no role ever explicitly
+    // granted a brand-new sub-permission id.
+    function tabState(id, fallbackDefault){
+      const ov=(cu.tabOverrides||{})[id];
+      const roleDefault=typeof fallbackDefault==='boolean'?fallbackDefault:roleDefaultTabs.has(id);
+      if(ov===undefined) return {view:roleDefault, edit:roleDefault, overridden:false};
+      if(typeof ov==='object') return {view:ov.view!==false, edit:ov.edit===true, overridden:true};
+      return {view:!!ov, edit:!!ov, overridden:(!!ov!==roleDefault)}; // legacy bare boolean
+    }
+    function persistTabState(id, view, edit, showEdit){
+      const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});if(i<0)return;
+      if(!all[i].tabOverrides) all[i].tabOverrides={};
+      all[i].tabOverrides[id]=showEdit?{view:view,edit:edit}:{view:view};
+      setApprovedUsers(all,true);
+      setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
+    }
+
+    PAGE_HIERARCHY.forEach(function(page){
+      const st=tabState(page.id);
+      const pageRow=el('div',{style:{marginBottom:'2px'}});
+      const pageTile=buildPermTile({
+        label:page.label, isViewable:st.view, isOverridden:st.overridden,
+        showEditCheckbox:!!page.editable, isEditChecked:st.edit,
+        onToggleView:function(){
+          const cur=tabState(page.id);
+          persistTabState(page.id, !cur.view, cur.view?false:cur.edit, !!page.editable);
+          buildFieldAccess(container,userEmail);
+        },
+        onToggleEdit:function(checked){
+          const cur=tabState(page.id);
+          persistTabState(page.id, checked?true:cur.view, checked, true);
+          buildFieldAccess(container,userEmail);
+        }
+      });
+      pageRow.appendChild(pageTile);
+
+      if(page.children&&page.children.length){
+        const childRow=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',paddingLeft:'16px',marginTop:'2px'}});
+        page.children.forEach(function(child){
+          const cst=tabState(child.id, true);
+          const childTile=buildPermTile({
+            label:child.label, isViewable:cst.view, isOverridden:cst.overridden,
+            showEditCheckbox:false,
+            onToggleView:function(){
+              const cur=tabState(child.id, true);
+              persistTabState(child.id, !cur.view, false, false);
+              buildFieldAccess(container,userEmail);
+            }
+          });
+          childRow.appendChild(childTile);
+        });
+        pageRow.appendChild(childRow);
+      }
+      container.appendChild(pageRow);
+    });
+
+    container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px'}},
+      'Dashed amber outline = overriding role default · Changes save automatically'));
+
+    // ── AI Assistant / Renzo access — restyled with the same tile pattern ───
+    const _cuFresh=getApprovedUsers().find(function(x){return x.email===userEmail;});
+    const _aiOn=!!(_cuFresh&&_cuFresh.featureFlags&&_cuFresh.featureFlags.aiEnabled!==false);
+    const _renzoOn=!!(_cuFresh&&_cuFresh.featureFlags&&_cuFresh.featureFlags.renzoEnabled!==false);
+
+    const aiToggleRow=el('div',{style:{marginTop:'12px',display:'flex',alignItems:'center',gap:'8px'}});
+    aiToggleRow.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',minWidth:'90px'}},'🤖 AI Assistant:'));
+    aiToggleRow.appendChild(buildPermTile({
+      label:_aiOn?'Enabled':'Disabled', isViewable:_aiOn, isOverridden:false, showEditCheckbox:false,
+      onToggleView:function(){
+        const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});if(i<0)return;
         if(!all[i].featureFlags)all[i].featureFlags={};
         all[i].featureFlags.aiEnabled=!_aiOn;
-        localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-        setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
+        setApprovedUsers(all,true);
+        setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
         buildFieldAccess(container,userEmail);
       }
-    },_aiOn?'Enabled ✅':'Disabled 🚫');
-    aiToggleRow.appendChild(aiBtn);
+    }));
     aiToggleRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'When disabled, AI calls return a "contact admin" message'));
     container.appendChild(aiToggleRow);
 
-    // Renzo enable/disable toggle
-    const renzoToggleRow=el('div',{style:{marginTop:'6px',display:'flex',alignItems:'center',gap:'8px',paddingLeft:'8px'}});
-    renzoToggleRow.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',minWidth:'90px'}},'Renzo Access:'));
-    const renzoBtn=el('button',{
-      class:'btn-xs btn-ghost',
-      style:{borderColor:_renzoOn?'var(--green)':'var(--muted)',color:_renzoOn?'var(--green)':'var(--muted)'},
-      onclick(e){
-        e.stopPropagation();
-        const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
+    const renzoToggleRow=el('div',{style:{marginTop:'6px',display:'flex',alignItems:'center',gap:'8px'}});
+    renzoToggleRow.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',minWidth:'90px'}},'Renzo Access:'));
+    renzoToggleRow.appendChild(buildPermTile({
+      label:_renzoOn?'Enabled':'Disabled', isViewable:_renzoOn, isOverridden:false, showEditCheckbox:false,
+      onToggleView:function(){
+        const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});if(i<0)return;
         if(!all[i].featureFlags)all[i].featureFlags={};
         all[i].featureFlags.renzoEnabled=!_renzoOn;
-        localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-        setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
+        setApprovedUsers(all,true);
+        setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
         buildFieldAccess(container,userEmail);
       }
-    },_renzoOn?'Enabled ✅':'Disabled 🚫');
-    renzoToggleRow.appendChild(renzoBtn);
+    }));
     renzoToggleRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'Renzo outreach button visibility per user'));
     container.appendChild(renzoToggleRow);
   }
@@ -25359,59 +25426,84 @@ function buildUserSubSection(label,bodyBuilderFn){
       }
 
       // ── SUB-SECTION 1: Permissions ────────────────────────────────────────
-      details.appendChild(_userSub('🔐 Permissions', true, function(b) {
-        const _saveUserPerm=async function(key,val){if(!u.permissions)u.permissions={};u.permissions[key]=val;const _pa=getApprovedUsers();const _pi=_pa.findIndex(x=>x.email===u.email);if(_pi>=0){_pa[_pi].permissions=u.permissions;setApprovedUsers(_pa,true);}await saveUsersViaProxy();if(typeof savePermToSupabase==='function')savePermToSupabase(u.email,u.permissions);toast('Updated for '+(u.name||u.email),'#10b981');};
+      details.appendChild(_userSub('🔐 Permissions', true, function _buildPermissionsPanel(b) {
+        b.innerHTML=''; // safe to call again after a toggle — buildPermTile needs a rebuild to show its new color, unlike a native checkbox
+        // S47: removed the "Can view Notes" / "Can edit vendor records"
+        // toggles — notesVisible is now controlled by the Activity field
+        // group's 'notes' field tile (Field Visibility, below), and
+        // canEditVendors is superseded by per-field/per-page edit
+        // permissions (the Vendor DB page's own Edit checkbox in Tab
+        // Access, plus each field's own Edit checkbox). userCan() itself
+        // still exists and still has its legacy fallback chain intact for
+        // any code path that hasn't been migrated to the newer per-field/
+        // per-page checks yet — only the redundant UI control is removed.
 
-        // Notes + Edit toggles
-        const _rd=ROLE_PERMISSION_DEFAULTS[u.role||'rep']||ROLE_PERMISSION_DEFAULTS.rep;
-        [['notesVisible','Can view Notes',_rd.notesVisible!==false],
-         ['canEditVendors','Can edit vendor records',_rd.canEditVendors!==false]
-        ].forEach(function(row){
-          const key=row[0],label=row[1],defVal=row[2];
-          const cb=el('input',{type:'checkbox'});
-          cb.checked=typeof((u.permissions||{})[key])==='boolean'?(u.permissions||{})[key]:defVal;
-          cb.onchange=function(){_saveUserPerm(key,cb.checked);};
-          const lbl=el('label',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px',cursor:'pointer',marginBottom:'4px'}});
-          lbl.appendChild(cb);lbl.appendChild(document.createTextNode(label));
-          b.appendChild(lbl);
-        });
-
-        // Feature Flags
+        // Feature Flags — S47: removed 'editContracts' (verified it had
+        // ZERO consumers anywhere in the codebase besides this toggle and
+        // the default-flags generator — a vestigial control that never
+        // actually gated anything, not just "redundant"). Restyled to the
+        // same buildPermTile green/red pattern used everywhere else.
         b.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:'var(--muted)',marginTop:'6px',marginBottom:'3px',textTransform:'uppercase'}},'Feature Flags'));
-        const FF_DEFS=[['export','Allow Export'],['addVendor','Add Vendor'],['editContracts','Edit Contracts'],['showFinancials','See Financials']];
-        const flagRow=el('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap'}});
+        const FF_DEFS=[['export','Allow Export'],['addVendor','Add Vendor'],['showFinancials','See Financials']];
+        const flagRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}});
         FF_DEFS.forEach(function(ff){
           const ffKey=ff[0],ffLabel=ff[1];
           const ffEnabled=(u.featureFlags||{})[ffKey]!==false;
-          const ffCb=el('input',{type:'checkbox',style:{cursor:'pointer'}});
-          ffCb.checked=ffEnabled;
-          ffCb.addEventListener('change',function(){
-            const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);
-            if(i>=0){if(!all[i].featureFlags)all[i].featureFlags={};all[i].featureFlags[ffKey]=ffCb.checked;setApprovedUsers(all);}
-            if(u.email===USER.email){if(!USER.featureFlags)USER.featureFlags={};USER.featureFlags[ffKey]=ffCb.checked;}
-            toast('✓ Feature flag updated');
-          });
-          const lbl=el('label',{style:{display:'flex',alignItems:'center',gap:'3px',cursor:'pointer',fontSize:'9px'}});
-          lbl.appendChild(ffCb);lbl.appendChild(el('span',{},ffLabel));
-          flagRow.appendChild(lbl);
+          flagRow.appendChild(buildPermTile({
+            label:ffLabel, isViewable:ffEnabled, isOverridden:false, showEditCheckbox:false,
+            onToggleView:function(){
+              const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===u.email;});if(i<0)return;
+              if(!all[i].featureFlags)all[i].featureFlags={};
+              const newVal=!ffEnabled;
+              all[i].featureFlags[ffKey]=newVal;
+              // S47: showFinancials was previously disconnected from any real
+              // enforcement (verified zero other consumers) — wire it to
+              // actually bulk-toggle the Financials field group's visibility,
+              // so this checkbox has real effect instead of being purely cosmetic.
+              if(ffKey==='showFinancials'){
+                const finKeys=FIELD_GROUPS['Financials']||[];
+                let newHf=[...(all[i].hiddenFields||[])];
+                if(newVal){ newHf=newHf.filter(function(k){return !finKeys.includes(k);}); }
+                else { finKeys.forEach(function(k){ if(!newHf.includes(k)) newHf.push(k); }); }
+                all[i].hiddenFields=newHf;
+                all[i]._customHiddenFields=true;
+              }
+              setApprovedUsers(all,true);
+              if(u.email===USER.email){if(!USER.featureFlags)USER.featureFlags={};USER.featureFlags[ffKey]=newVal;}
+              setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
+              toast('✓ Feature flag updated','#10b981');
+              _buildPermissionsPanel(b);
+            }
+          }));
         });
         b.appendChild(flagRow);
+
+        // S47: per-user override for "must search before Vendor DB lists
+        // anything" — role default (restricted/sales_rep) preserved via
+        // userRequiresSearchToList()'s fallback when no override is set.
+        b.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:'var(--muted)',marginTop:'8px',marginBottom:'3px',textTransform:'uppercase'}},'Vendor DB Browsing'));
+        const _rstOverride=typeof u.requireSearchToList==='boolean'?u.requireSearchToList:['restricted','sales_rep'].includes((u.role||'restricted').toLowerCase());
+        const rstRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center'}});
+        rstRow.appendChild(buildPermTile({
+          label:_rstOverride?'Requires search':'Full list browsable', isViewable:!_rstOverride, isOverridden:typeof u.requireSearchToList==='boolean', showEditCheckbox:false,
+          onToggleView:function(){
+            const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===u.email;});if(i<0)return;
+            all[i].requireSearchToList=!_rstOverride;
+            setApprovedUsers(all,true);
+            if(u.email===USER.email) USER.requireSearchToList=!_rstOverride;
+            setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
+            toast('✓ Updated','#10b981');
+            _buildPermissionsPanel(b);
+          }
+        }));
+        b.appendChild(rstRow);
       }));
 
-      // ── SUB-SECTION 1b: Page & Tab Access ─────────────────────────────────
-      // S44: re-skinned as amber/green click-tiles matching buildFieldAccess's
-      // visual language (was a checkbox tree). Still backed by the SAME
-      // u.tabOverrides storage that userCanSeeTab() and buildFieldAccess's own
-      // "📑 Tab Access" section both read — deliberately NOT a new parallel
-      // permission namespace. (buildFieldAccess already has an equivalent tab
-      // toggle list sourced from NAV_DEFS/ROLE_PERMS; this section covers the
-      // same tabOverrides keys with the TAB_PAGE_DEFAULTS role-default baseline
-      // that userCanSeeTab() actually enforces, so what's shown here matches
-      // real runtime behavior. See handoff notes on the pre-existing overlap
-      // between these two UIs for a candidate future consolidation.)
-      details.appendChild(_userSub('🗂 Page & Tab Access', false, function(b) {
-        buildPageAccess(b, u.email);
-      }));
+      // S47: the separate "🗂 Page & Tab Access" sub-section (S44's
+      // buildPageAccess, one of two parallel tab-toggle UIs) is removed —
+      // buildFieldAccess below now renders ONE unified Field Visibility +
+      // Tab Access UI (both using the shared buildPermTile pattern), so
+      // this duplicate wrapper is no longer needed.
 
       // ── SUB-SECTION 2: Field Visibility ───────────────────────────────────
       details.appendChild(_userSub('🔒 Field Visibility', false, function(b) {
