@@ -6,7 +6,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Vendor Contract Scheduler</title>
+<title>Prime Source CMS</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
@@ -768,9 +768,15 @@ var VCS_VERSION = 'v1778431112';
 
 <div id="login-screen">
   <div class="login-box">
-    <div class="up-logo">VCS</div>
+    <div class="up-logo" style="margin-bottom:12px">
+      <svg width="180" height="52" viewBox="0 0 180 52" xmlns="http://www.w3.org/2000/svg">
+        <rect width="180" height="52" rx="6" fill="#071630"/>
+        <text x="12" y="20" font-family="Arial,sans-serif" font-size="10" font-weight="700" fill="#4F7CFF">PRIME SOURCE</text>
+        <text x="12" y="40" font-family="Arial,sans-serif" font-size="13" font-weight="700" fill="#ffffff">Central Management</text>
+      </svg>
+    </div>
     <h1>Sign In</h1>
-    <p class="sub">Vendor Contract Scheduler — Prime Source<br>Sign in with your Microsoft or Google account.</p>
+    <p class="sub">Prime Source Central Management System<br>Sign in with your Microsoft or Google account.</p>
     <button type="button" class="oauth-btn ms-btn" id="ms-login-btn">
       <svg width="16" height="16" viewBox="0 0 21 21" style="margin-right:8px"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
       Sign in with Microsoft
@@ -790,9 +796,15 @@ var VCS_VERSION = 'v1778431112';
 
 <div id="upload-screen" style="display:none">
   <div class="up-box">
-    <div class="up-logo">VCS</div>
-    <h1>Vendor Contract Scheduler</h1>
-    <p>Upload your <strong>Vendor_Catalogue.xlsm</strong> (or .xlsx) to open the dashboard</p>
+    <div class="up-logo" style="margin-bottom:12px">
+      <svg width="180" height="52" viewBox="0 0 180 52" xmlns="http://www.w3.org/2000/svg">
+        <rect width="180" height="52" rx="6" fill="#071630"/>
+        <text x="12" y="20" font-family="Arial,sans-serif" font-size="10" font-weight="700" fill="#4F7CFF">PRIME SOURCE</text>
+        <text x="12" y="40" font-family="Arial,sans-serif" font-size="13" font-weight="700" fill="#ffffff">Central Management</text>
+      </svg>
+    </div>
+    <h1>Prime Source Central Management System</h1>
+    <p>Sign in to access your data.</p>
     <button class="up-btn" id="upload-btn">📂 Choose File</button>
     <input type="file" id="file-input" accept=".xlsm,.xlsx" style="display:none">
     <div style="margin:12px 0;display:flex;align-items:center;gap:10px"><hr style="flex:1;border:none;border-top:1px solid var(--border)"><span style="font-size:10px;color:var(--muted)">or</span><hr style="flex:1;border:none;border-top:1px solid var(--border)"></div>
@@ -1101,28 +1113,23 @@ function toRelativeTime(date) {
   return date.toLocaleDateString();
 }
 function migrateSearchHistory(){try{const dk='vcs_search_history_default';const uk='vcs_search_history_'+(USER&&USER.email||'');if(!uk.includes('@'))return;const dh=JSON.parse(localStorage.getItem(dk)||'[]');if(!dh.length)return;const uh=JSON.parse(localStorage.getItem(uk)||'[]');const mg=[].concat(uh);dh.forEach(function(t){if(!mg.includes(t))mg.push(t);});localStorage.setItem(uk,JSON.stringify(mg.slice(0,10)));localStorage.removeItem(dk);}catch(_){}}
-function recordLogin() {
+async function recordLogin() {
+  if (!USER || !USER.email) return;
   try {
-    const email=(USER&&USER.email)?USER.email:((S&&S.settings&&S.settings.currentUserEmail)?S.settings.currentUserEmail:'');
-    if(!email){
-      console.log('[VCS] recordLogin: no email yet, retrying...');
-      setTimeout(recordLogin,1500);
-      return;
-    }
-    const all=typeof getApprovedUsers==='function'?getApprovedUsers():[];
-    const idx=all.findIndex(function(u){return (u.email||'').toLowerCase()===email.toLowerCase();});
-    if(idx>=0){
-      all[idx].lastLogin=new Date().toISOString();
-      if(!all[idx].added) all[idx].added=new Date().toISOString();
-      if(typeof setApprovedUsers==='function') setApprovedUsers(all,true);
-      if(typeof saveUsersViaProxy==='function') saveUsersViaProxy().catch(function(e){console.warn('[VCS] recordLogin save failed:',e.message);});
+    const all = getApprovedUsers() || [];
+    const idx = all.findIndex(function(u){return (u.email||'').toLowerCase()===USER.email.toLowerCase();});
+    if (idx >= 0) {
+      all[idx].lastLogin = new Date().toISOString();
+      if (!all[idx].added) all[idx].added = new Date().toISOString();
+      setApprovedUsers(all, true);
       migrateSearchHistory();
-      console.log('[VCS] lastLogin recorded for',email,'at',all[idx].lastLogin);
+      await saveUsersViaProxy();
+      console.log('[VCS] lastLogin recorded for',USER.email,'at',all[idx].lastLogin);
     } else {
-      console.warn('[VCS] recordLogin: user not found:',email);
+      console.warn('[VCS] recordLogin: user not found:',USER.email);
     }
-  } catch(e){
-    console.warn('[VCS] recordLogin error:',e.message);
+  } catch(e) {
+    console.warn('[VCS] recordLogin failed:', e.message);
   }
 }
 
@@ -2091,7 +2098,7 @@ function checkPsdSchemaDrift(zip) {
         console.warn('[VCS C1] PSD schema drift detected:\n' + mismatches.join('\n'));
         // Surface warning to admin users only — non-blocking
         if (['admin','manager'].includes(USER.role)) {
-          setTimeout(() => toast('⚠ Excel schema drift detected — check VCS Health before saving', '#f59e0b', 8000), 2000);
+          setTimeout(() => toast('⚠ Excel schema drift detected — check System Health before saving', '#f59e0b', 8000), 2000);
         }
       } else {
         S._psdSchemaDrift = null;
@@ -3789,7 +3796,7 @@ const NAV_DEFS=[
   ['history','🕐','History'],
   ['datacheck','✅','Data Check'],
   ['settings','⚙','Settings'],
-  ['health','🔍','VCS Health'],
+  ['health','🔍','System Health'],
 ];
 
 // Derive tab groups from NAV_DEFS — SINGLE SOURCE OF TRUTH
@@ -3848,7 +3855,7 @@ function updateSidebar() {
     if(tabId.startsWith('_div')) return true; // always include dividers
     if (tabId in _tabOverrides) return _tabOverrides[tabId]; // user override
     if (USER.role === 'admin' || USER.role === 'manager') return true;
-    if(typeof userCanSeeTab==='function'&&(tabId==='contracts'||tabId==='spend')){return userCanSeeTab(tabId);}
+    if(typeof userCanSeeTab==='function'&&(tabId==='contracts'||tabId==='spend'||tabId==='network'||tabId==='economics'||tabId==='forecast'||tabId==='reports'||tabId==='tiers')){return userCanSeeTab(tabId);}
     return _roleBaseTabs.includes(tabId); // role default
   });
   for (const [id,icon,label] of NAV_DEFS) {
@@ -5776,7 +5783,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
           ].forEach(([l2,v2,c2])=>{const k=el("div",{});k.appendChild(el("div",{style:{fontWeight:"700",fontSize:"13px",color:c2}},v2));k.appendChild(el("div",{style:{fontSize:"8px",color:"var(--muted)"}},l2));sr.appendChild(k);});
           sfWrap.appendChild(sr);
           if(rateMismatch){const w=el("div",{style:{background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.3)",borderRadius:"3px",padding:"5px 8px",marginBottom:"6px",fontSize:"9px",color:"var(--red)"}});w.innerHTML="⚠ <strong>Rate discrepancy:</strong> SF shows "+sfRate.toFixed(2)+"% actual vs "+contractedRate.toFixed(1)+"% contracted.";sfWrap.appendChild(w);}
-          if(!contractedRate)sfWrap.appendChild(el("div",{style:{fontSize:"9px",color:"var(--amber)",marginBottom:"6px"}},"⚠ No contracted admin fee % in VCS — upload contract to auto-fill."));
+          if(!contractedRate)sfWrap.appendChild(el("div",{style:{fontSize:"9px",color:"var(--amber)",marginBottom:"6px"}},"⚠ No contracted admin fee % on file — upload contract to auto-fill."));
           sfWrap.appendChild(el("div",{style:{fontSize:"9px",fontWeight:"700",color:"var(--muted)",marginBottom:"3px",letterSpacing:".05em"}},"SPEND RECORDS ("+sp.records.length+(sp.totalSize>sp.records.length?" of "+sp.totalSize:"")+")"));
           sp.records.forEach(s2=>{const row2=el("div",{style:{display:"flex",gap:"6px",alignItems:"center",padding:"3px 0",borderBottom:"1px solid var(--border)",fontSize:"10px"}});row2.style.cursor='pointer'; row2.title='Open spend record in Salesforce'; row2.onclick=function(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/AP_Spend__c/'+s2.Id+'/view','_blank');}; row2.appendChild(el("span",{style:{flex:"1"}},s2.Name||"Spend"));if(s2.Category__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},s2.Category__c));row2.appendChild(el("span",{style:{color:"var(--green)",fontWeight:"600"}},"$"+Number(s2.Sales__c||0).toLocaleString()));if(s2.Admin_Fee__c)row2.appendChild(el("span",{style:{color:"var(--amber)",fontSize:"9px"}},"Fee: $"+Number(s2.Admin_Fee__c||0).toLocaleString()));if(s2.Reported_Date__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},new Date(s2.Reported_Date__c).toLocaleDateString()));sfWrap.appendChild(row2);});
           if(sp.totalSize>sp.records.length){sfWrap.appendChild(el("button",{class:"btn-xs btn-ghost",style:{marginTop:"5px",fontSize:"9px"},onclick(){S.view="spend";render();toast("See full spend data in Spend tab","#4f7cff");}},"See all "+sp.totalSize+" records in Spend tab →"));}
@@ -5936,8 +5943,7 @@ function renderCommPanel(body, vendor) {
       } else if(S._commCache[_cpKey]){
         const msgs=S._commCache[_cpKey];
         if(!msgs.length){
-          commBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'No emails found for "'+vendor.name+'".'));
-          if(vendor.email) commBody.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)'}},'Also searched by domain: '+vendor.email.split('@')[1]));
+          commBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)'}},'No emails found from known contacts of "'+vendor.name+'".'));
           const retryBtn=el('button',{class:'btn-xs btn-ghost',style:{marginTop:'4px'},onclick(e){e.stopPropagation();delete S._commCache[_cpKey];refreshDetailIfOpen(vendor);}},'🔄 Retry Search');
           commBody.appendChild(retryBtn);
         } else if(msgs[0]?._error) {
@@ -5963,64 +5969,58 @@ function renderCommPanel(body, vendor) {
           });
         }
       } else {
-        const spinner=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'8px 0'}},'⏳ Loading emails...');
-        commBody.appendChild(spinner);
-        (async()=>{
-          try{
-            // Graph API: $search and $orderby cannot be combined — use $search only
-            // Search by vendor name in subject/body; also try vendor email domain as fallback
-            const nameQ = encodeURIComponent('"'+vendor.name+'"');
-            const url = 'https://graph.microsoft.com/v1.0/me/messages'
-              + '?$search='+nameQ
-              + '&$top=25'
-              + '&$select=subject,from,receivedDateTime,bodyPreview,toRecipients';
-            const resp = await fetch(url, {
-              headers:{Authorization:'Bearer '+msToken, ConsistencyLevel:'eventual'}
-            });
-            if (!resp.ok) {
-              const errData = await resp.json().catch(()=>({}));
-              throw new Error('Graph API error ' + resp.status + ': ' + (errData?.error?.message || resp.statusText));
-            }
-            const d = await resp.json();
-            let msgs = (d.value||[]).map(m=>({
-              subject: m.subject,
-              from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || '',
-              fromAddr: m.from?.emailAddress?.address || '',
-              date: m.receivedDateTime ? new Date(m.receivedDateTime).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '',
-              dateRaw: m.receivedDateTime || '',
-              preview: (m.bodyPreview||'').slice(0,120)
-            }));
-            // Sort by date descending (Graph doesn't allow $orderby with $search)
-            msgs.sort((a,b) => (b.dateRaw||'').localeCompare(a.dateRaw||''));
-            // If vendor has an email address on file, also search by sender domain
-            if (!msgs.length && vendor.email) {
-              const domain = (vendor.email.split('@')[1]||'').toLowerCase();
-              if (domain && domain.length > 3) {
-                const domainQ = encodeURIComponent('"@'+domain+'"');
-                const resp2 = await fetch('https://graph.microsoft.com/v1.0/me/messages'
-                  + '?$search='+domainQ+'&$top=15&$select=subject,from,receivedDateTime,bodyPreview',
-                  {headers:{Authorization:'Bearer '+msToken, ConsistencyLevel:'eventual'}});
-                if (resp2.ok) {
-                  const d2 = await resp2.json();
-                  msgs = (d2.value||[]).map(m=>({
-                    subject: m.subject,
-                    from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || '',
-                    fromAddr: m.from?.emailAddress?.address || '',
-                    date: m.receivedDateTime ? new Date(m.receivedDateTime).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '',
-                    dateRaw: m.receivedDateTime || '',
-                    preview: (m.bodyPreview||'').slice(0,120)
-                  })).sort((a,b)=>(b.dateRaw||'').localeCompare(a.dateRaw||''));
-                }
+        // S42: contact-email-only matching — build the list of known contact
+        // emails for this vendor/customer; no name/company keyword search.
+        const contactEmails=[];
+        if(vendor.email) contactEmails.push(vendor.email);
+        if(vendor.email2) contactEmails.push(vendor.email2);
+        (vendor._sbContacts||[]).forEach(function(ct){
+          let em=ct.emails||[];
+          if(typeof em==='string'){try{em=JSON.parse(em);}catch(_){em=[];}}
+          em.forEach(function(e){const addr=e.address||e||'';if(addr&&addr.includes('@'))contactEmails.push(addr);});
+        });
+        if(!contactEmails.length){
+          commBody.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'8px 0'}},'No contacts found for this record. Add contacts to see email history.'));
+        } else {
+          const spinner=el('div',{style:{fontSize:'10px',color:'var(--muted)',padding:'8px 0'}},'⏳ Loading emails...');
+          commBody.appendChild(spinner);
+          (async()=>{
+            try{
+              // Graph API $filter — exact match on sender/recipient address against
+              // known contact emails only (no vendor-name or domain keyword search).
+              const uniqueEmails=[...new Set(contactEmails.map(function(e){return e.toLowerCase();}))].slice(0,10);
+              const fromClauses=uniqueEmails.map(function(e){return "from/emailAddress/address eq '"+e.replace(/'/g,"''")+"'";});
+              const filterStr=fromClauses.join(' or ');
+              const url = 'https://graph.microsoft.com/v1.0/me/messages'
+                + '?$filter='+encodeURIComponent(filterStr)
+                + '&$top=25'
+                + '&$orderby=receivedDateTime desc'
+                + '&$select=subject,from,receivedDateTime,bodyPreview,toRecipients';
+              const resp = await fetch(url, {
+                headers:{Authorization:'Bearer '+msToken, ConsistencyLevel:'eventual'}
+              });
+              if (!resp.ok) {
+                const errData = await resp.json().catch(()=>({}));
+                throw new Error('Graph API error ' + resp.status + ': ' + (errData?.error?.message || resp.statusText));
               }
+              const d = await resp.json();
+              const msgs = (d.value||[]).map(m=>({
+                subject: m.subject,
+                from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || '',
+                fromAddr: m.from?.emailAddress?.address || '',
+                date: m.receivedDateTime ? new Date(m.receivedDateTime).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '',
+                dateRaw: m.receivedDateTime || '',
+                preview: (m.bodyPreview||'').slice(0,120)
+              })).sort((a,b) => (b.dateRaw||'').localeCompare(a.dateRaw||''));
+              S._commCache[_cpKey] = msgs;
+            } catch(e) {
+              console.warn('[VCS] Comm email fetch error:', e.message);
+              // Store error message so UI can display it instead of silent empty
+              S._commCache[_cpKey] = [{_error: e.message}];
             }
-            S._commCache[_cpKey] = msgs;
-          } catch(e) {
-            console.warn('[VCS] Comm email fetch error:', e.message);
-            // Store error message so UI can display it instead of silent empty
-            S._commCache[_cpKey] = [{_error: e.message}];
-          }
-          refreshDetailIfOpen(vendor);
-        })();
+            refreshDetailIfOpen(vendor);
+          })();
+        }
       }
     } else if(_cpTab==='calls'){
       commBody.appendChild(el('div',{style:{textAlign:'center',padding:'20px',color:'var(--muted)',fontSize:'10px'}},'📞 Fathom call transcripts — coming soon'));
@@ -6916,7 +6916,7 @@ function offerSessionRestore() {
 
   openModal(body=>{
     body.appendChild(el('h3',{},'💾 Unsaved Session Found'));
-    body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--text)',lineHeight:'1.6',marginBottom:'8px'}},'VCS found an unsaved session from '+ageMin+' minute'+(ageMin!==1?'s':'')+' ago. Would you like to restore your unsaved changes?'));
+    body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--text)',lineHeight:'1.6',marginBottom:'8px'}},'CMS found an unsaved session from '+ageMin+' minute'+(ageMin!==1?'s':'')+' ago. Would you like to restore your unsaved changes?'));
     const details=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'4px',padding:'8px',marginBottom:'10px',fontSize:'10px'}});
     details.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'3px'}},'Session details:'));
     details.appendChild(el('div',{},'File: '+(saved.fileName||'—')));
@@ -7048,8 +7048,14 @@ function userCan(permission){
 }
 
 const TAB_PAGE_DEFAULTS={
-  rep:{sfboard_finance:false,sfboard_procurement:false,analytics_revenue:false,analytics_repperformance:true,contracts:false,spend:false,reviews:true,discovery:true},
-  ssa:{sfboard_finance:false,analytics_revenue:false,contracts:false,spend:false},
+  rep:{sfboard_finance:false,sfboard_procurement:false,analytics_revenue:false,analytics_repperformance:true,contracts:false,spend:false,reviews:true,discovery:true,
+    sfboard:true,sfboard_sales:true,analytics:true,analytics_pipeline:true,analytics_contracthealth:false,network:false,economics:false,forecast:false,reports:false,tiers:false,history:false,compare:false},
+  ssa:{sfboard_finance:false,analytics_revenue:false,contracts:false,spend:false,
+    sfboard:true,sfboard_procurement:true,sfboard_sales:true,analytics:true,analytics_pipeline:false,network:false,economics:false,forecast:false,reports:false,history:false},
+  // sales_rep is the real role name used in ROLE_PERMS/ROLES — mirror rep's defaults
+  // so the S42 nav gates (network/economics/forecast/reports/tiers) actually apply to it.
+  sales_rep:{sfboard_finance:false,sfboard_procurement:false,analytics_revenue:false,analytics_repperformance:true,contracts:false,spend:false,reviews:true,discovery:true,
+    sfboard:true,sfboard_sales:true,analytics:true,analytics_pipeline:true,analytics_contracthealth:false,network:false,economics:false,forecast:false,reports:false,tiers:false,history:false,compare:false},
   procurement:{sfboard_finance:false},
   manager:{},
   cro:{},
@@ -8040,15 +8046,15 @@ function dialPhone(phone, vendorName) {
   logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:vendorName||'',action:'📞 Dialed: '+phone});
 }
 function showSFSetupGuide(){
-  const prompt=`I need to set up a Salesforce Connected App for our Vendor Contract Scheduler (VCS) tool. This is a read-only integration — the app will only query Salesforce data, never create, update, or delete records.
+  const prompt=`I need to set up a Salesforce Connected App for our Prime Source CMS tool. This is a read-only integration — the app will only query Salesforce data, never create, update, or delete records.
 
 Please walk me through these steps ONE AT A TIME. After each step, STOP and tell me what I just did and what it means. Do NOT click any final "Save" or "Create" buttons — tell me to do that myself after I understand what's happening.
 
 STEPS NEEDED:
 1. Navigate to Setup → App Manager → New Connected App
 2. Fill in:
-   - Connected App Name: "VCS - Vendor Contract Scheduler"
-   - API Name: "VCS_Vendor_Contract_Scheduler"
+   - Connected App Name: "Prime Source CMS"
+   - API Name: "Prime_Source_CMS"
    - Contact Email: (my email)
    - Enable OAuth Settings: checked
    - Callback URL: "${window.location.href.split('?')[0].split('#')[0]}"
@@ -8056,7 +8062,7 @@ STEPS NEEDED:
    - Require Secret for Web Server Flow: UNCHECKED (we use implicit grant)
 3. STOP HERE — explain what I'm about to create and wait for me to click Save
 4. After save, show me the Consumer Key (Client ID) — I need to copy this
-5. Navigate to Setup → Manage Connected Apps → VCS → Edit Policies
+5. Navigate to Setup → Manage Connected Apps → Prime Source CMS → Edit Policies
 6. Set "Permitted Users" to "All users may self-authorize"
 7. STOP — explain what this policy means and wait for me to click Save
 
@@ -8064,7 +8070,7 @@ IMPORTANT RULES:
 - Do NOT click Save, Create, or any confirmation buttons — I will do that myself
 - Explain each field before I fill it in
 - If anything looks wrong or risky, warn me before proceeding
-- At the end, give me just the Client ID to paste into VCS Settings`;
+- At the end, give me just the Client ID to paste into Settings`;
 
   openModal(body=>{
     body.appendChild(el('h3',{},'☁ Salesforce Setup Guide'));
@@ -9636,44 +9642,44 @@ async function loadFathomMeetings(vendor) {
   }
   if(!fathomKey){console.warn('[VCS Fathom] No key after retry');return [];}
 
-  const cacheKey='fathom_'+(vendor.name||'');
+  const proxyUrl=typeof VCS_PROXY_URL!=='undefined'?VCS_PROXY_URL:(S.settings&&S.settings.gasProxyUrl)||'';
+  if(!proxyUrl) return [];
+
+  // CONTACT-EMAIL-ONLY MATCHING (S42): a meeting is relevant only if a known
+  // contact email of this vendor/customer is a calendar invitee on the call.
+  // No name/title/keyword matching — a name mentioned in conversation, or a
+  // vendor's name appearing in an unrelated meeting title, is not the same
+  // as the call actually being with that vendor's contacts.
+  const contactEmails=[];
+  if(vendor.email) contactEmails.push(vendor.email.toLowerCase());
+  if(vendor.email2) contactEmails.push(vendor.email2.toLowerCase());
+  (vendor._sbContacts||[]).forEach(function(ct){
+    let em=ct.emails||[];
+    if(typeof em==='string'){try{em=JSON.parse(em);}catch(_){em=[];}}
+    em.forEach(function(e){const addr=(e.address||e||'').toLowerCase();if(addr&&addr.includes('@'))contactEmails.push(addr);});
+  });
+  if(!contactEmails.length){console.log('[VCS Fathom] No contact emails for',vendor.name,'— skipping');return [];}
+
+  const cacheKey='fathom_'+(vendor.name||'')+'_'+contactEmails.length;
   if(S._fathomCache&&S._fathomCache[cacheKey]&&Date.now()-S._fathomCache[cacheKey].ts<5*60*1000){
     return S._fathomCache[cacheKey].data;
   }
 
-  const proxyUrl=typeof VCS_PROXY_URL!=='undefined'?VCS_PROXY_URL:(S.settings&&S.settings.gasProxyUrl)||'';
-  if(!proxyUrl) return [];
-
-  const vendorName=(vendor.name||'').toLowerCase();
-
-  // Extract vendor email domain for server-side domain filter
-  const allEmails=[vendor.email,vendor.email2,
-    ...(vendor._sbContacts||[]).flatMap(function(ct){
-      let em=ct.emails||[];
-      if(typeof em==='string'){try{em=JSON.parse(em);}catch(_){em=[];}}
-      return em.map(function(e){return e.address||e||'';});
-    })
-  ].filter(Boolean);
   const skipDomains=['gmail.com','yahoo.com','hotmail.com','outlook.com','icloud.com'];
-  const vendorDomain=(function(){
-    for(let i=0;i<allEmails.length;i++){
-      const d=(allEmails[i]||'').split('@')[1];
-      if(d&&!skipDomains.includes(d)) return d;
-    }
-    return '';
-  })();
+  const domains=[...new Set(contactEmails.map(function(e){return e.split('@')[1];}).filter(function(d){return d&&!skipDomains.includes(d);}))];
 
-  console.log('[VCS Fathom] Searching for:',vendor.name,'domain:',vendorDomain||'(no domain)');
+  console.log('[VCS Fathom] Searching for contacts:',contactEmails.slice(0,3));
 
   try {
+    const domain=domains[0]||'';
     const resp=await fetch(proxyUrl,{
       method:'POST',
       headers:{'Content-Type':'text/plain'},
       body:JSON.stringify({
         action:'fathomSearch',
         fathomKey:fathomKey,
-        query:vendor.name,
-        domain:vendorDomain
+        query:'',
+        domain:domain
       })
     });
 
@@ -9688,49 +9694,16 @@ async function loadFathomMeetings(vendor) {
 
     const data=proxyData.result||{};
     const meetings=data.items||data.results||data.data||data.meetings||[];
-    console.log('[VCS Fathom] meetings returned:',meetings.length,'for:',vendor.name);
+    console.log('[VCS Fathom] meetings from proxy:',meetings.length);
 
-    // MATCHING RULE (per David): a meeting is relevant if EITHER —
-    // (a) the vendor/customer name appears in the call TITLE, or
-    // (b) any known contact of this vendor/customer is a PARTICIPANT
-    //     (calendar invitee) on the call.
-    // Either signal alone is sufficient. We never match on summary/
-    // transcript text — a name being mentioned in conversation is not
-    // the same as the call actually being with/about that vendor.
-    const vendorWords=vendorName.split(/[\s\-\/&]+/).filter(function(w){
-      return w.length>=3&&!['the','and','for','inc','llc','ltd','corp','llp','inc.'].includes(w);
-    });
-    const titleMatches=function(m){
-      const title=(m.title||m.meeting_title||'').toLowerCase();
-      if(!title) return false;
-      if(title.includes(vendorName)) return true;
-      if(vendorWords.length>1){
-        return vendorWords.every(function(w){return title.includes(w);});
-      }
-      return vendorWords.length===1 && title.includes(vendorWords[0]);
-    };
-
-    // Build the set of known contact emails AND names for this vendor/customer
-    const contactNames=(vendor._sbContacts||[]).map(function(ct){
-      return (ct.name||'').toLowerCase();
-    }).filter(function(n){return n.length>2;});
-
-    const participantMatches=function(m){
+    const matched=meetings.filter(function(m){
       const invitees=m.calendar_invitees||[];
-      if(!invitees.length) return false;
-      return invitees.some(function(a){
-        const email=(a.email||'').toLowerCase();
-        const name=(a.name||'').toLowerCase();
-        if(email&&allEmails.some(function(ce){return ce.toLowerCase()===email;})) return true;
-        if(name&&contactNames.some(function(cn){return cn===name||name.includes(cn)||cn.includes(name);})) return true;
-        return false;
+      return invitees.some(function(inv){
+        const invEmail=(inv.email||'').toLowerCase();
+        return invEmail&&contactEmails.some(function(ce){return ce===invEmail;});
       });
-    };
-
-    let matched=meetings.filter(function(m){
-      return titleMatches(m) || participantMatches(m);
     });
-    console.log('[VCS Fathom] matched (title OR participant):',matched.length,'of',meetings.length);
+    console.log('[VCS Fathom] contact-matched:',matched.length,'of',meetings.length);
 
     const results=matched.map(function(m){
       const invitees=m.calendar_invitees||[];
@@ -10208,7 +10181,7 @@ function openVendorAliasModal(vendor) {
     body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--muted)',marginBottom:'8px'}},[
       '"'+vendor.name+'" doesn\'t exactly match any record in the Vendor Database. ',
       'Search below to find the correct record and link them. ',
-      'Once linked, VCS will treat them as the same vendor across all tabs.'
+      'Once linked, CMS will treat them as the same vendor across all tabs.'
     ].join('')));
     body.appendChild(el('p',{style:{fontSize:'10px',color:'rgba(245,158,11,.9)',background:'rgba(245,158,11,.08)',padding:'5px 8px',borderRadius:'4px',marginBottom:'10px'}},'⚠ This is a manual link you create. It can be removed at any time from the vendor detail panel. The original record names are not changed.'));
 
@@ -11322,7 +11295,7 @@ function printContractReport() {
     +'<thead><tr style="background:#f5f5f5"><th style="padding:5px 8px;text-align:left">Vendor</th><th style="padding:5px 8px;text-align:left">Category</th><th style="padding:5px 8px;text-align:left">Contact</th><th style="padding:5px 8px;text-align:left">Email</th><th style="padding:5px 8px;text-align:left">Expires</th><th style="padding:5px 8px;text-align:left">Fee</th><th style="padding:5px 8px;text-align:left">AR</th></tr></thead>'
     +'<tbody>'+vendors.map(fmtRow).join('')+'</tbody></table>':'';
 
-  const html=`<!DOCTYPE html><html><head><title>Prime Source VCS — Contract Report ${today.toLocaleDateString()}</title>
+  const html=`<!DOCTYPE html><html><head><title>Prime Source CMS — Contract Report ${today.toLocaleDateString()}</title>
 <style>body{font-family:Arial,sans-serif;margin:30px;color:#111}h1{font-size:20px;margin-bottom:4px}p.sub{color:#666;font-size:12px;margin-bottom:20px}@media print{button{display:none}}</style></head><body>
 <button onclick="window.print()" style="float:right;padding:6px 14px;background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">🖨 Print</button>
 <h1>Prime Source — Vendor Contract Report</h1>
@@ -12016,7 +11989,15 @@ function renderSFBoard(c) {
     {id:'vendor',label:'🏢 Vendor Brief',roles:['admin','procurement','sales_rep','finance']},
   ];
   const role=USER.role||'admin';
-  const visibleViews=views.filter(v=>v.roles.includes(role)||role==='admin');
+  // S42: gate Finance/Procurement/Sales sub-tabs with userCanSeeTab, in addition
+  // to the existing role-list filter (admins always see all sub-tabs).
+  const SFBOARD_SUBTAB_KEYS={finance:'sfboard_finance',procurement:'sfboard_procurement',sales:'sfboard_sales'};
+  const visibleViews=views.filter(v=>{
+    if(!(v.roles.includes(role)||role==='admin')) return false;
+    const gateKey=SFBOARD_SUBTAB_KEYS[v.id];
+    if(gateKey&&typeof userCanSeeTab==='function'&&role!=='admin') return userCanSeeTab(gateKey);
+    return true;
+  });
   const viewTabs=el('div',{style:{display:'flex',gap:'4px',marginBottom:'16px',flexWrap:'wrap'}});
   visibleViews.forEach(v=>{
     const btn=el('button',{class:'col-toggle-btn'+(S._sfBoardView===v.id?' on':''),onclick(){S._sfBoardView=v.id;render();}},v.label);
@@ -12104,7 +12085,7 @@ function renderSFBoard(c) {
   if(USER.sfInstance) oppHdr.appendChild(el('a',{href:USER.sfInstance+'/lightning/o/Opportunity/list',target:'_blank',style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none'}},'View in SF ↗'));
   oppsPanel.appendChild(oppHdr);
   if(!opps.length){
-    oppsPanel.appendChild(el('div',{style:{padding:'20px',textAlign:'center',fontSize:'10px',color:'var(--muted)'}},'No open opportunities matched to VCS vendors'));
+    oppsPanel.appendChild(el('div',{style:{padding:'20px',textAlign:'center',fontSize:'10px',color:'var(--muted)'}},'No open opportunities matched to CMS vendors'));
   } else {
     const oppList=el('div',{style:{maxHeight:'300px',overflowY:'auto'}});
     opps.slice(0,25).forEach(o=>{
@@ -12129,7 +12110,7 @@ function renderSFBoard(c) {
   if(USER.sfInstance) caseHdr.appendChild(el('a',{href:USER.sfInstance+'/lightning/o/Case/list',target:'_blank',style:{fontSize:'9px',color:'var(--blue)',textDecoration:'none'}},'View in SF ↗'));
   casesPanel.appendChild(caseHdr);
   if(!cases.length){
-    casesPanel.appendChild(el('div',{style:{padding:'20px',textAlign:'center',fontSize:'10px',color:'var(--muted)'}},'No open cases matched to VCS vendors'));
+    casesPanel.appendChild(el('div',{style:{padding:'20px',textAlign:'center',fontSize:'10px',color:'var(--muted)'}},'No open cases matched to CMS vendors'));
   } else {
     const caseList=el('div',{style:{maxHeight:'300px',overflowY:'auto'}});
     const sortedCases=[...cases].sort((a,b)=>{const po={High:0,Medium:1,Low:2};return (po[a.Priority]||3)-(po[b.Priority]||3);});
@@ -12395,7 +12376,7 @@ function renderSFVendorBrief(wrap, opps, cases, tasks, spendLeaderboard) {
   cRow('Markets',vcsV?.markets);
   cRow('Classes of Trade',vcsV?.classOfTrade);
   cRow('Assignment',vcsV?.assignment);
-  if(!vcsV) cBody.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'9px',fontStyle:'italic'}},'Not found in VCS vendor database.'));
+  if(!vcsV) cBody.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'9px',fontStyle:'italic'}},'Not found in vendor database.'));
   contractSec.appendChild(cBody);
   cols.appendChild(contractSec);
 
@@ -13694,7 +13675,7 @@ function renderChecklist(c) {
   const wrap=el('div',{style:{maxWidth:'1000px',margin:'0 auto',padding:'12px 0'}});
   const hdr=el('div',{style:{marginBottom:'12px'}});
   hdr.appendChild(el('h2',{style:{margin:'0 0 4px',fontSize:'16px',fontWeight:'700'}},'📋 Vendor Coverage Map'));
-  hdr.appendChild(el('p',{style:{margin:'0',fontSize:'10px',color:'var(--muted)',lineHeight:'1.6'}},'Ensure every spend category at each facility has an aligned vendor. VCS matches each line item against your vendor database automatically.'));
+  hdr.appendChild(el('p',{style:{margin:'0',fontSize:'10px',color:'var(--muted)',lineHeight:'1.6'}},'Ensure every spend category at each facility has an aligned vendor. CMS matches each line item against your vendor database automatically.'));
   wrap.appendChild(hdr);
 
   const custRow=el('div',{style:'display:flex;gap:8px;align-items:center;margin-bottom:12px;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:5px'});
@@ -14388,7 +14369,7 @@ ${tableXml}
 <w:p>
   <w:pPr><w:jc w:val="center"/><w:spacing w:before="80" w:after="0"/></w:pPr>
   <w:r><w:rPr><w:color w:val="808080"/><w:sz w:val="14"/><w:szCs w:val="14"/></w:rPr>
-    <w:t>Generated by VCS | ${esc(data.generatedDate)}${data.fileName?' | '+esc(data.fileName):''}</w:t></w:r>
+    <w:t>Generated by Prime Source CMS | ${esc(data.generatedDate)}${data.fileName?' | '+esc(data.fileName):''}</w:t></w:r>
 </w:p>
 <w:sectPr>
   <w:pgSz w:w="12240" w:h="15840"/>
@@ -14629,7 +14610,7 @@ function renderContracts(c) {
   // page title (Contract Manager) shown in #view-title header bar
   // h2 removed per no-duplicate-titles spec — title not repeated in #content
   // description <p> below provides tool context without duplicating the page heading
-  hdr.appendChild(el('p',{style:{margin:'0',fontSize:'10px',color:'var(--muted)'}},'Upload vendor contracts. Claude reads every clause and extracts structured data — auto-filling VCS fields and powering the true-up calculations.'));
+  hdr.appendChild(el('p',{style:{margin:'0',fontSize:'10px',color:'var(--muted)'}},'Upload vendor contracts. Claude reads every clause and extracts structured data — auto-filling CMS fields and powering the true-up calculations.'));
   wrap.appendChild(hdr);
 
   // Vendor search + upload
@@ -14942,14 +14923,14 @@ function renderContracts(c) {
         const _isExecuted = _cStatus === 'EXECUTED';
         const applyBtn = el('button',{
           class:'btn-xs '+(_isExecuted?'btn-green':'btn-amber'),
-          title: _isExecuted ? 'Apply this executed contract to VCS vendor record' : '⚠ This appears to be a '+_cStatus+' — verify before applying',
+          title: _isExecuted ? 'Apply this executed contract to the vendor record' : '⚠ This appears to be a '+_cStatus+' — verify before applying',
           onclick(){
             if(!_isExecuted){
               if(!confirm('⚠ This contract appears to be a '+_cStatus+', not a fully executed agreement.\n\nApplying unexecuted contracts may overwrite valid data.\n\nAre you sure you want to proceed?')) return;
             }
             openEditableApplyModal(vendor, ex);
           }
-        }, _isExecuted ? 'Apply to VCS' : '⚠ Apply (Unexecuted)');
+        }, _isExecuted ? 'Apply to Record' : '⚠ Apply (Unexecuted)');
         // Data Sheet generation button
         const dsBtn=el('button',{class:'btn-xs btn-ghost',onclick(e){
           e.stopPropagation();
@@ -14960,7 +14941,7 @@ function renderContracts(c) {
           title:'Remove this contract analysis from view',
           onclick(e){
             e.stopPropagation();
-            if(!confirm('Remove this contract analysis for "'+record.fileName+'"?\nThis removes it from VCS view only — the file in Drive is not deleted.')) return;
+            if(!confirm('Remove this contract analysis for "'+record.fileName+'"?\nThis removes it from view only — the file in Drive is not deleted.')) return;
             // Remove from window.S_contractStore for this vendor
             if(window.S_contractStore&&window.S_contractStore[vName]){
               window.S_contractStore[vName]=window.S_contractStore[vName].filter(r=>r.fileName!==record.fileName);
@@ -20273,7 +20254,7 @@ function openReviewDetail(r) {
 function exportICS() {
   const fmt=dt=>dt.toISOString().replace(/[-:]/g,'').split('.')[0]+'Z';
   const esc=s=>String(s||'').replace(/\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;');
-  const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Prime Source VCS//EN','CALSCALE:GREGORIAN','METHOD:PUBLISH'];
+  const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Prime Source CMS//EN','CALSCALE:GREGORIAN','METHOD:PUBLISH'];
   const now=new Date();
 
   // Manual calendar events
@@ -20474,7 +20455,7 @@ function renderCalendar(c) {
           }
           mbtns.appendChild(el('button',{class:'btn-xs btn-danger',onclick:async function(){
             if (mev.outlookEventId) {
-              const choice = confirm('This event is also in your Outlook calendar.\n\nClick OK to remove from BOTH VCS and Outlook.\nClick Cancel to remove from VCS only.');
+              const choice = confirm('This event is also in your Outlook calendar.\n\nClick OK to remove from BOTH CMS and Outlook.\nClick Cancel to remove from CMS only.');
               if (choice) {
                 // Remove from Outlook first
                 const tok = localStorage.getItem('vcs_ms_token');
@@ -20603,11 +20584,11 @@ function generateEventICS(event) {
     notes?'Notes: '+notes:'',
     teamsLink?'Teams: '+teamsLink:'',
     '',
-    'Scheduled via Prime Source VCS',
+    'Scheduled via Prime Source CMS',
   ].filter(Boolean).join('\\n');
 
   const lines = [
-    'BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Prime Source VCS//EN',
+    'BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Prime Source CMS//EN',
     'CALSCALE:GREGORIAN',
     // PUBLISH = adds to YOUR calendar only. No invitations sent to anyone automatically.
     // User must add attendees and hit Send themselves inside Outlook.
@@ -21281,13 +21262,21 @@ function renderAnalytics(c) {
   // ── Tab bar ──
   if(!S._analyticsTab) S._analyticsTab='contract';
   if(!S._analyticsDateRange) S._analyticsDateRange='ytd';
-  const tabs=[
-    {id:'contract',label:'📋 Contract Health'},
-    {id:'revenue',label:'💰 Revenue & Spend'},
-    {id:'pipeline',label:'🎯 SF Pipeline'},
-    {id:'performance',label:'👤 Rep Performance'},
+  const allAnalyticsTabs=[
+    {id:'contract',label:'📋 Contract Health',gateKey:'analytics_contracthealth'},
+    {id:'revenue',label:'💰 Revenue & Spend',gateKey:'analytics_revenue'},
+    {id:'pipeline',label:'🎯 SF Pipeline',gateKey:'analytics_pipeline'},
+    {id:'performance',label:'👤 Rep Performance',gateKey:'analytics_repperformance'},
     {id:'trends',label:'📈 Trends'},
   ];
+  // S42: gate analytics sub-tabs with userCanSeeTab (admins/managers always see all)
+  const tabs=allAnalyticsTabs.filter(t=>{
+    if(!t.gateKey) return true;
+    if(USER.role==='admin'||USER.role==='manager') return true;
+    return typeof userCanSeeTab!=='function'||userCanSeeTab(t.gateKey);
+  });
+  // If the current tab got filtered out (no access), fall back to the first visible tab
+  if(tabs.length&&!tabs.some(t=>t.id===S._analyticsTab)) S._analyticsTab=tabs[0].id;
   const tabBar=el('div',{class:'page-sticky-hdr',style:{display:'flex',gap:'4px',marginBottom:'0',borderBottom:'2px solid var(--border)',paddingBottom:'0',flexWrap:'wrap'}});
   tabs.forEach(t=>{
     const btn=el('button',{style:{padding:'6px 14px',fontSize:'11px',fontWeight:'600',border:'none',cursor:'pointer',borderBottom:S._analyticsTab===t.id?'2px solid var(--blue)':'2px solid transparent',marginBottom:'-2px',background:'transparent',color:S._analyticsTab===t.id?'var(--blue)':'var(--muted)',transition:'all .15s'},
@@ -21768,7 +21757,7 @@ function renderAnalytics(c) {
                 tb.appendChild(tr);
               });
               tbl.appendChild(tb);body.appendChild(tbl);
-              body.appendChild(el('p',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'6px'}},'↗ Click vendor to open in VCS'));
+              body.appendChild(el('p',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'6px'}},'↗ Click vendor to open'));
               const b=el('div',{class:'modal-btns'});b.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));body.appendChild(b);
             });
           }
@@ -22503,7 +22492,7 @@ function renderSummary(c) {
     if(fuWeek.length){lines.push('FOLLOW-UPS DUE:');fuWeek.forEach(v=>lines.push('  • '+v.name+' — due '+fmtDate(parseDate(v.followUp))));lines.push('');}
     if(calEvtsWeek.length){lines.push('SCHEDULED MEETINGS:');calEvtsWeek.forEach(ev=>lines.push('  • '+ev.dateStr+': '+ev.title+(ev.vendorName?' — '+ev.vendorName:'')));lines.push('');}
     if(callsWeek.length){lines.push('TOP CALL PRIORITIES:');callsWeek.forEach(v=>lines.push('  • '+v.name));lines.push('');}
-    launchMailto('','Week Ahead — Prime Source VCS '+today.toLocaleDateString(),lines.join('\n'));
+    launchMailto('','Week Ahead — Prime Source CMS '+today.toLocaleDateString(),lines.join('\n'));
   }},'✉ Email Week Ahead Briefing');
   weekSec.appendChild(emailBtn);
   c.appendChild(weekSec);
@@ -23240,7 +23229,7 @@ function openWatcherFixModal() {
       'The Watcher needs a connected Google Drive account and a Drive File ID. Follow the steps below.'));
     var steps = el('div',{style:{display:'flex',flexDirection:'column',gap:'8px',marginBottom:'12px'}});
     var stepData = [
-      ['1. Connect Google Drive','Grant VCS access to your Google Drive so it can read the vendor file.','Connect Drive',function(){
+      ['1. Connect Google Drive','Grant CMS access to your Google Drive so it can read the vendor file.','Connect Drive',function(){
         closeModal(); localStorage.setItem('vcs_s_drive','0'); S.view='settings'; render();
       }],
       ['2. Set Drive File ID','Paste your Vendor Catalogue file ID (from the Drive URL) in Google Drive settings.','Go to Settings',function(){
@@ -23568,7 +23557,7 @@ function renderVCSHealth(c) {
   const sessSec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'12px'}});
   sessSec.appendChild(el('h3',{style:{margin:'0 0 8px',fontSize:'12px',fontWeight:'700'}},'📊 Session Info'));
   const info=[
-    ['App Version','VCS v2.2 (Jun 2026)'],
+    ['App Version','CMS v2.2 (Jun 2026)'],
     ['User',''+USER.email+' ('+USER.role+')'],
     ['Vendors',''+S.vendors?.length+' direct'],
     ['Channel Partners',''+(S.channelVendors?.length||0)+' vendors'],
@@ -24032,6 +24021,10 @@ function renderSettings(c) {
       '⚙ Admin tip: Global keys (API keys, SF credentials, Renzo key) sync for all users. Personal config (theme, dialer URL) syncs per device. Use "Sync All" after making changes you want other users to pick up.'));
   }
   c.appendChild(syncSec);
+  // D2: Spacer so sticky settings bar never overlaps first card
+  const _settingsSpacer=el('div',{style:{height:'0px'}});
+  c.appendChild(_settingsSpacer);
+  requestAnimationFrame(()=>{const h=syncSec.getBoundingClientRect().height;if(h>0)_settingsSpacer.style.height=h+'px';});
   // Connect All button — refreshes all integrations + reloads global settings
   const connectAllBtn=el('button',{
     class:'btn-xs',
@@ -24122,22 +24115,29 @@ function _buildConnectionsSection(){
         const sfUrlInp=el('input',{value:S.settings.sfLoginUrl||'https://login.salesforce.com',style:{flex:'1',fontSize:'10px'}});
         sfUrlRow.appendChild(sfUrlInp);
         b.appendChild(sfUrlRow);
-        const sfBtns=el('div',{style:{display:'flex',gap:'6px',marginTop:'4px'}});
-        sfBtns.appendChild(el('button',{class:'btn-xs btn-green',title:'Save Salesforce configuration',onclick:async function(){
+        const actionRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'8px',paddingTop:'6px',borderTop:'1px solid var(--border)'}});
+        actionRow.appendChild(el('button',{class:'btn-xs btn-green',title:'Save Salesforce configuration',onclick:async function(){
           S.settings.sfClientId=sfCidInp.value.trim();S.settings.sfLoginUrl=sfUrlInp.value.trim()||'https://login.salesforce.com';
           await saveConfigToDrive();toast('Salesforce settings saved','#10b981');
         }},'Save'));
         if(USER&&USER.sfToken){
-          sfBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Sign out of Salesforce',onclick:function(){
+          const sfTestResult=el('span',{style:{fontSize:'9px',color:'var(--muted)',alignSelf:'center'}});
+          actionRow.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Test the Salesforce connection',onclick:async function(){
+            sfTestResult.textContent='⏳ Testing...';sfTestResult.style.color='var(--muted)';
+            try{const r=await sfQuery("SELECT Id,Name FROM User WHERE Id='"+USER.userId+"' LIMIT 1");sfTestResult.textContent='✅ '+(r.records&&r.records[0]&&r.records[0].Name||r.totalSize+' record found');sfTestResult.style.color='var(--green)';}
+            catch(e){sfTestResult.textContent='❌ '+e.message;sfTestResult.style.color='var(--red)';}
+          }},'Test'));
+          actionRow.appendChild(sfTestResult);
+          actionRow.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Sign out of Salesforce',onclick:function(){
             USER.sfToken=null;USER.sfInstance=null;USER.sfEmail='';
             sessionStorage.removeItem('vcs_sf_token');sessionStorage.removeItem('vcs_sf_instance');
             localStorage.removeItem('vcs_sf_token');localStorage.removeItem('vcs_sf_instance');localStorage.removeItem('vcs_sf_token_ls');
             refreshConnectionsSummary();toast('Salesforce disconnected','#f59e0b');
           }},'Disconnect'));
         } else {
-          sfBtns.appendChild(el('button',{class:'btn-xs',style:{background:'#1a73e8',color:'#fff'},title:'Sign in with Salesforce to sync data',onclick:function(){sfConnect();}},'Connect'));
+          actionRow.appendChild(el('button',{class:'btn-xs',style:{background:'#1a73e8',color:'#fff'},title:'Sign in with Salesforce to sync data',onclick:function(){sfConnect();}},'Connect'));
         }
-        b.appendChild(sfBtns);
+        b.appendChild(actionRow);
       },
       function(){return !!(USER&&USER.sfToken);}
     ));
@@ -24162,16 +24162,27 @@ function _buildConnectionsSection(){
             await saveConfigToDrive();toast('MS settings saved','#10b981');
           }},'Save Settings'));
         }
-        const msBtns=el('div',{style:{display:'flex',gap:'6px',marginTop:'4px'}});
+        const actionRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'8px',paddingTop:'6px',borderTop:'1px solid var(--border)'}});
         const msToken=getMSToken&&getMSToken();
         if(msToken&&Date.now()<(getMSTokenExp&&getMSTokenExp()||0)){
-          msBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Sign out of Microsoft 365',onclick:function(){
+          const msTestResult=el('span',{style:{fontSize:'9px',color:'var(--muted)',alignSelf:'center'}});
+          actionRow.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Test the Microsoft Graph connection',onclick:async function(){
+            msTestResult.textContent='⏳ Testing...';msTestResult.style.color='var(--muted)';
+            try{
+              const r=await fetch('https://graph.microsoft.com/v1.0/me',{headers:{Authorization:'Bearer '+msToken}});
+              if(!r.ok) throw new Error('HTTP '+r.status);
+              const d=await r.json();
+              msTestResult.textContent='✅ '+(d.displayName||d.userPrincipalName||'Connected');msTestResult.style.color='var(--green)';
+            }catch(e){msTestResult.textContent='❌ '+e.message;msTestResult.style.color='var(--red)';}
+          }},'Test'));
+          actionRow.appendChild(msTestResult);
+          actionRow.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Sign out of Microsoft 365',onclick:function(){
             clearMSTokens&&clearMSTokens();
             toast('Microsoft 365 disconnected','#f59e0b');refreshConnectionsSummary();
           }},'Disconnect'));
-          if(typeof refreshMSToken==='function') msBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Silently refresh the Microsoft access token',onclick:refreshMSToken},'Refresh Token'));
+          if(typeof refreshMSToken==='function') actionRow.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Silently refresh the Microsoft access token',onclick:refreshMSToken},'Refresh Token'));
         } else {
-          msBtns.appendChild(el('button',{class:'btn-xs',style:{background:'#0078d4',color:'#fff'},title:'Sign in with Microsoft 365',onclick:function(){
+          actionRow.appendChild(el('button',{class:'btn-xs',style:{background:'#0078d4',color:'#fff'},title:'Sign in with Microsoft 365',onclick:function(){
             const clientId=S.settings.msGraphClientId||'';
             const tenantId=S.settings.msGraphTenantId||'';
             if(!clientId||!tenantId){toast('Microsoft Client ID / Tenant ID not configured — contact admin','#ef4444');console.error('[VCS] MS connect blocked: clientId=',clientId,'tenantId=',tenantId);return;}
@@ -24191,7 +24202,7 @@ function _buildConnectionsSection(){
             });
           }},'Connect'));
         }
-        b.appendChild(msBtns);
+        b.appendChild(actionRow);
       },
       function(){const msToken=getMSToken&&getMSToken();return !!(msToken&&Date.now()<(getMSTokenExp&&getMSTokenExp()||0));}
     ));
@@ -24218,7 +24229,7 @@ function _buildConnectionsSection(){
         ));
         b.appendChild(fRow);
         const fKey=(S.settings&&S.settings.fathomApiKey)||localStorage.getItem(_fathomStorageKey)||'';
-        const fActionRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'6px'}});
+        const fActionRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'8px',paddingTop:'6px',borderTop:'1px solid var(--border)'}});
         if(fKey){
           fActionRow.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Test your Fathom API key',onclick:async function(){
             try{
@@ -24241,7 +24252,13 @@ function _buildConnectionsSection(){
     // Claude AI (admin only)
     if(USER&&USER.role==='admin'){
       connBody.appendChild(buildIntegrationSubsection('Claude AI',
-        function(){return (S.settings&&S.settings.apiKey)||localStorage.getItem('vcs_api_key')?'Configured':'Not configured';},
+        function(){
+          const p=S.settings.aiProvider||'anthropic';
+          if(p==='none')return 'Disabled';
+          const sk=p==='grok'?'vcs_grok_key':p==='openai'?'vcs_openai_key':'vcs_api_key';
+          const ssk=p==='grok'?'grokKey':p==='openai'?'openaiKey':'apiKey';
+          return (S.settings&&S.settings[ssk])||localStorage.getItem(sk)?'Configured':'Not configured';
+        },
         function(b){
           const provRow=el('div',{style:{display:'flex',gap:'4px',marginBottom:'6px',flexWrap:'wrap'}});
           b.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'2px'}},'AI Provider:'));
@@ -24260,27 +24277,54 @@ function _buildConnectionsSection(){
           sharedRow.appendChild(sharedCb);
           sharedRow.appendChild(document.createTextNode(' Share API key with all users'));
           b.appendChild(sharedRow);
-          const cRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
-          cRow.appendChild(el('label',{style:{minWidth:'80px'}},'API Key'));
-          cRow.appendChild(buildMaskedKeyField(
-            S.settings.apiKey||localStorage.getItem('vcs_api_key')||'',
-            async function(v){S.settings.apiKey=v;localStorage.setItem('vcs_api_key',v);await saveConfigToDrive();toast('Claude key saved','#10b981');refreshConnectionsSummary();},
-            'sk-ant-...'
-          ));
-          b.appendChild(cRow);
-          const _aiKey=(S.settings&&S.settings.apiKey)||localStorage.getItem('vcs_api_key')||'';
-          const _aiActionRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'6px'}});
+          const _aiProvider=S.settings.aiProvider||'anthropic';
+          const _aiStorageKey=_aiProvider==='grok'?'vcs_grok_key':_aiProvider==='openai'?'vcs_openai_key':'vcs_api_key';
+          const _aiSettingsKey=_aiProvider==='grok'?'grokKey':_aiProvider==='openai'?'openaiKey':'apiKey';
+          const _aiPlaceholder=_aiProvider==='grok'?'xai-...':_aiProvider==='openai'?'sk-...':'sk-ant-...';
+          const _aiKeyLabel=_aiProvider==='grok'?'Grok Key':_aiProvider==='openai'?'OpenAI Key':'API Key';
+          if(_aiProvider!=='none'){
+            const cRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
+            cRow.appendChild(el('label',{style:{minWidth:'80px'}},_aiKeyLabel));
+            cRow.appendChild(buildMaskedKeyField(
+              S.settings[_aiSettingsKey]||localStorage.getItem(_aiStorageKey)||'',
+              async function(v){S.settings[_aiSettingsKey]=v;localStorage.setItem(_aiStorageKey,v);await saveConfigToDrive();toast((_aiProvider==='grok'?'Grok':_aiProvider==='openai'?'OpenAI':'Claude')+' key saved','#10b981');refreshConnectionsSummary();},
+              _aiPlaceholder
+            ));
+            b.appendChild(cRow);
+          }
+          const _aiKey=(S.settings&&S.settings[_aiSettingsKey])||localStorage.getItem(_aiStorageKey)||'';
+          const _aiActionRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'8px',paddingTop:'6px',borderTop:'1px solid var(--border)'}});
           if(_aiKey){
-            _aiActionRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'},title:'Clear the Claude AI API key',onclick:async function(){
-              S.settings.apiKey='';localStorage.removeItem('vcs_api_key');
-              refreshConnectionsSummary();toast('Claude AI key cleared (this session only)','#f59e0b');
+            const aiTestResult=el('span',{style:{fontSize:'9px',color:'var(--muted)',alignSelf:'center'}});
+            if(_aiProvider==='anthropic'){
+              _aiActionRow.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Test the Claude AI API key',onclick:async function(){
+                aiTestResult.textContent='⏳ Testing...';aiTestResult.style.color='var(--muted)';
+                try{
+                  const rp=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'claudePing',apiKey:_aiKey})});
+                  const dp=await rp.json().catch(()=>({}));
+                  if(dp.status==='ok'||dp.code===200){aiTestResult.textContent='✅ Key valid';aiTestResult.style.color='var(--green)';}
+                  else if(dp.code===429){aiTestResult.textContent='✅ Rate limited but valid';aiTestResult.style.color='var(--green)';}
+                  else throw new Error(dp.error||'Invalid key');
+                }catch(e){aiTestResult.textContent='❌ '+e.message;aiTestResult.style.color='var(--red)';}
+              }},'Test'));
+              _aiActionRow.appendChild(aiTestResult);
+            }
+            _aiActionRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'},title:'Clear the AI API key',onclick:async function(){
+              S.settings[_aiSettingsKey]='';localStorage.removeItem(_aiStorageKey);
+              refreshConnectionsSummary();toast('AI key cleared (this session only)','#f59e0b');
             }},'Disconnect'));
           } else {
             _aiActionRow.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},'Enter your API key above to enable AI features.'));
           }
           b.appendChild(_aiActionRow);
         },
-        function(){return !!((S.settings&&S.settings.apiKey)||localStorage.getItem('vcs_api_key'));}
+        function(){
+          const p=S.settings.aiProvider||'anthropic';
+          if(p==='none')return false;
+          const sk=p==='grok'?'vcs_grok_key':p==='openai'?'vcs_openai_key':'vcs_api_key';
+          const ssk=p==='grok'?'grokKey':p==='openai'?'openaiKey':'apiKey';
+          return !!((S.settings&&S.settings[ssk])||localStorage.getItem(sk));
+        }
       ));
     }
 
@@ -24302,7 +24346,24 @@ function _buildConnectionsSection(){
             'Renzo API key'
           ));
           b.appendChild(rKeyRow);
-          const renzoActionRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',marginTop:'6px'}});
+          const renzoActionRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',marginTop:'8px',paddingTop:'6px',borderTop:'1px solid var(--border)'}});
+          const renzoTestResult=el('span',{style:{fontSize:'9px',color:'var(--muted)',alignSelf:'center'}});
+          renzoActionRow.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Test the Renzo connector',onclick:async function(){
+            const url=S.settings.renzoConnectorUrl,key=S.settings.renzoApiKey;
+            if(!url){toast('Enter the connector URL first','#f59e0b');return;}
+            renzoTestResult.textContent='⏳ Testing...';renzoTestResult.style.color='var(--muted)';
+            try{
+              const r=await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'renzoProxy',renzoUrl:url,renzoKey:key||'',renzoAction:'ping'})});
+              const text=await r.text();
+              let d;try{d=JSON.parse(text);}catch(e){d={error:'Non-JSON: '+text.slice(0,200)};}
+              const inner=d.renzoResult||d;
+              if(inner.status==='ok'){renzoTestResult.textContent='✅ Live (v'+(inner.version||'1.0')+')';renzoTestResult.style.color='var(--green)';}
+              else if(d.proxyError){renzoTestResult.textContent='⚠ Proxy error: '+d.proxyError;renzoTestResult.style.color='var(--amber)';}
+              else if(inner.error==='Unauthorized'){renzoTestResult.textContent='❌ Wrong API key';renzoTestResult.style.color='var(--red)';}
+              else{renzoTestResult.textContent='⚠ '+(inner.error||JSON.stringify(inner)).slice(0,80);renzoTestResult.style.color='var(--amber)';}
+            }catch(e){renzoTestResult.textContent='❌ '+e.message;renzoTestResult.style.color='var(--red)';}
+          }},'Test'));
+          renzoActionRow.appendChild(renzoTestResult);
           if(S.settings.renzoConnectorUrl){
             renzoActionRow.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Preview the next outreach records Renzo would generate',onclick:function(){
               window.open(S.settings.renzoConnectorUrl+'?action=getVCSRecords&apiKey='+(S.settings.renzoApiKey||'')+'&limit=5','_blank');
@@ -24336,7 +24397,7 @@ function _buildConnectionsSection(){
             'eyJ...'
           ));
           b.appendChild(sbKeyRow);
-          const dbBtns=el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginTop:'4px'}});
+          const dbBtns=el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginTop:'8px',paddingTop:'6px',borderTop:'1px solid var(--border)'}});
           dbBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Verify Supabase is reachable with current credentials',onclick:async function(){
             if(!S.settings.supabaseUrl){toast('No Supabase URL configured','#f59e0b');return;}
             try{
@@ -24389,11 +24450,21 @@ function _buildConnectionsSection(){
           gdSyncRow.appendChild(gdSyncCb);
           gdSyncRow.appendChild(el('label',{style:{fontSize:'10px',cursor:'pointer'}},'Auto-sync to Drive on Save'));
           b.appendChild(gdSyncRow);
-          const gdriveActionRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',marginTop:'4px'}});
+          const gdriveActionRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',marginTop:'8px',paddingTop:'6px',borderTop:'1px solid var(--border)'}});
           gdriveActionRow.appendChild(el('button',{class:'btn-xs btn-green',title:'Save Drive File ID and Google Client ID',onclick:async function(){
             S.settings.driveFileId=gdFileInp.value.trim();S.settings.googleClientId=gdClientInp.value.trim();
             await saveConfigToDrive();toast('Google Drive settings saved','#10b981');
           }},'Save'));
+          const gdTestResult=el('span',{style:{fontSize:'9px',color:'var(--muted)',alignSelf:'center'}});
+          gdriveActionRow.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Test the Google Drive connection',onclick:async function(){
+            if(!S.settings.driveFileId||!S.settings.googleClientId){gdTestResult.textContent='⚠ Enter File ID and Client ID first';gdTestResult.style.color='var(--amber)';return;}
+            gdTestResult.textContent='⏳ Testing...';gdTestResult.style.color='var(--muted)';
+            try{
+              await getGDriveToken();
+              gdTestResult.textContent='✅ Connected';gdTestResult.style.color='var(--green)';
+            }catch(e){gdTestResult.textContent='❌ '+e.message;gdTestResult.style.color='var(--red)';}
+          }},'Test'));
+          gdriveActionRow.appendChild(gdTestResult);
           gdriveActionRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'},title:'Unlink Google Drive file',onclick:async function(){
             S.settings.driveFileId='';
             refreshConnectionsSummary();toast('Google Drive unlinked (this session only)','#f59e0b');
@@ -24407,11 +24478,6 @@ function _buildConnectionsSection(){
     connWrap.appendChild(connBody);
     return connWrap;
 }
-
-  // D2: Spacer so sticky settings bar never overlaps first card
-  const _settingsSpacer=el('div',{style:{height:'0px'}});
-  c.appendChild(_settingsSpacer);
-  requestAnimationFrame(()=>{const h=syncSec.getBoundingClientRect().height;if(h>0)_settingsSpacer.style.height=h+'px';});
 
   // S3: Quick Setup Checklist — progress bar + 6 items, collapsed when all complete
   if(USER.role==='admin'||USER.role==='procurement'){
@@ -24721,7 +24787,7 @@ function buildUserSubSection(label,bodyBuilderFn){
     _umHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'8px'}},'(click to expand/collapse)'));
     secUsers.appendChild(_umHdr);
     const _umBody=el('div',{style:{display:_umCollapsed?'none':''}});
-    _umBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.5'}},'Control who can access VCS and what they can do. Only Admins can manage users. Stored in this browser — export user list to share access with another device.'));
+    _umBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px',lineHeight:'1.5'}},'Control who can access CMS and what they can do. Only Admins can manage users. Stored in this browser — export user list to share access with another device.'));
 
     // Role legend removed per B4 (redundant UI)
 
@@ -24937,20 +25003,6 @@ function buildUserSubSection(label,bodyBuilderFn){
           b.appendChild(lbl);
         });
 
-        // Page/Tab visibility toggles
-        b.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:'var(--muted)',marginTop:'6px',marginBottom:'3px',textTransform:'uppercase'}},'Page & Tab Visibility'));
-        const PAGE_TOGGLES=[['contracts','Contracts page'],['spend','Spend page'],['sfboard_finance','SF Board: Finance tab'],['analytics_revenue','Analytics: Revenue/Spend']];
-        PAGE_TOGGLES.forEach(function(pair){
-          const key=pair[0],label=pair[1];
-          const roleDef=(TAB_PAGE_DEFAULTS[u.role||'rep']||{})[key]!==false;
-          const cb=el('input',{type:'checkbox'});
-          cb.checked=typeof((u.tabOverrides||{})[key])==='boolean'?(u.tabOverrides||{})[key]:roleDef;
-          cb.onchange=async function(){if(!u.tabOverrides)u.tabOverrides={};u.tabOverrides[key]=cb.checked;const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===u.email;});if(i>=0){all[i].tabOverrides=u.tabOverrides;setApprovedUsers(all,true);}await saveUsersViaProxy();toast('Updated: '+label,'#10b981');};
-          const row=el('label',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px',cursor:'pointer',marginBottom:'3px'}});
-          row.appendChild(cb);row.appendChild(document.createTextNode(label));
-          b.appendChild(row);
-        });
-
         // Feature Flags
         b.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:'var(--muted)',marginTop:'6px',marginBottom:'3px',textTransform:'uppercase'}},'Feature Flags'));
         const FF_DEFS=[['export','Allow Export'],['addVendor','Add Vendor'],['editContracts','Edit Contracts'],['showFinancials','See Financials']];
@@ -24971,6 +25023,77 @@ function buildUserSubSection(label,bodyBuilderFn){
           flagRow.appendChild(lbl);
         });
         b.appendChild(flagRow);
+      }));
+
+      // ── SUB-SECTION 1b: Page & Tab Access (S42 — full tree, supersedes the
+      // old 4 hard-coded page toggles that lived in Permissions above) ──────
+      details.appendChild(_userSub('🗂 Page & Tab Access', false, function(b) {
+        const PAGE_TREE=[
+          {key:'today',label:'Today'},
+          {key:'callsheet',label:'Call Sheet'},
+          {key:'expiring',label:'Expiring'},
+          {key:'calendar',label:'Calendar'},
+          {key:'vendordb',label:'Vendor DB'},
+          {key:'customers',label:'Customers'},
+          {key:'itw',label:'In The Works'},
+          {key:'reviews',label:'Reviews'},
+          {key:'tiers',label:'Tier Tracker'},
+          {key:'contracts',label:'Contracts'},
+          {key:'compare',label:'Compare'},
+          {key:'checklist',label:'Checklist'},
+          {key:'discovery',label:'Discovery'},
+          {key:'sfboard',label:'SF Board',tabs:[
+            {key:'sfboard_sales',label:'Sales'},
+            {key:'sfboard_procurement',label:'Procurement'},
+            {key:'sfboard_finance',label:'Finance'},
+          ]},
+          {key:'spend',label:'Spend'},
+          {key:'network',label:'Network Intel'},
+          {key:'economics',label:'Contract Econ'},
+          {key:'analytics',label:'Analytics',tabs:[
+            {key:'analytics_pipeline',label:'Pipeline'},
+            {key:'analytics_revenue',label:'Revenue & Spend'},
+            {key:'analytics_repperformance',label:'Rep Performance'},
+            {key:'analytics_contracthealth',label:'Contract Health'},
+          ]},
+          {key:'forecast',label:'Forecast'},
+          {key:'reports',label:'Reports'},
+          {key:'summary',label:'Summary'},
+          {key:'history',label:'History'},
+          {key:'datacheck',label:'Data Check'},
+        ];
+        const roleDefs=TAB_PAGE_DEFAULTS[u.role||'rep']||{};
+        function makeToggle(key,label,indent){
+          const defaultVal=roleDefs[key]!==false;
+          const override=(u.tabOverrides||{})[key];
+          const val=typeof override==='boolean'?override:defaultVal;
+          const cb=el('input',{type:'checkbox'});
+          cb.checked=val;
+          cb.onchange=async function(){
+            if(!u.tabOverrides)u.tabOverrides={};
+            u.tabOverrides[key]=cb.checked;
+            const all=getApprovedUsers();
+            const i=all.findIndex(function(x){return x.email===u.email;});
+            if(i>=0){all[i].tabOverrides=u.tabOverrides;setApprovedUsers(all,true);}
+            await saveUsersViaProxy();
+            toast('Updated: '+label,'#10b981');
+          };
+          const row=el('label',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'9px',cursor:'pointer',marginBottom:'3px',paddingLeft:(indent||0)+'px'}});
+          row.appendChild(cb);row.appendChild(document.createTextNode(label));
+          return row;
+        }
+        const grid=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'2px 8px'}});
+        PAGE_TREE.forEach(function(page){
+          if(page.tabs){
+            const parentWrap=el('div',{style:{gridColumn:'1/-1',marginTop:'4px'}});
+            parentWrap.appendChild(makeToggle(page.key,'📄 '+page.label,0));
+            page.tabs.forEach(function(tab){parentWrap.appendChild(makeToggle(tab.key,tab.label,14));});
+            grid.appendChild(parentWrap);
+          } else {
+            grid.appendChild(makeToggle(page.key,page.label,0));
+          }
+        });
+        b.appendChild(grid);
       }));
 
       // ── SUB-SECTION 2: Field Visibility ───────────────────────────────────
@@ -24995,7 +25118,7 @@ function buildUserSubSection(label,bodyBuilderFn){
             toast('Fathom key updated for '+u.email,'#10b981');
           }},'Save'));
           b.appendChild(fRow);
-          b.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px'}},'Each user enters their own Fathom key — their own recorded calls will show in VCS.'));
+          b.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px'}},'Each user enters their own Fathom key — their own recorded calls will show in CMS.'));
         }));
       }
 
@@ -25071,9 +25194,9 @@ function buildUserSubSection(label,bodyBuilderFn){
     // Authentication status note
     const authNote=el('div',{style:{marginTop:'12px',padding:'10px',background:'rgba(245,158,11,.06)',border:'1px solid rgba(245,158,11,.25)',borderRadius:'5px'}});
     authNote.appendChild(el('div',{style:{fontSize:'10px',fontWeight:'700',color:'var(--amber)',marginBottom:'5px'}},'⚠ Current Authentication: Email-Only (Soft Gate)'));
-    authNote.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.6',marginBottom:'6px'}},'Right now VCS checks if the email entered matches your approved list — but it cannot verify the person actually owns that email. Anyone who knows an approved email address could type it in. This is adequate for internal use on a non-public URL, but is not a true security wall.'));
+    authNote.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.6',marginBottom:'6px'}},'Right now CMS checks if the email entered matches your approved list — but it cannot verify the person actually owns that email. Anyone who knows an approved email address could type it in. This is adequate for internal use on a non-public URL, but is not a true security wall.'));
     authNote.appendChild(el('div',{style:{fontSize:'9px',color:'var(--green)',fontWeight:'600',marginBottom:'3px'}},'✅ Upgrade Path: Microsoft OAuth (coming after GitHub Pages hosting)'));
-    authNote.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.6'}},'Once hosted on GitHub Pages, we will wire up Microsoft/Outlook sign-in — same as Fathom, Teams, and all your Microsoft apps. Users click "Sign in with Microsoft", the Microsoft portal verifies their identity, and sends back a confirmed token. VCS never handles passwords at all. Only users whose Microsoft email matches your approved list get through. Until then, keep the VCS URL private and only share it with approved team members.'));
+    authNote.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.6'}},'Once hosted on GitHub Pages, we will wire up Microsoft/Outlook sign-in — same as Fathom, Teams, and all your Microsoft apps. Users click "Sign in with Microsoft", the Microsoft portal verifies their identity, and sends back a confirmed token. CMS never handles passwords at all. Only users whose Microsoft email matches your approved list get through. Until then, keep the CMS URL private and only share it with approved team members.'));
     _umBody.appendChild(authNote);;
     const exportRow=el('div',{style:{display:'flex',gap:'6px',marginTop:'8px',flexWrap:'wrap'}});
     exportRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){
@@ -25118,8 +25241,8 @@ function buildUserSubSection(label,bodyBuilderFn){
   if (hasPermission('configSF') || USER.role==='admin') {
     const secSF=el('div',{class:'settings-section'});
     secSF.appendChild(el('h3',{},'☁ Salesforce Integration'));
-    secSF.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Connect to Salesforce with OAuth 2.0 (read-only). Each user authenticates with their own credentials — you only see data your SF profile allows. VCS never writes to Salesforce; it only reads and displays data for your reference.'));
-    secSF.appendChild(el('div',{style:{fontSize:'9px',color:'var(--green)',marginBottom:'8px',padding:'4px 8px',background:'rgba(34,197,94,.06)',border:'1px solid rgba(34,197,94,.2)',borderRadius:'3px'}},'🔒 Read-only: VCS will never create, update, or delete any Salesforce records.'));
+    secSF.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Connect to Salesforce with OAuth 2.0 (read-only). Each user authenticates with their own credentials — you only see data your SF profile allows. CMS never writes to Salesforce; it only reads and displays data for your reference.'));
+    secSF.appendChild(el('div',{style:{fontSize:'9px',color:'var(--green)',marginBottom:'8px',padding:'4px 8px',background:'rgba(34,197,94,.06)',border:'1px solid rgba(34,197,94,.2)',borderRadius:'3px'}},'🔒 Read-only: CMS will never create, update, or delete any Salesforce records.'));
     // Connection status
     const statusBox=el('div',{style:{padding:'8px 10px',borderRadius:'5px',marginBottom:'10px',background:USER.sfToken?'rgba(34,197,94,.07)':'rgba(239,68,68,.06)',border:'1px solid '+(USER.sfToken?'rgba(34,197,94,.25)':'rgba(239,68,68,.2)')}});
     if(USER.sfToken) {
@@ -25165,7 +25288,7 @@ function buildUserSubSection(label,bodyBuilderFn){
       secSF.appendChild(row);
     });
     secSF.appendChild(el('p',{style:{fontSize:'9px',color:'var(--amber)',marginTop:'8px',lineHeight:'1.5'}},
-      '⚠ SF sessions expire after your org\'s session timeout (default 2 hours). To extend: Salesforce Setup → Session Settings → Session Timeout → set to 8 hours or Never. VCS will use the stored token until it expires.'));
+      '⚠ SF sessions expire after your org\'s session timeout (default 2 hours). To extend: Salesforce Setup → Session Settings → Session Timeout → set to 8 hours or Never. CMS will use the stored token until it expires.'));
     makeCollapsibleSection(secSF,'☁ Salesforce Integration','vcs_s_sf',true);
     c.appendChild(secSF);
   }
@@ -25174,7 +25297,7 @@ function buildUserSubSection(label,bodyBuilderFn){
   if(hasPermission('configDrive')) {
   const secDrive=el('div',{class:'settings-section'});
   secDrive.appendChild(el('h3',{},'☁ Google Drive Connection'));
-  secDrive.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Connect your Vendor Catalogue to Google Drive. VCS will load directly from Drive and save back to Drive — no manual file management.'));
+  secDrive.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Connect your Vendor Catalogue to Google Drive. CMS will load directly from Drive and save back to Drive — no manual file management.'));
 
   // Drive status
   const driveStatus=el('div',{style:{fontSize:'10px',marginBottom:'8px',padding:'6px 8px',borderRadius:'4px',background:S.settings.driveFileId&&S.settings.googleClientId?'rgba(34,197,94,.08)':'rgba(255,255,255,.04)',border:'1px solid '+(S.settings.driveFileId&&S.settings.googleClientId?'rgba(34,197,94,.3)':'var(--border)')}});
@@ -25236,7 +25359,7 @@ function buildUserSubSection(label,bodyBuilderFn){
   const secSupa=el('div',{class:'settings-section'});
   secSupa.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},
     'Optional: connect a Supabase database for faster loads and a proper database backend. '+
-    'VCS continues to work without it — Excel/Drive remains the primary storage.'));
+    'CMS continues to work without it — Excel/Drive remains the primary storage.'));
   // URL field
   const supaUrlRow=el('div',{style:{marginBottom:'8px'}});
   supaUrlRow.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'2px'}},'Supabase Project URL'));
@@ -25650,128 +25773,15 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
   c.appendChild(secMS);
   } // end MS admin block
 
-  if (hasPermission('configAI')) {
-  const secAI=el('div',{class:'settings-section'});
-  secAI.appendChild(el('h3',{},'🤖 AI Configuration'));
-  secAI.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Configure your AI provider. Keys are saved to your VCS Drive config so they sync across all your devices automatically.'));
-  // Show sync status
-  const keyInDrive = !!(S.settings.apiKey||S.settings.grokKey);
-  const syncBanner=el('div',{style:{fontSize:'9px',padding:'6px 10px',borderRadius:'4px',marginBottom:'8px',
-    background:keyInDrive?'rgba(34,197,94,.07)':'rgba(245,158,11,.07)',
-    border:'1px solid '+(keyInDrive?'rgba(34,197,94,.2)':'rgba(245,158,11,.2)'),
-    display:'flex',gap:'8px',alignItems:'center'}});
-  syncBanner.appendChild(el('span',{style:{flex:'1',color:keyInDrive?'var(--green)':'var(--amber)'}},
-    keyInDrive?'✓ API key loaded from Drive — synced across all your devices':'⚠ No API key in Drive. Enter key below and save to sync across devices.'));
-  if(keyInDrive){
-    syncBanner.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:()=>{
-      saveConfigToDrive().then(()=>toast('✓ Settings synced to Drive','#22c55e')).catch(()=>toast('Drive sync failed','#ef4444'));
-    }},'↑ Push to Drive'));
-  }
-  secAI.appendChild(syncBanner);
-
-  // API key sharing controls (admin only)
-  if(USER.role==='admin'){
-    const shareRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'8px',padding:'6px 8px',background:'rgba(79,124,255,.05)',borderRadius:'4px',border:'1px solid rgba(79,124,255,.15)'}});
-    shareRow.appendChild(el('span',{style:{fontSize:'10px',flex:'1'}},'🔑 Share API key with all users (enables AI for everyone on this account)'));
-    const shareToggle=el('input',{type:'checkbox',style:{width:'14px',height:'14px',cursor:'pointer'}});
-    shareToggle.checked = S.settings.aiKeyShared===true;
-    shareToggle.addEventListener('change',()=>{
-      S.settings.aiKeyShared=shareToggle.checked;
-      debouncedSaveSettings();
-      saveConfigToDrive().catch(()=>{});
-      toast(shareToggle.checked?'✓ API key sharing ON — AI enabled for all users (saved to Drive)':'API key sharing OFF — users must configure their own key');
-    });
-    shareRow.appendChild(shareToggle);
-    secAI.appendChild(shareRow);
-  }
-
-  // Provider selector
-  const provRow=el('div',{style:{display:'flex',gap:'4px',marginBottom:'10px'}});
-  for (const [label,val] of [['Anthropic (Claude)','anthropic'],['Grok (xAI)','grok'],['OpenAI (ChatGPT)','openai'],['None (disabled)','none']]) {
-    const active=(S.settings.aiProvider||'anthropic')===val;
-    provRow.appendChild(el('button',{class:'col-toggle-btn'+(active?' on':''),onclick(){S.settings.aiProvider=val;localStorage.setItem('vcs_ai_provider',val);renderSettings(c);}},label));
-  }
-  secAI.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'4px'}},'AI Provider:'));
-  secAI.appendChild(provRow);
-
-  const provider=S.settings.aiProvider||'anthropic';
-  if (provider!=='none') {
-    const keyLabel=provider==='grok'?'xAI / Grok API Key:':provider==='openai'?'OpenAI API Key:':'Anthropic API Key:';
-    const keyPlaceholder=provider==='grok'?'xai-...':provider==='openai'?'sk-...':'sk-ant-api...';
-    const storageKey=provider==='grok'?'vcs_grok_key':provider==='openai'?'vcs_openai_key':'vcs_api_key';
-    const settingsKey=provider==='grok'?'grokKey':provider==='openai'?'openaiKey':'apiKey';
-    secAI.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'4px'}},keyLabel));
-    const apiRow=el('div',{class:'setting-row'});
-    const apiInp=el('input',{type:'password',class:'modal-input',style:{flex:'1',maxWidth:'300px',marginBottom:'0'},placeholder:keyPlaceholder});
-    apiInp.value=S.settings[settingsKey]||'';
-    apiRow.appendChild(apiInp);
-    apiRow.appendChild(el('button',{class:'btn-xs btn-green',onclick:async function(){
-      const k = apiInp.value.trim();
-      S.settings[settingsKey]=k;
-      localStorage.setItem(storageKey,k);
-      // Save via proxy (works without Google OAuth) + try Drive
-      try {
-        await saveUsersViaProxy();
-        toast('✓ API key saved & synced to Drive','#22c55e');
-      } catch(e) {
-        saveConfigToDrive().catch(()=>{});
-        toast('✓ API key saved locally','#f59e0b');
-      }
-      renderSettings(c);
-    }},'Save & Sync'));
-    secAI.appendChild(apiRow);
-    if (provider==='grok') {
-      secAI.appendChild(el('p',{style:{fontSize:'9px',color:'var(--green)',marginTop:'5px',lineHeight:'1.5'}},'✓ Grok offers free/generous API access via console.x.ai — ideal for heavy AI usage without per-token costs.'));
-    }
-    const hasKey=!!(S.settings[settingsKey]);
-    const statusEl=el('div',{style:{fontSize:'9px',marginTop:'4px',color:hasKey?'#22c55e':'#f59e0b'}});
-    statusEl.textContent=hasKey?`✓ ${provider==='grok'?'Grok':provider==='openai'?'OpenAI':'Claude'} API key configured — AI assistant ready`:'⚠ No API key — AI assistant disabled';
-    secAI.appendChild(statusEl);
-  }
-  // ── Fathom call recordings ────────────────────────────────────────────────
-  const fathomDiv=el('div',{style:{marginTop:'12px',paddingTop:'8px',borderTop:'1px solid var(--border)'}});
-  fathomDiv.appendChild(el('p',{style:{fontSize:'10px',fontWeight:'600',marginBottom:'4px'}},'🎙 Fathom — Call Recordings'));
-  fathomDiv.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'6px',lineHeight:'1.5'}},'Connect Fathom to pull call recordings into vendor activity timelines automatically.'));
-  const fathomKeyRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'4px'}});
-  fathomKeyRow.appendChild(el('label',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'55px'}},'API Key'));
-  const fathomKeyInp=el('input',{type:'password',class:'detail-edit-field',
-    style:{flex:'1',fontSize:'9px'},placeholder:'fathom_...'});
-  fathomKeyInp.value=S.settings.fathomApiKey||'';
-  fathomKeyInp.addEventListener('input',function(){
-    S.settings.fathomApiKey=fathomKeyInp.value.trim();
-    debouncedSaveSettings();
-  });
-  fathomKeyRow.appendChild(fathomKeyInp);
-  fathomKeyRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:async function(){
-    const key=fathomKeyInp.value.trim();
-    if(!key){toast('Enter Fathom API key first','#f59e0b');return;}
-    try{
-      const r=await fetch(VCS_PROXY_URL,{
-        method:'POST',
-        headers:{'Content-Type':'text/plain'},
-        body:JSON.stringify({action:'fathomProxy',fathomKey:key,fathomAction:'test'})
-      });
-      const d=await r.json().catch(()=>({}));
-      if(r.ok&&(d.status==='ok'||(d.result&&(d.result.items||d.result.meetings)!==undefined))) toast('✅ Fathom connected!','#10b981');
-      else if(d.error&&d.error.toLowerCase().includes('unauthorized')) toast('❌ Fathom auth failed — check API key','#ef4444');
-      else toast('⚠ Fathom: '+(d.error||'HTTP '+r.status),'#f59e0b');
-    }catch(e){toast('❌ Fathom connection failed: '+e.message,'#ef4444');}
-  }},'Test'));
-  fathomDiv.appendChild(fathomKeyRow);
-  const fathomStatus=el('p',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'2px',lineHeight:'1.5'}},
-    (S.settings.fathomApiKey?'✅ Fathom key configured — recordings will appear in vendor activity timelines':'Get your API key at fathom.video → Settings → Integrations → API'));
-  fathomDiv.appendChild(fathomStatus);
-  secAI.appendChild(fathomDiv);
-
-  makeCollapsibleSection(secAI,'🤖 AI Configuration','vcs_s_ai',true);
-  c.appendChild(secAI);
-  } // end AI config admin block
+  // S42: AI Configuration standalone section removed — fully superseded by
+  // Connections & API Keys → Claude AI (provider selector, per-provider key,
+  // share toggle, test, disconnect) and Connections & API Keys → Fathom.
 
   // Column visibility
   // ── Dialer Configuration ──
   const secDialer=el('div',{class:'settings-section'});
   secDialer.appendChild(el('h3',{},'📞 Click-to-Call Dialer'));
-  secDialer.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',lineHeight:'1.5',marginBottom:'8px'}},'Configure your preferred dialer. When set, all phone buttons in VCS launch your dialer instead of the default tel: link. Use {phone} for the number, {name} for the vendor name, {e164} for E.164 format (+1XXXXXXXXXX).'));
+  secDialer.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',lineHeight:'1.5',marginBottom:'8px'}},'Configure your preferred dialer. When set, all phone buttons in CMS launch your dialer instead of the default tel: link. Use {phone} for the number, {name} for the vendor name, {e164} for E.164 format (+1XXXXXXXXXX).'));
   const DIALER_PRESETS=[
     {name:'Default (tel: link)', url:''},
     {name:'Commpeak', url:'https://app.commpeak.com/dialer?number={phone}'},
@@ -25819,7 +25829,7 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
     '2. In the "My Phone Number" field below, enter your <strong>Google Voice number</strong> (not your cell). '+
     'This is the number that appears as your caller ID when you dial out through Google Voice.<br>'+
     '3. To find your Google Voice number: go to <a href="https://voice.google.com" target="_blank" style="color:var(--blue)">voice.google.com</a> and check the top-left.<br>'+
-    '4. When you click ☎️ on any vendor, VCS opens Google Voice and pre-dials that vendor number.<br>'+
+    '4. When you click ☎️ on any vendor, CMS opens Google Voice and pre-dials that vendor number.<br>'+
     '<strong>Note:</strong> Google Voice must be registered and linked in your Google account for this to work.';
   phoneGuide.appendChild(phoneGuideText);
 
@@ -26064,7 +26074,7 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
     renzoSec.appendChild(_rnHdr);
     if(_rnOpen){
       const _rnBody=el('div',{style:{padding:'14px'}});
-      _rnBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px'}},'Renzo connects to VCS via a Google Apps Script endpoint. Configure the connector URL and API key here.'));
+      _rnBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px'}},'Renzo connects to CMS via a Google Apps Script endpoint. Configure the connector URL and API key here.'));
 
       // Connector URL
       const urlRow=el('div',{style:{marginBottom:'8px'}});
@@ -26124,7 +26134,7 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
             toast('⚠ Proxy error: '+d.proxyError,'#f59e0b');
             testBtn.textContent='⚠ Proxy error'; testBtn.disabled=false;
           } else if(inner.error==='Unauthorized'){
-            toast('✗ Wrong API key — VCS key does not match Apps Script RENZO_API_KEY property','#ef4444');
+            toast('✗ Wrong API key — CMS key does not match Apps Script RENZO_API_KEY property','#ef4444');
             testBtn.textContent='✗ Wrong key'; testBtn.disabled=false;
           } else {
             toast('⚠ '+(inner.error||JSON.stringify(inner)).slice(0,120),'#f59e0b');
@@ -26155,7 +26165,7 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
       const renzoSteps=[
         {
           title:'Generate API Key',
-          note:'VCS will generate a secure API key for the Renzo connector.',
+          note:'CMS will generate a secure API key for the Renzo connector.',
           btn:'Generate Key →',
           onclick(){
             const key='renzo-'+Math.random().toString(36).slice(2)+'-'+Math.random().toString(36).slice(2);
@@ -26169,7 +26179,7 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
         },
         {
           title:'Open Google Apps Script',
-          note:'This will open script.google.com in a new tab. Click "New project" and name it "VCS Renzo Connector".',
+          note:'This will open script.google.com in a new tab. Click "New project" and name it "CMS Renzo Connector".',
           btn:'Open Google Apps Script →',
           onclick(){
             window.open('https://script.google.com/home','_blank');
@@ -26192,7 +26202,7 @@ function handleReq(e){
   if(e.postData){try{Object.assign(p,JSON.parse(e.postData.contents));}catch(err){}}
   const key=(p.renzoKey||p.apiKey||'').trim();
   if(key&&key!==RENZO_API_KEY)return out({error:'Unauthorized'});
-  if(p.action==='ping'||!p.action)return out({status:'ok',version:'1.0',message:'VCS Renzo Connector is live!'});
+  if(p.action==='ping'||!p.action)return out({status:'ok',version:'1.0',message:'Prime Source CMS Renzo Connector is live!'});
   return out({error:'Unknown action: '+p.action});
 }
 function out(o){return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);}`;
@@ -26392,7 +26402,7 @@ function out(o){return ContentService.createTextOutput(JSON.stringify(o)).setMim
   // ── Session Handover Generator — Admin only ──
   if(USER.role==='admin'){
   settingsCard(c,'Session Handover Generator','📋','handover',false,body=>{
-    body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Generate a complete handover document for the next Claude session. Captures current VCS state, recent changes, and pending work. Paste into a new chat to continue seamlessly.'));
+    body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Generate a complete handover document for the next Claude session. Captures current CMS state, recent changes, and pending work. Paste into a new chat to continue seamlessly.'));
     body.appendChild(el('button',{class:'btn-primary',onclick(){generateHandoverDoc();}},'📋 Generate Handover Document'));
     const handoverOut=el('div',{id:'vcs-handover-out',style:{display:'none',marginTop:'10px'}});
     body.appendChild(handoverOut);
@@ -26494,7 +26504,7 @@ function openAddFieldModal(existing) {
     {key:'field_type',label:'Field Type',type:'select',
      options:['text','number','date','url','phone','email','boolean','select','richtext']},
     {key:'section',label:'Panel Section',type:'select',
-     options:['Contract','Contacts','Communication','VCS','Custom']},
+     options:['Contract','Contacts','Communication','CMS','Custom']},
     {key:'display_order',label:'Display Order',type:'number',ph:'100'},
     {key:'is_searchable',label:'Searchable?',type:'boolean'},
     {key:'is_visible_by_default',label:'Visible by default?',type:'boolean'},
@@ -26587,13 +26597,13 @@ async function seedSchemaFields() {
     {field_key:'procContact',field_label:'Primary Contact',field_type:'text',section:'Contacts',display_order:20,is_core:true},
     {field_key:'email',field_label:'Email',field_type:'email',section:'Contacts',display_order:21,is_core:true},
     {field_key:'mobile',field_label:'Mobile',field_type:'phone',section:'Contacts',display_order:22,is_core:true},
-    {field_key:'sfAccountId',field_label:'SF Account ID',field_type:'text',section:'VCS',display_order:30,is_core:true},
-    {field_key:'trainualUrl',field_label:'Trainual URL',field_type:'url',section:'VCS',display_order:31,is_core:true},
+    {field_key:'sfAccountId',field_label:'SF Account ID',field_type:'text',section:'CMS',display_order:30,is_core:true},
+    {field_key:'trainualUrl',field_label:'Trainual URL',field_type:'url',section:'CMS',display_order:31,is_core:true},
     {field_key:'website',field_label:'Website',field_type:'url',section:'Identity',display_order:6,is_core:true},
     {field_key:'about',field_label:'About',field_type:'richtext',section:'Identity',display_order:7,is_core:true},
     {field_key:'aka',field_label:'AKA / Also Known As',field_type:'text',section:'Identity',display_order:8,is_core:true},
-    {field_key:'score',field_label:'VCS Score',field_type:'number',section:'VCS',display_order:32,is_core:true},
-    {field_key:'tier',field_label:'Tier',field_type:'select',section:'VCS',display_order:33,is_core:true},
+    {field_key:'score',field_label:'CMS Score',field_type:'number',section:'CMS',display_order:32,is_core:true},
+    {field_key:'tier',field_label:'Tier',field_type:'select',section:'CMS',display_order:33,is_core:true},
     {field_key:'repName',field_label:'Rep Name',field_type:'text',section:'Contacts',display_order:23,is_core:true},
     {field_key:'repEmail',field_label:'Rep Email',field_type:'email',section:'Contacts',display_order:24,is_core:true},
     {field_key:'repPhone',field_label:'Rep Phone',field_type:'phone',section:'Contacts',display_order:25,is_core:true},
@@ -27887,7 +27897,7 @@ function generateVendorDataSheet(vendor) {
   </div>
   <div class="header-right">
     Generated: ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}<br>
-    Prepared by: ${USER.name||'VCS System'}<br>
+    Prepared by: ${USER.name||'CMS System'}<br>
     <strong>CONFIDENTIAL — Internal Use Only</strong>
   </div>
 </div>
@@ -27937,7 +27947,7 @@ function render() {
     reports:'📑 Reports',summary:'📈 Summary',history:'🕐 History',
     datacheck:'✅ Data Check',settings:'⚙ Settings',customers:'👥 Customers & Clients',
     sfboard:'☁ Salesforce Board',spend:'💹 Spend',contracts:'📄 Contracts',
-    compare:'⚖ Compare',checklist:'✅ Checklist',discovery:'🔍 Discovery',health:'🔍 VCS Health',
+    compare:'⚖ Compare',checklist:'✅ Checklist',discovery:'🔍 Discovery',health:'🔍 System Health',
   };
   $('view-title').textContent=titles[S.view]||S.view;
   const fl=$('filter-label');
@@ -28643,7 +28653,7 @@ function hideKeywordSuggestions() {
         renderAISessionTabs();
         if(!aiHistory.length){
           const m=el('div',{class:'ai-msg assistant'});
-          m.innerHTML=markdownToHtml('Hello! I\'m your VCS AI assistant. Ask me anything about your vendor contracts, or click a suggestion below.');
+          m.innerHTML=markdownToHtml('Hello! I\'m your CMS AI assistant. Ask me anything about your vendor contracts, or click a suggestion below.');
           $('ai-messages').appendChild(m);
         } else {
           $('ai-messages').innerHTML='';
