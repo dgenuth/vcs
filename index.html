@@ -4807,7 +4807,11 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   // Archive/Restore/Delete buttons — admin only.
   // S48 Part I: permanent delete from the main detail panel is replaced by
   // Archive; genuine permanent delete now only happens from the Archived view.
-  if(hasPermission('editAll')) {
+  // S49 Part A: also requires canAccessArchive() — this wasn't one of the
+  // 4 call sites named in the S49 spec, but it's a real entry point into
+  // the same feature (a user could otherwise archive/restore/delete here
+  // even without Archive access anywhere else), so it's gated the same way.
+  if(hasPermission('editAll') && canAccessArchive()) {
    if(vendor.archived){
     acts.appendChild(el('button',{class:'btn-ghost btn-action',style:{color:'var(--green)',borderColor:'rgba(34,197,94,.3)'},
       title:'Restore this vendor — moves back to the active vendor list',
@@ -7277,6 +7281,18 @@ const PAGE_CAPABILITIES={
 // the hard-coded exclusion — it must NEVER check this function.
 function isAssistantAdmin(){ return !!(USER && USER.assistantAdmin); }
 
+// S49 Part A: gates the Archive feature (source filter + Restore/Archive/
+// Permanently Delete actions) behind a feature flag — admins always have
+// it; everyone else needs an explicit per-user override or a role default
+// of procurement/manager.
+function canAccessArchive(){
+  const role=(USER&&USER.role||'rep').toLowerCase();
+  if(role==='admin') return true; // admin always has access, unconditionally
+  const override=(USER.featureFlags||{}).canAccessArchive;
+  if(typeof override==='boolean') return override;
+  return ['procurement','manager'].includes(role); // sensible default
+}
+
 // S47: per-user/per-role override for Vendor DB's "must search before
 // listing" behavior. Real current behavior (verified in getFiltered() /
 // renderVendorDB) gates on role === 'restricted' or 'sales_rep' specifically
@@ -8191,10 +8207,13 @@ async function saveUsersViaProxy() {
 
 // Returns restrictive-by-default featureFlags for a given role (applied on user add or role change)
 function getDefaultFeatureFlags(role) {
-  const full={export:true,addVendor:true,showFinancials:true,editContracts:true,aiEnabled:true,renzoEnabled:true};
-  const noFin={export:true,addVendor:false,showFinancials:false,editContracts:false,aiEnabled:true,renzoEnabled:false};
-  const viewer={export:false,addVendor:false,showFinancials:false,editContracts:false,aiEnabled:false,renzoEnabled:false};
-  const map={admin:full,procurement:full,manager:{export:true,addVendor:true,showFinancials:true,editContracts:true,aiEnabled:true},
+  // S49 Part A: canAccessArchive gates the Archive feature (source filter +
+  // Restore/Archive/Permanently Delete actions) — off by default, on for
+  // procurement/manager/admin-level roles.
+  const full={export:true,addVendor:true,showFinancials:true,editContracts:true,aiEnabled:true,renzoEnabled:true,canAccessArchive:true};
+  const noFin={export:true,addVendor:false,showFinancials:false,editContracts:false,aiEnabled:true,renzoEnabled:false,canAccessArchive:true};
+  const viewer={export:false,addVendor:false,showFinancials:false,editContracts:false,aiEnabled:false,renzoEnabled:false,canAccessArchive:false};
+  const map={admin:full,procurement:full,manager:{export:true,addVendor:true,showFinancials:true,editContracts:true,aiEnabled:true,canAccessArchive:true},
     cro:noFin,finance_sr:full,finance_jr:{...full,addVendor:false,editContracts:false},
     viewer:viewer,sales:{...noFin,export:false},sales_rep:{...viewer,showFinancials:false},restricted:viewer};
   return Object.assign({},viewer,map[role]||viewer);
@@ -10896,8 +10915,12 @@ function renderVendorDB(c) {
     direct: {label:`Direct (${_activeVendors.length})`, data:_activeVendors, desc:'Prime Source Direct contracts — fully managed relationships'},
     channel: {label:`Channel Partners (${S.channelVendors.length})`, data:S.channelVendors, desc:'WellLink, HPSI, Entegra, Provista, Medtrust — visibility only, no direct management'},
     all: {label:`All (${_activeVendors.length+S.channelVendors.length})`, data:[..._activeVendors,...S.channelVendors], desc:'Full universe of all vendor contracts across all GPOs'},
-    archived: {label:`📦 Archived (${_archivedVendors.length})`, data:_archivedVendors, desc:'Archived vendors — right-click a row to Restore or Permanently Delete'},
   };
+  // S49 Part A: Archived source only shows up for users with canAccessArchive()
+  if (canAccessArchive()) {
+    sourcePool.archived = {label:`📦 Archived (${_archivedVendors.length})`, data:_archivedVendors, desc:'Archived vendors — right-click a row to Restore or Permanently Delete'};
+  }
+  if (!sourcePool[S.dbSource]) S.dbSource='direct'; // reset if the previously-selected source is no longer permitted
   for (const [key, {label}] of Object.entries(sourcePool)) {
     sourceBar.appendChild(el('button',{class:'col-toggle-btn'+(S.dbSource===key?' on':''),onclick(){
       S.dbSource=key;S.dbFilters={};S._dbRenderCount=150;
@@ -11322,14 +11345,16 @@ function renderVendorDB(c) {
           menu.style.top=Math.min(e.clientY,window.innerHeight-130)+'px';
           (S.dbSource==='archived' ? [
            {label:'👁 Open detail',fn:()=>openDetail(v)},
-           {label:'♻ Restore',fn:()=>{if(confirm('Restore '+v.name+'? It will reappear in the active vendor list.')){restoreVendor(v);render();toast('♻ '+v.name+' restored');}},color:'var(--green)'},
-           {label:'🗑 Permanently Delete',fn:()=>{if(confirm('PERMANENTLY DELETE '+v.name+'? Cannot be undone — all history will be lost.')){permanentlyDeleteVendor(v);render();toast('🗑 '+v.name+' permanently deleted');}},color:'var(--red)',admin:true},
+           {label:'♻ Restore',fn:()=>{if(confirm('Restore '+v.name+'? It will reappear in the active vendor list.')){restoreVendor(v);render();toast('♻ '+v.name+' restored');}},color:'var(--green)',archiveGate:true},
+           {label:'🗑 Permanently Delete',fn:()=>{if(confirm('PERMANENTLY DELETE '+v.name+'? Cannot be undone — all history will be lost.')){permanentlyDeleteVendor(v);render();toast('🗑 '+v.name+' permanently deleted');}},color:'var(--red)',admin:true,archiveGate:true},
           ] : [
            {label:'👁 Open detail',fn:()=>openDetail(v)},
            {label:'✉ Email',fn:()=>{openDetail(v);setTimeout(()=>openEmailModal(v),200);}},
-           {label:'📦 Archive',fn:()=>{if(confirm('Archive '+v.name+'? Preserved but hidden — restore anytime from the Archived view.')){archiveVendor(v);render();toast('📦 '+v.name+' archived');}},color:'var(--amber)'},
+           {label:'📦 Archive',fn:()=>{if(confirm('Archive '+v.name+'? Preserved but hidden — restore anytime from the Archived view.')){archiveVendor(v);render();toast('📦 '+v.name+' archived');}},color:'var(--amber)',archiveGate:true},
           ]).forEach(item=>{
             if(item.admin&&!hasPermission('editAll')) return;
+            // S49 Part A: Restore/Permanently Delete/Archive all require canAccessArchive()
+            if(item.archiveGate&&!canAccessArchive()) return;
             const row=document.createElement('div');
             row.style.cssText='padding:7px 14px;cursor:pointer;color:'+(item.color||'var(--text)');
             row.textContent=item.label;
@@ -23220,6 +23245,16 @@ function exportSummaryEmail(since, notesVendors, vs, recentHistory) {
 }
 
 async function renderHistory(c) {
+  // S49 Part C: quick jump to the Archived filter in Vendor DB — gated the
+  // same way as the Archive feature itself.
+  if (typeof canAccessArchive === 'function' && canAccessArchive()) {
+    const archiveLinkBtn = el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px',marginBottom:'8px'},
+      title:'View archived vendor records',
+      onclick:function(){ S.view='vendordb'; S.dbSource='archived'; render(); }
+    },'📦 View Archive');
+    c.appendChild(archiveLinkBtn);
+  }
+
   // ── Supabase audit log ──────────────────────────────────────────────────
   if(SB.ready()) {
     try {
@@ -25010,6 +25045,22 @@ function _buildConnectionsSection(){
 // publishes the current definition to window every time renderSettings runs.
 window._buildConnectionsSection = _buildConnectionsSection;
 
+  // S49 Part D: Deploy to Production — admin or assistant admin (deployment
+  // is an operational task, not a Connections/secrets access, so including
+  // isAssistantAdmin() here is intentional and correct). This is a separate
+  // section from Connections & API Keys, not part of it — the workflow file
+  // itself lives in the primesource-cms repo, added when that repo is set up.
+  if (USER.role==='admin' || isAssistantAdmin()) {
+    const deploySec = el('div',{class:'settings-section'});
+    deploySec.appendChild(el('h3',{},'🚀 Deploy to Production'));
+    deploySec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},
+      'Pushes the current sandbox version live to the production site. Opens GitHub Actions in a new tab — click "Run workflow" there to confirm and deploy.'));
+    deploySec.appendChild(el('button',{class:'btn-primary',onclick:function(){
+      window.open('https://github.com/dgenuth/primesource-cms/actions','_blank');
+    }},'🚀 Open Deploy Workflow'));
+    c.appendChild(deploySec);
+  }
+
   // S3: Quick Setup Checklist — progress bar + 6 items, collapsed when all complete
   if(USER.role==='admin'||USER.role==='procurement'){
     const _setupItems=[
@@ -25138,8 +25189,33 @@ window._buildConnectionsSection = _buildConnectionsSection;
       // button here — this section IS what defines the defaults, so
       // "reset to defaults" doesn't apply to it the way it does for a
       // per-user override.
-      _roleBody.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:'var(--text)',marginBottom:'4px'}},'📑 Tab Access Defaults (all '+role+' users):'));
+      // S49 Part B: each of the three role-default blocks below (Tab Access,
+      // Field Visibility, Feature Defaults) is now its own independently
+      // collapsible sub-section, keyed by role, mirroring the per-user
+      // _userSub pattern used in User Management.
+      function _roleSub(label, defaultOpen, builder) {
+        const sk = 'vcs_rsub_' + role + '_' + label.toLowerCase().replace(/\s+/g, '_');
+        const isOpen = localStorage.getItem(sk) === '1' || (defaultOpen && localStorage.getItem(sk) !== '0');
+        const wrap = el('div',{style:{border:'1px solid var(--border)',borderRadius:'3px',marginTop:'6px',overflow:'hidden'}});
+        const arrow = el('span',{style:{fontSize:'8px',marginRight:'5px',color:'var(--muted)'}}, isOpen?'▼':'▶');
+        const hdr = el('div',{style:{display:'flex',alignItems:'center',padding:'4px 8px',cursor:'pointer',background:'rgba(255,255,255,.03)',fontSize:'9px',fontWeight:'700'}});
+        hdr.onclick = function(){ const o=body.style.display!=='none'; body.style.display=o?'none':''; arrow.textContent=o?'▶':'▼'; localStorage.setItem(sk,o?'0':'1'); };
+        hdr.appendChild(arrow);
+        hdr.appendChild(document.createTextNode(label));
+        const body = el('div',{style:{display:isOpen?'':'none',padding:'8px'}});
+        wrap.appendChild(hdr);
+        wrap.appendChild(body);
+        builder(body);
+        return wrap;
+      }
 
+      // S48 Part C: rebuilt to use buildPermTile/PAGE_HIERARCHY — matches
+      // the per-user Tab Access section's structure and adds Edit checkboxes
+      // (the old getNavTabGroups()-based buttons were View-only). No Reset
+      // button here — this section IS what defines the defaults, so
+      // "reset to defaults" doesn't apply to it the way it does for a
+      // per-user override.
+      _roleBody.appendChild(_roleSub('📑 Tab Access Defaults (all '+role+' users)', true, function(b){
       function roleTabState(id, fallbackDefault){
         const savedOverrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
         const roleOv=(savedOverrides[role]||{})[id];
@@ -25224,17 +25300,18 @@ window._buildConnectionsSection = _buildConnectionsSection;
         }
         roleTabGrid.appendChild(pageRow);
       });
-      _roleBody.appendChild(roleTabGrid);
+      b.appendChild(roleTabGrid);
+      }));
 
       // ── Field Visibility Defaults for this role ──────────────────────────
-      _roleBody.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:'var(--text)',marginTop:'10px',marginBottom:'4px',paddingTop:'6px',borderTop:'1px solid var(--border)'}},'🔒 Field Visibility Defaults (all '+role+' users):'));
+      _roleBody.appendChild(_roleSub('🔒 Field Visibility Defaults (all '+role+' users)', false, function(b){
       const _rfKey='vcs_role_fields_'+role;
       const _roleHF=new Set(JSON.parse(localStorage.getItem(_rfKey)||'[]'));
       const _fGroups={'Vendor Info':['gpo','name','category','subCategory','product','classOfTrade','markets','addedValue','website','status'],'Contacts':['procContact','contactType','title','bizPhone','mobile','email','sharedContact','contactType2','title2','mobile2','email2'],'Contract':['contractName','inContractSince','contractEffective','contractExpiry','autoRenewal','autoRenewalType','contractTerm','currentTerm','termEffective','termExpiry','terminationNotice','terminationWoCause','terminationReceived','assignment','assignmentConditions','exclusivity','signatory'],'Financials':['adminFee','adminFeeNotes','tiers','perpetuity','tail','minYears','contractNo','reportFrequency','agreementType','pricingCommitment'],'Docs & Pricing':['coverSheet','dataSheet','havePricing','pricingLocation','pricingDate','pricingFrequency','whitePapers','serviceSummary','videoRecording'],'Activity':['comments','notes','lastComm','followUp','engagementReminder','needsLOP']};
       const _fgC={'Vendor Info':'#4f7cff','Contacts':'#22c55e','Contract':'#f59e0b','Financials':'#8b5cf6','Docs & Pricing':'#06b6d4','Activity':'#ec4899'};
       Object.entries(_fGroups).forEach(([gName,gKeys])=>{
         const gColor=_fgC[gName]||'var(--muted)';
-        _roleBody.appendChild(el('div',{style:{fontSize:'7px',fontWeight:'700',color:gColor,marginTop:'5px',marginBottom:'2px',textTransform:'uppercase',letterSpacing:'.04em',borderBottom:'1px solid '+gColor+'33',paddingBottom:'2px'}},gName));
+        b.appendChild(el('div',{style:{fontSize:'7px',fontWeight:'700',color:gColor,marginTop:'5px',marginBottom:'2px',textTransform:'uppercase',letterSpacing:'.04em',borderBottom:'1px solid '+gColor+'33',paddingBottom:'2px'}},gName));
         const fgrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',marginBottom:'3px'}});
         gKeys.forEach(fKey=>{
           const fieldDef=(typeof ALL_RESTRICTABLE_FIELDS!=='undefined'?ALL_RESTRICTABLE_FIELDS:[]).find(f=>f.key===fKey);
@@ -25254,12 +25331,13 @@ window._buildConnectionsSection = _buildConnectionsSection;
           });
           fgrid.appendChild(fbtn);
         });
-        _roleBody.appendChild(fgrid);
+        b.appendChild(fgrid);
       });
-      _roleBody.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)',marginBottom:'4px'}},'✅ = visible to role · 🚫 = hidden from role'));
+      b.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)',marginBottom:'4px'}},'✅ = visible to role · 🚫 = hidden from role'));
+      }));
 
       // ── Feature Defaults for this role ────────────────────────────────────
-      _roleBody.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:'var(--text)',marginTop:'10px',marginBottom:'4px',paddingTop:'6px',borderTop:'1px solid var(--border)'}},'⚙ Feature Defaults:'));
+      _roleBody.appendChild(_roleSub('⚙ Feature Defaults (all '+role+' users)', false, function(b){
       const ROLE_FEATURES=[['ai','AI Assistant'],['renzo','Renzo Access'],['discovery','Discovery'],['sfboard','SF Board'],['spend','Spend Page'],['contracts','Contracts']];
       const featGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',marginBottom:'4px'}});
       ROLE_FEATURES.forEach(function([feat,featLabel]){
@@ -25278,7 +25356,8 @@ window._buildConnectionsSection = _buildConnectionsSection;
         });
         featGrid.appendChild(fbtn2);
       });
-      _roleBody.appendChild(featGrid);
+      b.appendChild(featGrid);
+      }));
 
       roleSection.appendChild(_roleBody);
       _rdBody.appendChild(roleSection);
@@ -25582,7 +25661,7 @@ function buildUserSubSection(label,bodyBuilderFn){
         // actually gated anything, not just "redundant"). Restyled to the
         // same buildPermTile green/red pattern used everywhere else.
         b.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:'var(--muted)',marginTop:'6px',marginBottom:'3px',textTransform:'uppercase'}},'Feature Flags'));
-        const FF_DEFS=[['export','Allow Export'],['addVendor','Add Vendor'],['showFinancials','See Financials']];
+        const FF_DEFS=[['export','Allow Export'],['addVendor','Add Vendor'],['showFinancials','See Financials'],['canAccessArchive','Access Archive']];
         const flagRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}});
         FF_DEFS.forEach(function(ff){
           const ffKey=ff[0],ffLabel=ff[1];
