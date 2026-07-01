@@ -1173,6 +1173,11 @@ function loginAs(userObj) {
   }
   USER.hiddenFields = _scMatch !== null && _scMatch !== undefined ? _scMatch : (userObj.hiddenFields || getDefaultHiddenFields(userObj.role, userObj.email));
   USER.tabOverrides = userObj.tabOverrides || {};
+  // S44 fix: these per-user override objects were never copied onto the live
+  // USER object, so userCan()'s USER.permissions check (and the new
+  // canView/canEdit's USER.perms check) never actually saw saved overrides.
+  USER.permissions = userObj.permissions || {};
+  USER.perms = userObj.perms || {};
   USER._impersonating = userObj._impersonating || false;
   // Always hide tier and days for non-admin roles — hard rule, not spreadsheet-dependent
   if (USER.role !== 'admin') {
@@ -6010,7 +6015,9 @@ function renderCommPanel(body, vendor) {
         meetings.sort(function(a,b){return new Date(b.activity_date||0)-new Date(a.activity_date||0);});
         meetings.forEach(function(m){
           const row=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',padding:'4px 2px',borderBottom:'1px solid var(--border)',fontSize:'10px',cursor:'pointer'},onclick:function(){if(m.source_url)window.open(m.source_url,'_blank');}});
-          row.appendChild(el('span',{style:{fontSize:'11px',flexShrink:'0'}},m.source==='fathom'?'🎙':'📹'));
+          row.appendChild(m.source==='fathom'
+            ?el('span',{style:{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'14px',height:'14px',borderRadius:'50%',background:'#7B61FF',color:'#fff',fontSize:'8px',fontWeight:'700',flexShrink:'0'}},'F')
+            :el('span',{style:{fontSize:'11px',flexShrink:'0'}},'📅'));
           row.appendChild(el('span',{style:{flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text)'}},m.subject||'Recording'));
           row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',flexShrink:'0'}},m.activity_date||''));
           if(m.duration_minutes)row.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)',flexShrink:'0'}},m.duration_minutes+'m'));
@@ -6074,25 +6081,27 @@ function renderCommPanel(body, vendor) {
           commBody.appendChild(spinner);
           (async()=>{
             try{
-              // Graph API $filter — exact match on sender/recipient address against
-              // known contact emails only (no vendor-name or domain keyword search).
-              const uniqueEmails=[...new Set(contactEmails.map(function(e){return e.toLowerCase();}))].slice(0,10);
-              const fromClauses=uniqueEmails.map(function(e){return "from/emailAddress/address eq '"+e.replace(/'/g,"''")+"'";});
-              const filterStr=fromClauses.join(' or ');
-              const url = 'https://graph.microsoft.com/v1.0/me/messages'
-                + '?$filter='+encodeURIComponent(filterStr)
-                + '&$top=25'
-                + '&$orderby=receivedDateTime desc'
-                + '&$select=subject,from,receivedDateTime,bodyPreview,toRecipients';
-              const resp = await fetch(url, {
-                headers:{Authorization:'Bearer '+msToken, ConsistencyLevel:'eventual'}
+              // S44 E3: per-contact simple $filter queries run in parallel, instead
+              // of one query combining every contact with 'or' — a single equality
+              // filter never needs Graph's Advanced Query support (ConsistencyLevel
+              // + $count=true), while an OR'd multi-clause filter on a nested
+              // property like from/emailAddress/address can 400 without it.
+              const uniqueEmails=[...new Set(contactEmails.map(function(e){return e.toLowerCase();}))].slice(0,3);
+              const emailQueries=uniqueEmails.map(async function(email){
+                const url = 'https://graph.microsoft.com/v1.0/me/messages'
+                  + '?$filter='+encodeURIComponent("from/emailAddress/address eq '"+email.replace(/'/g,"''")+"'")
+                  + '&$top=10'
+                  + '&$orderby=receivedDateTime desc'
+                  + '&$select=subject,from,receivedDateTime,bodyPreview,toRecipients';
+                const r = await fetch(url, {headers:{Authorization:'Bearer '+msToken}});
+                if(!r.ok) return [];
+                const d = await r.json();
+                return d.value||[];
               });
-              if (!resp.ok) {
-                const errData = await resp.json().catch(()=>({}));
-                throw new Error('Graph API error ' + resp.status + ': ' + (errData?.error?.message || resp.statusText));
-              }
-              const d = await resp.json();
-              const msgs = (d.value||[]).map(m=>({
+              const allMsgs = (await Promise.all(emailQueries)).flat();
+              const seen = new Set();
+              const uniqueMsgs = allMsgs.filter(function(m){if(seen.has(m.id))return false;seen.add(m.id);return true;});
+              const msgs = uniqueMsgs.map(m=>({
                 subject: m.subject,
                 from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || '',
                 fromAddr: m.from?.emailAddress?.address || '',
@@ -6201,6 +6210,13 @@ async function getGDriveToken() {
 
 async function saveToSupabase(vendor) {
   if (!SB.ready()||!vendor) return;
+  // S44 D1: function-level guard — this is the single chokepoint every save
+  // path (bulk dirty-sync loop and individual vendor save) funnels through,
+  // so gating here protects both regardless of which UI button was hidden.
+  if (!canEdit('vendor.name')) {
+    toast('You do not have permission to edit vendor records','#ef4444');
+    return;
+  }
   try {
     const row = vendorToRow(vendor, USER.email||'');
     if (vendor._sbId) row.id=vendor._sbId;
@@ -6211,6 +6227,22 @@ async function saveToSupabase(vendor) {
     auditLog(vendor.name, '_save', null, new Date().toISOString(), 'update');
   } catch(e) {
     console.warn('[VCS SB] saveToSupabase error:',e);
+  }
+}
+
+// S44 D3: best-effort Supabase backup for per-user permission changes.
+// GAS config (saveUsersViaProxy, already called by every caller of this)
+// remains the primary persistence path — this is purely a secondary copy,
+// and never throws even if the table doesn't exist yet.
+async function savePermToSupabase(userEmail, perms) {
+  try {
+    if (!SB.ready()) return;
+    await SB.upsert('user_permissions', [{
+      email: userEmail, perms: JSON.stringify(perms||{}),
+      updated_at: new Date().toISOString(), updated_by: (USER&&USER.email)||'unknown'
+    }]);
+  } catch(e) {
+    console.warn('[CMS] Could not save perms to Supabase:', e.message);
   }
 }
 
@@ -7128,6 +7160,11 @@ const ROLE_PERMISSION_DEFAULTS={
   rep:{notesVisible:false,canEditVendors:false,canEditContacts:false},
 };
 function userCan(permission){
+  // S44: delegates to canView/canEdit (defined below), which fall back to
+  // ROLE_PERMISSION_DEFAULTS + USER.permissions when no new-format perms
+  // entry exists — behavior for these two names is unchanged.
+  if(permission==='notesVisible') return canView('vendor.notes');
+  if(permission==='canEditVendors') return canEdit('vendor.name');
   const role=(USER&&USER.role||'rep').toLowerCase();
   const defaults=ROLE_PERMISSION_DEFAULTS[role]||ROLE_PERMISSION_DEFAULTS.rep;
   const userOverride=(USER&&USER.permissions||{})[permission];
@@ -7150,11 +7187,93 @@ const TAB_PAGE_DEFAULTS={
   admin:{},
 };
 function userCanSeeTab(pageOrTab){
+  // S44: delegates to canView (defined below), which recovers the legacy
+  // TAB_PAGE_DEFAULTS/tabOverrides check via _PERM_KEY_TO_LEGACY_TAB when no
+  // new-format perms entry exists for the mapped key — behavior unchanged
+  // for every tab id already gated here.
+  const key=_LEGACY_TAB_TO_PERM_KEY[pageOrTab]||('page.'+pageOrTab);
+  return canView(key);
+}
+
+// ─── S44: Unified canView/canEdit permission layer ──────────────────────────
+// New capability, additive on top of the existing hiddenFields/tabOverrides/
+// ROLE_PERMISSION_DEFAULTS/TAB_PAGE_DEFAULTS systems above (which stay live —
+// 21+ enforcement sites read hiddenFields directly and are not being rewritten
+// this session). canView/canEdit give a single 'namespace.key' API for NEW
+// permission surfaces (vendor field edit-gating, the Page & Tab Access tile
+// UI) while falling back to the existing role-default sources for any key
+// that already has an equivalent there, so nothing already enforced regresses.
+const _PERM_DEFAULTS={
+  admin:{},
+  procurement:{'page.spend':{v:true,e:false},'tab.sfboard.finance':{v:false,e:false}},
+  cro:{'vendor.notes':{v:true,e:false},'vendor.name':{v:true,e:false}},
+  manager:{'vendor.notes':{v:true,e:false},'vendor.name':{v:true,e:false}},
+  ssa:{'vendor.notes':{v:false,e:false},'vendor.name':{v:true,e:false},'page.spend':{v:false,e:false},'page.contracts':{v:true,e:false},'tab.sfboard.finance':{v:false,e:false}},
+  rep:{'vendor.notes':{v:false,e:false},'vendor.name':{v:true,e:false},'page.spend':{v:false,e:false},'page.contracts':{v:false,e:false},'tab.sfboard.finance':{v:false,e:false},'tab.analytics.revenue':{v:false,e:false},'page.networkintel':{v:false,e:false},'page.contractecon':{v:false,e:false},'page.tiertracker':{v:false,e:false}},
+};
+// Maps new 'page.X'/'tab.X.Y' keys back to the legacy TAB_PAGE_DEFAULTS/tabOverrides
+// tab id, so canView() can fall back to the already-enforced legacy default for
+// any key not (yet) given an explicit entry in _PERM_DEFAULTS above.
+const _PERM_KEY_TO_LEGACY_TAB={
+  'page.contracts':'contracts','page.spend':'spend','page.networkintel':'network',
+  'page.contractecon':'economics','page.tiertracker':'tiers','page.forecast':'forecast',
+  'page.reports':'reports','page.history':'history','page.reviews':'reviews',
+  'page.discovery':'discovery','page.analytics':'analytics','page.compare':'compare','page.sfboard':'sfboard',
+  'tab.sfboard.sales':'sfboard_sales','tab.sfboard.procurement':'sfboard_procurement','tab.sfboard.finance':'sfboard_finance',
+  'tab.analytics.pipeline':'analytics_pipeline','tab.analytics.revenue':'analytics_revenue',
+  'tab.analytics.repperf':'analytics_repperformance','tab.analytics.contracthealth':'analytics_contracthealth',
+};
+const _LEGACY_TAB_TO_PERM_KEY={};
+Object.keys(_PERM_KEY_TO_LEGACY_TAB).forEach(function(k){_LEGACY_TAB_TO_PERM_KEY[_PERM_KEY_TO_LEGACY_TAB[k]]=k;});
+
+function canView(key){
   const role=(USER&&USER.role||'rep').toLowerCase();
-  const defaults=TAB_PAGE_DEFAULTS[role]||{};
-  const override=(USER&&USER.tabOverrides||{})[pageOrTab];
-  if(typeof override==='boolean')return override;
-  return defaults[pageOrTab]!==false;
+  const roleDefaults=_PERM_DEFAULTS[role]||{};
+  const userOverride=(USER&&USER.perms||{})[key];
+  if(userOverride!==undefined) return userOverride.v!==false;
+  if(roleDefaults[key]!==undefined) return roleDefaults[key].v!==false;
+  if(key==='vendor.notes'){
+    const legacyDefaults=ROLE_PERMISSION_DEFAULTS[role]||ROLE_PERMISSION_DEFAULTS.rep;
+    const legacyOverride=(USER&&USER.permissions||{}).notesVisible;
+    if(typeof legacyOverride==='boolean') return legacyOverride;
+    return legacyDefaults.notesVisible!==false;
+  }
+  const legacyTabId=_PERM_KEY_TO_LEGACY_TAB[key];
+  if(legacyTabId){
+    const legacyDefaults=TAB_PAGE_DEFAULTS[role]||{};
+    const legacyOverride=(USER&&USER.tabOverrides||{})[legacyTabId];
+    if(typeof legacyOverride==='boolean') return legacyOverride;
+    if(legacyDefaults[legacyTabId]!==undefined) return legacyDefaults[legacyTabId]!==false;
+  }
+  return true;
+}
+
+function canEdit(key){
+  if(!canView(key)) return false;
+  const role=(USER&&USER.role||'rep').toLowerCase();
+  const roleDefaults=_PERM_DEFAULTS[role]||{};
+  const userOverride=(USER&&USER.perms||{})[key];
+  if(userOverride!==undefined) return userOverride.e===true;
+  if(roleDefaults[key]!==undefined) return roleDefaults[key].e===true;
+  if(key==='vendor.name'||key==='vendor.adminFee'||key==='vendor.notes'){
+    const legacyDefaults=ROLE_PERMISSION_DEFAULTS[role]||ROLE_PERMISSION_DEFAULTS.rep;
+    const legacyOverride=(USER&&USER.permissions||{}).canEditVendors;
+    if(typeof legacyOverride==='boolean') return legacyOverride;
+    return legacyDefaults.canEditVendors===true;
+  }
+  return true;
+}
+
+// Migration: convert any legacy hiddenFields entries into 'vendor.<field>' perms
+// entries (additive — hiddenFields itself keeps being read by its ~21 existing
+// enforcement sites; this just makes the new keyspace aware of them too).
+function migrateHiddenFieldsToPerms(userObj){
+  if(!userObj||!Array.isArray(userObj.hiddenFields)||!userObj.hiddenFields.length) return;
+  if(!userObj.perms) userObj.perms={};
+  userObj.hiddenFields.forEach(function(fieldKey){
+    const permKey='vendor.'+fieldKey;
+    if(userObj.perms[permKey]===undefined) userObj.perms[permKey]={v:false,e:false};
+  });
 }
 
 // Debounced Drive sync — fires 3s after any settings change
@@ -23467,6 +23586,29 @@ function renderVCSHealth(c) {
         const _hc=$('content');if(_hc){_hc.innerHTML='';renderVCSHealth(_hc);}
       }
     },
+    // S44 E5: Microsoft 365 — cached-state test (same pattern as Supabase above),
+    // verified on demand via the Fix button rather than pinging Graph on every render.
+    {label:'Microsoft 365',icon:'📧',roles:'all',
+      test:function(){
+        const tok=typeof getMSToken==='function'?getMSToken():null;
+        const exp=typeof getMSTokenExp==='function'?getMSTokenExp():0;
+        return !!(tok&&Date.now()<exp-10000);
+      },
+      pass:S._msHealthName?'Connected as '+S._msHealthName:'Connected',
+      fail:'Not connected — connect in Settings → Connections',
+      fixLabel:'🔌 Test Connection',
+      fix:async function(){
+        const tok=typeof getMSToken==='function'?getMSToken():null;
+        const exp=typeof getMSTokenExp==='function'?getMSTokenExp():0;
+        if(!tok||Date.now()>exp-10000){toast('⚠ Not connected — connect Microsoft 365 in Settings','#f59e0b');return;}
+        try{
+          const r=await fetch('https://graph.microsoft.com/v1.0/me',{headers:{Authorization:'Bearer '+tok}});
+          if(r.ok){const d=await r.json();S._msHealthName=d.displayName||d.mail||'user';toast('✅ Microsoft 365 connected as '+S._msHealthName,'#10b981');}
+          else{S._msHealthName=null;toast('❌ Token invalid — reconnect in Settings','#ef4444');}
+        }catch(e){toast('❌ MS 365 check failed: '+e.message,'#ef4444');}
+        const _hc=$('content');if(_hc){_hc.innerHTML='';renderVCSHealth(_hc);}
+      }
+    },
   ];
 
   const _visibleChecks=checks.filter(chk=>{
@@ -23668,6 +23810,72 @@ function renderVCSHealth(c) {
   });
   sessSec.appendChild(infoGrid);
   wrap.appendChild(sessSec);
+}
+
+// S44: Page & Tab Access tile UI — visual match for buildFieldAccess's tile
+// style below, but this one writes to u.tabOverrides (the SAME storage
+// userCanSeeTab() and buildFieldAccess's own tab-toggle section both read),
+// not a separate permission namespace. See the call site's comment for why.
+function buildPageAccess(container, userEmail) {
+  container.innerHTML='';
+  const all=getApprovedUsers();
+  const u=all.find(function(x){return x.email===userEmail;});
+  if(!u) return;
+  const roleDefs=TAB_PAGE_DEFAULTS[u.role||'rep']||{};
+  const PAGE_GROUPS=[
+    {group:'Pages',items:[
+      {key:'today',label:'Today'},{key:'vendordb',label:'Vendor DB'},{key:'customers',label:'Customers'},
+      {key:'contracts',label:'Contracts'},{key:'spend',label:'Spend'},{key:'network',label:'Network Intel'},
+      {key:'economics',label:'Contract Econ'},{key:'tiers',label:'Tier Tracker'},{key:'itw',label:'In The Works'},
+      {key:'reviews',label:'Reviews'},{key:'forecast',label:'Forecast'},{key:'reports',label:'Reports'},
+      {key:'discovery',label:'Discovery'},{key:'calendar',label:'Calendar'},{key:'callsheet',label:'Call Sheet'},
+      {key:'history',label:'History'},{key:'analytics',label:'Analytics'},{key:'compare',label:'Compare'},
+    ]},
+    {group:'SF Board Tabs',items:[
+      {key:'sfboard_sales',label:'Sales'},{key:'sfboard_procurement',label:'Procurement'},{key:'sfboard_finance',label:'Finance'},
+    ]},
+    {group:'Analytics Tabs',items:[
+      {key:'analytics_pipeline',label:'Pipeline'},{key:'analytics_revenue',label:'Revenue/Spend'},
+      {key:'analytics_repperformance',label:'Rep Performance'},{key:'analytics_contracthealth',label:'Contract Health'},
+    ]},
+  ];
+  function persist(tabOverrides){
+    u.tabOverrides=tabOverrides;
+    const all2=getApprovedUsers();
+    const i=all2.findIndex(function(x){return x.email===userEmail;});
+    if(i>=0){all2[i].tabOverrides=tabOverrides;setApprovedUsers(all2,true);}
+    saveUsersViaProxy().catch(function(){});
+  }
+  PAGE_GROUPS.forEach(function(group){
+    container.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:'var(--muted)',marginTop:'8px',marginBottom:'4px',textTransform:'uppercase',letterSpacing:'.04em'}},group.group));
+    const grid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px'}});
+    group.items.forEach(function(item){
+      const tabOverrides=u.tabOverrides||{};
+      const hasOverride=item.key in tabOverrides;
+      const roleDefault=roleDefs[item.key]!==false;
+      const isVisible=hasOverride?tabOverrides[item.key]:roleDefault;
+      const isOverridden=hasOverride&&(tabOverrides[item.key]!==roleDefault);
+      const tile=el('div',{style:{padding:'3px 6px',borderRadius:'3px',fontSize:'8px',cursor:'pointer',fontWeight:'500',background:isVisible?'rgba(34,197,94,.1)':'rgba(239,68,68,.1)',border:'1px solid '+(isVisible?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)'),color:isVisible?'#4ade80':'#f87171',outline:isOverridden?'1px dashed #f59e0b':''}});
+      tile.textContent=item.label+' '+(isVisible?'✅':'🚫');
+      tile.title=(isOverridden?'⚠ Overriding role default. ':'')+(isVisible?'Click to hide':'Click to show');
+      tile.onclick=function(){
+        const cur=u.tabOverrides||{};
+        const next=Object.assign({},cur);
+        next[item.key]=!isVisible;
+        persist(next);
+        buildPageAccess(container,userEmail);
+        toast('Updated: '+item.label,'#10b981');
+      };
+      grid.appendChild(tile);
+    });
+    container.appendChild(grid);
+  });
+  const resetBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',marginTop:'6px'},onclick:function(){
+    persist({});
+    buildPageAccess(container,userEmail);
+  }},'↺ Reset all to role defaults');
+  container.appendChild(resetBtn);
+  container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'4px'}},'Dashed amber outline = overriding role default · Changes save automatically'));
 }
 
 // Field access builder — standalone so role tab toggle can call it for any user
@@ -24160,15 +24368,15 @@ function _buildConnectionsSection(){
     const _connKey='vcs_s_connections';
     const _connOpen=localStorage.getItem(_connKey)!=='1';
     const connWrap=el('div',{id:'vcs-connections-summary',style:{border:'1px solid var(--border)',borderRadius:'4px',marginBottom:'8px',overflow:'hidden'}});
-    const connArrow=el('span',{style:{color:'var(--muted)',fontSize:'9px',marginRight:'6px'}},_connOpen?'▼':'▶');
-    const connHdr=el('div',{style:{padding:'8px 12px',fontWeight:'700',fontSize:'11px',cursor:'pointer',display:'flex',justifyContent:'space-between',alignItems:'center',background:'var(--card)',userSelect:'none'},onclick:function(){
+    const connArrow=el('span',{style:{color:'var(--muted)',fontSize:'9px'}},_connOpen?'▼':'▶');
+    const connHdr=el('div',{style:{padding:'8px 12px',cursor:'pointer',display:'flex',gap:'6px',alignItems:'center',background:'var(--card)',userSelect:'none'},onclick:function(){
       const now=connBody.style.display==='none';
       connBody.style.display=now?'':'none';
       connArrow.textContent=now?'▼':'▶';
       localStorage.setItem(_connKey,now?'0':'1');
     }});
     connHdr.appendChild(connArrow);
-    connHdr.appendChild(el('span',{},'Connections & API Keys'));
+    connHdr.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'600',color:'var(--blue)'}},'🔌 Connections & API Keys'));
     connWrap.appendChild(connHdr);
     const connBody=el('div',{style:{display:_connOpen?'':'none',padding:'12px',display:'flex',flexDirection:'column',gap:'8px'}});
     connBody.appendChild(connectAllBtn);
@@ -24869,13 +25077,13 @@ function buildUserSubSection(label,bodyBuilderFn){
     const secUsers=el('div',{class:'settings-section'});
     // Collapsible header
     const _umCollapsed = localStorage.getItem('vcs_um_collapsed') === '1';
-    const _umHdr=el('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',cursor:'pointer',userSelect:'none'},onclick(){
+    const _umHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none'},onclick(){
       const _c=!(_umBody.style.display==='none');
       _umBody.style.display=_c?'none':'';
       _umChev.textContent=_c?'▶':'▼';
       localStorage.setItem('vcs_um_collapsed',_c?'1':'0');
     }});
-    const _umChev=el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'6px'}},_umCollapsed?'▶':'▼');
+    const _umChev=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_umCollapsed?'▶':'▼');
     _umHdr.appendChild(_umChev);
     _umHdr.appendChild(el('h3',{style:{margin:'0'}},'👥 User Management'));
     _umHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'8px'}},'(click to expand/collapse)'));
@@ -24938,6 +25146,18 @@ function buildUserSubSection(label,bodyBuilderFn){
     selAllCb.addEventListener('change',()=>tblWrap.querySelectorAll('input.um-cb').forEach(cb=>cb.checked=selAllCb.checked));
     _umBody.appendChild(bulkBar);
 
+    // A3: Expand All / Collapse All for every user's detail row at once
+    const umExpandRow=el('div',{style:{display:'flex',gap:'6px',marginBottom:'8px'}});
+    umExpandRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick:function(){
+      document.querySelectorAll('[data-um-details]').forEach(function(d){d.style.display='';});
+      document.querySelectorAll('[data-um-expbtn]').forEach(function(b){b.textContent='−';});
+    }},'Expand All Users'));
+    umExpandRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick:function(){
+      document.querySelectorAll('[data-um-details]').forEach(function(d){d.style.display='none';});
+      document.querySelectorAll('[data-um-expbtn]').forEach(function(b){b.textContent='+';});
+    }},'Collapse All Users'));
+    _umBody.appendChild(umExpandRow);
+
     // ── Compact rows with expandable details ─────────────────────────────────
     const tblWrap=el('div',{style:{marginBottom:'12px'}});
     users.forEach((u,uidx)=>{
@@ -24953,7 +25173,7 @@ function buildUserSubSection(label,bodyBuilderFn){
       mainLine.appendChild(rowCb);
 
       // Expand toggle
-      const expBtn=el('button',{style:{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:'9px',padding:'0 2px',flexShrink:'0'}},'+');
+      const expBtn=el('button',{'data-um-expbtn':'1',style:{background:'none',border:'none',color:'var(--muted)',cursor:'pointer',fontSize:'9px',padding:'0 2px',flexShrink:'0'}},'+');
       mainLine.appendChild(expBtn);
 
       // Email + name + added date
@@ -25046,7 +25266,32 @@ function buildUserSubSection(label,bodyBuilderFn){
       row.appendChild(mainLine);
 
       // ── Expanded details: hidden by default ───────────────────────────────
-      const details=el('div',{style:{display:'none',marginTop:'6px',paddingLeft:'34px',borderTop:'1px dashed rgba(255,255,255,.06)',paddingTop:'6px'}});
+      const details=el('div',{'data-um-details':'1',style:{display:'none',marginTop:'6px',paddingLeft:'34px',borderTop:'1px dashed rgba(255,255,255,.06)',paddingTop:'6px'}});
+      // Per-user sub-section expand/collapse (targets this user's own _userSub wrappers only)
+      const subExpandRow=el('div',{style:{display:'flex',gap:'4px',marginBottom:'6px'}});
+      subExpandRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick:function(){
+        details.querySelectorAll('[data-user-sub]').forEach(function(w){
+          const hdr=w.querySelector(':scope > div:first-child');
+          const body=w.querySelector(':scope > div:last-child');
+          const arrow=hdr&&hdr.querySelector('span:first-child');
+          if(body){body.style.display='';}
+          if(arrow){arrow.textContent='▼';}
+          const sk=w.getAttribute('data-user-sub-key');
+          if(sk)localStorage.setItem(sk,'1');
+        });
+      }},'Expand All Sections'));
+      subExpandRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick:function(){
+        details.querySelectorAll('[data-user-sub]').forEach(function(w){
+          const hdr=w.querySelector(':scope > div:first-child');
+          const body=w.querySelector(':scope > div:last-child');
+          const arrow=hdr&&hdr.querySelector('span:first-child');
+          if(body){body.style.display='none';}
+          if(arrow){arrow.textContent='▶';}
+          const sk=w.getAttribute('data-user-sub-key');
+          if(sk)localStorage.setItem(sk,'0');
+        });
+      }},'Collapse All Sections'));
+      details.appendChild(subExpandRow);
 
       // Added date + password in one line
       const detailsMeta=el('div',{style:{display:'flex',gap:'12px',alignItems:'center',marginBottom:'8px',flexWrap:'wrap'}});
@@ -25066,7 +25311,7 @@ function buildUserSubSection(label,bodyBuilderFn){
       function _userSub(label, defaultOpen, builder) {
         const sk='vcs_usub_'+u.email.split('@')[0]+'_'+label.toLowerCase().replace(/\s+/g,'_');
         const isOpen=localStorage.getItem(sk)==='1'||defaultOpen&&localStorage.getItem(sk)!=='0';
-        const wrap=el('div',{style:{border:'1px solid var(--border)',borderRadius:'3px',marginTop:'6px',overflow:'hidden'}});
+        const wrap=el('div',{'data-user-sub':u.email,'data-user-sub-key':sk,style:{border:'1px solid var(--border)',borderRadius:'3px',marginTop:'6px',overflow:'hidden'}});
         const arrow=el('span',{style:{fontSize:'8px',marginRight:'5px',color:'var(--muted)'}},isOpen?'▼':'▶');
         const hdr=el('div',{style:{display:'flex',alignItems:'center',padding:'4px 8px',cursor:'pointer',background:'rgba(255,255,255,.03)',fontSize:'9px',fontWeight:'700'}});
         hdr.onclick=function(){const o=body.style.display!=='none';body.style.display=o?'none':'';arrow.textContent=o?'▶':'▼';localStorage.setItem(sk,o?'0':'1');};
@@ -25081,7 +25326,7 @@ function buildUserSubSection(label,bodyBuilderFn){
 
       // ── SUB-SECTION 1: Permissions ────────────────────────────────────────
       details.appendChild(_userSub('🔐 Permissions', true, function(b) {
-        const _saveUserPerm=async function(key,val){if(!u.permissions)u.permissions={};u.permissions[key]=val;const _pa=getApprovedUsers();const _pi=_pa.findIndex(x=>x.email===u.email);if(_pi>=0){_pa[_pi].permissions=u.permissions;setApprovedUsers(_pa,true);}await saveUsersViaProxy();toast('Updated for '+(u.name||u.email),'#10b981');};
+        const _saveUserPerm=async function(key,val){if(!u.permissions)u.permissions={};u.permissions[key]=val;const _pa=getApprovedUsers();const _pi=_pa.findIndex(x=>x.email===u.email);if(_pi>=0){_pa[_pi].permissions=u.permissions;setApprovedUsers(_pa,true);}await saveUsersViaProxy();if(typeof savePermToSupabase==='function')savePermToSupabase(u.email,u.permissions);toast('Updated for '+(u.name||u.email),'#10b981');};
 
         // Notes + Edit toggles
         const _rd=ROLE_PERMISSION_DEFAULTS[u.role||'rep']||ROLE_PERMISSION_DEFAULTS.rep;
@@ -25119,75 +25364,19 @@ function buildUserSubSection(label,bodyBuilderFn){
         b.appendChild(flagRow);
       }));
 
-      // ── SUB-SECTION 1b: Page & Tab Access (S42 — full tree, supersedes the
-      // old 4 hard-coded page toggles that lived in Permissions above) ──────
+      // ── SUB-SECTION 1b: Page & Tab Access ─────────────────────────────────
+      // S44: re-skinned as amber/green click-tiles matching buildFieldAccess's
+      // visual language (was a checkbox tree). Still backed by the SAME
+      // u.tabOverrides storage that userCanSeeTab() and buildFieldAccess's own
+      // "📑 Tab Access" section both read — deliberately NOT a new parallel
+      // permission namespace. (buildFieldAccess already has an equivalent tab
+      // toggle list sourced from NAV_DEFS/ROLE_PERMS; this section covers the
+      // same tabOverrides keys with the TAB_PAGE_DEFAULTS role-default baseline
+      // that userCanSeeTab() actually enforces, so what's shown here matches
+      // real runtime behavior. See handoff notes on the pre-existing overlap
+      // between these two UIs for a candidate future consolidation.)
       details.appendChild(_userSub('🗂 Page & Tab Access', false, function(b) {
-        const PAGE_TREE=[
-          {key:'today',label:'Today'},
-          {key:'callsheet',label:'Call Sheet'},
-          {key:'expiring',label:'Expiring'},
-          {key:'calendar',label:'Calendar'},
-          {key:'vendordb',label:'Vendor DB'},
-          {key:'customers',label:'Customers'},
-          {key:'itw',label:'In The Works'},
-          {key:'reviews',label:'Reviews'},
-          {key:'tiers',label:'Tier Tracker'},
-          {key:'contracts',label:'Contracts'},
-          {key:'compare',label:'Compare'},
-          {key:'checklist',label:'Checklist'},
-          {key:'discovery',label:'Discovery'},
-          {key:'sfboard',label:'SF Board',tabs:[
-            {key:'sfboard_sales',label:'Sales'},
-            {key:'sfboard_procurement',label:'Procurement'},
-            {key:'sfboard_finance',label:'Finance'},
-          ]},
-          {key:'spend',label:'Spend'},
-          {key:'network',label:'Network Intel'},
-          {key:'economics',label:'Contract Econ'},
-          {key:'analytics',label:'Analytics',tabs:[
-            {key:'analytics_pipeline',label:'Pipeline'},
-            {key:'analytics_revenue',label:'Revenue & Spend'},
-            {key:'analytics_repperformance',label:'Rep Performance'},
-            {key:'analytics_contracthealth',label:'Contract Health'},
-          ]},
-          {key:'forecast',label:'Forecast'},
-          {key:'reports',label:'Reports'},
-          {key:'summary',label:'Summary'},
-          {key:'history',label:'History'},
-          {key:'datacheck',label:'Data Check'},
-        ];
-        const roleDefs=TAB_PAGE_DEFAULTS[u.role||'rep']||{};
-        function makeToggle(key,label,indent){
-          const defaultVal=roleDefs[key]!==false;
-          const override=(u.tabOverrides||{})[key];
-          const val=typeof override==='boolean'?override:defaultVal;
-          const cb=el('input',{type:'checkbox'});
-          cb.checked=val;
-          cb.onchange=async function(){
-            if(!u.tabOverrides)u.tabOverrides={};
-            u.tabOverrides[key]=cb.checked;
-            const all=getApprovedUsers();
-            const i=all.findIndex(function(x){return x.email===u.email;});
-            if(i>=0){all[i].tabOverrides=u.tabOverrides;setApprovedUsers(all,true);}
-            await saveUsersViaProxy();
-            toast('Updated: '+label,'#10b981');
-          };
-          const row=el('label',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'9px',cursor:'pointer',marginBottom:'3px',paddingLeft:(indent||0)+'px'}});
-          row.appendChild(cb);row.appendChild(document.createTextNode(label));
-          return row;
-        }
-        const grid=el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'2px 8px'}});
-        PAGE_TREE.forEach(function(page){
-          if(page.tabs){
-            const parentWrap=el('div',{style:{gridColumn:'1/-1',marginTop:'4px'}});
-            parentWrap.appendChild(makeToggle(page.key,'📄 '+page.label,0));
-            page.tabs.forEach(function(tab){parentWrap.appendChild(makeToggle(tab.key,tab.label,14));});
-            grid.appendChild(parentWrap);
-          } else {
-            grid.appendChild(makeToggle(page.key,page.label,0));
-          }
-        });
-        b.appendChild(grid);
+        buildPageAccess(b, u.email);
       }));
 
       // ── SUB-SECTION 2: Field Visibility ───────────────────────────────────
@@ -28636,8 +28825,8 @@ function hideKeywordSuggestions() {
     window._kwCalcTimer=setTimeout(()=>showKeywordSuggestions(q), 350);
   });
   $('search').addEventListener('focus', e => {
-    // Show history dropdown when focused and empty (or on click)
-    if (!e.target.value) renderSearchDropdown();
+    // S44 E1: always show the dropdown on focus, not just when the field is empty
+    renderSearchDropdown();
   });
   $('search').addEventListener('blur', () => {
     // Small delay so mousedown on dropdown item fires first
