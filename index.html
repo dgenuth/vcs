@@ -7699,11 +7699,16 @@ async function loadGlobalSettingsViaProxy() {
       const gs = cfg.globalSettings;
       const SAFE_GLOBAL_KEYS = ['apiKey','renzoApiKey','driveFileId','aiKeyShared','supabaseUrl','supabaseKey','fathomApiKey'];
       SAFE_GLOBAL_KEYS.forEach(k => {
-        if (gs[k] !== undefined && gs[k] !== '' && gs[k] !== null) {
+        // Server value only fills in when local is empty -- local settings the
+        // user just changed in this session must win, otherwise every
+        // subsequent proxy reload (including every Connect All click) could
+        // clobber a freshly-saved key with a stale server copy.
+        if (gs[k] !== undefined && gs[k] !== '' && gs[k] !== null && !S.settings[k]) {
           S.settings[k] = gs[k];
         }
       });
-      const _ak=gs.apiKey||S.settings.apiKey;const _fk=gs.fathomApiKey||S.settings.fathomApiKey;if(_ak){S.settings.apiKey=_ak;localStorage.setItem('vcs_api_key',_ak);}if(_fk){S.settings.fathomApiKey=_fk;localStorage.setItem(getFathomKeyStorageKey(),_fk);}
+      if(!S.settings.apiKey && gs.apiKey){S.settings.apiKey=gs.apiKey;localStorage.setItem('vcs_api_key',gs.apiKey);}
+      if(!S.settings.fathomApiKey && gs.fathomApiKey){S.settings.fathomApiKey=gs.fathomApiKey;localStorage.setItem(getFathomKeyStorageKey(),gs.fathomApiKey);}
     }
     // Merge approved users list (carries feature flags, roles, hiddenFields)
     if (cfg.users && Array.isArray(cfg.users)) {
@@ -24345,10 +24350,10 @@ function renderSettings(c) {
       '⚙ Admin tip: Global keys (API keys, SF credentials, Renzo key) sync for all users. Personal config (theme, dialer URL) syncs per device. Use "Sync All" after making changes you want other users to pick up.'));
   }
   c.appendChild(syncSec);
-  // D2: Spacer so sticky settings bar never overlaps first card
-  const _settingsSpacer=el('div',{style:{height:'0px'}});
-  c.appendChild(_settingsSpacer);
-  requestAnimationFrame(()=>{const h=syncSec.getBoundingClientRect().height;if(h>0)_settingsSpacer.style.height=h+'px';});
+  // (Spacer removed — syncSec uses position:sticky, which already reserves
+  // its own space in the document flow. A matching-height spacer is only
+  // needed for position:fixed elements; adding one here duplicated the
+  // sync bar's height as blank space right below it.)
   // Connect All button — refreshes all integrations + reloads global settings
   const connectAllBtn=el('button',{
     class:'btn-xs',
@@ -24400,7 +24405,7 @@ function _buildConnectionsSection(){
     connHdr.appendChild(connArrow);
     connHdr.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'600',color:'var(--blue)'}},'🔌 Connections & API Keys'));
     connWrap.appendChild(connHdr);
-    const connBody=el('div',{style:{display:_connOpen?'':'none',padding:'12px',display:'flex',flexDirection:'column',gap:'8px'}});
+    const connBody=el('div',{style:{display:_connOpen?'flex':'none',padding:'12px',flexDirection:'column',gap:'8px'}});
     connBody.appendChild(connectAllBtn);
     const connScopeRow=el('div',{style:{display:'flex',gap:'4px',marginBottom:'8px',flexWrap:'wrap'}});
     connScopeRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px',padding:'3px 8px'},title:'Expand all integration sections',onclick:function(){
