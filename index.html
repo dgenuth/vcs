@@ -25213,6 +25213,24 @@ function _buildConnectionsSection(){
       function(){return !!(S.settings&&S.settings.driveFileId);}
     ));
 
+    // Deploy to Production — admin ONLY (not assistant admin). David: "very
+    // sensitive... only accessible by me, just like Connections & API Keys."
+    // Same hard-exclusion principle as the other secret-adjacent gates in
+    // this section — do not add isAssistantAdmin() here.
+    if (USER && USER.role === 'admin') {
+      connBody.appendChild(buildIntegrationSubsection('Deploy to Production',
+        function(){ return 'Admin only'; },
+        function(b){
+          b.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},
+            'Pushes the current sandbox version live to the production site. Opens GitHub Actions in a new tab — click "Run workflow" there to confirm and deploy.'));
+          b.appendChild(el('button',{class:'btn-primary',onclick:function(){
+            window.open('https://github.com/dgenuth/primesource-cms/actions','_blank');
+          }},'🚀 Open Deploy Workflow'));
+        },
+        function(){ return false; } // never shows a "connected" green state -- this isn't a connection
+      ));
+    }
+
     connWrap.appendChild(connBody);
     return connWrap;
 }
@@ -25223,22 +25241,6 @@ function _buildConnectionsSection(){
 // not defined" and the UI never updated without a full page reload. This
 // publishes the current definition to window every time renderSettings runs.
 window._buildConnectionsSection = _buildConnectionsSection;
-
-  // S49 Part D: Deploy to Production — admin or assistant admin (deployment
-  // is an operational task, not a Connections/secrets access, so including
-  // isAssistantAdmin() here is intentional and correct). This is a separate
-  // section from Connections & API Keys, not part of it — the workflow file
-  // itself lives in the primesource-cms repo, added when that repo is set up.
-  if (USER.role==='admin' || isAssistantAdmin()) {
-    const deploySec = el('div',{class:'settings-section'});
-    deploySec.appendChild(el('h3',{},'🚀 Deploy to Production'));
-    deploySec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},
-      'Pushes the current sandbox version live to the production site. Opens GitHub Actions in a new tab — click "Run workflow" there to confirm and deploy.'));
-    deploySec.appendChild(el('button',{class:'btn-primary',onclick:function(){
-      window.open('https://github.com/dgenuth/primesource-cms/actions','_blank');
-    }},'🚀 Open Deploy Workflow'));
-    c.appendChild(deploySec);
-  }
 
   // S3: Quick Setup Checklist — progress bar + 6 items, collapsed when all complete
   if(USER.role==='admin'||USER.role==='procurement'){
