@@ -8,7 +8,6 @@
   TO DEPLOY TO PRODUCTION:
   1. Copy this index.html to the primesource-cms GitHub repo
   2. Change: const CMS_PRODUCTION_MODE = false;
-const FATHOM_ICON_B64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAADBElEQVR42u2WT2hcVRjFf999b95kYv602pEWRBBBLZYKdiUoxbZREHQj2QiKG8GFC6ErKzJqBatQiqgLI24rJN1ZXRibmcxUKbTW0r8rN4KxoaEJMdP58969x8VooZCZSbS6kJztvdxzz/ed890LG/h/QzImFVGSQ4qQ7L+/xKSif0eZZMPTuiua9V/YDyq72ezVXZ+dyd2i/LahrBggmvETXJT4XuK0ZFV/Ljmp529RW5Jbz9Fxn/VRMqBBgwaxCu6RNOKYq/oZl/l3sz02+6fiCAiYqR/h6rerEJAsVvuArXCKUQoMkKNJW3WykLg9PslVopq+zJVbOzDzmImy4n7G6rEoAxMlxW6vf1Fmb6ng7qMOpLQxYoZx1qLpCBNJy33Y2Ge/3uxxF7Vrsvlfm6ym/YIDKnAnvwOBFkaeYbAmCyZ/pNiIPpp/2urdSK2rS4GtNbZct/BpFrPdpTr25ono4MQuBq5u5iDiNQ2QsEIgkBGTMAq2GE5v8m5scR/LHYb+fb3pUpvREXdZoirxo2Q1P+eqesWAQrl+j9X8UTspcUrihDK+U52zUlRJx7pldnXTXEMGFJNwb1jGW0bblsgkty0MMkHVX2hbspMnohci8ZhlTDNIxBYGbZn5vLUuIhnjhDURjo+DgJe2hmznCJE8ThCTkrFEqsjtCHfEX9us/7a4yHk9bk9FzexZl/k3cp7dN3YP/datnKvmcByYAjZFzl7eBmcJlK/DXOxiPKhJW028im7sqg/vIe33ZseB4+0+Lu0Z/BRoBXh40NmDQyE7OpcdvtKKn7PNbNeNTn0MtyQz8Y3yFPBUCJiFvzVprBNG6iEoiV38yUPtz/f+FL+da/B6mvAMC+FcMXWH5zuubq/FkXHvGa6chHfCI+Lpa9HdPGk/p3BIcAhgfp1jelXTXKp08mnOrhRGiAqjLu99SIfy6S9I9ugZ5SjJMbn+N7Jn8D9YYKi5Et5PRtwD7aXs49L9ua9KknunR49u/zv5DxH3I5gEdwl0eQqbMvMb/64N/AFrJoBcO2jyugAAAABJRU5ErkJggg==';
          to: const CMS_PRODUCTION_MODE = true;
   3. Commit and push -- GitHub Pages deploys automatically in ~2 min
 
@@ -853,7 +852,7 @@ var VCS_VERSION = 'v1778431112';
     <nav id="nav"></nav>
     <div class="sb-actions">
       <button class="sb-btn" id="reload-btn" title="Reload file">↺ <span class="sb-btn-lbl">Reload</span></button>
-      <button class="sb-btn accent" id="save-btn" title="Save to XLSM">💾 <span class="sb-btn-lbl">Save</span></button>
+      <button class="sb-btn accent" id="save-btn" title="Force an immediate sync of any pending edits to the database (edits normally auto-save ~1.5s after you stop typing)">💾 <span class="sb-btn-lbl">Save</span></button>
     </div>
     <div id="quick-stats" class="quick-stats"></div>
   </aside>
@@ -939,6 +938,7 @@ const GOOGLE_CLIENT_ID_AUTH = '690262071158-vfuo0pm2rd1bkqnkj26ut5g6a5nhbqfd.app
 // Set to true ONLY in the production repo (primesource-cms).
 // Sandbox repo (vcs) keeps this false — no auth gate in development.
 const CMS_PRODUCTION_MODE = false;
+const FATHOM_ICON_B64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAADBElEQVR42u2WT2hcVRjFf999b95kYv602pEWRBBBLZYKdiUoxbZREHQj2QiKG8GFC6ErKzJqBatQiqgLI24rJN1ZXRibmcxUKbTW0r8rN4KxoaEJMdP58969x8VooZCZSbS6kJztvdxzz/ed890LG/h/QzImFVGSQ4qQ7L+/xKSif0eZZMPTuiua9V/YDyq72ezVXZ+dyd2i/LahrBggmvETXJT4XuK0ZFV/Ljmp529RW5Jbz9Fxn/VRMqBBgwaxCu6RNOKYq/oZl/l3sz02+6fiCAiYqR/h6rerEJAsVvuArXCKUQoMkKNJW3WykLg9PslVopq+zJVbOzDzmImy4n7G6rEoAxMlxW6vf1Fmb6ng7qMOpLQxYoZx1qLpCBNJy33Y2Ge/3uxxF7Vrsvlfm6ym/YIDKnAnvwOBFkaeYbAmCyZ/pNiIPpp/2urdSK2rS4GtNbZct/BpFrPdpTr25ono4MQuBq5u5iDiNQ2QsEIgkBGTMAq2GE5v8m5scR/LHYb+fb3pUpvREXdZoirxo2Q1P+eqesWAQrl+j9X8UTspcUrihDK+U52zUlRJx7pldnXTXEMGFJNwb1jGW0bblsgkty0MMkHVX2hbspMnohci8ZhlTDNIxBYGbZn5vLUuIhnjhDURjo+DgJe2hmznCJE8ThCTkrFEqsjtCHfEX9us/7a4yHk9bk9FzexZl/k3cp7dN3YP/datnKvmcByYAjZFzl7eBmcJlK/DXOxiPKhJW028im7sqg/vIe33ZseB4+0+Lu0Z/BRoBXh40NmDQyE7OpcdvtKKn7PNbNeNTn0MtyQz8Y3yFPBUCJiFvzVprBNG6iEoiV38yUPtz/f+FL+da/B6mvAMC+FcMXWH5zuubq/FkXHvGa6chHfCI+Lpa9HdPGk/p3BIcAhgfp1jelXTXKp08mnOrhRGiAqjLu99SIfy6S9I9ugZ5SjJMbn+N7Jn8D9YYKi5Et5PRtwD7aXs49L9ua9KknunR49u/zv5DxH3I5gEdwl0eQqbMvMb/64N/AFrJoBcO2jyugAAAABJRU5ErkJggg==';
 
 let msalInstance = null;
 
@@ -2644,32 +2644,26 @@ async function loadFile(file) {
 
 // ─── SURGICAL SAVE via JSZip ──────────────────────────────────────────────────
 async function saveFile() {
-  if (!hasPermission('save')) { toast('⚠ You don\'t have permission to save (Viewer role)','#f59e0b'); return; }
-  if (!S.originalBuffer) { toast('No file loaded', '#ef4444'); return; }
-  const dirtyCount = S.vendors.filter(v => S.dirty.has(v.name)).length;
-  const reviewDirtyCount = S.dirtyReviews ? S.dirtyReviews.size : 0;
-  const itwDirtyCount = S.dirtyITW ? S.dirtyITW.size : 0;
-  if (!dirtyCount && !reviewDirtyCount && !itwDirtyCount) { toast('No unsaved changes','#f59e0b'); return; }
-
-  // ── Confirmation required — user must approve before any file is written ──
-  openModal(body=>{
-    body.appendChild(el('h3',{},'💾 Confirm Save'));
-    body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--text)',lineHeight:'1.6',marginBottom:'10px'}},'You are about to save your changes. If Google Drive sync is configured, the file will be pushed directly to Drive. A local download will also be triggered as a backup copy.'));
-    const summary=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'5px',padding:'10px',marginBottom:'12px',fontSize:'10px'}});
-    summary.appendChild(el('div',{style:{fontWeight:'700',marginBottom:'4px'}},'Changes to be saved:'));
-    summary.appendChild(el('div',{},dirtyCount+' vendor record'+(dirtyCount!==1?'s':'')+' modified'));
-    if(reviewDirtyCount) summary.appendChild(el('div',{},reviewDirtyCount+' review note'+(reviewDirtyCount!==1?'s':'')+' updated'));
-    if(itwDirtyCount) summary.appendChild(el('div',{},itwDirtyCount+' ITW note'+(itwDirtyCount!==1?'s':'')+' updated'));
-    summary.appendChild(el('div',{},S.history.length+' actions logged this session'));
-    summary.appendChild(el('div',{style:{color:'var(--muted)',marginTop:'4px',fontSize:'9px'}},'User: '+(USER.email||'—')+' | Role: '+(ROLES[USER.role]||'—')));
-    body.appendChild(summary);
-    body.appendChild(el('p',{style:{fontSize:'9px',color:'var(--amber)',lineHeight:'1.5'}},'⚠ After downloading, open in Excel and do File → Save As to preserve macros and formatting.'));
-    const btns=el('div',{class:'modal-btns'});
-    btns.appendChild(el('button',{class:'btn-primary',onclick(){closeModal();executeSave();}},'✅ Confirm & Save'));
-    btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
-    body.appendChild(btns);
-  });
+  // Force-sync: flush any vendor edits waiting on their 1.5s debounce timer
+  // straight to Supabase right now, rather than waiting for the timer.
+  // (The old XLSM/Drive save path required a manually-uploaded Excel file
+  // via loadFile(), which never happens in the Supabase-first flow --
+  // S.originalBuffer was always null here, making this button a no-op.)
+  if (!canEdit('vendor.name')) { toast('You do not have permission to edit vendor records','#ef4444'); return; }
+  const dirtyVendors = (S.vendors||[]).filter(v => S.dirty.has(v.name) || v._dirty);
+  if (!dirtyVendors.length) { toast('No unsaved changes — everything is already synced','#22c55e'); return; }
+  toast('⏳ Syncing '+dirtyVendors.length+' vendor'+(dirtyVendors.length!==1?'s':'')+'...','#4F7CFF');
+  let ok=0, failed=0;
+  for (const v of dirtyVendors) {
+    clearTimeout(v._sbSaveTimer);
+    try { await saveToSupabase(v); S.dirty.delete(v.name); ok++; }
+    catch(e) { failed++; console.warn('[VCS] Force sync failed for', v.name, e); }
+  }
+  if (failed) toast('⚠ Synced '+ok+', '+failed+' failed — check console','#f59e0b');
+  else toast('✅ Synced '+ok+' vendor'+(ok!==1?'s':'')+' to database','#22c55e');
+  updateSidebar();
 }
+
 
 // Excel date serial number — days since 1899-12-30 (Excel epoch)
 function dateToExcelSerial(d) {
@@ -6090,7 +6084,6 @@ function renderCommPanel(body, vendor) {
                 const url = 'https://graph.microsoft.com/v1.0/me/messages'
                   + '?$filter='+encodeURIComponent("from/emailAddress/address eq '"+email.replace(/'/g,"''")+"'")
                   + '&$top=10'
-                  + '&$orderby=receivedDateTime desc'
                   + '&$select=subject,from,receivedDateTime,bodyPreview,toRecipients';
                 const r = await fetch(url, {headers:{Authorization:'Bearer '+msToken}});
                 if(!r.ok) return [];
@@ -23404,7 +23397,11 @@ function refreshConnectionsSummary(){
   setTimeout(function(){
     const existing2=document.getElementById('vcs-connections-summary');
     if(!existing2||!existing2.parentNode)return;
-    const fresh=_buildConnectionsSection();
+    if(typeof window._buildConnectionsSection!=='function'){
+      console.warn('[VCS] _buildConnectionsSection not yet published to window — Settings must render at least once first');
+      return;
+    }
+    const fresh=window._buildConnectionsSection();
     existing2.parentNode.replaceChild(fresh,existing2);
   },50);
 }
@@ -24779,6 +24776,13 @@ function _buildConnectionsSection(){
     connWrap.appendChild(connBody);
     return connWrap;
 }
+// BUGFIX: _buildConnectionsSection is declared inside renderSettings, so it
+// only exists in that call's local scope. refreshConnectionsSummary() is a
+// global function and could never see it -- every post-connect/disconnect
+// live-refresh silently threw "ReferenceError: _buildConnectionsSection is
+// not defined" and the UI never updated without a full page reload. This
+// publishes the current definition to window every time renderSettings runs.
+window._buildConnectionsSection = _buildConnectionsSection;
 
   // S3: Quick Setup Checklist — progress bar + 6 items, collapsed when all complete
   if(USER.role==='admin'||USER.role==='procurement'){
