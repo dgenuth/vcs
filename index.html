@@ -1177,6 +1177,7 @@ function loginAs(userObj) {
   // canView/canEdit's USER.perms check) never actually saw saved overrides.
   USER.permissions = userObj.permissions || {};
   USER.perms = userObj.perms || {};
+  USER.fieldGroupPerms = userObj.fieldGroupPerms || {};
   USER._impersonating = userObj._impersonating || false;
   // Always hide tier and days for non-admin roles — hard rule, not spreadsheet-dependent
   if (USER.role !== 'admin') {
@@ -3800,6 +3801,12 @@ function editNotes(vendor, newText) {
   updateSidebar(); refreshDetailIfOpen(vendor); render(); toast('Notes updated!');
 }
 function updateVendorField(vendor, field, value) {
+  // S46: function-level guard — protects every caller of this shared
+  // update path, not just the addEditableSection click-to-edit UI.
+  if (typeof canEditField === 'function' && !canEditField(field)) {
+    toast('You do not have permission to edit this field', '#ef4444');
+    return;
+  }
   const oldVal = vendor[field];
   const oldDisplay = oldVal instanceof Date ? fmtDate(oldVal) : String(oldVal||'—');
   vendor[field] = value; markDirty(vendor);
@@ -3825,12 +3832,15 @@ function updateVendorField(vendor, field, value) {
   saveSessionState(); // auto-persist to localStorage
 }
 function snoozeVendor(vendor, days, untilDate) {
+  // S46: gate the action itself, not just the Today page's visibility
+  if(typeof userCanEditTab==='function'&&!userCanEditTab('today')){toast('You do not have permission to snooze vendors','#ef4444');return;}
   const until = untilDate ? new Date(untilDate+'T12:00:00') : new Date(Date.now()+days*86400000);
   S.snoozed[vendor.name] = until;
   logHistory({date:isoDate(new Date()), time:new Date().toLocaleTimeString(), vendor:vendor.name, action:`Snoozed until ${fmtDate(until)}`});
   closeDetail(); render(); toast(`💤 Snoozed until ${fmtDate(until)}`);
 }
 function dismissVendor(vendor) {
+  if(typeof userCanEditTab==='function'&&!userCanEditTab('today')){toast('You do not have permission to dismiss vendors','#ef4444');return;}
   S.dismissed.add(vendor.name);
   logHistory({date:isoDate(new Date()), time:new Date().toLocaleTimeString(), vendor:vendor.name, action:'Dismissed'});
   closeDetail(); render(); toast('Dismissed');
@@ -6002,7 +6012,8 @@ function renderCommPanel(body, vendor) {
       const loadingMsg=el('div',{style:{fontSize:'9px',color:'var(--muted)',padding:'6px 0'}},'⏳ Loading meetings...');
       mDiv.appendChild(loadingMsg);
       commBody.appendChild(mDiv);
-      loadFathomMeetings(vendor).then(function(meetings){
+      Promise.all([loadFathomMeetings(vendor), loadCalendarMeetings(vendor)]).then(function(results){
+        const meetings=[].concat(results[0]||[], results[1]||[]);
         mDiv.innerHTML='';
         if(!meetings.length){mDiv.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',fontStyle:'italic',padding:'6px 0'}},'No recorded meetings found for this vendor.'));return;}
         meetings.sort(function(a,b){return new Date(b.activity_date||0)-new Date(a.activity_date||0);});
@@ -7187,6 +7198,30 @@ function userCanSeeTab(pageOrTab){
   return canView(key);
 }
 
+// S46: which pages/tabs have real editable/actionable content — pure
+// reporting pages get a View checkbox only in the Tab Access UI (no
+// meaningless disabled Edit checkbox), and userCanEditTab() below treats
+// them as "not gated" (view access alone is sufficient).
+const PAGE_CAPABILITIES={
+  today:{editable:true}, callsheet:{editable:true}, expiring:{editable:true},
+  calendar:{editable:false}, vendordb:{editable:true}, itw:{editable:true},
+  reviews:{editable:true}, tiers:{editable:false}, contracts:{editable:true},
+  compare:{editable:true}, checklist:{editable:true}, discovery:{editable:false},
+  sfboard:{editable:false}, customers:{editable:true}, spend:{editable:false},
+  network:{editable:false}, economics:{editable:false}, analytics:{editable:false},
+  forecast:{editable:false}, reports:{editable:false}, summary:{editable:false},
+  history:{editable:false}, datacheck:{editable:true,adminOnly:true},
+  settings:{editable:true,adminOnly:true}, health:{editable:true,adminOnly:true},
+};
+function userCanEditTab(pageOrTab){
+  if(!userCanSeeTab(pageOrTab)) return false;
+  const cap=PAGE_CAPABILITIES[pageOrTab];
+  if(!cap||!cap.editable) return true; // no edit concept for this page = not gated
+  const override=(USER&&USER.tabOverrides||{})[pageOrTab];
+  if(override&&typeof override==='object') return override.edit===true;
+  return canEdit('vendor.name'); // legacy boolean override or no override — fall back to global edit perm
+}
+
 // ─── S44: Unified canView/canEdit permission layer ──────────────────────────
 // New capability, additive on top of the existing hiddenFields/tabOverrides/
 // ROLE_PERMISSION_DEFAULTS/TAB_PAGE_DEFAULTS systems above (which stay live —
@@ -7234,6 +7269,9 @@ function canView(key){
   if(legacyTabId){
     const legacyDefaults=TAB_PAGE_DEFAULTS[role]||{};
     const legacyOverride=(USER&&USER.tabOverrides||{})[legacyTabId];
+    // S46: tabOverrides entries may now be {view,edit} objects (written by
+    // the new Tab Access checkboxes) as well as the older bare boolean.
+    if(legacyOverride&&typeof legacyOverride==='object') return legacyOverride.view!==false;
     if(typeof legacyOverride==='boolean') return legacyOverride;
     if(legacyDefaults[legacyTabId]!==undefined) return legacyDefaults[legacyTabId]!==false;
   }
@@ -7266,6 +7304,59 @@ function migrateHiddenFieldsToPerms(userObj){
     const permKey='vendor.'+fieldKey;
     if(userObj.perms[permKey]===undefined) userObj.perms[permKey]={v:false,e:false};
   });
+}
+
+// ─── S46: Field Visibility — section-level View/Edit ────────────────────────
+// Hoisted to module level (was previously declared twice, once inside each
+// of two duplicate buildFieldAccess declarations — the first was dead code
+// due to function-declaration hoisting; deleted this session) so the new
+// canViewField/canEditField helpers and the migration function can share
+// the same group definitions buildFieldAccess's UI renders.
+const FIELD_GROUPS={
+  'Vendor Info':['gpo','name','category','subCategory','product','classOfTrade','markets','addedValue','website','status'],
+  'Contacts':['procContact','contactType','title','bizPhone','mobile','email','sharedContact','contactType2','title2','mobile2','email2'],
+  'Contract':['contractName','inContractSince','contractEffective','contractExpiry','autoRenewal','autoRenewalType','contractTerm','currentTerm','termEffective','termExpiry','terminationNotice','terminationWoCause','terminationReceived','assignment','assignmentConditions','exclusivity','signatory'],
+  'Financials':['adminFee','adminFeeNotes','tiers','perpetuity','tail','minYears','contractNo','reportFrequency','agreementType','pricingCommitment'],
+  'Docs & Pricing':['coverSheet','dataSheet','havePricing','pricingLocation','pricingDate','pricingFrequency','whitePapers','serviceSummary','videoRecording'],
+  'Activity':['comments','notes','lastComm','followUp','engagementReminder','needsLOP'],
+};
+function migrateFieldGroupPerms(user){
+  const hf=user.hiddenFields||[];
+  // Preserve the role's existing view-only status (rep/ssa default to
+  // canEditVendors:false in ROLE_PERMISSION_DEFAULTS) rather than defaulting
+  // every migrated group to edit:true whenever some-but-not-all fields in
+  // it happen to be hidden — a straight "!allHidden" would have silently
+  // granted edit rights to roles that have never had them.
+  const role=(user.role||'rep').toLowerCase();
+  const roleEditDefault=(ROLE_PERMISSION_DEFAULTS[role]||ROLE_PERMISSION_DEFAULTS.rep).canEditVendors===true;
+  const result={};
+  Object.entries(FIELD_GROUPS).forEach(function(entry){
+    const groupName=entry[0],keys=entry[1];
+    const allHidden=keys.every(function(k){return hf.includes(k);});
+    result[groupName]={view:!allHidden,edit:!allHidden&&roleEditDefault};
+  });
+  return result;
+}
+function fieldGroupOf(fieldKey){
+  for(const entry of Object.entries(FIELD_GROUPS)){
+    if(entry[1].includes(fieldKey)) return entry[0];
+  }
+  return null;
+}
+function canViewField(fieldKey){
+  const group=fieldGroupOf(fieldKey);
+  if(!group) return true;
+  const perm=(USER.fieldGroupPerms||{})[group];
+  if(perm) return perm.view!==false;
+  return !(USER.hiddenFields||[]).includes(fieldKey);
+}
+function canEditField(fieldKey){
+  if(!canViewField(fieldKey)) return false;
+  const group=fieldGroupOf(fieldKey);
+  if(!group) return canEdit('vendor.name');
+  const perm=(USER.fieldGroupPerms||{})[group];
+  if(perm) return perm.edit===true;
+  return canEdit('vendor.name');
 }
 
 // Debounced Drive sync — fires 3s after any settings change
@@ -7996,20 +8087,13 @@ function restoreSession(){
   }catch(e){return false;}
 }
 
-// Check if a field is visible to the current user
-function canViewField(fieldKey){
-  if(!USER.loggedIn) return false;
-  if(USER.role==='admin'||USER.role==='manager') return true;
-  // Check role-level permission
-  const perms=ROLE_PERMS[USER.role]||{};
-  const feeFields=['adminFee','tiers','perpetuity','tail'];
-  const contactFields=['email','bizPhone','mobile','procContact','title'];
-  if(feeFields.includes(fieldKey)&&perms.viewFees===false) return false;
-  if(contactFields.includes(fieldKey)&&perms.viewContacts===false) return false;
-  // Check per-user hidden fields set by admin
-  if(USER.hiddenFields&&USER.hiddenFields.includes(fieldKey)) return false;
-  return true;
-}
+// S46: removed a second, older, dead canViewField(fieldKey) declaration that
+// used to live here (ROLE_PERMS.viewFees/viewContacts-based). It had zero
+// callers anywhere in the codebase and, due to function-declaration hoisting,
+// was silently shadowing the real canViewField (FIELD_GROUPS-based, defined
+// near migrateFieldGroupPerms) since it came later in the file — meaning
+// canEditField's internal canViewField() call was resolving to this dead
+// function instead of the live one. Deleting it makes the real one live.
 
 async function logout(){
   // If there are unsaved changes and Drive is configured, offer to push before logout
@@ -8550,7 +8634,13 @@ function addEditableSection(body, title, vendor, fields) {
   const canEdit = hasPermission('editContract') || hasPermission('editContact') || !USER.loggedIn;
   // Filter out fields hidden from this user's role
   const _hidden = new Set(USER.hiddenFields || []);
-  const visibleFields = fields.filter(([,field]) => !_hidden.has(field));
+  // S46: also gate by the new section-level canViewField (FIELD_GROUPS-based)
+  // — a real caller for canViewField/canEditField, not just self-referencing
+  // definitions. Both the old hiddenFields set AND the new group perm must
+  // allow the field, so a fieldGroupPerms override can only ever be MORE
+  // restrictive than what's already enforced, never accidentally reveal a
+  // field hiddenFields already hides.
+  const visibleFields = fields.filter(([,field]) => !_hidden.has(field) && (typeof canViewField!=='function'||canViewField(field)));
   const nonEmpty = visibleFields.filter(([,field]) => {
     const v = vendor[field]; return v !== '' && v !== null && v !== undefined && String(v).trim() !== '';
   });
@@ -8576,8 +8666,12 @@ function addEditableSection(body, title, vendor, fields) {
     const val = vendor[field];
     const displayVal = isDate ? fmtDate(val) : String(val||'');
     const picklist = FIELD_PICKLISTS[field];
+    // S46: per-field edit permission (canEditField), narrower than the
+    // section-wide `canEdit` — a field in an otherwise-editable section can
+    // still be view-only if its own group's Edit checkbox is unchecked.
+    const fieldEditable = canEdit && (typeof canEditField!=='function'||canEditField(field));
     grid.appendChild(el('span',{class:'detail-label'},label+(picklist?'':'')));
-    const valEl=el('span',{class:'detail-value',title:canEdit?'Click to edit':'View only',style:{cursor:canEdit?'pointer':'default',display:'flex',alignItems:'center',gap:'4px'}});
+    const valEl=el('span',{class:'detail-value',title:fieldEditable?'Click to edit':'View only',style:{cursor:fieldEditable?'pointer':'default',display:'flex',alignItems:'center',gap:'4px'}});
     const textNode=document.createTextNode(displayVal||'—');
     valEl.appendChild(textNode);
     // Send-to-Phone buttons for phone/mobile fields
@@ -8591,8 +8685,8 @@ function addEditableSection(body, title, vendor, fields) {
       valEl.appendChild(el('a',{href:smsHref,style:{fontSize:'9px',color:'var(--green)',marginLeft:'2px',textDecoration:'none'},title:smsTitle},'📲'));
       }
     }
-    if (picklist && canEdit) valEl.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)',opacity:'0.6'}},'▾'));
-    if (!canEdit) { grid.appendChild(valEl); continue; }
+    if (picklist && fieldEditable) valEl.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)',opacity:'0.6'}},'▾'));
+    if (!fieldEditable) { grid.appendChild(valEl); continue; }
     valEl.addEventListener('click',()=>{
       let inp;
       if (isDate) {
@@ -9839,6 +9933,62 @@ function openLogActivityModal(vendor) {
 function getFathomKeyStorageKey(){return 'vcs_fathom_key_'+(USER&&USER.email||'default');}
 
 // ── Activity Timeline (rendered inside vendor panel) ──────────────────────────
+// S46: regular (non-Fathom) calendar meetings — the Meetings tab previously
+// only called loadFathomMeetings, so the 📅 calendar-icon branch in the row
+// renderer was dead code (m.source was always 'fathom'). This fetches a
+// 90-days-back/30-days-forward window of the user's calendar and filters
+// client-side by attendee email, since Graph's advanced attendee $filter
+// support on nested collections is unreliable without extra query params.
+async function loadCalendarMeetings(vendor) {
+  const msToken = typeof getMSToken === 'function' ? getMSToken() : null;
+  const msExpiry = typeof getMSTokenExp === 'function' ? getMSTokenExp() : 0;
+  if (!msToken || Date.now() > msExpiry - 10000) return [];
+  const contactEmails = [];
+  if (vendor.email) contactEmails.push(vendor.email.toLowerCase());
+  (vendor._sbContacts||[]).forEach(function(ct) {
+    let em = ct.emails||[];
+    if (typeof em === 'string') { try { em = JSON.parse(em); } catch(_) { em = []; } }
+    em.forEach(function(e) {
+      const addr = (e.address||e||'').toLowerCase();
+      if (addr && addr.includes('@')) contactEmails.push(addr);
+    });
+  });
+  if (!contactEmails.length) return [];
+  try {
+    const now = new Date();
+    const start = new Date(now.getTime() - 90*86400000).toISOString();
+    const end = new Date(now.getTime() + 30*86400000).toISOString();
+    const url = 'https://graph.microsoft.com/v1.0/me/calendarview'
+      + '?startDateTime=' + encodeURIComponent(start)
+      + '&endDateTime=' + encodeURIComponent(end)
+      + '&$select=subject,start,end,attendees,webLink'
+      + '&$top=50';
+    const r = await fetch(url, {headers:{Authorization:'Bearer '+msToken}});
+    if (!r.ok) return [];
+    const d = await r.json();
+    const events = d.value || [];
+    const matched = events.filter(function(ev) {
+      const attendees = ev.attendees || [];
+      return attendees.some(function(a) {
+        const addr = ((a.emailAddress&&a.emailAddress.address)||'').toLowerCase();
+        return contactEmails.includes(addr);
+      });
+    });
+    return matched.map(function(ev) {
+      return {
+        id: 'cal_' + (ev.id||Math.random()),
+        source: 'calendar',
+        subject: ev.subject || 'Meeting',
+        activity_date: ((ev.start&&ev.start.dateTime)||'').split('T')[0],
+        source_url: ev.webLink || ''
+      };
+    });
+  } catch(e) {
+    console.warn('[VCS] Calendar meetings fetch failed:', e.message);
+    return [];
+  }
+}
+
 async function loadFathomMeetings(vendor) {
   let fathomKey=(S.settings&&S.settings.fathomApiKey)||localStorage.getItem(getFathomKeyStorageKey())||'';
   if(!fathomKey){
@@ -14388,7 +14538,12 @@ function renderChecklist(c) {
           const sel=el('select',{class:'detail-edit-field',style:{height:'22px',fontSize:'8px',padding:'0 3px',width:'100%'}});
           ['','Not Started','In Progress','Done','N/A'].forEach(opt=>sel.appendChild(el('option',{value:opt},opt||'Status…')));
           sel.value=(S._clStatus||{})[custIn.value+'_'+item.label]||'';
-          sel.addEventListener('change',e=>{if(!S._clStatus)S._clStatus={};S._clStatus[custIn.value+'_'+item.label]=e.target.value;_clSave(custIn.value);});
+          // S46: gate the actual edit, not just the checklist page's visibility
+          if(typeof userCanEditTab==='function'&&!userCanEditTab('checklist')) sel.disabled=true;
+          sel.addEventListener('change',e=>{
+            if(typeof userCanEditTab==='function'&&!userCanEditTab('checklist')){toast('You do not have permission to edit the checklist','#ef4444');sel.value=(S._clStatus||{})[custIn.value+'_'+item.label]||'';return;}
+            if(!S._clStatus)S._clStatus={};S._clStatus[custIn.value+'_'+item.label]=e.target.value;_clSave(custIn.value);
+          });
           // "Going with" dropdown — VCS vendors for this category
           if(matchV.length>0){
             const gwSel=el('select',{style:{height:'20px',fontSize:'8px',padding:'0 3px',width:'100%',
@@ -23880,68 +24035,70 @@ function buildFieldAccess(container, userEmail) {
     const currentUsers=getApprovedUsers();
     const cu=currentUsers.find(x=>x.email===userEmail);
     if(!cu) return;
-    const hf=cu.hiddenFields||[];
+    if(!cu.fieldGroupPerms) cu.fieldGroupPerms=migrateFieldGroupPerms(cu);
 
-    // All restrictable fields
-    container.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginBottom:'6px'}},'🔒 Field Access — click to toggle (amber = restricted, green = visible):'));
-    // Field groups for visual organization
-    const FIELD_GROUPS={
-      'Vendor Info':['gpo','name','category','subCategory','product','classOfTrade','markets','addedValue','website','status'],
-      'Contacts':['procContact','contactType','title','bizPhone','mobile','email','sharedContact','contactType2','title2','mobile2','email2'],
-      'Contract':['contractName','inContractSince','contractEffective','contractExpiry','autoRenewal','autoRenewalType','contractTerm','currentTerm','termEffective','termExpiry','terminationNotice','terminationWoCause','terminationReceived','assignment','assignmentConditions','exclusivity','signatory'],
-      'Financials':['adminFee','adminFeeNotes','tiers','perpetuity','tail','minYears','contractNo','reportFrequency','agreementType','pricingCommitment'],
-      'Docs & Pricing':['coverSheet','dataSheet','havePricing','pricingLocation','pricingDate','pricingFrequency','whitePapers','serviceSummary','videoRecording'],
-      'Activity':['comments','notes','lastComm','followUp','engagementReminder','needsLOP'],
-    };
+    // S46: section-level View/Edit — replaces the old 40+ individual
+    // per-field toggle buttons. FIELD_GROUPS is now module-level (see
+    // migrateFieldGroupPerms/canViewField above) so it's shared here.
+    container.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginBottom:'8px'}},'🔒 Field Visibility — per section, View and/or Edit:'));
     const GROUP_COLORS={'Vendor Info':'#4f7cff','Contacts':'#22c55e','Contract':'#f59e0b','Financials':'#8b5cf6','Docs & Pricing':'#06b6d4','Activity':'#ec4899'};
-    const allFields=ALL_RESTRICTABLE_FIELDS;
-    // Render fields in groups with colored section headers
-    Object.entries(FIELD_GROUPS).forEach(([groupName,groupKeys])=>{
-      const groupFields=allFields.filter(f=>groupKeys.includes(f.key));
-      if(!groupFields.length) return;
-      const groupColor=GROUP_COLORS[groupName]||'var(--muted)';
-      const groupHdr=el('div',{style:{fontSize:'8px',fontWeight:'700',color:groupColor,
-        marginTop:'8px',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.05em',
-        borderBottom:'1px solid '+groupColor+'44',paddingBottom:'2px'}},groupName);
-      container.appendChild(groupHdr);
-      const fieldGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'4px',paddingLeft:'8px'}});
-    groupFields.forEach(f=>{
-      const hidden=hf.includes(f.key);
-      const btn=document.createElement('button');
-      btn.dataset.fkey=f.key;
-      // Track hidden state on the button itself so we can toggle without rebuilding
-      btn._hidden = hidden;
-      function updateBtnStyle(isHidden){
-        btn.textContent=f.label+' '+(isHidden?'🚫':'✅');
-        btn.style.cssText='font-size:8px;padding:2px 8px;border-radius:4px;cursor:pointer;font-weight:500;'
-    +'border:1px solid '+(isHidden?'rgba(239,68,68,.4)':'rgba(34,197,94,.4)')+';'
-    +'background:'+(isHidden?'rgba(239,68,68,.1)':'rgba(34,197,94,.1)')+';'
-    +'color:'+(isHidden?'#f87171':'#4ade80')+';';
-      }
-      updateBtnStyle(hidden);
-      btn.addEventListener('click', function(e){
-        e.stopPropagation();
-        e.preventDefault();
-        const nowHidden = btn._hidden;
+
+    Object.keys(FIELD_GROUPS).forEach(function(groupName){
+      const perm=cu.fieldGroupPerms[groupName]||{view:true,edit:true};
+      const row=el('div',{style:{display:'flex',alignItems:'center',gap:'10px',
+        padding:'6px 8px',borderRadius:'4px',marginBottom:'3px',
+        background:'rgba(255,255,255,.02)',borderLeft:'3px solid '+(GROUP_COLORS[groupName]||'var(--muted)')}});
+      row.appendChild(el('div',{style:{flex:'1',fontSize:'10px',fontWeight:'600'}},groupName));
+
+      function saveGroupPerm(){
         const all=getApprovedUsers();
-        const i=all.findIndex(x=>x.email===userEmail);
-        if(i<0){ console.warn('[FieldToggle] user not found:', userEmail); return; }
-        let newHf=[...(all[i].hiddenFields||[])];
-        if(nowHidden){ newHf=newHf.filter(k=>k!==f.key); }
-        else { if(!newHf.includes(f.key)) newHf.push(f.key); }
-        all[i].hiddenFields=newHf;
-        all[i]._customHiddenFields=true;
-        localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-        // Update visual immediately — no rebuild needed
-        btn._hidden = !nowHidden;
-        updateBtnStyle(!nowHidden);
-        setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
-      });
-      fieldGrid.appendChild(btn);
+        const i=all.findIndex(function(x){return x.email===userEmail;});
+        if(i<0) return;
+        if(!all[i].fieldGroupPerms) all[i].fieldGroupPerms={};
+        all[i].fieldGroupPerms[groupName]=perm;
+        setApprovedUsers(all,true);
+        setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
+      }
+
+      const viewCb=el('input',{type:'checkbox'});
+      viewCb.checked=perm.view!==false;
+      viewCb.onchange=function(){
+        perm.view=viewCb.checked;
+        if(!perm.view){perm.edit=false;editCb.checked=false;}
+        saveGroupPerm();
+      };
+      const viewLbl=el('label',{style:{display:'flex',gap:'4px',alignItems:'center',fontSize:'9px',cursor:'pointer'}});
+      viewLbl.appendChild(viewCb);viewLbl.appendChild(document.createTextNode('View'));
+
+      const editCb=el('input',{type:'checkbox'});
+      editCb.checked=perm.edit===true;
+      editCb.onchange=function(){
+        perm.edit=editCb.checked;
+        if(perm.edit){perm.view=true;viewCb.checked=true;}
+        saveGroupPerm();
+      };
+      const editLbl=el('label',{style:{display:'flex',gap:'4px',alignItems:'center',fontSize:'9px',cursor:'pointer'}});
+      editLbl.appendChild(editCb);editLbl.appendChild(document.createTextNode('Edit'));
+
+      row.appendChild(viewLbl);
+      row.appendChild(editLbl);
+      container.appendChild(row);
     });
-    container.appendChild(fieldGrid);
-    }); // end Object.entries(FIELD_GROUPS).forEach
-    container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginBottom:'8px'}},'✅ = visible to user · 🚫 = hidden from user'));
+
+    const fgBulkRow=el('div',{style:{display:'flex',gap:'4px',marginTop:'6px',marginBottom:'8px'}});
+    fgBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick:function(){
+      Object.keys(FIELD_GROUPS).forEach(function(g){cu.fieldGroupPerms[g]={view:true,edit:true};});
+      const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});
+      if(i>=0){all[i].fieldGroupPerms=cu.fieldGroupPerms;setApprovedUsers(all,true);}
+      saveUsersViaProxy();buildFieldAccess(container,userEmail);
+    }},'All: View + Edit'));
+    fgBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick:function(){
+      Object.keys(FIELD_GROUPS).forEach(function(g){cu.fieldGroupPerms[g]={view:true,edit:false};});
+      const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});
+      if(i>=0){all[i].fieldGroupPerms=cu.fieldGroupPerms;setApprovedUsers(all,true);}
+      saveUsersViaProxy();buildFieldAccess(container,userEmail);
+    }},'All: View Only'));
+    container.appendChild(fgBulkRow);
 
     // Tab access — toggleable per user (overrides role default)
     container.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginBottom:'4px',marginTop:'8px'}},'📑 Tab Access (click to toggle):'));
@@ -23962,192 +24119,57 @@ function buildFieldAccess(container, userEmail) {
     };
     allTabs.forEach(t=>{
       const hasOverride=t.id in tabOverrides;
+      const existingOverride=tabOverrides[t.id];
       const roleDefault=t.id.startsWith('_')?(virtualTabDefaults[t.id]||false):roleDefaultTabs.has(t.id);
-      const hasAccess=hasOverride?tabOverrides[t.id]:roleDefault;
-      // Only show override indicator if state actually differs from role default
-      const isOverridden=hasOverride && (tabOverrides[t.id] !== roleDefault);
-      const btn=el('button',{
-        style:{
-    fontSize:'8px',padding:'2px 6px',borderRadius:'4px',cursor:'pointer',
-    border:'1px solid '+(hasAccess?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)'),
-    background:hasAccess?'rgba(34,197,94,.1)':'rgba(239,68,68,.1)',
-    color:hasAccess?'#4ade80':'#f87171',
-    outline:isOverridden?'1px dashed #f59e0b':''
-        },
-        title:(isOverridden?'⚠ Overriding role default. ':'')+(hasAccess?'Click to hide tab':'Click to show tab'),
-        onclick(e){
-    e.stopPropagation(); e.preventDefault();
-    const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
-    if(!all[i].tabOverrides) all[i].tabOverrides={};
-    const currentAccess=hasOverride?tabOverrides[t.id]:roleDefaultTabs.has(t.id);
-    all[i].tabOverrides[t.id]=!currentAccess;
-    localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-    setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
-    requestAnimationFrame(()=>buildFieldAccess(container,userEmail));
-        }
-      },t.label+' '+(hasAccess?'✅':'🚫')+(isOverridden?' ⚡':''));
-      tabGrid.appendChild(btn);
-    });
-    container.appendChild(tabGrid);
-    }); // end TAB_GROUPS_DISPLAY.forEach
-    const resetTabsBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(){
-      const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
-      delete all[i].tabOverrides;
-      localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-      setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
-      buildFieldAccess(container,userEmail);
-    }},'↺ Reset tabs to role defaults');
-    const resetFieldsBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(){
-      const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
-      all[i].hiddenFields=getDefaultHiddenFields(all[i].role);
-      all[i]._customHiddenFields=false;
-      localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-      setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
-      buildFieldAccess(container,userEmail);
-    }},'↺ Reset fields to role defaults');
-    container.appendChild(el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginTop:'4px'}},resetTabsBtn,resetFieldsBtn));
-    container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'2px'}},'⚡ = overriding role default · Click any field or tab to toggle · Changes save automatically'));
+      // S46: tabOverrides[t.id] may be a legacy bare boolean or the new
+      // {view,edit} object — normalize to a {view,edit} working value either way.
+      const overrideIsObj=hasOverride&&existingOverride&&typeof existingOverride==='object';
+      const curView=hasOverride?(overrideIsObj?existingOverride.view!==false:!!existingOverride):roleDefault;
+      const cap=PAGE_CAPABILITIES[t.id];
+      const showEdit=!!(cap&&cap.editable);
+      const curEdit=overrideIsObj?existingOverride.edit===true:curView; // legacy boolean override implied edit=view
+      const isOverridden=hasOverride && (curView!==roleDefault || (overrideIsObj&&existingOverride.edit!==undefined&&existingOverride.edit!==curView));
 
-    // Per-user AI toggle
-    const _cuFresh=getApprovedUsers().find(x=>x.email===userEmail);
-    const _aiOn=_cuFresh?.featureFlags?.aiEnabled!==false;
-    const aiToggleRow=el('div',{style:{marginTop:'10px',display:'flex',alignItems:'center',gap:'8px',paddingLeft:'8px'}});
-    aiToggleRow.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)'}},'🤖 AI Assistant:'));
-    const aiBtn=el('button',{
-      style:{fontSize:'8px',padding:'3px 10px',borderRadius:'4px',cursor:'pointer',
-        border:'1px solid '+(_aiOn?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)'),
-        background:_aiOn?'rgba(34,197,94,.1)':'rgba(239,68,68,.1)',
-        color:_aiOn?'#4ade80':'#f87171'},
-      onclick(e){
-        e.stopPropagation();
+      const tile=el('div',{style:{display:'flex',alignItems:'center',gap:'5px',
+        padding:'2px 6px',borderRadius:'4px',fontSize:'8px',
+        border:'1px solid '+(curView?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)'),
+        background:curView?'rgba(34,197,94,.08)':'rgba(239,68,68,.08)',
+        outline:isOverridden?'1px dashed #f59e0b':''
+      },title:isOverridden?'⚠ Overriding role default':''});
+      tile.appendChild(el('span',{style:{color:curView?'#4ade80':'#f87171'}},t.label));
+
+      function persistTabPerm(view,edit){
         const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
-        if(!all[i].featureFlags)all[i].featureFlags={};
-        all[i].featureFlags.aiEnabled=!_aiOn;
+        if(!all[i].tabOverrides) all[i].tabOverrides={};
+        all[i].tabOverrides[t.id]=showEdit?{view:view,edit:edit}:{view:view};
         localStorage.setItem(AUTH_KEY,JSON.stringify(all));
         setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
-        buildFieldAccess(container,userEmail);
       }
-    },_aiOn?'Enabled ✅':'Disabled 🚫');
-    aiToggleRow.appendChild(aiBtn);
-    aiToggleRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'When disabled, AI calls return a "contact admin" message'));
-    container.appendChild(aiToggleRow);
-  }
 
+      const vCb=el('input',{type:'checkbox',title:'View'});
+      vCb.checked=curView;
+      vCb.onclick=function(e){e.stopPropagation();};
+      vCb.onchange=function(){
+        const newView=vCb.checked;
+        const newEdit=newView?curEdit:false;
+        persistTabPerm(newView,newEdit);
+        requestAnimationFrame(()=>buildFieldAccess(container,userEmail));
+      };
+      tile.appendChild(vCb);
 
-
-// Field access builder — standalone so role tab toggle can call it for any user
-function buildFieldAccess(container, userEmail) {
-    container.innerHTML='';
-    const currentUsers=getApprovedUsers();
-    const cu=currentUsers.find(x=>x.email===userEmail);
-    if(!cu) return;
-    const hf=cu.hiddenFields||[];
-
-    // All restrictable fields
-    container.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginBottom:'6px'}},'🔒 Field Access — click to toggle (amber = restricted, green = visible):'));
-    // Field groups for visual organization
-    const FIELD_GROUPS={
-      'Vendor Info':['gpo','name','category','subCategory','product','classOfTrade','markets','addedValue','website','status'],
-      'Contacts':['procContact','contactType','title','bizPhone','mobile','email','sharedContact','contactType2','title2','mobile2','email2'],
-      'Contract':['contractName','inContractSince','contractEffective','contractExpiry','autoRenewal','autoRenewalType','contractTerm','currentTerm','termEffective','termExpiry','terminationNotice','terminationWoCause','terminationReceived','assignment','assignmentConditions','exclusivity','signatory'],
-      'Financials':['adminFee','adminFeeNotes','tiers','perpetuity','tail','minYears','contractNo','reportFrequency','agreementType','pricingCommitment'],
-      'Docs & Pricing':['coverSheet','dataSheet','havePricing','pricingLocation','pricingDate','pricingFrequency','whitePapers','serviceSummary','videoRecording'],
-      'Activity':['comments','notes','lastComm','followUp','engagementReminder','needsLOP'],
-    };
-    const GROUP_COLORS={'Vendor Info':'#4f7cff','Contacts':'#22c55e','Contract':'#f59e0b','Financials':'#8b5cf6','Docs & Pricing':'#06b6d4','Activity':'#ec4899'};
-    const allFields=ALL_RESTRICTABLE_FIELDS;
-    // Render fields in groups with colored section headers
-    Object.entries(FIELD_GROUPS).forEach(([groupName,groupKeys])=>{
-      const groupFields=allFields.filter(f=>groupKeys.includes(f.key));
-      if(!groupFields.length) return;
-      const groupColor=GROUP_COLORS[groupName]||'var(--muted)';
-      const groupHdr=el('div',{style:{fontSize:'8px',fontWeight:'700',color:groupColor,
-        marginTop:'8px',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.05em',
-        borderBottom:'1px solid '+groupColor+'44',paddingBottom:'2px'}},groupName);
-      container.appendChild(groupHdr);
-      const fieldGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',marginBottom:'4px',paddingLeft:'8px'}});
-    groupFields.forEach(f=>{
-      const hidden=hf.includes(f.key);
-      const btn=document.createElement('button');
-      btn.dataset.fkey=f.key;
-      // Track hidden state on the button itself so we can toggle without rebuilding
-      btn._hidden = hidden;
-      function updateBtnStyle(isHidden){
-        btn.textContent=f.label+' '+(isHidden?'🚫':'✅');
-        btn.style.cssText='font-size:8px;padding:2px 8px;border-radius:4px;cursor:pointer;font-weight:500;'
-    +'border:1px solid '+(isHidden?'rgba(239,68,68,.4)':'rgba(34,197,94,.4)')+';'
-    +'background:'+(isHidden?'rgba(239,68,68,.1)':'rgba(34,197,94,.1)')+';'
-    +'color:'+(isHidden?'#f87171':'#4ade80')+';';
+      if(showEdit){
+        const eCb=el('input',{type:'checkbox',title:'Edit'});
+        eCb.checked=curEdit&&curView;
+        eCb.onclick=function(e){e.stopPropagation();};
+        eCb.onchange=function(){
+          const newEdit=eCb.checked;
+          const newView=newEdit?true:curView;
+          persistTabPerm(newView,newEdit);
+          requestAnimationFrame(()=>buildFieldAccess(container,userEmail));
+        };
+        tile.appendChild(eCb);
       }
-      updateBtnStyle(hidden);
-      btn.addEventListener('click', function(e){
-        e.stopPropagation();
-        e.preventDefault();
-        const nowHidden = btn._hidden;
-        const all=getApprovedUsers();
-        const i=all.findIndex(x=>x.email===userEmail);
-        if(i<0){ console.warn('[FieldToggle] user not found:', userEmail); return; }
-        let newHf=[...(all[i].hiddenFields||[])];
-        if(nowHidden){ newHf=newHf.filter(k=>k!==f.key); }
-        else { if(!newHf.includes(f.key)) newHf.push(f.key); }
-        all[i].hiddenFields=newHf;
-        all[i]._customHiddenFields=true;
-        localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-        // Update visual immediately — no rebuild needed
-        btn._hidden = !nowHidden;
-        updateBtnStyle(!nowHidden);
-        setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
-      });
-      fieldGrid.appendChild(btn);
-    });
-    container.appendChild(fieldGrid);
-    }); // end Object.entries(FIELD_GROUPS).forEach
-    container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginBottom:'8px'}},'✅ = visible to user · 🚫 = hidden from user'));
-
-    // Tab access — toggleable per user (overrides role default)
-    container.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600',color:'var(--text)',marginBottom:'4px',marginTop:'8px'}},'📑 Tab Access (click to toggle):'));
-    const rolePerms=ROLE_PERMS[cu.role]||ROLE_PERMS.restricted;
-    const roleDefaultTabs=new Set(rolePerms.tabs||[]);
-    const tabOverrides=cu.tabOverrides||{}; // {tabId: true/false} overrides role default
-    // Derive groups from NAV_DEFS — stays in sync automatically
-    const TAB_GROUPS_DISPLAY=getNavTabGroups();
-    TAB_GROUPS_DISPLAY.forEach(grp=>{
-      container.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:grp.color,
-        marginTop:'6px',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.04em',
-        borderBottom:'1px solid '+grp.color+'33',paddingBottom:'2px'}},grp.label));
-      const tabGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',marginBottom:'4px',paddingLeft:'8px'}});
-      const allTabs=grp.tabs;
-    const virtualTabDefaults={
-      '_statsbar':['admin','procurement','manager'].includes(cu.role),
-      '_savebtn':(ROLE_PERMS[cu.role]||{}).save||false,
-    };
-    allTabs.forEach(t=>{
-      const hasOverride=t.id in tabOverrides;
-      const roleDefault=t.id.startsWith('_')?(virtualTabDefaults[t.id]||false):roleDefaultTabs.has(t.id);
-      const hasAccess=hasOverride?tabOverrides[t.id]:roleDefault;
-      // Only show override indicator if state actually differs from role default
-      const isOverridden=hasOverride && (tabOverrides[t.id] !== roleDefault);
-      const btn=el('button',{
-        style:{
-    fontSize:'8px',padding:'2px 6px',borderRadius:'4px',cursor:'pointer',
-    border:'1px solid '+(hasAccess?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)'),
-    background:hasAccess?'rgba(34,197,94,.1)':'rgba(239,68,68,.1)',
-    color:hasAccess?'#4ade80':'#f87171',
-    outline:isOverridden?'1px dashed #f59e0b':''
-        },
-        title:(isOverridden?'⚠ Overriding role default. ':'')+(hasAccess?'Click to hide tab':'Click to show tab'),
-        onclick(e){
-    e.stopPropagation(); e.preventDefault();
-    const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
-    if(!all[i].tabOverrides) all[i].tabOverrides={};
-    const currentAccess=hasOverride?tabOverrides[t.id]:roleDefaultTabs.has(t.id);
-    all[i].tabOverrides[t.id]=!currentAccess;
-    localStorage.setItem(AUTH_KEY,JSON.stringify(all));
-    setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
-    requestAnimationFrame(()=>buildFieldAccess(container,userEmail));
-        }
-      },t.label+' '+(hasAccess?'✅':'🚫')+(isOverridden?' ⚡':''));
-      tabGrid.appendChild(btn);
+      tabGrid.appendChild(tile);
     });
     container.appendChild(tabGrid);
     }); // end TAB_GROUPS_DISPLAY.forEach
@@ -24162,6 +24184,10 @@ function buildFieldAccess(container, userEmail) {
       const all=getApprovedUsers();const i=all.findIndex(x=>x.email===userEmail);if(i<0)return;
       all[i].hiddenFields=getDefaultHiddenFields(all[i].role);
       all[i]._customHiddenFields=false;
+      // S46: also reset the new section-level perms so they don't silently
+      // override the just-reset hiddenFields (fieldGroupPerms takes priority
+      // in canViewField/canEditField when present).
+      all[i].fieldGroupPerms=migrateFieldGroupPerms(all[i]);
       localStorage.setItem(AUTH_KEY,JSON.stringify(all));
       setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);
       buildFieldAccess(container,userEmail);
