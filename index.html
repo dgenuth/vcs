@@ -852,6 +852,8 @@ var VCS_VERSION = 'v1778431112';
       <button id="refresh-btn" style="display:none;padding:4px 10px;font-size:10px;font-weight:600;border-radius:4px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;font-family:inherit">🔄 Refresh</button>
       <button id="save-btn" style="display:none;padding:4px 12px;font-size:10px;font-weight:600;border-radius:4px;border:none;background:var(--blue);color:#fff;cursor:pointer;font-family:inherit">💾 Save File</button>
       <button id="theme-toggle-btn" onclick="toggleTheme()" title="Toggle dark/light mode" style="padding:4px 8px;font-size:13px;border-radius:4px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;font-family:inherit">☀</button>
+      <button id="suggest-btn" title="Suggest an improvement" style="padding:4px 8px;font-size:13px;border-radius:4px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;font-family:inherit">💡</button>
+      <button id="report-issue-btn" title="Report something broken" style="padding:4px 8px;font-size:13px;border-radius:4px;border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;font-family:inherit">🚩</button>
       <button id="ai-toggle">🤖 AI</button>
       <span id="user-badge" class="user-badge" title="Signed in — click to manage session" style="display:none"></span>
       <span id="vcs-sb-dot" title="Database status" style="display:none;width:8px;height:8px;border-radius:50%;background:#64748b;flex-shrink:0;transition:background .3s"></span>
@@ -3890,6 +3892,11 @@ const NAV_DEFS=[
   ['summary','📈','Summary'],
   ['history','🕐','History'],
   ['datacheck','✅','Data Check'],
+  // S50: Feedback is universally available (not permission-gated) — see the
+  // explicit bypasses in updateSidebar()'s allowedTabs filter and render()'s
+  // redirect guard. Do not add it to PAGE_HIERARCHY (that would give it a
+  // per-role Tab Access toggle, which contradicts "universally available").
+  ['feedback','💬','Feedback'],
   ['settings','⚙','Settings'],
   ['health','🔍','System Health'],
 ];
@@ -3948,6 +3955,7 @@ function updateSidebar() {
   const _tabOverrides = USER.tabOverrides || {};
   const allowedTabs = NAV_DEFS.map(n=>n[0]).filter(tabId => {
     if(tabId.startsWith('_div')) return true; // always include dividers
+    if(tabId==='feedback') return true; // S50: universally available, never gated
     if (tabId in _tabOverrides) return _tabOverrides[tabId]; // user override
     if (USER.role === 'admin' || USER.role === 'manager') return true;
     if(typeof userCanSeeTab==='function'&&(tabId==='contracts'||tabId==='spend'||tabId==='network'||tabId==='economics'||tabId==='forecast'||tabId==='reports'||tabId==='tiers')){return userCanSeeTab(tabId);}
@@ -4034,6 +4042,57 @@ function openModal(buildFn, opts) {
   }
 }
 function closeModal() { $('modal-wrap').style.display = 'none'; }
+
+// S50: Suggestions & Corrections feedback modal — universally available to
+// every logged-in user regardless of role, no permission gates.
+function openFeedbackModal(presetType) {
+  openModal(function(body) {
+    body.appendChild(el('h3',{}, presetType==='correction' ? '🚩 Report Something Broken' : '💡 Suggest an Improvement'));
+    body.appendChild(el('p',{class:'modal-sub'},
+      presetType==='correction'
+        ? "Found something that doesn't work right? Let us know what and where."
+        : 'Have an idea that would make this better? Share it below.'));
+
+    const typeRow = el('div',{style:{display:'flex',gap:'6px',marginBottom:'8px'}});
+    const sugBtn = el('button',{class:'btn-xs'+(presetType!=='correction'?' btn-primary':' btn-ghost')},'💡 Suggestion');
+    const corBtn = el('button',{class:'btn-xs'+(presetType==='correction'?' btn-primary':' btn-ghost')},'🚩 Correction');
+    let selectedType = presetType || 'suggestion';
+    sugBtn.onclick=function(){selectedType='suggestion';sugBtn.className='btn-xs btn-primary';corBtn.className='btn-xs btn-ghost';};
+    corBtn.onclick=function(){selectedType='correction';corBtn.className='btn-xs btn-primary';sugBtn.className='btn-xs btn-ghost';};
+    typeRow.appendChild(sugBtn); typeRow.appendChild(corBtn);
+    body.appendChild(typeRow);
+
+    const textArea = el('textarea',{class:'modal-textarea',style:{minHeight:'100px'},
+      placeholder:"Describe your idea or what's not working...",maxlength:'2000'});
+    body.appendChild(textArea);
+
+    const submitBtn = el('button',{class:'btn-primary',style:{marginTop:'10px'},onclick:async function(){
+      const text = textArea.value.trim();
+      if (!text) { toast('Enter some text first','#f59e0b'); return; }
+      submitBtn.disabled = true; submitBtn.textContent = 'Submitting...';
+      // SB.upsert() never throws on failure -- it swallows errors internally
+      // and returns null, so we must check the return value explicitly
+      // rather than relying on a try/catch (which would never fire).
+      const ok = await SB.upsert('feedback', [{
+        type: selectedType,
+        text: text,
+        page_context: S.view || 'unknown',
+        submitted_by_email: USER.email || '',
+        submitted_by_name: USER.name || USER.email || 'Unknown',
+        status: 'new',
+        upvotes: []
+      }]);
+      if (ok) {
+        closeModal();
+        toast('✅ Thanks! Your '+selectedType+' has been logged.','#22c55e');
+      } else {
+        submitBtn.disabled=false; submitBtn.textContent='Submit';
+        toast('❌ Failed to submit — has the feedback table been created in Supabase?','#ef4444');
+      }
+    }},'Submit');
+    body.appendChild(submitBtn);
+  });
+}
 
 function openSnoozeModal(vendor) {
   openModal(body => {
@@ -23401,6 +23460,106 @@ async function renderHistory(c) {
   ));
 }
 
+// S50: Suggestions & Corrections feedback page — universally available,
+// no permission gates on submitting or viewing (only the status-change
+// controls below are admin-only).
+async function renderFeedback(c) {
+  c.innerHTML = '';
+  c.appendChild(el('p',{style:{fontSize:'11px',color:'var(--muted)',marginBottom:'10px'}},
+    'Everyone can see and add to this list. Upvote an idea instead of resubmitting it — that helps the best ideas rise to the top.'));
+
+  const tabRow = el('div',{style:{display:'flex',gap:'6px',marginBottom:'10px'}});
+  let activeTab = S._feedbackTab || 'suggestion';
+  const sugTabBtn = el('button',{class:'btn-xs'+(activeTab==='suggestion'?' btn-primary':' btn-ghost')},'💡 Suggestions');
+  const corTabBtn = el('button',{class:'btn-xs'+(activeTab==='correction'?' btn-primary':' btn-ghost')},'🚩 Corrections');
+  sugTabBtn.onclick=function(){S._feedbackTab='suggestion';renderFeedback(c);};
+  corTabBtn.onclick=function(){S._feedbackTab='correction';renderFeedback(c);};
+  tabRow.appendChild(sugTabBtn); tabRow.appendChild(corTabBtn);
+  c.appendChild(tabRow);
+
+  const listWrap = el('div',{id:'feedback-list'});
+  listWrap.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'11px'}},'Loading...'));
+  c.appendChild(listWrap);
+
+  try {
+    const rows = await SB.query('feedback', 'select=*&type=eq.'+activeTab+'&order=created_at.desc&limit=200');
+    listWrap.innerHTML = '';
+    // SB.query() never throws -- it swallows errors internally and returns
+    // null on failure (missing table, network error, not configured), or an
+    // array (possibly empty) on success. These are two different messages.
+    if (rows === null) {
+      listWrap.appendChild(el('p',{style:{color:'var(--red)',fontSize:'11px'}},
+        'Could not load feedback — has the feedback table been created in Supabase yet?'));
+      return;
+    }
+    if (!rows.length) {
+      listWrap.appendChild(el('p',{style:{color:'var(--muted)',fontSize:'11px'}},'Nothing here yet — be the first!'));
+      return;
+    }
+    // Normalize upvotes to a real array — PostgREST usually returns jsonb
+    // columns already parsed, but this codebase has hit cases (see
+    // loadFromSupabase's parseJ) where a jsonb/array column comes back as a
+    // JSON string instead, so don't assume.
+    rows.forEach(function(row){
+      if (!Array.isArray(row.upvotes)) {
+        try { row.upvotes = JSON.parse(row.upvotes || '[]'); } catch(_) { row.upvotes = []; }
+      }
+    });
+    // Sort by upvote count (desc), then newest first as tiebreak
+    rows.sort(function(a,b){
+      const au=(a.upvotes||[]).length, bu=(b.upvotes||[]).length;
+      if (bu!==au) return bu-au;
+      return new Date(b.created_at)-new Date(a.created_at);
+    });
+    rows.forEach(function(row) {
+      const card = el('div',{style:{border:'1px solid var(--border)',borderRadius:'6px',padding:'10px',marginBottom:'8px'}});
+      const topRow = el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'6px'}});
+      topRow.appendChild(el('div',{style:{fontSize:'12px',lineHeight:'1.5'}}, row.text));
+
+      const hasUpvoted = (row.upvotes||[]).includes(USER.email);
+      const upvoteBtn = el('button',{class:'btn-xs'+(hasUpvoted?' btn-primary':' btn-ghost'),style:{flexShrink:'0',marginLeft:'8px'},
+        onclick:async function(){
+          const current = row.upvotes || [];
+          const updated = hasUpvoted ? current.filter(function(e){return e!==USER.email;}) : current.concat([USER.email]);
+          const ok = await SB.upsert('feedback',[{id:row.id, upvotes:updated}]);
+          if (ok) { renderFeedback(c); } else { toast('Failed to update','#ef4444'); }
+        }
+      }, '👍 '+(row.upvotes||[]).length);
+      topRow.appendChild(upvoteBtn);
+      card.appendChild(topRow);
+
+      const metaRow = el('div',{style:{fontSize:'9px',color:'var(--muted)',display:'flex',gap:'8px',alignItems:'center'}});
+      metaRow.appendChild(el('span',{}, row.submitted_by_name || row.submitted_by_email));
+      metaRow.appendChild(el('span',{}, new Date(row.created_at).toLocaleDateString()));
+      if (row.page_context) metaRow.appendChild(el('span',{style:{color:'var(--muted)',opacity:'.7'}}, 'on '+row.page_context));
+
+      const statusColors = {new:'var(--muted)',planned:'#4f7cff',in_progress:'#f59e0b',done:'#22c55e',wont_fix:'#ef4444'};
+      const statusLabels = {new:'New',planned:'Planned',in_progress:'In Progress',done:'Done',wont_fix:"Won't Fix"};
+      metaRow.appendChild(el('span',{style:{marginLeft:'auto',color:statusColors[row.status]||'var(--muted)',fontWeight:'700'}}, statusLabels[row.status]||row.status));
+      card.appendChild(metaRow);
+
+      // Admin-only status control — universal viewing/submitting above, but
+      // changing status is restricted to real admins only.
+      if (USER.role==='admin') {
+        const adminRow = el('div',{style:{display:'flex',gap:'4px',marginTop:'6px',flexWrap:'wrap'}});
+        Object.keys(statusLabels).forEach(function(s){
+          adminRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick:async function(){
+            const ok = await SB.upsert('feedback',[{id:row.id, status:s}]);
+            if (ok) { renderFeedback(c); } else { toast('Failed to update status','#ef4444'); }
+          }}, statusLabels[s]));
+        });
+        card.appendChild(adminRow);
+      }
+
+      listWrap.appendChild(card);
+    });
+  } catch(e) {
+    listWrap.innerHTML = '';
+    listWrap.appendChild(el('p',{style:{color:'var(--red)',fontSize:'11px'}},
+      'Could not load feedback: '+e.message+' (has the feedback table been created in Supabase?)'));
+  }
+}
+
 function renderDataCheck(c) {
   const today=new Date(); const issues=[];
   for (const v of S.vendors) {
@@ -28623,6 +28782,7 @@ function render() {
     datacheck:'✅ Data Check',settings:'⚙ Settings',customers:'👥 Customers & Clients',
     sfboard:'☁ Salesforce Board',spend:'💹 Spend',contracts:'📄 Contracts',
     compare:'⚖ Compare',checklist:'✅ Checklist',discovery:'🔍 Discovery',health:'🔍 System Health',
+    feedback:'💬 Suggestions & Corrections',
   };
   $('view-title').textContent=titles[S.view]||S.view;
   const fl=$('filter-label');
@@ -28630,8 +28790,9 @@ function render() {
   // Refresh AI suggestions contextually when view changes
   if (S.aiOpen && typeof renderAISuggestions==='function') renderAISuggestions();
   // Redirect to allowed tab if current view is not permitted for this role
+  // S50: 'feedback' is universally available and must never be redirected away from.
   const _allowedTabs = (ROLE_PERMS[USER.role||'viewer']||ROLE_PERMS.viewer).tabs;
-  if (_allowedTabs && !_allowedTabs.includes(S.view)) {
+  if (_allowedTabs && S.view!=='feedback' && !_allowedTabs.includes(S.view)) {
     S.view = _allowedTabs[0] || 'today';
   }
   if (!S.loaded&&S.view!=='settings'&&S.view!=='health'){content.appendChild(el('p',{class:'muted',style:{padding:'24px'}},'No file loaded. Upload a workbook to begin.'));return;}
@@ -28677,7 +28838,9 @@ function render() {
       break;
     case 'forecast':renderForecast(content);break;case 'analytics':renderAnalytics(content);break;case 'summary':renderSummary(content);break;
     case 'reports':renderReports(content);break;
-    case 'history':renderHistory(content);break;case 'datacheck':renderDataCheck(content);break;case 'settings':renderSettings(content);break;case 'health':renderVCSHealth(content);break;
+    case 'history':renderHistory(content);break;case 'datacheck':renderDataCheck(content);break;
+    case 'feedback':renderFeedback(content);break;
+    case 'settings':renderSettings(content);break;case 'health':renderVCSHealth(content);break;
   }
   if (hadFocus){search.focus();try{search.setSelectionRange(curPos,curPos);}catch(e){}}
 }
@@ -29229,6 +29392,10 @@ function hideKeywordSuggestions() {
     document.body.style.userSelect='';
     document.body.style.cursor='';
   });
+
+  // S50: Suggestions & Corrections quick-submit buttons — universal, not gated
+  $('suggest-btn').addEventListener('click', function(){ openFeedbackModal('suggestion'); });
+  $('report-issue-btn').addEventListener('click', function(){ openFeedbackModal('correction'); });
 
   // AI Panel
   $('ai-toggle').addEventListener('click',()=>{
