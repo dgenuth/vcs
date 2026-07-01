@@ -1126,11 +1126,16 @@ function handleOAuthLogin(email, name, provider) {
     const allUsers = inDir ? EMPLOYEE_DIRECTORY : [{email:loginEmail,name,role:'admin',added:new Date().toISOString(),addedBy:'system',password:'',hiddenFields:[]}, ...EMPLOYEE_DIRECTORY];
     setApprovedUsers(allUsers);
     const meUser = allUsers.find(u=>u.email===loginEmail) || {email,name,role:'admin',hiddenFields:[]};
-    loginAs({email:meUser.email,name:meUser.name,role:meUser.role,hiddenFields:meUser.hiddenFields||[]});
+    // Pass the FULL matched user record, not just 4 fields -- loginAs() also
+    // reads tabOverrides/permissions/perms/fieldEditPerms/requireSearchToList/
+    // assistantAdmin, all of which silently defaulted to empty/false before
+    // this fix, producing a stripped-down first-login experience every time
+    // (a later session-restore path picking up the complete record was the
+    // only reason a manual refresh appeared to "fix" it).
+    loginAs(meUser);
   } else {
-    const role = found.role || 'viewer';
-    const displayName = found.name || name;
-    loginAs({ email, name: displayName, role, hiddenFields: found.hiddenFields || [] });
+    // Pass the FULL matched user record for the same reason as above.
+    loginAs(Object.assign({}, found, { email, name: found.name || name }));
   }
 
   logLoginAttempt(email, true);
@@ -4701,6 +4706,7 @@ function closeAnalyticsPopup() { $('analytics-popup-wrap').style.display='none';
 
 // ─── Detail Panel ─────────────────────────────────────────────────────────────
 function openDetail(vendor, fromAnalytics, pushStack=true) {
+  const _isSameVendorRefresh = !pushStack && _openDetailVendor && _openDetailVendor.name === vendor.name;
   if (pushStack && _openDetailVendor && _openDetailVendor.name !== vendor.name) {
     _detailStack.push(_openDetailVendor);
   }
@@ -4708,7 +4714,14 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   _openDetailVendor = vendor;
   _fromAnalytics = !!fromAnalytics;
   $('detail-panel').style.zIndex = fromAnalytics ? '3000' : '1100';
-  $('detail-panel').style.width = '390px';
+  // Only reset to the default width when genuinely opening a (new) panel --
+  // a "refresh only" call for the vendor that's already open (e.g. from
+  // refreshDetailIfOpen(), which fires constantly -- after saves, and when
+  // switching Communications tabs) must never discard a width the user
+  // manually dragged, or every such refresh silently snaps it back to 390px.
+  if (!_isSameVendorRefresh) {
+    $('detail-panel').style.width = '390px';
+  }
   $('detail-overlay').style.zIndex = fromAnalytics ? '2900' : '1000';
   $('detail-overlay').style.background = fromAnalytics ? 'transparent' : 'rgba(0,0,0,.4)';
   const body=$('detail-body');
@@ -23541,13 +23554,22 @@ async function renderFeedback(c) {
       // Admin-only status control — universal viewing/submitting above, but
       // changing status is restricted to real admins only.
       if (USER.role==='admin') {
-        const adminRow = el('div',{style:{display:'flex',gap:'4px',marginTop:'6px',flexWrap:'wrap'}});
+        const adminRow = el('div',{style:{display:'flex',gap:'4px',marginTop:'6px',flexWrap:'wrap',alignItems:'center'}});
         Object.keys(statusLabels).forEach(function(s){
           adminRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick:async function(){
             const ok = await SB.upsert('feedback',[{id:row.id, status:s}]);
             if (ok) { renderFeedback(c); } else { toast('Failed to update status','#ef4444'); }
           }}, statusLabels[s]));
         });
+        adminRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',color:'var(--red)',marginLeft:'auto'},
+          title:'Permanently remove this item',
+          onclick:async function(){
+            if(!confirm('Delete this '+row.type+' permanently? This cannot be undone.')) return;
+            const ok = await SB.delete('feedback','id=eq.'+row.id);
+            if (ok !== false) { toast('🗑 Deleted','#f59e0b'); renderFeedback(c); }
+            else { toast('Failed to delete','#ef4444'); }
+          }
+        }, '🗑 Delete'));
         card.appendChild(adminRow);
       }
 
