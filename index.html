@@ -6016,7 +6016,9 @@ function renderCommPanel(body, vendor) {
         meetings.forEach(function(m){
           const row=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',padding:'4px 2px',borderBottom:'1px solid var(--border)',fontSize:'10px',cursor:'pointer'},onclick:function(){if(m.source_url)window.open(m.source_url,'_blank');}});
           row.appendChild(m.source==='fathom'
-            ?el('span',{style:{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'14px',height:'14px',borderRadius:'50%',background:'#7B61FF',color:'#fff',fontSize:'8px',fontWeight:'700',flexShrink:'0'}},'F')
+            ?(typeof FATHOM_ICON_B64!=='undefined'
+              ?el('img',{src:FATHOM_ICON_B64,style:{width:'14px',height:'14px',borderRadius:'3px',objectFit:'contain',flexShrink:'0'},alt:'Fathom'})
+              :el('span',{style:{display:'inline-flex',alignItems:'center',justifyContent:'center',width:'14px',height:'14px',borderRadius:'50%',background:'#7B61FF',color:'#fff',fontSize:'8px',fontWeight:'700',flexShrink:'0'}},'F'))
             :el('span',{style:{fontSize:'11px',flexShrink:'0'}},'📅'));
           row.appendChild(el('span',{style:{flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text)'}},m.subject||'Recording'));
           row.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',flexShrink:'0'}},m.activity_date||''));
