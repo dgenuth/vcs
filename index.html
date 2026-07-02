@@ -1327,6 +1327,12 @@ async function completeLogin() {
       if (_roleChanged) {
         updateUserBadge();
         if (typeof updateSidebar === 'function') updateSidebar();
+        // Also re-render the current page's actual content, not just the
+        // sidebar buttons -- if something like Settings already drew its
+        // full admin view before this correction landed (a real race if the
+        // user checks Settings immediately on load), updateSidebar() alone
+        // wouldn't retroactively hide content that's already on screen.
+        if (typeof render === 'function') render();
       }
     }
   } catch(e) { console.warn('[VCS] Post-sync role refresh failed:', e.message); }
