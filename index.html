@@ -8806,7 +8806,17 @@ function _consumeSFOAuthResultFromStorage(){
 function sfConnect(){
   // Show SF setup guide prompt for Chrome extension
   const clientId=S.settings.sfClientId;
-  const redirectUri=S.settings.sfRedirectUri||window.location.href.split('?')[0].split('#')[0];
+  // Only honor the stored sfRedirectUri if it matches the origin we're
+  // actually running on. It's a GLOBAL setting saved back when the sandbox
+  // was the only environment -- on production it pointed at
+  // dgenuth.github.io, so Salesforce delivered the token to the SANDBOX
+  // origin (separate localStorage), and production could never see it.
+  // That was the exact reason SF connect worked in sandbox but not in
+  // production. (The Connected App must whitelist BOTH callback URLs.)
+  const _storedRedirect = S.settings.sfRedirectUri || '';
+  const redirectUri = (_storedRedirect && _storedRedirect.indexOf(window.location.origin) === 0)
+    ? _storedRedirect
+    : window.location.href.split('?')[0].split('#')[0];
   if(!clientId){toast('⚠ Configure Salesforce Client ID in Settings first','#f59e0b');return;}
   const loginUrl=(S.settings.sfLoginUrl||'https://login.salesforce.com')+'/services/oauth2/authorize?response_type=token&client_id='+encodeURIComponent(clientId)+'&redirect_uri='+encodeURIComponent(redirectUri)+'&scope=api+id';
   // Flag that an SF auth is in progress -- the popup (which loads this same
@@ -29821,18 +29831,45 @@ function hideKeywordSuggestions() {
 
 // ── Microsoft token storage — per VCS user, cross-device via Drive ──────────
 function sfTokenKey() {
-  // Mirrors msTokenKey()'s pattern -- vcs_sf_token_ls was previously a single
-  // global key shared by whoever happened to be using this browser, meaning
-  // one person's Salesforce session leaked to every subsequent different
-  // user who logged in on the same machine.
+  // v2 prefix: legacy keys (vcs_sf_token_ls*) are ignored AND scrubbed below.
+  // During the shared-token era, one person's Salesforce session leaked to
+  // every subsequent user on the same machine -- and per-user keys written
+  // during that era may contain the WRONG person's token (poisoned data).
+  // Bumping the prefix invalidates all of it in one stroke; everyone
+  // reconnects once, cleanly, under their own key.
   const u = (USER.loggedIn && USER.email) ? USER.email.toLowerCase().replace(/[^a-z0-9]/g,'_') : 'shared';
-  return 'vcs_sf_token_ls_' + u;
+  return 'vcs_sf2_token_' + u;
 }
 function msTokenKey(suffix) {
-  // Use email if logged in, fall back to 'shared' so callback tokens are findable
+  // v2 prefix -- same reasoning as sfTokenKey(): per-user keys written
+  // during the leak era can hold the WRONG person's Microsoft token (silent
+  // refreshes saved the shared token under whoever was logged in at the
+  // time). That's exactly why another user's Calendar page was still
+  // showing David's Microsoft calendar even after the read-path fix. The
+  // version bump orphans all legacy tokens; the scrub below deletes them.
   const u = (USER.loggedIn && USER.email) ? USER.email.toLowerCase().replace(/[^a-z0-9]/g,'_') : 'shared';
-  return 'vcs_ms_' + suffix + '_' + u;
+  return 'vcs_ms2_' + suffix + '_' + u;
 }
+// One-time scrub of all legacy (v1) token keys -- both the old shared keys
+// and the potentially-poisoned per-user keys from the leak era.
+(function _scrubLegacyTokenKeys(){
+  try {
+    const doomed = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k) continue;
+      if (k.indexOf('vcs_ms_token_') === 0 || k.indexOf('vcs_ms_refresh_') === 0 ||
+          k.indexOf('vcs_ms_name_') === 0 || k.indexOf('vcs_sf_token_ls') === 0) {
+        doomed.push(k);
+      }
+    }
+    if (doomed.length) {
+      doomed.forEach(function(k){ localStorage.removeItem(k); });
+      console.log('[VCS] Scrubbed', doomed.length, 'legacy token key(s) from the pre-privacy-fix era');
+    }
+    try { sessionStorage.removeItem('vcs_sf_token'); } catch(_){}
+  } catch(e) {}
+})();
 function getMSToken()    { 
   // Only check the current user's own key -- msTokenKey() already correctly
   // falls back to a shared key internally for the brief not-logged-in-yet
