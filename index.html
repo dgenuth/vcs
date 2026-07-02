@@ -29938,6 +29938,19 @@ async function ensureMSToken() {
   } catch(e) { console.warn('[VCS] MS OAuth error:', e.message); }
 })();
 
+// If this page load is actually a Salesforce OAuth popup landing back on the
+// app's own URL (sfRedirectUri defaults to window.location.href when not
+// explicitly configured), don't run the normal app init sequence at all --
+// the opener window's own polling in sfConnect() is already watching this
+// popup's location.hash directly and will read the token out and close this
+// popup itself. Running full init() here would show this popup its own
+// login screen (a popup has no session of its own), which is exactly what
+// was happening: SF login completes, then the "app" the popup shows is just
+// the ordinary sign-in screen, looking like the whole flow failed.
+if (window.opener && !window.opener.closed && window.location.hash && window.location.hash.includes('access_token')) {
+  document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;color:#888">Connecting to Salesforce...</div>';
+} else {
+
 try {
   init();
 } catch(initErr) {
@@ -29949,6 +29962,7 @@ try {
   errDiv.textContent = '⚠ Startup error: ' + initErr.message + ' — Try refreshing or clearing localStorage.';
   document.body.appendChild(errDiv);
 }
+} // end else (not an SF OAuth popup callback)
 
 
 // ─── Global Note Input Sanitizer ────────────────────────────────────────────
