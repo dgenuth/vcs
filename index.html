@@ -8749,6 +8749,29 @@ IMPORTANT RULES:
   });
 }
 
+function _processSFOAuthResult(token, idUrl, instanceUrl, expiresIn){
+  USER.sfToken=token;
+  // instance_url is not in implicit flow hash — derive from id URL or settings
+  const sfLoginBase=S.settings.sfLoginUrl||'https://login.salesforce.com';
+  let derivedInstance=instanceUrl||'';
+  if(!derivedInstance){
+    derivedInstance=sfLoginBase.replace('login.salesforce.com','psgpo.my.salesforce.com');
+    if(sfLoginBase.includes('.my.salesforce.com')||sfLoginBase.includes('.lightning.force.com')){
+      derivedInstance=sfLoginBase;
+    }
+  }
+  USER.sfInstance=derivedInstance||sfLoginBase;
+  const sfPayload={token:USER.sfToken,instance:USER.sfInstance,storedAt:Date.now(),expiry:Date.now()+((expiresIn||7200)*1000)};
+  localStorage.setItem(sfTokenKey(),JSON.stringify(sfPayload));
+  sessionStorage.setItem('vcs_sf_token',JSON.stringify(sfPayload));
+  startSFTokenMonitor();
+  console.log('[VCS SF] Connected. Instance:', USER.sfInstance);
+  toast('✓ Salesforce connected');updateUserBadge();
+  if(S.view==='health'){const _hc=$('content');if(_hc){_hc.innerHTML='';renderVCSHealth(_hc);}}
+  if(_openDetailVendor){ delete _openDetailVendor._sfCache; }
+  if(S.view)render();
+}
+let _sfMessageListenerAttached=false;
 function sfConnect(){
   // Show SF setup guide prompt for Chrome extension
   const clientId=S.settings.sfClientId;
@@ -8757,34 +8780,26 @@ function sfConnect(){
   const loginUrl=(S.settings.sfLoginUrl||'https://login.salesforce.com')+'/services/oauth2/authorize?response_type=token&client_id='+encodeURIComponent(clientId)+'&redirect_uri='+encodeURIComponent(redirectUri)+'&scope=api+id';
   const popup=window.open(loginUrl,'sf_auth','width=600,height=700');
   if(!popup){toast('⚠ Popup blocked — allow popups','#f59e0b');return;}
-  const poll=setInterval(()=>{try{if(popup.closed){clearInterval(poll);return;}const h=popup.location.hash;if(h&&h.includes('access_token')){clearInterval(poll);popup.close();const p=new URLSearchParams(h.slice(1));USER.sfToken=p.get('access_token');
-      // instance_url is not in implicit flow hash — derive from id URL or settings
-      const idUrl=p.get('id')||''; // e.g. https://login.salesforce.com/id/00D.../005...
-      const sfLoginBase=S.settings.sfLoginUrl||'https://login.salesforce.com';
-      // Derive instance from id URL: id URLs are on login.sf.com but actual instance is org-specific
-      // Try to extract from 'id' URL hostname, or fall back to sfLoginUrl, or use stored org
-      let derivedInstance=p.get('instance_url')||'';
-      if(!derivedInstance){
-        // Use the sfLoginUrl as the base (works if org is set to psgpo.my.salesforce.com)
-        derivedInstance=sfLoginBase.replace('login.salesforce.com','psgpo.my.salesforce.com');
-        // If sfLoginUrl is already the org URL (not login.salesforce.com), use it directly
-        if(sfLoginBase.includes('.my.salesforce.com')||sfLoginBase.includes('.lightning.force.com')){
-          derivedInstance=sfLoginBase;
-        }
-      }
-      USER.sfInstance=derivedInstance||sfLoginBase;
-      const expiresIn=parseInt(p.get('expires_in')||'7200');
-      // Save token to localStorage (persistent) and sessionStorage (tab-level)
-      const sfPayload={token:USER.sfToken,instance:USER.sfInstance,storedAt:Date.now(),expiry:Date.now()+(expiresIn*1000)};
-      localStorage.setItem(sfTokenKey(),JSON.stringify(sfPayload));
-      sessionStorage.setItem('vcs_sf_token',JSON.stringify(sfPayload));
-      startSFTokenMonitor();
-      console.log('[VCS SF] Connected. Instance:', USER.sfInstance);
-      toast('✓ Salesforce connected');updateUserBadge();
-if(S.view==='health'){const _hc=$('content');if(_hc){_hc.innerHTML='';renderVCSHealth(_hc);}}
-      // If vendor panel is open, auto-reload its SF data
-      if(_openDetailVendor){ delete _openDetailVendor._sfCache; }
-      if(S.view)render();}}catch(e){}},500);
+  // PRIMARY mechanism: the popup itself extracts the token and posts it back
+  // via postMessage once it lands on the redirect URI. This works even when
+  // Cross-Origin-Opener-Policy blocks direct cross-window property access
+  // (popup.location, popup.closed) -- the same reliable pattern already
+  // used for the Microsoft OAuth flow (popup does the work, closes itself).
+  if (!_sfMessageListenerAttached) {
+    _sfMessageListenerAttached = true;
+    window.addEventListener('message', function(ev){
+      if (ev.origin !== window.location.origin) return;
+      if (!ev.data || ev.data.type !== 'vcs_sf_oauth_result') return;
+      if (!ev.data.token) return;
+      _processSFOAuthResult(ev.data.token, ev.data.idUrl, ev.data.instanceUrl, ev.data.expiresIn);
+    });
+  }
+  // FALLBACK mechanism: polling, kept for environments where COOP doesn't
+  // block cross-window access. Harmless if the message path already
+  // succeeded -- the popup will already be closed by then.
+  const poll=setInterval(()=>{try{if(popup.closed){clearInterval(poll);return;}const h=popup.location.hash;if(h&&h.includes('access_token')){clearInterval(poll);popup.close();const p=new URLSearchParams(h.slice(1));
+      _processSFOAuthResult(p.get('access_token'), p.get('id')||'', p.get('instance_url')||'', parseInt(p.get('expires_in')||'7200'));
+      }}catch(e){}},500);
 }
 function restoreSFSession(){
   try {
@@ -29949,6 +29964,25 @@ async function ensureMSToken() {
 // the ordinary sign-in screen, looking like the whole flow failed.
 if (window.opener && !window.opener.closed && window.location.hash && window.location.hash.includes('access_token')) {
   document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;color:#888">Connecting to Salesforce...</div>';
+  // Extract the token HERE, in the popup itself, and hand it to the opener
+  // via postMessage rather than expecting the opener to reach into this
+  // popup's location/closed state from outside -- that cross-window access
+  // is exactly what Cross-Origin-Opener-Policy can silently block, which is
+  // why the previous approach (opener polling popup.location.hash) could
+  // get permanently stuck showing "Connecting..." with nothing happening.
+  // This mirrors the Microsoft flow, which already works reliably by having
+  // the popup do its own work and close itself.
+  try {
+    const p = new URLSearchParams(window.location.hash.slice(1));
+    const token = p.get('access_token');
+    const idUrl = p.get('id') || '';
+    const instanceUrl = p.get('instance_url') || '';
+    const expiresIn = parseInt(p.get('expires_in') || '7200');
+    if (window.opener.postMessage) {
+      window.opener.postMessage({ type: 'vcs_sf_oauth_result', token: token, idUrl: idUrl, instanceUrl: instanceUrl, expiresIn: expiresIn }, window.location.origin);
+    }
+  } catch(e) { console.warn('[VCS SF] Popup token extraction failed:', e.message); }
+  setTimeout(function(){ window.close(); }, 300);
 } else {
 
 try {
