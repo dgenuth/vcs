@@ -7984,6 +7984,7 @@ async function loadGlobalSettingsViaProxy() {
     if (cfg.globalSettings) {
       const gs = cfg.globalSettings;
       console.log('[VCS APIKEY DEBUG] 3. loadGlobalSettingsViaProxy (GAS getConfig) running. Current S.settings.apiKey:',S.settings.apiKey?S.settings.apiKey.slice(0,15)+'...':'(empty)','| GAS returned apiKey:',gs.apiKey?gs.apiKey.slice(0,15)+'...':'(none)');
+      console.log('[VCS SFRENZO DEBUG] GAS getConfig returned -- sfClientId:',JSON.stringify(gs.sfClientId||'(none)'),'| sfLoginUrl:',JSON.stringify(gs.sfLoginUrl||'(none)'),'| renzoConnectorUrl:',JSON.stringify(gs.renzoConnectorUrl||'(none)'),'| Full globalSettings keys present:',JSON.stringify(Object.keys(gs)));
       const SAFE_GLOBAL_KEYS = ['apiKey','renzoApiKey','renzoConnectorUrl','driveFileId','aiKeyShared','supabaseUrl','supabaseKey','fathomApiKey','msGraphClientId','msGraphTenantId','sfClientId','sfLoginUrl','sfRedirectUri','googleClientId'];
       SAFE_GLOBAL_KEYS.forEach(k => {
         // Server value only fills in when local is empty -- local settings the
@@ -7996,6 +7997,7 @@ async function loadGlobalSettingsViaProxy() {
       });
       if(!S.settings.apiKey && gs.apiKey){S.settings.apiKey=gs.apiKey;localStorage.setItem('vcs_api_key',gs.apiKey);}
       console.log('[VCS APIKEY DEBUG] 3b. After loadGlobalSettingsViaProxy, S.settings.apiKey is now:',S.settings.apiKey?S.settings.apiKey.slice(0,15)+'...':'(empty)');
+      console.log('[VCS SFRENZO DEBUG] After sync loop -- S.settings.sfClientId:',JSON.stringify(S.settings.sfClientId||'(empty)'),'| S.settings.renzoConnectorUrl:',JSON.stringify(S.settings.renzoConnectorUrl||'(empty)'));
       if(!S.settings.fathomApiKey && gs.fathomApiKey){S.settings.fathomApiKey=gs.fathomApiKey;localStorage.setItem(getFathomKeyStorageKey(),gs.fathomApiKey);}
     }
     // Merge approved users list (carries feature flags, roles, hiddenFields)
