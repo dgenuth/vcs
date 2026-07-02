@@ -501,7 +501,8 @@ body.ps-light-theme .tbl-wrap .data-table thead th{background:#0078b8!important;
 
 /* Detail Panel */
 .detail-panel-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:1000}
-.detail-panel{position:fixed;right:0;top:0;width:390px;min-width:280px;max-width:780px;height:100vh;background:var(--sb);border-left:1px solid var(--border);z-index:1100;overflow-y:auto;padding-bottom:24px;transition:none}
+.detail-panel{position:fixed;right:0;top:0;width:390px;min-width:280px;max-width:780px;height:100vh;background:var(--sb);border-left:1px solid var(--border);z-index:1100;overflow:hidden;transition:none}
+.detail-scroll-wrap{height:100%;overflow-y:auto;padding-bottom:24px}
 .detail-resize-handle{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:col-resize;background:transparent;z-index:40;transition:background .15s}
 .detail-resize-handle:hover,.detail-resize-handle.dragging{background:rgba(79,124,255,.4)}
 .detail-close{position:sticky;top:0;float:right;margin:7px 7px 0 0;background:rgba(255,255,255,.08);border:none;color:var(--text);width:22px;height:22px;border-radius:4px;cursor:pointer;font-size:11px;z-index:1}
@@ -867,8 +868,10 @@ var VCS_VERSION = 'v1778431112';
 <div id="detail-panel" class="detail-panel" style="display:none">
   <div class="detail-resize-handle" id="detail-resize-handle"></div>
   <button class="detail-close" id="detail-close-btn">✕</button>
+  <div class="detail-scroll-wrap">
   <div id="detail-sticky-hdr" style="position:sticky;top:0;z-index:20;background:var(--sb);padding:6px 11px 6px 11px;display:none;flex-wrap:wrap;align-items:center;gap:5px;border-bottom:1px solid var(--border)"></div>
   <div id="detail-body" class="detail-body"></div>
+  </div>
 </div>
 
 <div id="modal-wrap" style="display:none">
@@ -7981,7 +7984,7 @@ async function loadGlobalSettingsViaProxy() {
     if (cfg.globalSettings) {
       const gs = cfg.globalSettings;
       console.log('[VCS APIKEY DEBUG] 3. loadGlobalSettingsViaProxy (GAS getConfig) running. Current S.settings.apiKey:',S.settings.apiKey?S.settings.apiKey.slice(0,15)+'...':'(empty)','| GAS returned apiKey:',gs.apiKey?gs.apiKey.slice(0,15)+'...':'(none)');
-      const SAFE_GLOBAL_KEYS = ['apiKey','renzoApiKey','driveFileId','aiKeyShared','supabaseUrl','supabaseKey','fathomApiKey','msGraphClientId','msGraphTenantId','sfClientId','sfLoginUrl','sfRedirectUri','googleClientId'];
+      const SAFE_GLOBAL_KEYS = ['apiKey','renzoApiKey','renzoConnectorUrl','driveFileId','aiKeyShared','supabaseUrl','supabaseKey','fathomApiKey','msGraphClientId','msGraphTenantId','sfClientId','sfLoginUrl','sfRedirectUri','googleClientId'];
       SAFE_GLOBAL_KEYS.forEach(k => {
         // Server value only fills in when local is empty -- local settings the
         // user just changed in this session must win, otherwise every
