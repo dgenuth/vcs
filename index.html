@@ -1271,7 +1271,7 @@ async function completeLogin() {
 
   // Silent SF token restore
   try {
-    const sfTok=localStorage.getItem('vcs_sf_token_ls');
+    const sfTok=localStorage.getItem(sfTokenKey());
     if(sfTok){const sfPayload=JSON.parse(sfTok);if(sfPayload&&sfPayload.token&&(!sfPayload.expiry||Date.now()<sfPayload.expiry)){USER.sfToken=sfPayload.token;USER.sfInstance=sfPayload.instance||'';console.log('[VCS] SF token restored from session');}}
   } catch(_) {}
 
@@ -8776,7 +8776,7 @@ function sfConnect(){
       const expiresIn=parseInt(p.get('expires_in')||'7200');
       // Save token to localStorage (persistent) and sessionStorage (tab-level)
       const sfPayload={token:USER.sfToken,instance:USER.sfInstance,storedAt:Date.now(),expiry:Date.now()+(expiresIn*1000)};
-      localStorage.setItem('vcs_sf_token_ls',JSON.stringify(sfPayload));
+      localStorage.setItem(sfTokenKey(),JSON.stringify(sfPayload));
       sessionStorage.setItem('vcs_sf_token',JSON.stringify(sfPayload));
       startSFTokenMonitor();
       console.log('[VCS SF] Connected. Instance:', USER.sfInstance);
@@ -8788,12 +8788,12 @@ if(S.view==='health'){const _hc=$('content');if(_hc){_hc.innerHTML='';renderVCSH
 }
 function restoreSFSession(){
   try {
-    const ls = JSON.parse(localStorage.getItem('vcs_sf_token_ls')||'null');
+    const ls = JSON.parse(localStorage.getItem(sfTokenKey())||'null');
     if(ls && ls.token) {
       // Check expiry — SF tokens typically last 2 hours. Don't restore if expired.
       if(ls.expiry && Date.now() > ls.expiry) {
         // Token expired — clear storage so system status shows red honestly
-        localStorage.removeItem('vcs_sf_token_ls');
+        localStorage.removeItem(sfTokenKey());
         sessionStorage.removeItem('vcs_sf_token');
         console.log('[VCS SF] Stored token expired — cleared. Reconnect required.');
         return;
@@ -8820,7 +8820,7 @@ function startSFTokenMonitor(){
   if(_sfTokenMonitor) clearInterval(_sfTokenMonitor);
   _sfTokenMonitor=setInterval(()=>{
     try{
-      const ls=JSON.parse(localStorage.getItem('vcs_sf_token_ls')||'null');
+      const ls=JSON.parse(localStorage.getItem(sfTokenKey())||'null');
       if(!ls||!ls.expiry) return;
       const minsLeft=Math.round((ls.expiry-Date.now())/60000);
       if(minsLeft<=5&&minsLeft>0&&!S._sfExpiryWarned){
@@ -8830,7 +8830,7 @@ function startSFTokenMonitor(){
       if(minsLeft<=0){
         clearInterval(_sfTokenMonitor);_sfTokenMonitor=null;S._sfExpiryWarned=false;
         USER.sfToken=null;USER.sfInstance='';
-        localStorage.removeItem('vcs_sf_token_ls');
+        localStorage.removeItem(sfTokenKey());
         sessionStorage.removeItem('vcs_sf_token');
         toast('⚠ Salesforce session expired — please reconnect','#ef4444',8000);
         if(S.view==='health'){const hc=$('content');if(hc){hc.innerHTML='';renderVCSHealth(hc);}}
@@ -8898,7 +8898,7 @@ async function sfQuery(soql, _retried){
       // Token expired — clear and show reconnect prompt
       USER.sfToken=null; USER.sfInstance=null;
       sessionStorage.removeItem('vcs_sf_token');
-      localStorage.removeItem('vcs_sf_token_ls');
+      localStorage.removeItem(sfTokenKey());
       if(!_retried){
         // Queue a reconnect and retry once when done
         sfAutoReconnect(_retried===false?null:()=>sfQuery(soql,true));
@@ -12617,7 +12617,7 @@ async function sfQueryAll(soql, maxRecords=2000){
   while(url && allRecords.length < maxRecords){
     try{
       const r=await fetch(url,{headers:{'Authorization':'Bearer '+USER.sfToken,'Content-Type':'application/json'}});
-      if(r.status===401){USER.sfToken=null;USER.sfInstance=null;sessionStorage.removeItem('vcs_sf_token');localStorage.removeItem('vcs_sf_token_ls');sfAutoReconnect();return allRecords;}
+      if(r.status===401){USER.sfToken=null;USER.sfInstance=null;sessionStorage.removeItem('vcs_sf_token');localStorage.removeItem(sfTokenKey());sfAutoReconnect();return allRecords;}
       if(!r.ok) break;
       const data=await r.json();
       if(data.records) allRecords.push(...data.records);
@@ -24170,7 +24170,7 @@ function renderVCSHealth(c) {
       test:()=>{
         if(USER.sfToken) return true; // connected this session — memory token wins
         try {
-          const stored=JSON.parse(localStorage.getItem('vcs_sf_token_ls')||'null');
+          const stored=JSON.parse(localStorage.getItem(sfTokenKey())||'null');
           if(stored&&stored.token&&stored.expiry&&Date.now()<stored.expiry) return true;
         } catch(e){}
         return false;
@@ -24182,7 +24182,7 @@ function renderVCSHealth(c) {
     },
     {label:'GAS Proxy',icon:'🔗',roles:'admin',test:()=>!!VCS_PROXY_URL,pass:VCS_PROXY_URL.slice(0,40)+'…',fail:'No proxy URL configured — check Settings → Integrations',fix:()=>{S.view='settings';render();}},
     {label:'Claude API Key',icon:'🤖',roles:'admin',test:()=>!!(S.settings?.apiKey||localStorage.getItem('vcs_api_key')),pass:'API key configured',fail:'No API key — set in Settings → AI Configuration',fixLabel:'🔑 Enter Key',fix:()=>{openModal(body=>{body.appendChild(el('h3',{},'🔑 Enter Anthropic API Key'));body.appendChild(el('p',{class:'modal-sub'},'Paste your sk-ant-... key below. It will be saved to Settings and Drive.'));const inp=el('input',{type:'password',class:'settings-input',placeholder:'sk-ant-...',style:{width:'100%',marginBottom:'8px'}});inp.value=S.settings?.apiKey||localStorage.getItem('vcs_api_key')||'';body.appendChild(inp);const saveBtn=el('button',{class:'btn-primary',onclick(){const k=inp.value.trim();if(!k){toast('Enter a key first','var(--red)');return;}S.settings.apiKey=k;localStorage.setItem('vcs_api_key',k);debouncedDriveSync();closeModal();toast('API key saved','var(--green)');}},'💾 Save Key');body.appendChild(saveBtn);setTimeout(()=>inp.focus(),100);});}},
-    {label:'Vendors Loaded',icon:'🗂',roles:'all',test:()=>(S.vendors?.length||0)>0,pass:(S.vendors?.length||0)+' direct + '+(S.channelVendors?.length||0)+' channel vendors',fail:'No vendors loaded — upload a vendor file',fixLabel:'☁ Load from Drive',fix:()=>{const rb=document.getElementById('reload-btn');if(rb)rb.click();else{toast('Use Connections & API Keys → Google Drive to load your data manually','#f59e0b');}}},
+    {label:'Vendors Loaded',icon:'🗂',roles:'all',test:()=>(S.vendors?.length||0)>0,pass:(S.vendors?.length||0)+' direct + '+(S.channelVendors?.length||0)+' channel vendors',fail:'No vendors loaded',fixLabel:'🔄 Reload from Supabase',fix:()=>{const rb=document.getElementById('reload-btn');if(rb)rb.click();else{toast('Use the Reload button in the sidebar','#f59e0b');}}},
     {label:'Channel Partners',icon:'🤝',roles:'procurement',test:()=>(S.channelVendors?.length||0)>0,pass:(S.channelVendors?.length||0)+' channel vendors across GPOs',fail:'No channel vendor data',fixLabel:'🔄 Reload',fix:()=>location.reload()},
     {label:'User Session',icon:'👤',roles:'all',test:()=>!!USER.email,pass:USER.email+' ('+USER.role+')',fail:'No user session — reload the page',fix:()=>location.reload()},
     {label:'Renzo API Key',icon:'✉',roles:'admin',test:()=>S._renzoHealthy===true?true:S._renzoHealthy===null?!!(S.settings?.renzoApiKey||S.settings?.renzoOutreachKey):!!(S.settings?.renzoApiKey||S.settings?.renzoOutreachKey),pass:S._renzoHealthy===true?'Renzo API reachable — key valid':S._renzoHealthy===null?'⏳ Testing Renzo connection...':'Renzo key configured (not yet pinged)',fail:S._renzoHealthy===false?'Renzo API unreachable — check key and proxy':'No Renzo key — set in Settings → Renzo',fix:()=>{S.view='settings';render();}},
@@ -24844,7 +24844,7 @@ function renderSettings(c) {
       const results=[];
       // SF validity check + sfConnect() must run synchronously, before any await below —
       // browsers only allow window.open() during the original click gesture's sync execution.
-      const sfLs=(function(){ try{ return JSON.parse(localStorage.getItem('vcs_sf_token_ls')||'null'); }catch(_){ return null; } })();
+      const sfLs=(function(){ try{ return JSON.parse(localStorage.getItem(sfTokenKey())||'null'); }catch(_){ return null; } })();
       const sfValid=!!(USER.sfToken)||!!(sfLs&&sfLs.token&&(!sfLs.expiry||Date.now()<sfLs.expiry));
       if(!sfValid){
         if(typeof sfConnect==='function') sfConnect();
@@ -24969,7 +24969,7 @@ function _buildConnectionsSection(){
           actionRow.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Sign out of Salesforce',onclick:function(){
             USER.sfToken=null;USER.sfInstance=null;USER.sfEmail='';
             sessionStorage.removeItem('vcs_sf_token');sessionStorage.removeItem('vcs_sf_instance');
-            localStorage.removeItem('vcs_sf_token');localStorage.removeItem('vcs_sf_instance');localStorage.removeItem('vcs_sf_token_ls');
+            localStorage.removeItem('vcs_sf_token');localStorage.removeItem('vcs_sf_instance');localStorage.removeItem(sfTokenKey());
             refreshConnectionsSummary();toast('Salesforce disconnected','#f59e0b');
           }},'Disconnect'));
         } else {
@@ -26203,7 +26203,7 @@ function buildUserSubSection(label,bodyBuilderFn){
     const addRow=el('div',{style:{display:'flex',gap:'5px',alignItems:'center',flexWrap:'wrap'}});
     const emailIn=el('input',{type:'email',class:'modal-input',placeholder:'user@company.com',style:{flex:'1',minWidth:'160px',height:'26px',fontSize:'10px',marginBottom:'0'}});
     const roleIn=el('select',{class:'detail-edit-field',style:{width:'130px',fontSize:'9px'}});
-    ['manager','viewer','restricted','admin'].forEach(r=>roleIn.appendChild(el('option',{value:r},ROLES[r])));
+    ['admin','procurement','cro','director_ops','ops_qc','finance_sr','finance_jr','ssa','sales_rep','viewer','restricted','manager'].forEach(r=>roleIn.appendChild(el('option',{value:r},ROLES[r]||r)));
     const pwNewIn=el('input',{type:'password',class:'modal-input',placeholder:'Password (optional)',style:{width:'140px',height:'26px',fontSize:'10px',marginBottom:'0'}});
     addRow.appendChild(emailIn); addRow.appendChild(roleIn); addRow.appendChild(pwNewIn);
     addRow.appendChild(el('button',{class:'btn-xs btn-green',style:{height:'26px',padding:'0 10px'},onclick:async function(){
@@ -29187,7 +29187,15 @@ async function init() {
 
   // Manual load/save buttons (Choose File, Load from Google Drive) now live in
   // Connections & API Keys → Google Drive — see buildIntegrationSubsection('Google Drive',...)
-  $('reload-btn').addEventListener('click',()=>{const inp=document.createElement('input');inp.type='file';inp.accept='.xlsm,.xlsx';inp.addEventListener('change',e=>{if(e.target.files[0])loadFile(e.target.files[0]);});inp.click();});
+  $('reload-btn').addEventListener('click',async ()=>{
+    toast('🔄 Reloading from Supabase...','#4f7cff');
+    try {
+      await loadFromSupabase();
+      toast('✅ Reloaded from Supabase','#22c55e');
+    } catch(e) {
+      toast('Reload failed: '+e.message,'#ef4444');
+    }
+  });
 
   // Save button
   $('save-btn').addEventListener('click',()=>saveFile());
@@ -29731,23 +29739,36 @@ function hideKeywordSuggestions() {
 }
 
 // ── Microsoft token storage — per VCS user, cross-device via Drive ──────────
+function sfTokenKey() {
+  // Mirrors msTokenKey()'s pattern -- vcs_sf_token_ls was previously a single
+  // global key shared by whoever happened to be using this browser, meaning
+  // one person's Salesforce session leaked to every subsequent different
+  // user who logged in on the same machine.
+  const u = (USER.loggedIn && USER.email) ? USER.email.toLowerCase().replace(/[^a-z0-9]/g,'_') : 'shared';
+  return 'vcs_sf_token_ls_' + u;
+}
 function msTokenKey(suffix) {
   // Use email if logged in, fall back to 'shared' so callback tokens are findable
   const u = (USER.loggedIn && USER.email) ? USER.email.toLowerCase().replace(/[^a-z0-9]/g,'_') : 'shared';
   return 'vcs_ms_' + suffix + '_' + u;
 }
 function getMSToken()    { 
-  // Check user-keyed first, then shared (set during OAuth callback before login)
-  return localStorage.getItem(msTokenKey('token')) || localStorage.getItem('vcs_ms_token_shared') || null;
+  // Only check the current user's own key -- msTokenKey() already correctly
+  // falls back to a shared key internally for the brief not-logged-in-yet
+  // moment during an OAuth redirect. Also checking a shared key HERE,
+  // unconditionally, meant that once any user connected Microsoft in this
+  // browser, every subsequent DIFFERENT user would silently inherit that
+  // token and see the first user's personal emails/calendar.
+  return localStorage.getItem(msTokenKey('token')) || null;
 }
 function getMSTokenExp() { 
-  return parseInt(localStorage.getItem(msTokenKey('token_exp')) || localStorage.getItem('vcs_ms_token_exp_shared') || '0');
+  return parseInt(localStorage.getItem(msTokenKey('token_exp')) || '0');
 }
 function getMSRefresh()  { 
-  return localStorage.getItem(msTokenKey('refresh')) || localStorage.getItem('vcs_ms_refresh_shared') || null;
+  return localStorage.getItem(msTokenKey('refresh')) || null;
 }
 function getMSUserName() { 
-  return localStorage.getItem(msTokenKey('name')) || localStorage.getItem('vcs_ms_name_shared') || '';
+  return localStorage.getItem(msTokenKey('name')) || '';
 }
 function setMSToken(tok, exp, refresh, name) {
   // Store under both user-keyed and shared so it's found regardless of login state
@@ -29758,6 +29779,12 @@ function setMSToken(tok, exp, refresh, name) {
   localStorage.setItem('vcs_ms_token_exp_shared', String(exp));
   if (refresh) { localStorage.setItem(msTokenKey('refresh'), refresh); localStorage.setItem('vcs_ms_refresh_shared', refresh); }
   if (name)    { localStorage.setItem(msTokenKey('name'), name);    localStorage.setItem('vcs_ms_name_shared', name); }
+  // Clean up the shared bridge keys immediately once we know who's actually
+  // logged in -- otherwise they sit there indefinitely and can leak to
+  // whichever different user happens to log in next in this same browser.
+  if (USER.loggedIn && USER.email) {
+    ['vcs_ms_token_shared','vcs_ms_token_exp_shared','vcs_ms_refresh_shared','vcs_ms_name_shared'].forEach(function(k){ localStorage.removeItem(k); });
+  }
 }
 function clearMSTokens() {
   ['token','token_exp','refresh','name'].forEach(s => {
