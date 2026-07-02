@@ -1252,6 +1252,16 @@ async function completeLogin() {
   $('login-screen').style.display = 'none';
   $('app').style.display = 'flex';
   updateUserBadge();
+  // Refresh sidebar visibility NOW, using the just-populated USER object.
+  // Previously, updateSidebar() only ever ran once, unconditionally, during
+  // init()'s synchronous startup -- BEFORE a fresh OAuth login had a chance
+  // to populate USER's role/tabOverrides. On a page refresh, restoreSession()
+  // happens to complete before that startup call fires, so the sidebar looks
+  // correct there by coincidence -- but nothing ever re-ran it after a
+  // genuinely fresh sign-in, leaving the sidebar permanently stuck showing
+  // whatever it filtered to before login (the "watered-down" first-login
+  // experience that only a full refresh appeared to fix).
+  if (typeof updateSidebar === 'function') updateSidebar();
   toast('Welcome, ' + USER.name + ' (' + ROLES[USER.role] + ')');
   loadSettings();
   showLoadingSpinner('Loading your data…');
@@ -7971,7 +7981,7 @@ async function loadGlobalSettingsViaProxy() {
     if (cfg.globalSettings) {
       const gs = cfg.globalSettings;
       console.log('[VCS APIKEY DEBUG] 3. loadGlobalSettingsViaProxy (GAS getConfig) running. Current S.settings.apiKey:',S.settings.apiKey?S.settings.apiKey.slice(0,15)+'...':'(empty)','| GAS returned apiKey:',gs.apiKey?gs.apiKey.slice(0,15)+'...':'(none)');
-      const SAFE_GLOBAL_KEYS = ['apiKey','renzoApiKey','driveFileId','aiKeyShared','supabaseUrl','supabaseKey','fathomApiKey'];
+      const SAFE_GLOBAL_KEYS = ['apiKey','renzoApiKey','driveFileId','aiKeyShared','supabaseUrl','supabaseKey','fathomApiKey','msGraphClientId','msGraphTenantId','sfClientId','sfLoginUrl','sfRedirectUri','googleClientId'];
       SAFE_GLOBAL_KEYS.forEach(k => {
         // Server value only fills in when local is empty -- local settings the
         // user just changed in this session must win, otherwise every
@@ -24866,6 +24876,8 @@ function _buildConnectionsSection(){
     connBody.appendChild(buildIntegrationSubsection('Salesforce',
       function(){return USER&&USER.sfToken?'Connected as '+(USER.sfEmail||USER.email||''):'Not connected';},
       function(b){
+        const actionRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'8px',paddingTop:'6px',borderTop:'1px solid var(--border)'}});
+        if (USER && USER.role === 'admin') {
         const sfRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
         sfRow.appendChild(el('label',{style:{minWidth:'80px'}},'Client ID'));
         const sfCidInp=el('input',{value:S.settings.sfClientId||'',style:{flex:'1',fontSize:'10px'}});
@@ -24876,11 +24888,11 @@ function _buildConnectionsSection(){
         const sfUrlInp=el('input',{value:S.settings.sfLoginUrl||'https://login.salesforce.com',style:{flex:'1',fontSize:'10px'}});
         sfUrlRow.appendChild(sfUrlInp);
         b.appendChild(sfUrlRow);
-        const actionRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'8px',paddingTop:'6px',borderTop:'1px solid var(--border)'}});
         actionRow.appendChild(el('button',{class:'btn-xs btn-green',title:'Save Salesforce configuration',onclick:async function(){
           S.settings.sfClientId=sfCidInp.value.trim();S.settings.sfLoginUrl=sfUrlInp.value.trim()||'https://login.salesforce.com';
           await saveConfigToDrive();toast('Salesforce settings saved','#10b981');
         }},'Save'));
+        } // end Salesforce config fields admin-only gate
         if(USER&&USER.sfToken){
           const sfTestResult=el('span',{style:{fontSize:'9px',color:'var(--muted)',alignSelf:'center'}});
           actionRow.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Test the Salesforce connection',onclick:async function(){
@@ -24974,7 +24986,25 @@ function _buildConnectionsSection(){
     connBody.appendChild(buildIntegrationSubsection('Fathom',
       function(){return _fathomConnected?'Configured':'Not configured';},
       function(b){
-        b.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'4px'}},'Your personal Fathom API key — shows YOUR meeting recordings'));
+        const fHdrRow=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'4px'}});
+        fHdrRow.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},'Your personal Fathom API key — shows YOUR meeting recordings'));
+        fHdrRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',flexShrink:'0'},title:'How to find your Fathom API key',onclick:function(){
+          openModal(function(body){
+            body.appendChild(el('h3',{},'🔑 How to Get Your Fathom API Key'));
+            body.appendChild(el('ol',{style:{fontSize:'11px',lineHeight:'1.8',paddingLeft:'18px'}},
+              el('li',{},'Log in at ',el('a',{href:'https://fathom.video',target:'_blank',style:{color:'var(--blue)'}},'fathom.video')),
+              el('li',{},'Click Settings (top right)'),
+              el('li',{},'Find "API Access" under My Settings'),
+              el('li',{},'Click Add, then "Generate API Key"'),
+              el('li',{},'Give it a name (e.g. "Prime Source CMS") and click Create API Client'),
+              el('li',{},'Copy the key and paste it into the field below')
+            ));
+            body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginTop:'8px'}},
+              'Direct link: ',el('a',{href:'https://fathom.video/api_settings/new',target:'_blank',style:{color:'var(--blue)'}},'fathom.video/api_settings/new')));
+            body.appendChild(el('button',{class:'btn-primary',style:{marginTop:'10px'},onclick:closeModal},'Got it'));
+          });
+        }},'❓ How do I find this?'));
+        b.appendChild(fHdrRow);
         const fRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
         fRow.appendChild(el('label',{style:{minWidth:'80px'}},'API Key'));
         fRow.appendChild(buildMaskedKeyField(
@@ -25198,7 +25228,10 @@ function _buildConnectionsSection(){
       ));
     }
 
-    // Google Drive
+    // Google Drive — admin ONLY. This is David's personal Google Drive
+    // account, not a shared org resource, so no other user has any reason
+    // to see the file ID, load/save buttons, or any of this configuration.
+    if (USER && USER.role === 'admin') {
     connBody.appendChild(buildIntegrationSubsection('Google Drive',
       function(){return S.settings&&S.settings.driveFileId?'Connected (file linked)':'Not connected';},
       function(b){
@@ -25261,6 +25294,7 @@ function _buildConnectionsSection(){
       },
       function(){return !!(S.settings&&S.settings.driveFileId);}
     ));
+    } // end Google Drive admin-only gate
 
     // Deploy to Production — admin ONLY (not assistant admin). David: "very
     // sensitive... only accessible by me, just like Connections & API Keys."
