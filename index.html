@@ -1241,6 +1241,7 @@ async function recordLogin() {
       if (!all[idx].added) all[idx].added = new Date().toISOString();
       setApprovedUsers(all, true);
       migrateSearchHistory();
+      touchUser(USER.email);
       await saveUsersViaProxy();
       console.log('[VCS] lastLogin recorded for',USER.email,'at',all[idx].lastLogin);
     } else {
@@ -8352,9 +8353,54 @@ function setApprovedUsers(u, skipDriveSync){
 }
 
 // Save user array + global settings to Drive via GAS proxy (no Google OAuth required)
+// Emails of user records THIS tab has explicitly modified this session.
+// saveUsersViaProxy only asserts authority over these; every other record
+// is taken fresh from the server at save time. This is what stops a stale
+// tab (e.g. a sandbox tab left open from before a role change) from
+// reverting changes made elsewhere just by saving its own login timestamp.
+const _TOUCHED_USERS = new Set();
+function touchUser(email){ if(email) _TOUCHED_USERS.add(String(email).toLowerCase()); }
 async function saveUsersViaProxy() {
   try {
-    const users = getApprovedUsers();
+    let users = getApprovedUsers();
+    // ── Sync-before-save merge ─────────────────────────────────────────
+    // Pull the server's CURRENT list and merge: records this tab touched
+    // win locally (including local deletion); untouched records take the
+    // server's version. Previously this pushed the entire local list
+    // blind -- so whichever tab saved last (even just to record a login
+    // timestamp) overwrote every other tab's changes wholesale.
+    try {
+      const pre = await fetch(VCS_PROXY_URL, {
+        method:'POST', headers:{'Content-Type':'text/plain'},
+        body: JSON.stringify({action:'getConfig'})
+      });
+      const preData = await pre.json();
+      const serverUsers = (preData && preData.config && Array.isArray(preData.config.users)) ? preData.config.users : null;
+      if (serverUsers && serverUsers.length > 0) {
+        const lk = u => (u && u.email ? String(u.email).toLowerCase() : '');
+        const localMap = new Map(users.map(u => [lk(u), u]));
+        const mergedForSave = [];
+        serverUsers.forEach(su => {
+          const k = lk(su);
+          if (_TOUCHED_USERS.has(k)) {
+            const lu = localMap.get(k);
+            if (lu) mergedForSave.push(lu); // this tab's edit wins
+            // else: deleted in this tab -- honor the deletion by skipping
+          } else {
+            mergedForSave.push(su); // untouched: server's fresh copy wins
+          }
+          localMap.delete(k);
+        });
+        // Local-only records: include only ones THIS tab created/touched.
+        // An untouched local-only record means another tab deleted it on
+        // the server -- re-including it would resurrect deleted users.
+        localMap.forEach((lu, k) => { if (_TOUCHED_USERS.has(k)) mergedForSave.push(lu); });
+        users = mergedForSave;
+        setApprovedUsers(users, true); // keep this tab's view consistent with what's pushed
+      }
+    } catch(mergeErr) {
+      console.warn('[VCS] pre-save sync failed, pushing local list as-is:', mergeErr.message);
+    }
     const globalSettings = {};
     GLOBAL_SETTING_KEYS.forEach(k => { if(S.settings[k]!==undefined) globalSettings[k]=S.settings[k]; });
     const existing = JSON.parse(localStorage.getItem('vcs_config')||'{}');
@@ -8373,7 +8419,7 @@ async function saveUsersViaProxy() {
       body: JSON.stringify({action:'saveConfig', config: JSON.stringify(cfg)})
     });
     if(!resp.ok) throw new Error('HTTP '+resp.status);
-    console.log('[VCS] Users saved to Drive via proxy ✅');
+    console.log('[VCS] Users saved to Drive via proxy ✅ (touched:', [..._TOUCHED_USERS].join(',')||'none', ')');
   } catch(e) {
     console.warn('[VCS] saveUsersViaProxy failed:', e.message);
     throw e;
@@ -8404,7 +8450,7 @@ function logLoginAttempt(email,success,reason){
   if(success){
     const all=getApprovedUsers();
     const idx=all.findIndex(u=>u.email.toLowerCase()===email.toLowerCase());
-    if(idx>=0){all[idx].lastLogin=new Date().toISOString();setApprovedUsers(all,true);saveUsersViaProxy().catch(()=>{});} // immediate sync to Drive so admin can see last login
+    if(idx>=0){all[idx].lastLogin=new Date().toISOString();touchUser(all[idx].email);setApprovedUsers(all,true);saveUsersViaProxy().catch(()=>{});} // immediate sync to Drive so admin can see last login
   }
 }
 
@@ -24653,6 +24699,7 @@ function buildFieldAccess(container, userEmail) {
       all[i].hiddenFields=getDefaultHiddenFields(all[i].role);
       all[i]._customHiddenFields=false;
       delete all[i].fieldEditPerms;
+      touchUser(all[i].email);
       setApprovedUsers(all,true);
       setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
       buildFieldAccess(container,userEmail);
@@ -24705,6 +24752,7 @@ function buildFieldAccess(container, userEmail) {
             else if(!newHf.includes(f.key)) newHf.push(f.key);
             all[i].hiddenFields=newHf;
             all[i]._customHiddenFields=true;
+            touchUser(all[i].email);
             setApprovedUsers(all,true);
             setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
             buildFieldAccess(container,userEmail);
@@ -24713,6 +24761,7 @@ function buildFieldAccess(container, userEmail) {
             const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});if(i<0)return;
             if(!all[i].fieldEditPerms) all[i].fieldEditPerms={};
             all[i].fieldEditPerms[f.key]=checked;
+            touchUser(all[i].email);
             setApprovedUsers(all,true);
             setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
             buildFieldAccess(container,userEmail);
@@ -24742,6 +24791,7 @@ function buildTabAccessSection(container, userEmail) {
     taHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick:function(){
       const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});if(i<0)return;
       delete all[i].tabOverrides;
+      touchUser(all[i].email);
       setApprovedUsers(all,true);
       setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
       buildTabAccessSection(container,userEmail);
@@ -24797,6 +24847,7 @@ function buildTabAccessSection(container, userEmail) {
       const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});if(i<0)return;
       if(!all[i].tabOverrides) all[i].tabOverrides={};
       all[i].tabOverrides[id]=showEdit?{view:view,edit:edit}:{view:view};
+      touchUser(all[i].email);
       setApprovedUsers(all,true);
       setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
     }
@@ -25669,6 +25720,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
             if(!u.tabOverrides) u.tabOverrides={};
             u.tabOverrides[id]=showEdit?{view:view,edit:edit}:{view:view};
           });
+          allUsers.forEach(function(_u){ if(_u&&_u.email) touchUser(_u.email); });
           localStorage.setItem(AUTH_KEY,JSON.stringify(allUsers));
           setTimeout(function(){saveUsersViaProxy().catch(function(){});},2000);
         }catch(ue){ console.error('[RoleTab]',ue); }
@@ -25749,7 +25801,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
             e.stopPropagation();e.preventDefault();
             const newH=!fbtn._hidden;
             try{const rh=new Set(JSON.parse(localStorage.getItem(_rfKey)||'[]'));if(newH){rh.add(fKey);}else{rh.delete(fKey);}localStorage.setItem(_rfKey,JSON.stringify([...rh]));}catch(e2){}
-            try{const allU=getApprovedUsers();allU.forEach(u=>{if((u.role||'admin')!==role)return;if(!u.hiddenFields)u.hiddenFields=[];if(newH){if(!u.hiddenFields.includes(fKey))u.hiddenFields.push(fKey);}else{u.hiddenFields=u.hiddenFields.filter(k=>k!==fKey);}});localStorage.setItem(AUTH_KEY,JSON.stringify(allU));setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);}catch(e3){}
+            try{const allU=getApprovedUsers();allU.forEach(u=>{if((u.role||'admin')!==role)return;if(!u.hiddenFields)u.hiddenFields=[];if(newH){if(!u.hiddenFields.includes(fKey))u.hiddenFields.push(fKey);}else{u.hiddenFields=u.hiddenFields.filter(k=>k!==fKey);}touchUser(u.email);});localStorage.setItem(AUTH_KEY,JSON.stringify(allU));setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);}catch(e3){}
             fbtn._hidden=newH;upF(newH);
             toast('✓ '+lbl+' '+(newH?'hidden':'visible')+' for all '+role+' users','#22c55e');
           });
@@ -25846,6 +25898,7 @@ function buildUserSubSection(label,bodyBuilderFn){
       const all=getApprovedUsers();
       if(action==='remove'){
         if(!confirm('Remove '+checked.length+' user(s)?'))return;
+        checked.forEach(touchUser);
         setApprovedUsers(all.filter(u=>!checked.includes(u.email)));
         try{await saveUsersViaProxy();}catch(e){toast('⚠ Removed locally but failed to save: '+e.message,'#ef4444');}
         renderSettings(c);return;
@@ -25853,6 +25906,7 @@ function buildUserSubSection(label,bodyBuilderFn){
       if(action==='enable_ai'||action==='disable_ai'){
         const enable=action==='enable_ai';
         all.forEach(u=>{if(checked.includes(u.email)){if(!u.featureFlags)u.featureFlags={};u.featureFlags.aiEnabled=enable;}});
+        checked.forEach(touchUser);
         setApprovedUsers(all);
         try{await saveUsersViaProxy();toast('✓ AI '+(enable?'enabled':'disabled')+' for '+checked.length+' user(s) and saved');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
         renderSettings(c);return;
@@ -25860,6 +25914,7 @@ function buildUserSubSection(label,bodyBuilderFn){
       if(action==='allow_export'||action==='restrict_export'){
         const val=action==='allow_export';
         all.forEach(u=>{if(checked.includes(u.email)){if(!u.featureFlags)u.featureFlags={};u.featureFlags.export=val;}});
+        checked.forEach(touchUser);
         setApprovedUsers(all);
         try{await saveUsersViaProxy();toast('✓ Export '+(val?'allowed':'restricted')+' for '+checked.length+' user(s) and saved');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
         renderSettings(c);return;
@@ -25867,6 +25922,7 @@ function buildUserSubSection(label,bodyBuilderFn){
       if(action==='allow_addvendor'||action==='restrict_addvendor'){
         const val=action==='allow_addvendor';
         all.forEach(u=>{if(checked.includes(u.email)){if(!u.featureFlags)u.featureFlags={};u.featureFlags.addVendor=val;}});
+        checked.forEach(touchUser);
         setApprovedUsers(all);
         try{await saveUsersViaProxy();toast('✓ Add Vendor '+(val?'allowed':'restricted')+' for '+checked.length+' user(s) and saved');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
         renderSettings(c);return;
@@ -25874,6 +25930,7 @@ function buildUserSubSection(label,bodyBuilderFn){
       if(action==='show_financials'||action==='hide_financials'){
         const val=action==='show_financials';
         all.forEach(u=>{if(checked.includes(u.email)){if(!u.featureFlags)u.featureFlags={};u.featureFlags.showFinancials=val;}});
+        checked.forEach(touchUser);
         setApprovedUsers(all);
         try{await saveUsersViaProxy();toast('✓ Financials '+(val?'shown':'hidden')+' for '+checked.length+' user(s) and saved');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
         renderSettings(c);return;
@@ -25882,6 +25939,7 @@ function buildUserSubSection(label,bodyBuilderFn){
         const newRole=prompt('Enter role for '+checked.length+' user(s): admin, procurement, manager, viewer, sales, restricted');
         if(!newRole||!ROLES[newRole]){toast('Invalid role','var(--amber)');return;}
         all.forEach(u=>{if(checked.includes(u.email)){u.role=newRole;u.featureFlags=getDefaultFeatureFlags(newRole);if(!u._customHiddenFields)u.hiddenFields=getDefaultHiddenFields(newRole);u.tabOverrides={};}});
+        checked.forEach(touchUser);
         setApprovedUsers(all);
         try{await saveUsersViaProxy();toast('✓ Role set to '+newRole+' for '+checked.length+' user(s) and saved');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
         renderSettings(c);return;
@@ -25954,6 +26012,7 @@ function buildUserSubSection(label,bodyBuilderFn){
             // the NEW role's tab visibility. Without this, grants/blocks made
             // under the old role linger and fight the new role's defaults.
             all[i].tabOverrides = {};
+            touchUser(all[i].email);
             setApprovedUsers(all);
             if(isYou){USER.role=sel.value;updateUserBadge();}
             roleBadge.textContent=ROLES[sel.value]||sel.value;
@@ -26019,6 +26078,7 @@ function buildUserSubSection(label,bodyBuilderFn){
         }},'👁 View As'));
         mainLine.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',fontSize:'9px'},onclick:async function(){
           if(!confirm('Remove '+u.email+'?'))return;
+          touchUser(u.email);
           setApprovedUsers(getApprovedUsers().filter(x=>x.email!==u.email));
           try{await saveUsersViaProxy();toast('✓ '+u.email+' removed and saved','#10b981');}catch(e){toast('⚠ Removed locally but failed to save: '+e.message,'#ef4444');}
           renderSettings(c);
@@ -26063,7 +26123,7 @@ function buildUserSubSection(label,bodyBuilderFn){
       const pwBtn=el('button',{class:'btn-xs btn-ghost',onclick:async function(){
         const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);
         if(i>=0){
-          all[i].password=pwIn.value.trim();setApprovedUsers(all,true);
+          all[i].password=pwIn.value.trim();touchUser(u.email);setApprovedUsers(all,true);
           try{await saveUsersViaProxy();toast('✓ Password updated and saved','#10b981');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
         }
       }},'Set');
@@ -26142,6 +26202,7 @@ function buildUserSubSection(label,bodyBuilderFn){
               }
               setApprovedUsers(all,true);
               if(u.email===USER.email){if(!USER.featureFlags)USER.featureFlags={};USER.featureFlags[ffKey]=newVal;}
+              touchUser(u.email);
               setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
               toast('✓ Feature flag updated','#10b981');
               _buildPermissionsPanel(b);
@@ -26163,6 +26224,7 @@ function buildUserSubSection(label,bodyBuilderFn){
             all[i].requireSearchToList=!_rstOverride;
             setApprovedUsers(all,true);
             if(u.email===USER.email) USER.requireSearchToList=!_rstOverride;
+            touchUser(u.email);
             setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
             toast('✓ Updated','#10b981');
             _buildPermissionsPanel(b);
@@ -26188,6 +26250,7 @@ function buildUserSubSection(label,bodyBuilderFn){
             const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===u.email;});if(i<0)return;
             if(!all[i].featureFlags)all[i].featureFlags={};
             all[i].featureFlags.aiEnabled=!_aiOn;
+            touchUser(all[i].email);
             setApprovedUsers(all,true);
             setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
             _buildPermissionsPanel(b);
@@ -26204,6 +26267,7 @@ function buildUserSubSection(label,bodyBuilderFn){
             const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===u.email;});if(i<0)return;
             if(!all[i].featureFlags)all[i].featureFlags={};
             all[i].featureFlags.renzoEnabled=!_renzoOn;
+            touchUser(all[i].email);
             setApprovedUsers(all,true);
             setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
             _buildPermissionsPanel(b);
@@ -26311,6 +26375,7 @@ function buildUserSubSection(label,bodyBuilderFn){
       const all=getApprovedUsers();
       if(all.find(x=>x.email===e)){toast('User already exists','#f59e0b');return;}
       all.push({email:e,name:e.split('@')[0],role:roleIn.value,password:pwNewIn.value.trim(),hiddenFields:[],featureFlags:getDefaultFeatureFlags(roleIn.value),added:isoDate(new Date()),addedBy:USER.email});
+      touchUser(e);
       setApprovedUsers(all);
       emailIn.value='';pwNewIn.value='';
       try{
