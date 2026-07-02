@@ -7322,9 +7322,13 @@ const SETTINGS_STORAGE_KEY = 'vcs_user_settings_v2';
 const PERSONAL_SETTING_KEYS = ['theme','fontSize','compactRows','defaultView','showKPIs',
   'showHebrew','autoSortByScore','showSnoozed','showDismissedDefault','animateBadges',
   'emailSignature','cols','dbHiddenCols','sidebarWidth','closedDays','oooDays','dialerUrl',
-  'myPhone','sfClientId','aiProvider','fathomApiKey']; // sfClientId is per-user (each user has own SF credentials)
+  'myPhone','aiProvider','fathomApiKey']; // sfClientId REMOVED -- it's one shared org-wide
+  // Salesforce Connected App (like msGraphClientId), not a per-user credential. It was
+  // incorrectly listed here from an earlier session's wrong assumption, which meant it
+  // fought with the global-settings sync on every load -- whichever ran last won,
+  // explaining why it worked inconsistently and got wiped specifically on hard refresh.
 // Global settings — org-wide, admin-controlled, apply to all sessions
-const GLOBAL_SETTING_KEYS = ['sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey','apiKey','grokKey','openaiKey','aiKeyShared','composioKey','roleDefaults','supabaseUrl','supabaseKey'];
+const GLOBAL_SETTING_KEYS = ['sfClientId','sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey','apiKey','grokKey','openaiKey','aiKeyShared','composioKey','roleDefaults','supabaseUrl','supabaseKey'];
 window.GLOBAL_SETTING_KEYS = GLOBAL_SETTING_KEYS;
 const PERSIST_KEYS = [...PERSONAL_SETTING_KEYS, ...GLOBAL_SETTING_KEYS];
 const ROLE_PERMISSION_DEFAULTS={
@@ -7670,7 +7674,12 @@ function loadSettings() {
       Object.assign(S.vendorAliases, saved.vendorAliases);
       delete saved.vendorAliases;
     }
-    Object.assign(S.settings, saved);
+    Object.keys(saved).forEach(function(k) {
+      const v = saved[k];
+      if (v !== undefined && v !== '' && v !== null && !S.settings[k]) {
+        S.settings[k] = v;
+      }
+    });
     // Restore googleClientId from sessionStorage backup if missing
     if (!S.settings.googleClientId) {
       const bk = sessionStorage.getItem('vcs_gClientId_bk');
