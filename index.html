@@ -3999,6 +3999,22 @@ function getNavTabGroups() {
 }
 
 
+// Single source of truth for whether the current user may see a given tab.
+// Mirrors exactly what updateSidebar() shows -- user override first, then
+// admin/manager blanket, then feature-gated tabs, then role defaults. The
+// render() redirect guard previously used ONLY static ROLE_PERMS tabs,
+// ignoring per-user tabOverrides entirely -- so the sidebar would show a
+// granted tab but clicking it bounced the content back to Today (with the
+// header already set to the new page's title, since that happened first).
+function isTabAllowedForUser(tabId){
+  if(tabId==='feedback') return true; // S50: universally available
+  const _tabOverrides = USER.tabOverrides || {};
+  if (tabId in _tabOverrides) return !!_tabOverrides[tabId];
+  if (USER.role === 'admin' || USER.role === 'manager') return true;
+  if(typeof userCanSeeTab==='function'&&(tabId==='contracts'||tabId==='spend'||tabId==='network'||tabId==='economics'||tabId==='forecast'||tabId==='reports'||tabId==='tiers')){return userCanSeeTab(tabId);}
+  const _roleBaseTabs = (ROLE_PERMS[USER.role||'viewer']||ROLE_PERMS.viewer).tabs || NAV_DEFS.map(n=>n[0]).filter(id=>!id.startsWith('_'));
+  return _roleBaseTabs.includes(tabId);
+}
 function updateSidebar() {
   // Hide save/reload for non-edit roles
   const _sb=$('save-btn');
@@ -4029,16 +4045,10 @@ function updateSidebar() {
       dirtyInd.title=parts.join(', ')+' with unsaved changes — click Save to persist';
     }
   }
-  // Get effective tabs — role defaults + per-user overrides
-  const _roleBaseTabs = (ROLE_PERMS[USER.role||'viewer']||ROLE_PERMS.viewer).tabs || NAV_DEFS.map(n=>n[0]).filter(id=>!id.startsWith('_'));
-  const _tabOverrides = USER.tabOverrides || {};
+  // Get effective tabs — single source of truth shared with render()'s guard
   const allowedTabs = NAV_DEFS.map(n=>n[0]).filter(tabId => {
     if(tabId.startsWith('_div')) return true; // always include dividers
-    if(tabId==='feedback') return true; // S50: universally available, never gated
-    if (tabId in _tabOverrides) return _tabOverrides[tabId]; // user override
-    if (USER.role === 'admin' || USER.role === 'manager') return true;
-    if(typeof userCanSeeTab==='function'&&(tabId==='contracts'||tabId==='spend'||tabId==='network'||tabId==='economics'||tabId==='forecast'||tabId==='reports'||tabId==='tiers')){return userCanSeeTab(tabId);}
-    return _roleBaseTabs.includes(tabId); // role default
+    return isTabAllowedForUser(tabId);
   });
   for (const [id,icon,label] of NAV_DEFS) {
     // Render section dividers
@@ -8812,6 +8822,7 @@ function sfConnect(){
     // popup (same origin) writes the result to localStorage. COOP-proof.
     window.addEventListener('storage', function(ev){
       if (ev.key !== 'vcs_sf_oauth_result_data' || !ev.newValue) return;
+      console.log('[VCS SF DEBUG] storage event received for oauth result');
       _consumeSFOAuthResultFromStorage();
     });
     // Secondary: postMessage, in case the opener relationship survived
@@ -8819,16 +8830,29 @@ function sfConnect(){
       if (ev.origin !== window.location.origin) return;
       if (!ev.data || ev.data.type !== 'vcs_sf_oauth_result') return;
       if (!ev.data.token) return;
+      console.log('[VCS SF DEBUG] postMessage received from popup');
       localStorage.removeItem('vcs_sf_oauth_result_data'); // avoid double-processing
       _processSFOAuthResult(ev.data.token, ev.data.idUrl, ev.data.instanceUrl, ev.data.expiresIn);
     });
   }
-  // Tertiary: poll localStorage directly (covers any browser where the
-  // storage event doesn't fire reliably), plus the legacy popup.location
-  // polling for environments without COOP restrictions at all.
+  console.log('[VCS SF DEBUG] sfConnect: popup opened, listeners attached, polling started');
+  // Tertiary: time-based localStorage polling. Deliberately NOT keyed off
+  // popup.closed -- under COOP, popup.closed can read true IMMEDIATELY after
+  // the popup navigates to salesforce.com (the reference is severed), which
+  // previously killed this poll long before the user even clicked Allow.
+  // Poll for up to 3 minutes; also try legacy direct-hash reading, which
+  // still works in environments without COOP restrictions.
+  const _pollStart = Date.now();
   const poll=setInterval(()=>{
-    if (_consumeSFOAuthResultFromStorage()) { clearInterval(poll); return; }
-    try{if(popup.closed){setTimeout(()=>{_consumeSFOAuthResultFromStorage();},600);clearInterval(poll);return;}const h=popup.location.hash;if(h&&h.includes('access_token')){clearInterval(poll);popup.close();const p=new URLSearchParams(h.slice(1));
+    if (_consumeSFOAuthResultFromStorage()) { console.log('[VCS SF DEBUG] poll consumed oauth result from localStorage'); clearInterval(poll); return; }
+    if (Date.now() - _pollStart > 180000) {
+      clearInterval(poll);
+      const dbg = localStorage.getItem('vcs_sf_popup_debug');
+      console.warn('[VCS SF DEBUG] poll timed out after 3 minutes without a result. Popup debug marker:', dbg || '(none — popup guard may never have run)');
+      return;
+    }
+    try{const h=popup.location.hash;if(h&&h.includes('access_token')){clearInterval(poll);popup.close();const p=new URLSearchParams(h.slice(1));
+      console.log('[VCS SF DEBUG] legacy direct-hash path succeeded');
       localStorage.removeItem('vcs_sf_oauth_result_data'); // avoid double-processing
       _processSFOAuthResult(p.get('access_token'), p.get('id')||'', p.get('instance_url')||'', parseInt(p.get('expires_in')||'7200'));
       }}catch(e){}},500);
@@ -19297,7 +19321,10 @@ function renderToday(c) {
     sfMsg.appendChild(el('div',{style:{fontWeight:'600',fontSize:'11px',marginBottom:'2px'}},'Salesforce not connected'));
     sfMsg.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)'}},'Connect Salesforce in Settings to load live Opportunities, Cases, and Signals here.'));
     sfConnectSec.appendChild(sfMsg);
-    sfConnectSec.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){S.view='settings';const _sr=$('content');if(_sr){_sr.innerHTML='';renderToday(_sr);};}},'→ Connect Salesforce'));
+    sfConnectSec.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){
+      if(S.settings&&S.settings.sfClientId){ sfConnect(); }
+      else { S.view='settings'; render(); }
+    }},'→ Connect Salesforce'));
     c.appendChild(sfConnectSec);
   }
 
@@ -25833,7 +25860,7 @@ function buildUserSubSection(label,bodyBuilderFn){
       if(action==='set_role'){
         const newRole=prompt('Enter role for '+checked.length+' user(s): admin, procurement, manager, viewer, sales, restricted');
         if(!newRole||!ROLES[newRole]){toast('Invalid role','var(--amber)');return;}
-        all.forEach(u=>{if(checked.includes(u.email)){u.role=newRole;u.featureFlags=getDefaultFeatureFlags(newRole);if(!u._customHiddenFields)u.hiddenFields=getDefaultHiddenFields(newRole);}});
+        all.forEach(u=>{if(checked.includes(u.email)){u.role=newRole;u.featureFlags=getDefaultFeatureFlags(newRole);if(!u._customHiddenFields)u.hiddenFields=getDefaultHiddenFields(newRole);u.tabOverrides={};}});
         setApprovedUsers(all);
         try{await saveUsersViaProxy();toast('✓ Role set to '+newRole+' for '+checked.length+' user(s) and saved');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
         renderSettings(c);return;
@@ -25902,6 +25929,10 @@ function buildUserSubSection(label,bodyBuilderFn){
             // Auto-apply default hidden fields and feature flags for new role (only if not manually customized)
             if(!all[i]._customHiddenFields) all[i].hiddenFields = getDefaultHiddenFields(sel.value);
             all[i].featureFlags = getDefaultFeatureFlags(sel.value);
+            // Reset per-user tab overrides -- switching profile means adopting
+            // the NEW role's tab visibility. Without this, grants/blocks made
+            // under the old role linger and fight the new role's defaults.
+            all[i].tabOverrides = {};
             setApprovedUsers(all);
             if(isYou){USER.role=sel.value;updateUserBadge();}
             roleBadge.textContent=ROLES[sel.value]||sel.value;
@@ -29026,17 +29057,20 @@ function render() {
     compare:'⚖ Compare',checklist:'✅ Checklist',discovery:'🔍 Discovery',health:'🔍 System Health',
     feedback:'💬 Suggestions & Corrections',
   };
+  // Redirect to an allowed tab if current view is not permitted -- this must
+  // run BEFORE the title is set (previously it ran after, which is why a
+  // blocked page showed its own title over Today's content), and must use
+  // the same override-aware logic as the sidebar (previously it used only
+  // static ROLE_PERMS tabs, ignoring per-user grants entirely).
+  if (S.view!=='settings' && S.view!=='health' && !isTabAllowedForUser(S.view)) {
+    const _firstAllowed = NAV_DEFS.map(n=>n[0]).find(id=>!id.startsWith('_div') && isTabAllowedForUser(id));
+    S.view = _firstAllowed || 'today';
+  }
   $('view-title').textContent=titles[S.view]||S.view;
   const fl=$('filter-label');
   if (S.filterLabel){fl.textContent=`[${S.filterLabel}]`;fl.style.display='inline';}else fl.style.display='none';
   // Refresh AI suggestions contextually when view changes
   if (S.aiOpen && typeof renderAISuggestions==='function') renderAISuggestions();
-  // Redirect to allowed tab if current view is not permitted for this role
-  // S50: 'feedback' is universally available and must never be redirected away from.
-  const _allowedTabs = (ROLE_PERMS[USER.role||'viewer']||ROLE_PERMS.viewer).tabs;
-  if (_allowedTabs && S.view!=='feedback' && !_allowedTabs.includes(S.view)) {
-    S.view = _allowedTabs[0] || 'today';
-  }
   if (!S.loaded&&S.view!=='settings'&&S.view!=='health'){content.appendChild(el('p',{class:'muted',style:{padding:'24px'}},'No file loaded. Upload a workbook to begin.'));return;}
   // Reset per-tab inline styles VendorDB sets on #content so other pages aren't broken
   content.style.display='';content.style.flexDirection='';content.style.overflow='';content.style.padding='';content.style.height='';
@@ -29999,6 +30033,8 @@ if (window.location.hash && window.location.hash.includes('access_token') && (_s
   try {
     const p = new URLSearchParams(window.location.hash.slice(1));
     const result = { token: p.get('access_token'), idUrl: p.get('id')||'', instanceUrl: p.get('instance_url')||'', expiresIn: parseInt(p.get('expires_in')||'7200'), at: Date.now() };
+    // Debug marker readable from the opener after this popup closes
+    try { localStorage.setItem('vcs_sf_popup_debug', JSON.stringify({at:Date.now(), guardRan:true, tokenFound:!!result.token, hashLen:(window.location.hash||'').length})); } catch(_){}
     // PRIMARY channel: localStorage (COOP-proof, same-origin shared)
     localStorage.setItem('vcs_sf_oauth_result_data', JSON.stringify(result));
     localStorage.removeItem('vcs_sf_auth_pending');
@@ -30006,7 +30042,7 @@ if (window.location.hash && window.location.hash.includes('access_token') && (_s
     if (window.opener && window.opener.postMessage) {
       window.opener.postMessage({ type: 'vcs_sf_oauth_result', token: result.token, idUrl: result.idUrl, instanceUrl: result.instanceUrl, expiresIn: result.expiresIn }, window.location.origin);
     }
-  } catch(e) { console.warn('[VCS SF] Popup token extraction failed:', e.message); }
+  } catch(e) { console.warn('[VCS SF] Popup token extraction failed:', e.message); try { localStorage.setItem('vcs_sf_popup_debug', JSON.stringify({at:Date.now(), guardRan:true, error:e.message})); } catch(_){} }
   setTimeout(function(){ window.close(); }, 300);
 } else {
 
