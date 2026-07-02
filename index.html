@@ -19136,6 +19136,16 @@ function openAddVendorRecordModal(opts) {
         if(!opts.promoteMode && S.vendors.find(v=>v.name.toLowerCase()===name.toLowerCase())){
           toast('A vendor with this name already exists','#f59e0b');return;
         }
+        // GPO validation: *PS marks a genuine Prime Source Direct vendor.
+        // Anything else is a channel partner vendor and does NOT belong in
+        // this database. Previously this destination always hardcoded
+        // source:'psd' regardless of the GPO typed in, silently
+        // misclassifying anything that wasn't actually Direct -- warn and
+        // require explicit confirmation instead of a silent mistake.
+        const _enteredGpo=String(inputs['psd_gpo']?.value||'').trim();
+        if(_enteredGpo && _enteredGpo.toUpperCase()!=='*PS'){
+          if(!confirm('GPO is "'+_enteredGpo+'", not *PS (Prime Source Direct).\n\nBased on this GPO, this looks like a Channel Partner vendor, not a Direct vendor -- it should not go in the Vendor Database.\n\nAdd it here anyway? (Click Cancel to go back and fix the GPO field, or to add it as a Channel Partner instead once that feature is available.)')) return;
+        }
         const data={source:'psd',_row:99999+S.vendors.length,gpoSource:'Prime Source Direct'};
         PSD_SECTIONS.forEach(sec=>sec.fields.forEach(([,field])=>{
           const val=(inputs['psd_'+field]?.value||'').trim();
@@ -24952,8 +24962,10 @@ function buildTabAccessSection(container, userEmail) {
     }
     function persistTabState(id, view, edit, showEdit){
       const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});if(i<0)return;
+      const _before=JSON.stringify(all[i].tabOverrides||{});
       if(!all[i].tabOverrides) all[i].tabOverrides={};
       all[i].tabOverrides[id]=showEdit?{view:view,edit:edit}:{view:view};
+      console.log('[VCS TAB DEBUG] Toggled tab:',id,'| new value:',JSON.stringify(all[i].tabOverrides[id]),'| tabOverrides BEFORE:',_before,'| tabOverrides AFTER:',JSON.stringify(all[i].tabOverrides));
       touchUser(all[i].email);
       setApprovedUsers(all,true);
       scheduleUserSave(1500);
@@ -26318,8 +26330,10 @@ function buildUserSubSection(label,bodyBuilderFn){
               if(ffKey==='showFinancials'){
                 const finKeys=FIELD_GROUPS['Financials']||[];
                 let newHf=[...(all[i].hiddenFields||[])];
+                const _beforeHf=[...newHf];
                 if(newVal){ newHf=newHf.filter(function(k){return !finKeys.includes(k);}); }
                 else { finKeys.forEach(function(k){ if(!newHf.includes(k)) newHf.push(k); }); }
+                console.log('[VCS PERM DEBUG] showFinancials toggled to:',newVal,'| this INTENTIONALLY bulk-toggles the entire Financials field group:',JSON.stringify(finKeys),'| hiddenFields BEFORE:',JSON.stringify(_beforeHf),'| hiddenFields AFTER:',JSON.stringify(newHf));
                 all[i].hiddenFields=newHf;
                 all[i]._customHiddenFields=true;
               }
