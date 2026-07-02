@@ -8368,10 +8368,28 @@ function getApprovedUsers(){
     return users;
   }catch(e){return [];}
 }
+// Shared debounced save -- a single pending timer, reset (not stacked) by
+// every call. Previously each of 11 different toggle handlers scheduled
+// its OWN independent 1.5s-delayed save, meaning rapid toggling created
+// multiple overlapping in-flight saves that could race each other on the
+// server (the actual root cause of the field-visibility "ripple effect" --
+// removing the local-storage overwrite fixed one symptom of this, but
+// overlapping saves themselves were never actually eliminated). Now any
+// call within the debounce window just pushes the save later instead of
+// firing a second one, so rapid toggles always collapse into a single
+// save carrying the truly final state.
+let _pendingUserSaveTimer = null;
+function scheduleUserSave(delayMs){
+  if (_pendingUserSaveTimer) clearTimeout(_pendingUserSaveTimer);
+  _pendingUserSaveTimer = setTimeout(function(){
+    _pendingUserSaveTimer = null;
+    saveUsersViaProxy().catch(function(e){ console.warn('[VCS] Debounced user save failed:', e.message); });
+  }, delayMs || 1500);
+}
 function setApprovedUsers(u, skipDriveSync){
   localStorage.setItem(AUTH_KEY,JSON.stringify(u));
   if (!skipDriveSync) {
-    setTimeout(() => saveUsersViaProxy().catch(e=>console.warn('[VCS] User save failed:',e.message)), 2000);
+    scheduleUserSave(2000);
   }
 }
 
@@ -8383,7 +8401,24 @@ function setApprovedUsers(u, skipDriveSync){
 // reverting changes made elsewhere just by saving its own login timestamp.
 const _TOUCHED_USERS = new Set();
 function touchUser(email){ if(email) _TOUCHED_USERS.add(String(email).toLowerCase()); }
+let _saveUsersInFlight = null;
 async function saveUsersViaProxy() {
+  // Hard mutex: only one save ever actually runs at a time, regardless of
+  // entry point (the debounced toggle path, or a direct awaited call like
+  // Remove User / Password Update / bulk actions). A concurrent call waits
+  // for the in-flight one to finish, then runs fresh rather than racing it.
+  if (_saveUsersInFlight) {
+    await _saveUsersInFlight.catch(function(){});
+  }
+  const _thisSave = _saveUsersViaProxyImpl();
+  _saveUsersInFlight = _thisSave;
+  try {
+    return await _thisSave;
+  } finally {
+    if (_saveUsersInFlight === _thisSave) _saveUsersInFlight = null;
+  }
+}
+async function _saveUsersViaProxyImpl() {
   try {
     let users = getApprovedUsers();
     // ── Sync-before-save merge ─────────────────────────────────────────
@@ -24749,7 +24784,7 @@ function buildFieldAccess(container, userEmail) {
       delete all[i].fieldEditPerms;
       touchUser(all[i].email);
       setApprovedUsers(all,true);
-      setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
+      scheduleUserSave(1500);
       buildFieldAccess(container,userEmail);
       toast('Fields reset to role defaults','#10b981');
     }},'↺ Reset to role defaults'));
@@ -24804,7 +24839,7 @@ function buildFieldAccess(container, userEmail) {
             console.log('[VCS FIELD DEBUG] Toggled field:',f.key,'| isHidden was:',isHidden,'| hiddenFields BEFORE:',JSON.stringify(_before),'| hiddenFields AFTER:',JSON.stringify(newHf),'| diff:',JSON.stringify(_before.filter(function(k){return !newHf.includes(k);})),'removed,',JSON.stringify(newHf.filter(function(k){return !_before.includes(k);})),'added');
             touchUser(all[i].email);
             setApprovedUsers(all,true);
-            setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
+            scheduleUserSave(1500);
             buildFieldAccess(container,userEmail);
           },
           onToggleEdit:function(checked){
@@ -24813,7 +24848,7 @@ function buildFieldAccess(container, userEmail) {
             all[i].fieldEditPerms[f.key]=checked;
             touchUser(all[i].email);
             setApprovedUsers(all,true);
-            setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
+            scheduleUserSave(1500);
             buildFieldAccess(container,userEmail);
           }
         });
@@ -24843,7 +24878,7 @@ function buildTabAccessSection(container, userEmail) {
       delete all[i].tabOverrides;
       touchUser(all[i].email);
       setApprovedUsers(all,true);
-      setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
+      scheduleUserSave(1500);
       buildTabAccessSection(container,userEmail);
       toast('Tabs reset to role defaults','#10b981');
     }},'↺ Reset to role defaults'));
@@ -24899,7 +24934,7 @@ function buildTabAccessSection(container, userEmail) {
       all[i].tabOverrides[id]=showEdit?{view:view,edit:edit}:{view:view};
       touchUser(all[i].email);
       setApprovedUsers(all,true);
-      setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
+      scheduleUserSave(1500);
     }
 
     PAGE_HIERARCHY.forEach(function(page){
@@ -25867,7 +25902,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
             e.stopPropagation();e.preventDefault();
             const newH=!fbtn._hidden;
             try{const rh=new Set(JSON.parse(localStorage.getItem(_rfKey)||'[]'));if(newH){rh.add(fKey);}else{rh.delete(fKey);}localStorage.setItem(_rfKey,JSON.stringify([...rh]));}catch(e2){}
-            try{const allU=getApprovedUsers();allU.forEach(u=>{if((u.role||'admin')!==role)return;if(!u.hiddenFields)u.hiddenFields=[];if(newH){if(!u.hiddenFields.includes(fKey))u.hiddenFields.push(fKey);}else{u.hiddenFields=u.hiddenFields.filter(k=>k!==fKey);}touchUser(u.email);});localStorage.setItem(AUTH_KEY,JSON.stringify(allU));setTimeout(()=>saveUsersViaProxy().catch(()=>{}),2000);}catch(e3){}
+            try{const allU=getApprovedUsers();allU.forEach(u=>{if((u.role||'admin')!==role)return;if(!u.hiddenFields)u.hiddenFields=[];if(newH){if(!u.hiddenFields.includes(fKey))u.hiddenFields.push(fKey);}else{u.hiddenFields=u.hiddenFields.filter(k=>k!==fKey);}touchUser(u.email);});localStorage.setItem(AUTH_KEY,JSON.stringify(allU));scheduleUserSave(2000);}catch(e3){}
             fbtn._hidden=newH;upF(newH);
             toast('✓ '+lbl+' '+(newH?'hidden':'visible')+' for all '+role+' users','#22c55e');
           });
@@ -26269,7 +26304,7 @@ function buildUserSubSection(label,bodyBuilderFn){
               setApprovedUsers(all,true);
               if(u.email===USER.email){if(!USER.featureFlags)USER.featureFlags={};USER.featureFlags[ffKey]=newVal;}
               touchUser(u.email);
-              setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
+              scheduleUserSave(1500);
               toast('✓ Feature flag updated','#10b981');
               _buildPermissionsPanel(b);
             }
@@ -26291,7 +26326,7 @@ function buildUserSubSection(label,bodyBuilderFn){
             setApprovedUsers(all,true);
             if(u.email===USER.email) USER.requireSearchToList=!_rstOverride;
             touchUser(u.email);
-            setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
+            scheduleUserSave(1500);
             toast('✓ Updated','#10b981');
             _buildPermissionsPanel(b);
           }
@@ -26318,7 +26353,7 @@ function buildUserSubSection(label,bodyBuilderFn){
             all[i].featureFlags.aiEnabled=!_aiOn;
             touchUser(all[i].email);
             setApprovedUsers(all,true);
-            setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
+            scheduleUserSave(1500);
             _buildPermissionsPanel(b);
           }
         }));
@@ -26335,7 +26370,7 @@ function buildUserSubSection(label,bodyBuilderFn){
             all[i].featureFlags.renzoEnabled=!_renzoOn;
             touchUser(all[i].email);
             setApprovedUsers(all,true);
-            setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
+            scheduleUserSave(1500);
             _buildPermissionsPanel(b);
           }
         }));
@@ -26361,7 +26396,7 @@ function buildUserSubSection(label,bodyBuilderFn){
               all[i].assistantAdmin=!_cuFresh.assistantAdmin;
               setApprovedUsers(all,true);
               if(u.email===USER.email) USER.assistantAdmin=all[i].assistantAdmin;
-              setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
+              scheduleUserSave(1500);
               toast(all[i].assistantAdmin?'Assistant Admin enabled':'Assistant Admin disabled','#10b981');
               _buildPermissionsPanel(b);
             }
