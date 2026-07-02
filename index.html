@@ -8048,12 +8048,20 @@ async function loadGlobalSettingsViaProxy() {
       const existing = getApprovedUsers();
       const merged = [...existing];
       cfg.users.forEach(du => {
-        const idx = merged.findIndex(u => u.email === du.email);
+        const idx = merged.findIndex(u => (u.email||'').toLowerCase() === (du.email||'').toLowerCase());
         if (idx < 0) merged.push(du);
         else {
-          if (du.featureFlags) merged[idx].featureFlags = du.featureFlags;
-          if (du.hiddenFields) merged[idx].hiddenFields = du.hiddenFields;
-          if (du.role && !merged[idx].role) merged[idx].role = du.role;
+          // SERVER WINS for existing users. The old logic only applied the
+          // server's role when the local record had NO role (never true in
+          // practice) and never merged tabOverrides/permissions/perms/
+          // fieldEditPerms/assistantAdmin at all -- so any change an admin
+          // made to an EXISTING user never reached any other browser, ever,
+          // while NEW users worked fine because they were pushed in fresh.
+          // ("Whoever you put in the user the first time, that's the way
+          // the user stays" -- exactly this bug.) The spread keeps any
+          // local-only fields the server record doesn't have, but every
+          // field the server DOES have overwrites the local copy.
+          merged[idx] = Object.assign({}, merged[idx], du);
         }
       });
       setApprovedUsers(merged);
@@ -8772,32 +8780,56 @@ function _processSFOAuthResult(token, idUrl, instanceUrl, expiresIn){
   if(S.view)render();
 }
 let _sfMessageListenerAttached=false;
+function _consumeSFOAuthResultFromStorage(){
+  try {
+    const raw = localStorage.getItem('vcs_sf_oauth_result_data');
+    if (!raw) return false;
+    const r = JSON.parse(raw);
+    localStorage.removeItem('vcs_sf_oauth_result_data');
+    if (r && r.token && (Date.now() - (r.at||0)) < 600000) {
+      _processSFOAuthResult(r.token, r.idUrl, r.instanceUrl, r.expiresIn);
+      return true;
+    }
+  } catch(_) {}
+  return false;
+}
 function sfConnect(){
   // Show SF setup guide prompt for Chrome extension
   const clientId=S.settings.sfClientId;
   const redirectUri=S.settings.sfRedirectUri||window.location.href.split('?')[0].split('#')[0];
   if(!clientId){toast('⚠ Configure Salesforce Client ID in Settings first','#f59e0b');return;}
   const loginUrl=(S.settings.sfLoginUrl||'https://login.salesforce.com')+'/services/oauth2/authorize?response_type=token&client_id='+encodeURIComponent(clientId)+'&redirect_uri='+encodeURIComponent(redirectUri)+'&scope=api+id';
+  // Flag that an SF auth is in progress -- the popup (which loads this same
+  // app at the redirect URI) uses this to recognize itself as an OAuth
+  // callback WITHOUT needing window.opener, which Salesforce's cross-origin
+  // policies can sever entirely.
+  try { localStorage.setItem('vcs_sf_auth_pending', String(Date.now())); } catch(_) {}
   const popup=window.open(loginUrl,'sf_auth','width=600,height=700');
   if(!popup){toast('⚠ Popup blocked — allow popups','#f59e0b');return;}
-  // PRIMARY mechanism: the popup itself extracts the token and posts it back
-  // via postMessage once it lands on the redirect URI. This works even when
-  // Cross-Origin-Opener-Policy blocks direct cross-window property access
-  // (popup.location, popup.closed) -- the same reliable pattern already
-  // used for the Microsoft OAuth flow (popup does the work, closes itself).
   if (!_sfMessageListenerAttached) {
     _sfMessageListenerAttached = true;
+    // PRIMARY: storage event -- fires in this tab automatically when the
+    // popup (same origin) writes the result to localStorage. COOP-proof.
+    window.addEventListener('storage', function(ev){
+      if (ev.key !== 'vcs_sf_oauth_result_data' || !ev.newValue) return;
+      _consumeSFOAuthResultFromStorage();
+    });
+    // Secondary: postMessage, in case the opener relationship survived
     window.addEventListener('message', function(ev){
       if (ev.origin !== window.location.origin) return;
       if (!ev.data || ev.data.type !== 'vcs_sf_oauth_result') return;
       if (!ev.data.token) return;
+      localStorage.removeItem('vcs_sf_oauth_result_data'); // avoid double-processing
       _processSFOAuthResult(ev.data.token, ev.data.idUrl, ev.data.instanceUrl, ev.data.expiresIn);
     });
   }
-  // FALLBACK mechanism: polling, kept for environments where COOP doesn't
-  // block cross-window access. Harmless if the message path already
-  // succeeded -- the popup will already be closed by then.
-  const poll=setInterval(()=>{try{if(popup.closed){clearInterval(poll);return;}const h=popup.location.hash;if(h&&h.includes('access_token')){clearInterval(poll);popup.close();const p=new URLSearchParams(h.slice(1));
+  // Tertiary: poll localStorage directly (covers any browser where the
+  // storage event doesn't fire reliably), plus the legacy popup.location
+  // polling for environments without COOP restrictions at all.
+  const poll=setInterval(()=>{
+    if (_consumeSFOAuthResultFromStorage()) { clearInterval(poll); return; }
+    try{if(popup.closed){setTimeout(()=>{_consumeSFOAuthResultFromStorage();},600);clearInterval(poll);return;}const h=popup.location.hash;if(h&&h.includes('access_token')){clearInterval(poll);popup.close();const p=new URLSearchParams(h.slice(1));
+      localStorage.removeItem('vcs_sf_oauth_result_data'); // avoid double-processing
       _processSFOAuthResult(p.get('access_token'), p.get('id')||'', p.get('instance_url')||'', parseInt(p.get('expires_in')||'7200'));
       }}catch(e){}},500);
 }
@@ -29954,32 +29986,25 @@ async function ensureMSToken() {
 })();
 
 // If this page load is actually a Salesforce OAuth popup landing back on the
-// app's own URL (sfRedirectUri defaults to window.location.href when not
-// explicitly configured), don't run the normal app init sequence at all --
-// the opener window's own polling in sfConnect() is already watching this
-// popup's location.hash directly and will read the token out and close this
-// popup itself. Running full init() here would show this popup its own
-// login screen (a popup has no session of its own), which is exactly what
-// was happening: SF login completes, then the "app" the popup shows is just
-// the ordinary sign-in screen, looking like the whole flow failed.
-if (window.opener && !window.opener.closed && window.location.hash && window.location.hash.includes('access_token')) {
+// app's own URL, don't run the normal app init sequence at all. Detection
+// does NOT rely on window.opener -- Salesforce's cross-origin policies can
+// sever the opener relationship entirely (window.opener becomes null), which
+// would break both opener-based detection AND postMessage. Instead:
+// sfConnect() sets a localStorage flag before opening the popup, and the
+// token is handed back through localStorage too -- shared across all
+// same-origin tabs automatically, no window relationship needed at all.
+const _sfAuthPending = (function(){ try { const t = parseInt(localStorage.getItem('vcs_sf_auth_pending')||'0'); return t && (Date.now() - t) < 600000; } catch(_) { return false; } })();
+if (window.location.hash && window.location.hash.includes('access_token') && (_sfAuthPending || (window.opener && !window.opener.closed))) {
   document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;color:#888">Connecting to Salesforce...</div>';
-  // Extract the token HERE, in the popup itself, and hand it to the opener
-  // via postMessage rather than expecting the opener to reach into this
-  // popup's location/closed state from outside -- that cross-window access
-  // is exactly what Cross-Origin-Opener-Policy can silently block, which is
-  // why the previous approach (opener polling popup.location.hash) could
-  // get permanently stuck showing "Connecting..." with nothing happening.
-  // This mirrors the Microsoft flow, which already works reliably by having
-  // the popup do its own work and close itself.
   try {
     const p = new URLSearchParams(window.location.hash.slice(1));
-    const token = p.get('access_token');
-    const idUrl = p.get('id') || '';
-    const instanceUrl = p.get('instance_url') || '';
-    const expiresIn = parseInt(p.get('expires_in') || '7200');
-    if (window.opener.postMessage) {
-      window.opener.postMessage({ type: 'vcs_sf_oauth_result', token: token, idUrl: idUrl, instanceUrl: instanceUrl, expiresIn: expiresIn }, window.location.origin);
+    const result = { token: p.get('access_token'), idUrl: p.get('id')||'', instanceUrl: p.get('instance_url')||'', expiresIn: parseInt(p.get('expires_in')||'7200'), at: Date.now() };
+    // PRIMARY channel: localStorage (COOP-proof, same-origin shared)
+    localStorage.setItem('vcs_sf_oauth_result_data', JSON.stringify(result));
+    localStorage.removeItem('vcs_sf_auth_pending');
+    // Secondary: postMessage, in case opener relationship survived
+    if (window.opener && window.opener.postMessage) {
+      window.opener.postMessage({ type: 'vcs_sf_oauth_result', token: result.token, idUrl: result.idUrl, instanceUrl: result.instanceUrl, expiresIn: result.expiresIn }, window.location.origin);
     }
   } catch(e) { console.warn('[VCS SF] Popup token extraction failed:', e.message); }
   setTimeout(function(){ window.close(); }, 300);
