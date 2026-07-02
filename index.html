@@ -1311,6 +1311,7 @@ async function completeLogin() {
   try {
     const _freshUsers = getApprovedUsers();
     const _freshMe = _freshUsers.length ? _freshUsers.find(function(u){return u.email && USER.email && u.email.toLowerCase()===USER.email.toLowerCase();}) : null;
+    console.log('[VCS ROLE DEBUG] completeLogin() post-sync check -- USER.email:',USER.email,'| USER.role BEFORE this check:',USER.role,'| freshUsers list length:',_freshUsers.length,'| _freshMe found:',!!_freshMe,'| _freshMe.role:',_freshMe?_freshMe.role:'(n/a)');
     if (_freshMe) {
       const _roleChanged = USER.role !== _freshMe.role;
       USER.role = _freshMe.role;
@@ -1322,6 +1323,7 @@ async function completeLogin() {
       USER.featureFlags = _freshMe.featureFlags || {};
       USER.requireSearchToList = _freshMe.requireSearchToList;
       USER.assistantAdmin = !!_freshMe.assistantAdmin;
+      console.log('[VCS ROLE DEBUG] completeLogin() post-sync APPLIED -- USER.role is now:',USER.role,'| roleChanged:',_roleChanged);
       if (_roleChanged) {
         updateUserBadge();
         if (typeof updateSidebar === 'function') updateSidebar();
@@ -8421,6 +8423,7 @@ function restoreSession(){
     if(!s||!s.email)return false;
     const users=getApprovedUsers();
     const foundUser=users.length?users.find(u=>u.email.toLowerCase()===s.email.toLowerCase()):null;
+    console.log('[VCS ROLE DEBUG] restoreSession() running for email:',s.email,'| cached role in sessionStorage:',s.role,'| users list length:',users.length,'| foundUser role in current approved-users list:',foundUser?foundUser.role:'(not found)');
     if(users.length&&!foundUser)return false;
     USER.email=s.email;USER.name=(foundUser&&foundUser.name)||s.name;
     // Use the CURRENT user record's role/permissions, not the stale snapshot
@@ -8440,6 +8443,7 @@ function restoreSession(){
     USER.featureFlags=foundUser?(foundUser.featureFlags||{}):{};
     USER.requireSearchToList=foundUser?foundUser.requireSearchToList:undefined;
     USER.assistantAdmin=foundUser?!!foundUser.assistantAdmin:false;
+    console.log('[VCS ROLE DEBUG] restoreSession() FINAL applied USER.role:',USER.role,'| USER.email:',USER.email);
     return true;
   }catch(e){return false;}
 }
