@@ -24662,7 +24662,14 @@ function buildFieldAccess(container, userEmail) {
 
     const hf=cu.hiddenFields||[];
     const canRoleEdit=!!rolePerms.save;
-    const _roleDefaultHf=getDefaultHiddenFields(cu.role, cu.email)||[];
+    // Pure ROLE defaults only -- deliberately NOT passing cu.email here.
+    // getDefaultHiddenFields(role, email) checks a legacy per-user
+    // spreadsheet mapping first (with fuzzy prefix matching), which is only
+    // meant for initial seeding. Using it as the amber-comparison baseline
+    // meant tiles were compared against the spreadsheet-era list while the
+    // user's actual fields follow pure role defaults -- permanently
+    // mismatched, so everything showed amber no matter what was toggled.
+    const _roleDefaultHf=getDefaultHiddenFields(cu.role)||[];
 
     Object.entries(FIELD_GROUPS).forEach(function(entry){
       const groupName=entry[0], groupKeys=entry[1];
@@ -24775,9 +24782,13 @@ function buildTabAccessSection(container, userEmail) {
       if(typeof ov==='object'){
         const v=ov.view!==false, e=ov.edit===true;
         // Only genuinely overridden if the stored values actually differ from
-        // the role default -- previously this was hardcoded true for any
-        // object-shape override, even when the values matched the default.
-        const differs = (v !== roleDefault) || (e !== roleDefaultEdit);
+        // the role default. Two subtleties: (1) previously this was hardcoded
+        // true for any object-shape override; (2) view-only pages store
+        // {view} with NO edit property, which read as edit:false and got
+        // compared against a roleDefaultEdit of true -- flagging "differs"
+        // even when the view matched the default exactly. Only compare the
+        // edit dimension when the override actually stores one.
+        const differs = (v !== roleDefault) || (('edit' in ov) && (e !== roleDefaultEdit));
         return {view:v, edit:e, overridden:differs};
       }
       return {view:!!ov, edit:!!ov, overridden:(!!ov!==roleDefault)}; // legacy bare boolean
