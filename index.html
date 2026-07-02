@@ -25099,8 +25099,16 @@ function _buildConnectionsSection(){
         const sfUrlInp=el('input',{value:S.settings.sfLoginUrl||'https://login.salesforce.com',style:{flex:'1',fontSize:'10px'}});
         sfUrlRow.appendChild(sfUrlInp);
         b.appendChild(sfUrlRow);
+        const sfRedirRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
+        sfRedirRow.appendChild(el('label',{style:{minWidth:'80px'}},'Redirect URL'));
+        const sfRedirInp=el('input',{value:S.settings.sfRedirectUri||'',placeholder:'Leave blank to auto-use the current sites own URL',style:{flex:'1',fontSize:'10px'}});
+        sfRedirRow.appendChild(sfRedirInp);
+        b.appendChild(sfRedirRow);
+        b.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'2px'}},
+          'Leave blank in normal use -- each site (sandbox/production) automatically uses its own URL. Only set this to force a specific value. Both URLs must be registered as Callback URLs on the Salesforce Connected App regardless.'));
         actionRow.appendChild(el('button',{class:'btn-xs btn-green',title:'Save Salesforce configuration',onclick:async function(){
           S.settings.sfClientId=sfCidInp.value.trim();S.settings.sfLoginUrl=sfUrlInp.value.trim()||'https://login.salesforce.com';
+          S.settings.sfRedirectUri=sfRedirInp.value.trim();
           await saveConfigToDrive();toast('Salesforce settings saved','#10b981');
         }},'Save'));
         } // end Salesforce config fields admin-only gate
