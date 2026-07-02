@@ -1302,6 +1302,32 @@ async function completeLogin() {
     // Fallback: still try proxy for global settings
     try { await loadGlobalSettingsViaProxy(); } catch(_) {}
   }
+  // Re-apply the CURRENT user's role/permissions now that the freshest
+  // possible approved-users list has been pulled from the server above.
+  // restoreSession() may have used a role cached locally from before an
+  // admin's role change had synced to THIS browser yet -- this closes that
+  // gap by re-checking against the just-synced data and re-rendering the
+  // sidebar if anything actually changed.
+  try {
+    const _freshUsers = getApprovedUsers();
+    const _freshMe = _freshUsers.length ? _freshUsers.find(function(u){return u.email && USER.email && u.email.toLowerCase()===USER.email.toLowerCase();}) : null;
+    if (_freshMe) {
+      const _roleChanged = USER.role !== _freshMe.role;
+      USER.role = _freshMe.role;
+      USER.hiddenFields = Array.isArray(_freshMe.hiddenFields) ? _freshMe.hiddenFields : [];
+      USER.tabOverrides = _freshMe.tabOverrides || {};
+      USER.permissions = _freshMe.permissions || {};
+      USER.perms = _freshMe.perms || {};
+      USER.fieldEditPerms = _freshMe.fieldEditPerms || {};
+      USER.featureFlags = _freshMe.featureFlags || {};
+      USER.requireSearchToList = _freshMe.requireSearchToList;
+      USER.assistantAdmin = !!_freshMe.assistantAdmin;
+      if (_roleChanged) {
+        updateUserBadge();
+        if (typeof updateSidebar === 'function') updateSidebar();
+      }
+    }
+  } catch(e) { console.warn('[VCS] Post-sync role refresh failed:', e.message); }
   // ── SUPABASE FIRST LOAD ──────────────────────────────────────────────────
   // Credentials are now loaded from Drive config or GAS proxy above.
   // Try Supabase before anything else — faster and more reliable than Drive.
@@ -8394,11 +8420,26 @@ function restoreSession(){
     const s=JSON.parse(sessionStorage.getItem('vcs_session')||'null');
     if(!s||!s.email)return false;
     const users=getApprovedUsers();
-    if(users.length&&!users.find(u=>u.email.toLowerCase()===s.email.toLowerCase()))return false;
-    USER.email=s.email;USER.name=s.name;USER.role=s.role;USER.loggedIn=true;
+    const foundUser=users.length?users.find(u=>u.email.toLowerCase()===s.email.toLowerCase()):null;
+    if(users.length&&!foundUser)return false;
+    USER.email=s.email;USER.name=(foundUser&&foundUser.name)||s.name;
+    // Use the CURRENT user record's role/permissions, not the stale snapshot
+    // taken at original login time -- previously this line used s.role (the
+    // cached value), meaning an admin changing someone's role had NO effect
+    // on that person's session until they fully closed the browser tab,
+    // since sessionStorage survives a hard refresh. A role change must take
+    // effect on the very next refresh, not "eventually."
+    USER.role=foundUser?foundUser.role:s.role;
+    USER.loggedIn=true;
     USER.loginTime=new Date(s.loginTime);
-    USER.hiddenFields=Array.isArray(s.hiddenFields)?s.hiddenFields:[];
-    USER.tabOverrides=s.tabOverrides||{};
+    USER.hiddenFields=foundUser?(Array.isArray(foundUser.hiddenFields)?foundUser.hiddenFields:[]):(Array.isArray(s.hiddenFields)?s.hiddenFields:[]);
+    USER.tabOverrides=foundUser?(foundUser.tabOverrides||{}):(s.tabOverrides||{});
+    USER.permissions=foundUser?(foundUser.permissions||{}):{};
+    USER.perms=foundUser?(foundUser.perms||{}):{};
+    USER.fieldEditPerms=foundUser?(foundUser.fieldEditPerms||{}):{};
+    USER.featureFlags=foundUser?(foundUser.featureFlags||{}):{};
+    USER.requireSearchToList=foundUser?foundUser.requireSearchToList:undefined;
+    USER.assistantAdmin=foundUser?!!foundUser.assistantAdmin:false;
     return true;
   }catch(e){return false;}
 }
