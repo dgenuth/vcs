@@ -8630,6 +8630,12 @@ function logHistory(entry) {
   if (!entry.to) entry.to = '';
   S.history.push(entry);
 }
+// Single validation point for writing a role value anywhere in the app.
+// This is the PREVENTION layer, complementing the defensive read-time
+// guards added after a corrupted role value crashed the entire Settings
+// page render. Every UI entry point that sets a user's role now runs
+// through this rather than writing whatever string it was given.
+function isValidRole(r){ return typeof r==='string' && !!ROLE_PERMS[r]; }
 function hasPermission(p){
   if(!USER.loggedIn) return false;
   // configDrive — only admin
@@ -25984,7 +25990,7 @@ function buildUserSubSection(label,bodyBuilderFn){
       }
       if(action==='set_role'){
         const newRole=prompt('Enter role for '+checked.length+' user(s): admin, procurement, manager, viewer, sales, restricted');
-        if(!newRole||!ROLES[newRole]){toast('Invalid role','var(--amber)');return;}
+        if(!isValidRole(newRole)){toast('Invalid role — must be one of: '+Object.keys(ROLE_PERMS).join(', '),'var(--amber)');return;}
         all.forEach(u=>{if(checked.includes(u.email)){u.role=newRole;u.featureFlags=getDefaultFeatureFlags(newRole);if(!u._customHiddenFields)u.hiddenFields=getDefaultHiddenFields(newRole);u.tabOverrides={};}});
         checked.forEach(touchUser);
         setApprovedUsers(all);
@@ -26050,7 +26056,7 @@ function buildUserSubSection(label,bodyBuilderFn){
         for(const r of assignableRoles){const o=el('option',{value:r},ROLES[r]||r);if(r===u.role)o.selected=true;sel.appendChild(o);}
         sel.addEventListener('change',async ()=>{
           const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);
-          if(i>=0){
+          if(i>=0 && isValidRole(sel.value)){
             all[i].role=sel.value;
             // Auto-apply default hidden fields and feature flags for new role (only if not manually customized)
             if(!all[i]._customHiddenFields) all[i].hiddenFields = getDefaultHiddenFields(sel.value);
@@ -26419,6 +26425,7 @@ function buildUserSubSection(label,bodyBuilderFn){
     addRow.appendChild(el('button',{class:'btn-xs btn-green',style:{height:'26px',padding:'0 10px'},onclick:async function(){
       const e=emailIn.value.trim().toLowerCase();
       if(!e||!e.includes('@')){toast('Enter a valid email','#f59e0b');return;}
+      if(!isValidRole(roleIn.value)){toast('Invalid role selected','#f59e0b');return;}
       const all=getApprovedUsers();
       if(all.find(x=>x.email===e)){toast('User already exists','#f59e0b');return;}
       all.push({email:e,name:e.split('@')[0],role:roleIn.value,password:pwNewIn.value.trim(),hiddenFields:[],featureFlags:getDefaultFeatureFlags(roleIn.value),added:isoDate(new Date()),addedBy:USER.email});
