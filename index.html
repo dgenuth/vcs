@@ -8427,7 +8427,18 @@ async function saveUsersViaProxy() {
         // the server -- re-including it would resurrect deleted users.
         localMap.forEach((lu, k) => { if (_TOUCHED_USERS.has(k)) mergedForSave.push(lu); });
         users = mergedForSave;
-        setApprovedUsers(users, true); // keep this tab's view consistent with what's pushed
+        // Deliberately NOT calling setApprovedUsers() here. This merge
+        // result reflects a snapshot taken at the START of this save call --
+        // if any other field toggle happened while the server round-trip
+        // above was in flight (a real possibility, since this awaits a full
+        // fetch cycle that can take a couple of seconds), that newer local
+        // change would be silently reverted the moment this older, now-stale
+        // merge got written back over local storage. This was the actual
+        // cause of the field-toggle "ripple effect" -- rapid toggles each
+        // scheduled their own independent save, and whichever one's merge
+        // happened to finish last would stomp any toggle that occurred
+        // after IT started. The merge result below is used only to build
+        // what gets pushed to the server, never to overwrite local state.
       }
     } catch(mergeErr) {
       console.warn('[VCS] pre-save sync failed, pushing local list as-is:', mergeErr.message);
@@ -24784,11 +24795,13 @@ function buildFieldAccess(container, userEmail) {
           showEditCheckbox:true, isEditChecked:isEditChecked,
           onToggleView:function(){
             const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});if(i<0)return;
+            const _before=[...(all[i].hiddenFields||[])];
             let newHf=[...(all[i].hiddenFields||[])];
             if(isHidden) newHf=newHf.filter(function(k){return k!==f.key;});
             else if(!newHf.includes(f.key)) newHf.push(f.key);
             all[i].hiddenFields=newHf;
             all[i]._customHiddenFields=true;
+            console.log('[VCS FIELD DEBUG] Toggled field:',f.key,'| isHidden was:',isHidden,'| hiddenFields BEFORE:',JSON.stringify(_before),'| hiddenFields AFTER:',JSON.stringify(newHf),'| diff:',JSON.stringify(_before.filter(function(k){return !newHf.includes(k);})),'removed,',JSON.stringify(newHf.filter(function(k){return !_before.includes(k);})),'added');
             touchUser(all[i].email);
             setApprovedUsers(all,true);
             setTimeout(function(){saveUsersViaProxy().catch(function(){});},1500);
