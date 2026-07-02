@@ -24838,7 +24838,7 @@ function buildTabAccessSection(container, userEmail) {
     // pre-change value forever after the first role-default edit.
     const _persistedRoleOverrides = (function(){ try{ return JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}'); }catch(_){ return {}; } })();
     const _roleTabOv = _persistedRoleOverrides[cu.role] || {};
-    const roleDefaultTabs=new Set(rolePerms.tabs||[]);
+    const roleDefaultTabs=new Set(Array.isArray(rolePerms.tabs)?rolePerms.tabs:[]);
 
     // fallbackDefault lets child/sub-tab ids (which ROLE_PERMS.tabs never
     // lists — it's a page-level list) default to "visible" instead of
@@ -25666,7 +25666,15 @@ window._buildConnectionsSection = _buildConnectionsSection;
     }
     // Always include these core roles
     ['admin','procurement','manager','cro'].forEach(r=>_allUserRoles.add(r));
-    const ROLE_LIST=[..._allUserRoles].sort();
+    const ROLE_LIST=[..._allUserRoles].filter(r=>typeof r==='string'&&ROLE_PERMS[r]).sort();
+    // Diagnostic: surface any user(s) with a corrupted/unrecognized role
+    // value, which previously crashed this entire page's render silently.
+    (function(){
+      try {
+        const _bad = getApprovedUsers().filter(u=>u.role&&(typeof u.role!=='string'||!ROLE_PERMS[u.role]));
+        if (_bad.length) console.warn('[VCS] User(s) with invalid/corrupted role (fix via their individual role dropdown):', _bad.map(u=>u.email+' -> '+JSON.stringify(u.role)));
+      } catch(_) {}
+    })();
     const ALL_TABS=getNavTabGroups().flatMap(g=>g.tabs);
 
     ROLE_LIST.forEach(role=>{
@@ -25733,7 +25741,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
       function roleTabState(id, fallbackDefault){
         const savedOverrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
         const roleOv=(savedOverrides[role]||{})[id];
-        const builtInDefault=typeof fallbackDefault==='boolean'?fallbackDefault:new Set(rolePerms.tabs||[]).has(id);
+        const builtInDefault=typeof fallbackDefault==='boolean'?fallbackDefault:new Set(Array.isArray(rolePerms.tabs)?rolePerms.tabs:[]).has(id);
         if(roleOv===undefined) return {view:builtInDefault, edit:builtInDefault};
         if(typeof roleOv==='object') return {view:roleOv.view!==false, edit:roleOv.edit===true};
         return {view:!!roleOv, edit:!!roleOv}; // legacy bare boolean per role
