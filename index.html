@@ -25744,7 +25744,7 @@ function buildUserSubSection(label,bodyBuilderFn){
       bulkSel.appendChild(el('option',{value:v},lbl));
     });
     bulkBar.appendChild(bulkSel);
-    bulkBar.appendChild(el('button',{class:'btn-xs btn-primary',onclick(){
+    bulkBar.appendChild(el('button',{class:'btn-xs btn-primary',async onclick(){
       const action=bulkSel.value;if(!action)return;
       const checked=[...tblWrap.querySelectorAll('input.um-cb:checked')].map(cb=>cb.dataset.email);
       if(!checked.length){toast('No users selected','var(--amber)');return;}
@@ -25752,33 +25752,44 @@ function buildUserSubSection(label,bodyBuilderFn){
       if(action==='remove'){
         if(!confirm('Remove '+checked.length+' user(s)?'))return;
         setApprovedUsers(all.filter(u=>!checked.includes(u.email)));
+        try{await saveUsersViaProxy();}catch(e){toast('⚠ Removed locally but failed to save: '+e.message,'#ef4444');}
         renderSettings(c);return;
       }
       if(action==='enable_ai'||action==='disable_ai'){
         const enable=action==='enable_ai';
         all.forEach(u=>{if(checked.includes(u.email)){if(!u.featureFlags)u.featureFlags={};u.featureFlags.aiEnabled=enable;}});
-        setApprovedUsers(all);toast('✓ AI '+(enable?'enabled':'disabled')+' for '+checked.length+' user(s)');renderSettings(c);return;
+        setApprovedUsers(all);
+        try{await saveUsersViaProxy();toast('✓ AI '+(enable?'enabled':'disabled')+' for '+checked.length+' user(s) and saved');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
+        renderSettings(c);return;
       }
       if(action==='allow_export'||action==='restrict_export'){
         const val=action==='allow_export';
         all.forEach(u=>{if(checked.includes(u.email)){if(!u.featureFlags)u.featureFlags={};u.featureFlags.export=val;}});
-        setApprovedUsers(all);toast('✓ Export '+(val?'allowed':'restricted')+' for '+checked.length+' user(s)');renderSettings(c);return;
+        setApprovedUsers(all);
+        try{await saveUsersViaProxy();toast('✓ Export '+(val?'allowed':'restricted')+' for '+checked.length+' user(s) and saved');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
+        renderSettings(c);return;
       }
       if(action==='allow_addvendor'||action==='restrict_addvendor'){
         const val=action==='allow_addvendor';
         all.forEach(u=>{if(checked.includes(u.email)){if(!u.featureFlags)u.featureFlags={};u.featureFlags.addVendor=val;}});
-        setApprovedUsers(all);toast('✓ Add Vendor '+(val?'allowed':'restricted')+' for '+checked.length+' user(s)');renderSettings(c);return;
+        setApprovedUsers(all);
+        try{await saveUsersViaProxy();toast('✓ Add Vendor '+(val?'allowed':'restricted')+' for '+checked.length+' user(s) and saved');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
+        renderSettings(c);return;
       }
       if(action==='show_financials'||action==='hide_financials'){
         const val=action==='show_financials';
         all.forEach(u=>{if(checked.includes(u.email)){if(!u.featureFlags)u.featureFlags={};u.featureFlags.showFinancials=val;}});
-        setApprovedUsers(all);toast('✓ Financials '+(val?'shown':'hidden')+' for '+checked.length+' user(s)');renderSettings(c);return;
+        setApprovedUsers(all);
+        try{await saveUsersViaProxy();toast('✓ Financials '+(val?'shown':'hidden')+' for '+checked.length+' user(s) and saved');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
+        renderSettings(c);return;
       }
       if(action==='set_role'){
         const newRole=prompt('Enter role for '+checked.length+' user(s): admin, procurement, manager, viewer, sales, restricted');
         if(!newRole||!ROLES[newRole]){toast('Invalid role','var(--amber)');return;}
-        all.forEach(u=>{if(checked.includes(u.email)){u.role=newRole;u.featureFlags=getDefaultFeatureFlags(newRole);}});
-        setApprovedUsers(all);toast('✓ Role set to '+newRole+' for '+checked.length+' user(s)');renderSettings(c);return;
+        all.forEach(u=>{if(checked.includes(u.email)){u.role=newRole;u.featureFlags=getDefaultFeatureFlags(newRole);if(!u._customHiddenFields)u.hiddenFields=getDefaultHiddenFields(newRole);}});
+        setApprovedUsers(all);
+        try{await saveUsersViaProxy();toast('✓ Role set to '+newRole+' for '+checked.length+' user(s) and saved');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
+        renderSettings(c);return;
       }
     }},'Apply'));
     selAllCb.addEventListener('change',()=>tblWrap.querySelectorAll('input.um-cb').forEach(cb=>cb.checked=selAllCb.checked));
@@ -25837,7 +25848,7 @@ function buildUserSubSection(label,bodyBuilderFn){
         const sel=el('select',{class:'detail-edit-field',style:{fontSize:'9px',padding:'2px 3px',width:'130px'}});
         const assignableRoles=['admin','procurement','cro','director_ops','ops_qc','finance_sr','finance_jr','ssa','sales_rep','viewer','restricted','manager'];
         for(const r of assignableRoles){const o=el('option',{value:r},ROLES[r]||r);if(r===u.role)o.selected=true;sel.appendChild(o);}
-        sel.addEventListener('change',()=>{
+        sel.addEventListener('change',async ()=>{
           const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);
           if(i>=0){
             all[i].role=sel.value;
@@ -25849,6 +25860,17 @@ function buildUserSubSection(label,bodyBuilderFn){
             roleBadge.textContent=ROLES[sel.value]||sel.value;
             roleBadge.style.color=ROLE_COLORS[sel.value]||'#94a3b8';
             roleBadge.style.borderColor=ROLE_COLORS[sel.value]||'#475569';
+            // CRITICAL: push to the server immediately -- a role change is
+            // security-relevant, and without this the change only ever
+            // existed in the admin's own browser. Any other session logging
+            // in as this user would keep pulling the old role indefinitely,
+            // since nothing ever told the server anything had changed.
+            try {
+              await saveUsersViaProxy();
+              toast('Role updated to '+(ROLES[sel.value]||sel.value)+' and saved','#10b981');
+            } catch(e) {
+              toast('⚠ Role changed locally but failed to save to server: '+e.message,'#ef4444');
+            }
             renderSettings(c); // re-render to show updated field restrictions
           }
         });
@@ -25896,9 +25918,11 @@ function buildUserSubSection(label,bodyBuilderFn){
             }, 400);
           })();
         }},'👁 View As'));
-        mainLine.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',fontSize:'9px'},onclick(){
+        mainLine.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)',fontSize:'9px'},onclick:async function(){
           if(!confirm('Remove '+u.email+'?'))return;
-          setApprovedUsers(getApprovedUsers().filter(x=>x.email!==u.email));renderSettings(c);
+          setApprovedUsers(getApprovedUsers().filter(x=>x.email!==u.email));
+          try{await saveUsersViaProxy();toast('✓ '+u.email+' removed and saved','#10b981');}catch(e){toast('⚠ Removed locally but failed to save: '+e.message,'#ef4444');}
+          renderSettings(c);
         }},'✕'));
       }
       row.appendChild(mainLine);
@@ -25937,9 +25961,12 @@ function buildUserSubSection(label,bodyBuilderFn){
       const pwRow=el('div',{style:{display:'flex',gap:'4px',alignItems:'center'}});
       pwRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Password:'));
       const pwIn=el('input',{type:'password',class:'detail-edit-field',placeholder:'(none)',style:{width:'100px',fontSize:'9px'},value:u.password||''});
-      const pwBtn=el('button',{class:'btn-xs btn-ghost',onclick(){
+      const pwBtn=el('button',{class:'btn-xs btn-ghost',onclick:async function(){
         const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);
-        if(i>=0){all[i].password=pwIn.value.trim();setApprovedUsers(all,true);toast('✓ Password updated');}
+        if(i>=0){
+          all[i].password=pwIn.value.trim();setApprovedUsers(all,true);
+          try{await saveUsersViaProxy();toast('✓ Password updated and saved','#10b981');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
+        }
       }},'Set');
       pwRow.appendChild(pwIn);pwRow.appendChild(pwBtn);
       detailsMeta.appendChild(pwRow);
@@ -26179,7 +26206,7 @@ function buildUserSubSection(label,bodyBuilderFn){
     ['manager','viewer','restricted','admin'].forEach(r=>roleIn.appendChild(el('option',{value:r},ROLES[r])));
     const pwNewIn=el('input',{type:'password',class:'modal-input',placeholder:'Password (optional)',style:{width:'140px',height:'26px',fontSize:'10px',marginBottom:'0'}});
     addRow.appendChild(emailIn); addRow.appendChild(roleIn); addRow.appendChild(pwNewIn);
-    addRow.appendChild(el('button',{class:'btn-xs btn-green',style:{height:'26px',padding:'0 10px'},onclick(){
+    addRow.appendChild(el('button',{class:'btn-xs btn-green',style:{height:'26px',padding:'0 10px'},onclick:async function(){
       const e=emailIn.value.trim().toLowerCase();
       if(!e||!e.includes('@')){toast('Enter a valid email','#f59e0b');return;}
       const all=getApprovedUsers();
@@ -26187,8 +26214,14 @@ function buildUserSubSection(label,bodyBuilderFn){
       all.push({email:e,name:e.split('@')[0],role:roleIn.value,password:pwNewIn.value.trim(),hiddenFields:[],featureFlags:getDefaultFeatureFlags(roleIn.value),added:isoDate(new Date()),addedBy:USER.email});
       setApprovedUsers(all);
       emailIn.value='';pwNewIn.value='';
-      renderSettings(c);
-      toast('✓ '+e+' added as '+ROLES[roleIn.value]);
+      try{
+        await saveUsersViaProxy();
+        renderSettings(c);
+        toast('✓ '+e+' added as '+ROLES[roleIn.value]+' and saved','#10b981');
+      }catch(err){
+        renderSettings(c);
+        toast('⚠ '+e+' added locally but FAILED to save to server — they will not be able to log in yet: '+err.message,'#ef4444');
+      }
     }},'Add User'));
     addSec.appendChild(addRow);
     _umBody.appendChild(addSec);
@@ -26254,8 +26287,14 @@ function buildUserSubSection(label,bodyBuilderFn){
           if(!existing.find(x=>x.email===u.email)){existing.push(u);added++;}
         }
         setApprovedUsers(existing);
-        renderSettings(c);
-        toast('✓ Imported '+added+' new user'+(added!==1?'s':''));
+        try{
+          await saveUsersViaProxy();
+          renderSettings(c);
+          toast('✓ Imported '+added+' new user'+(added!==1?'s':'')+' and saved','#10b981');
+        }catch(saveErr){
+          renderSettings(c);
+          toast('⚠ Imported '+added+' locally but FAILED to save to server: '+saveErr.message,'#ef4444');
+        }
       }catch(e){toast('Import failed: '+e.message,'#ef4444');}
     });
     exportRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){importFile.click();}},'⬆ Import User List'));
@@ -27305,9 +27344,12 @@ function out(o){return ContentService.createTextOutput(JSON.stringify(o)).setMim
           const togLbl=el('label',{style:{fontSize:'9px',cursor:'pointer',display:'flex',alignItems:'center',gap:'3px',justifyContent:'center'}});
           const togCb=el('input',{type:'checkbox'});
           togCb.checked=aiEnabled;
-          togCb.addEventListener('change',()=>{
+          togCb.addEventListener('change',async ()=>{
             const all2=getApprovedUsers();const ui=all2.findIndex(u=>u.email===userEmail);
-            if(ui>=0){if(!all2[ui].featureFlags)all2[ui].featureFlags={};all2[ui].featureFlags.aiEnabled=togCb.checked;setApprovedUsers(all2);toast('✓ AI '+(togCb.checked?'enabled':'disabled')+' for '+userEmail);}
+            if(ui>=0){
+              if(!all2[ui].featureFlags)all2[ui].featureFlags={};all2[ui].featureFlags.aiEnabled=togCb.checked;setApprovedUsers(all2);
+              try{await saveUsersViaProxy();toast('✓ AI '+(togCb.checked?'enabled':'disabled')+' for '+userEmail+' and saved','#10b981');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
+            }
           });
           togLbl.appendChild(togCb);togLbl.appendChild(el('span',{},aiEnabled?'On':'Off'));
           togTd.appendChild(togLbl);tr.appendChild(togTd);
@@ -27366,9 +27408,12 @@ function out(o){return ContentService.createTextOutput(JSON.stringify(o)).setMim
             const rTogLbl=el('label',{style:{display:'flex',alignItems:'center',justifyContent:'center',gap:'4px',cursor:'pointer',fontSize:'9px'}});
             const rTogCb=el('input',{type:'checkbox'});
             rTogCb.checked=rOn;
-            rTogCb.addEventListener('change',()=>{
+            rTogCb.addEventListener('change',async ()=>{
               const all2=getApprovedUsers();const ui=all2.findIndex(u=>u.email===rEmail);
-              if(ui>=0){if(!all2[ui].featureFlags)all2[ui].featureFlags={};all2[ui].featureFlags.renzoEnabled=rTogCb.checked;setApprovedUsers(all2);toast('✓ Renzo '+(rTogCb.checked?'enabled':'disabled')+' for '+rEmail);}
+              if(ui>=0){
+                if(!all2[ui].featureFlags)all2[ui].featureFlags={};all2[ui].featureFlags.renzoEnabled=rTogCb.checked;setApprovedUsers(all2);
+                try{await saveUsersViaProxy();toast('✓ Renzo '+(rTogCb.checked?'enabled':'disabled')+' for '+rEmail+' and saved','#10b981');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
+              }
             });
             rTogLbl.appendChild(rTogCb);rTogLbl.appendChild(el('span',{},rOn?'On':'Off'));
             rTogTd.appendChild(rTogLbl);rtr.appendChild(rTogTd);
