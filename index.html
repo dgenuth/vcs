@@ -7549,7 +7549,29 @@ const PAGE_HIERARCHY=[
   {id:'reports',label:'Reports',editable:false},
   {id:'summary',label:'Summary',editable:false},
   {id:'history',label:'History',editable:false},
+  {id:'datacheck',label:'Data Check',editable:true},
+  {id:'settings',label:'Settings',editable:true},
+  {id:'health',label:'System Health',editable:true},
 ];
+// Permanent auto-reconciliation: NAV_DEFS is the true master list of every
+// page/tab that exists. Without this, a page added to NAV_DEFS in the
+// future could silently be missing from Tab Access entirely (exactly what
+// happened here -- datacheck/settings/health existed in the app and in
+// NAV_DEFS, but were simply never added to this array, so they had no
+// toggle at all and were invisible to everyone regardless of role). Any
+// NAV_DEFS entry not already listed above now gets auto-added, defaulting
+// to hidden for non-admins via the existing tabState()/isTabAllowedForUser()
+// fallback (a role's static tabs list won't include it until explicitly
+// granted), while still admin-visible and always toggleable on request.
+(function _reconcilePageHierarchyWithNavDefs(){
+  const known = new Set(PAGE_HIERARCHY.map(p=>p.id));
+  NAV_DEFS.forEach(function(entry){
+    const id = entry[0], label = entry[2];
+    if (id.startsWith('_div') || id === 'feedback' || known.has(id)) return;
+    PAGE_HIERARCHY.push({id:id, label:label, editable:true});
+    console.warn('[VCS] Page "'+id+'" was in NAV_DEFS but missing from PAGE_HIERARCHY -- auto-added with a safe (hidden-by-default-for-non-admins) Tab Access entry. Consider adding it explicitly for a more deliberate default.');
+  });
+})();
 
 // ─── S44: Unified canView/canEdit permission layer ──────────────────────────
 // New capability, additive on top of the existing hiddenFields/tabOverrides/
