@@ -4930,8 +4930,15 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     if(_canAct2) qBar.appendChild(qBtn('📧','Send email',()=>openEmailModal(vendor),'var(--blue)'));
     if(hasPermission('editNotes')){const _nb=qBtn('📝','Add note',()=>openStructuredNoteModal(vendor),'var(--green)');if(vendor.notes&&vendor.notes.trim()){_nb.style.position='relative';const _dot=el('span',{style:{position:'absolute',top:'0',right:'0',width:'7px',height:'7px',borderRadius:'50%',background:'#22c55e',display:'block'}});_nb.appendChild(_dot);}qBar.appendChild(_nb);}
     if(hasPermission('editContract')) qBar.appendChild(qBtn('📄','Edit contract',()=>{S._contractsPresetVendor=vendor.name;S.view='contracts';render();},'var(--amber)'));
-    if(USER.sfToken&&vendor.sfAccountId) qBar.appendChild(qBtn('☁','Open in Salesforce',()=>window.open(USER.sfInstance+'/lightning/r/Account/'+vendor.sfAccountId+'/view','_blank'),'#38bdf8'));
-    if(USER.sfToken&&vendor.sfAccountId) qBar.appendChild(qBtn('📊','SF Dashboard',()=>window.open(USER.sfInstance+'/lightning/r/Account/'+vendor.sfAccountId+'/view','_blank'),'var(--blue)'));
+    // S50 QA fix: there were two icons here doing the exact same thing
+    // (identical onclick, identical URL) — the '📊 SF Dashboard' button was
+    // a dead duplicate of '☁ Open in Salesforce', removed. Both also used
+    // to point at /lightning/r/Account/, but vendor.sfAccountId is actually
+    // a Vendor__c record ID (this org matches vendors against the custom
+    // Vendor__c object, not standard Account — same issue already fixed on
+    // the "Matched" banner links), so the URL was opening the wrong object
+    // type in Salesforce. Fixed to Vendor__c.
+    if(USER.sfToken&&vendor.sfAccountId) qBar.appendChild(qBtn('☁','Open in Salesforce',()=>window.open(USER.sfInstance+'/lightning/r/Vendor__c/'+vendor.sfAccountId+'/view','_blank'),'#38bdf8'));
     if(_canAct2) qBar.appendChild(qBtn('📅','Schedule meeting',()=>openCalendarEventModal(isoDate(new Date()),vendor.name)));
     if(_canAct2) qBar.appendChild(qBtn('🎯','Meeting Mode — AI talking points',()=>openTalkingPointsModal(0,vendor),'var(--amber)'));
     stickySlot.appendChild(qBar);
@@ -23731,7 +23738,11 @@ function renderSummary(c) {
     const rangeLabel=S.summaryRange==='all'?'All time':S.summaryRange==='custom'?`${S.summaryFrom} – ${S.summaryTo||'today'}`:`Last ${S.summaryRange}d`;
     sec4.appendChild(el('h3',{style:{color:'var(--blue)',marginBottom:'6px'}},`📝 Recently Contacted (${rangeLabel})`));
     sec4.appendChild(buildSortableTable(['Vendor','Last Comm','Note Preview'],notesVendors.sort((a,b)=>(parseDate(b.lastComm)||0)-(parseDate(a.lastComm)||0)).slice(0,30),v=>[vLink(v),fmtDate(parseDate(v.lastComm)),el('span',{class:'note-preview'},String(v.notes||'').split('|')[0]?.slice(0,100)||'')]));
-    makeCollapsibleSection(sec4,'🎨 Display Preferences','vcs_s_display',true);
+    // S50 QA fix: this used to read makeCollapsibleSection(sec4,'🎨 Display
+    // Preferences','vcs_s_display',true) — a stray copy-paste that mislabeled
+    // this Recently Contacted table with a Settings-page header/storage key
+    // that has nothing to do with the Summary page. Given its own real key.
+    makeCollapsibleSection(sec4,'📝 Recently Contacted','vcs_sum_notes',true);
   c.appendChild(sec4);
   }
 }
@@ -25188,17 +25199,22 @@ function renderSettings(c) {
     position:'sticky',top:'0',zIndex:'30',
     boxShadow:'0 2px 8px rgba(0,0,0,.18)',width:'100%',boxSizing:'border-box'
   }});
-  const driveConnected=!!(window.GDriveToken && Date.now()<window.GDriveTokenExpiry-5000);
+  const driveConnected=!!(window._vcsDriveProxyVerified || (window.GDriveToken && Date.now()<window.GDriveTokenExpiry-5000));
   const lastSync=localStorage.getItem('vcs_last_drive_sync');
-  const lastSyncStr=lastSync?'Last synced: '+new Date(parseInt(lastSync)).toLocaleTimeString():'Never synced this session';
+  const lastSyncStr=lastSync?'Last synced: '+new Date(parseInt(lastSync)).toLocaleTimeString():'Not yet synced this session';
   const syncInfo=el('div',{style:{flex:'1'}});
-  syncInfo.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',color:'var(--text)',marginBottom:'2px'}},'☁ Drive Config Sync'));
-  syncInfo.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},driveConnected?'Connected \u2014 '+lastSyncStr:'Not connected to Drive \u2014 config will not sync across devices'));
+  syncInfo.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',color:'var(--text)',marginBottom:'2px'}},'☁ Config Sync'));
+  // S50: reworded — this used to say "Not connected to Drive" based only on
+  // a personal Google OAuth token, which most users never have (and don't
+  // need — the GAS proxy is the real sync path for config and vendor data).
+  // Now reflects whichever path actually verified this session, and is
+  // explicit that Supabase, not Drive, is the primary data store.
+  syncInfo.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},driveConnected?'Drive sync active \u2014 '+lastSyncStr:'Config lives in Supabase \u2014 Drive sync is a fallback and hasn\u2019t been used yet this session'));
   syncSec.appendChild(syncInfo);
   // D3: Expand/Collapse ALL known settings keys
   const _allSettingsKeys=['emailSig','fileInfo','dataActions','handover','renzo'];
-  const _allRawKeys=['vcs_s_sf','vcs_s_drive','vcs_s_ms','vcs_s_ai','vcs_s_dialer','vcs_s_cols','vcs_s_prefs','vcs_s_startup','vcs_s_theme','vcs_s_display','vcs_s_connections','vcs_s_supa'];
-  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},title:'Expand All (Ctrl+Shift+E)',onclick(){
+  const _allRawKeys=['vcs_s_sf','vcs_s_drive','vcs_s_ms','vcs_s_ai','vcs_s_dialer','vcs_s_cols','vcs_s_startup','vcs_s_theme','vcs_s_connections','vcs_s_supa'];
+  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},title:'Expand All (Ctrl+E)',onclick(){
     S._settingsExpandAll=true;
     if(!S._settingsOpen)S._settingsOpen={};
     _allSettingsKeys.forEach(k=>S._settingsOpen[k]=true);
@@ -25210,7 +25226,7 @@ function renderSettings(c) {
     S._setupChecklistOpen=true;
     render();
   }},'▼ Expand All'));
-  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},title:'Collapse All (Ctrl+Shift+C)',onclick(){
+  syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},title:'Collapse All (Ctrl+K)',onclick(){
     S._settingsExpandAll=false;
     if(!S._settingsOpen)S._settingsOpen={};
     _allSettingsKeys.forEach(k=>S._settingsOpen[k]=false);
@@ -27462,22 +27478,12 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
   makeCollapsibleSection(secDialer,'📞 Click-to-Call & Phone Connect','vcs_s_dialer',true);
   c.appendChild(secDialer);
 
-  // Display preferences
-  const sec4=el('div',{class:'settings-section'});
-  // header for Display Preferences added by makeCollapsibleSection below
-  const prefDefs=[
-    ['Compact rows (smaller row height)','compactRows'],
-    ['Color score cells by urgency','showScoreColor'],
-    ['Auto-sort Today view by score','autoSortByScore'],
-  ];
-  for (const [label,key] of prefDefs) {
-    const row=el('div',{class:'setting-row'});
-    row.appendChild(el('label',{},label));
-    const cb=el('input',{type:'checkbox'}); cb.checked=!!S.settings[key];
-    cb.addEventListener('change',()=>{S.settings[key]=cb.checked;debouncedSaveSettings();renderSettings(c);render();});
-    row.appendChild(cb); sec4.appendChild(row);
-  }
-  makeCollapsibleSection(sec4,'🎨 Display Preferences','vcs_s_prefs',true);c.appendChild(sec4);
+  // S50: removed the old 3-option Display Preferences section here (compact
+  // rows / score color / auto-sort) — confirmed a strict duplicate of three
+  // of the eight toggles in the section below (which also has proper
+  // onChange side-effects like live-toggling the compact CSS class, which
+  // this old one didn't). That section is being renamed to Display
+  // Preferences below, so nothing is lost, just de-duplicated.
 
   // Calendar / Availability
   const secCal=el('div',{class:'settings-section'});
@@ -27629,7 +27635,7 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
     cb.addEventListener('change',()=>{S.settings[key]=cb.checked; onChangeFn(cb.checked); debouncedSaveSettings(); renderSettings(c);});
     row.appendChild(cb); secTheme.appendChild(row);
   }
-  makeCollapsibleSection(secTheme,'🌙 Theme & Font','vcs_s_theme',true);
+  makeCollapsibleSection(secTheme,'🎨 Display Preferences','vcs_s_theme',true);
   c.appendChild(secTheme);
 
   // Email Signature section removed -- signatures come from each user's
