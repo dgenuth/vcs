@@ -6967,6 +6967,13 @@ async function loadFromSupabase() {
 
     S.loaded=true;
     S.source='supabase';
+    // S50 QA fix: the earlier defaultView fix lived in loadFile()'s
+    // completion code, but that's the Drive/Excel fallback path — Supabase
+    // is the primary path (see the early `return` after a successful
+    // loadFromSupabase() call above completeLogin()), so loadFile() never
+    // actually runs on a normal login/refresh and the fix never fired. This
+    // is the code path that actually executes; applying it here for real.
+    S.view = S.settings.defaultView || 'today';
     // ── Load schema_fields registry ────────────────────────────────────────
     const schemaData = await SB.query('schema_fields',
       'select=*&order=display_order.asc&limit=500');
