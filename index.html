@@ -7678,6 +7678,17 @@ const PAGE_HIERARCHY=[
   {id:'settings',label:'Settings',editable:true},
   {id:'health',label:'System Health',editable:true},
 ];
+// S50: parent/child Tab Access dependency. A sub-tab (e.g. Pipeline, under
+// Analytics) is unreachable if its parent page isn't visible — there's no
+// way to navigate to a sub-tab of a page you can't open. This looks up a
+// child id's parent so persistTabState/persistRoleTabState can force the
+// parent on whenever a child is turned on.
+function _findParentPageId(childId){
+  for (const page of PAGE_HIERARCHY) {
+    if (page.children && page.children.some(function(c){return c.id===childId;})) return page.id;
+  }
+  return null;
+}
 // Permanent auto-reconciliation: NAV_DEFS is the true master list of every
 // page/tab that exists. Without this, a page added to NAV_DEFS in the
 // future could silently be missing from Tab Access entirely (exactly what
@@ -25257,6 +25268,19 @@ function buildTabAccessSection(container, userEmail) {
       const _before=JSON.stringify(all[i].tabOverrides||{});
       if(!all[i].tabOverrides) all[i].tabOverrides={};
       all[i].tabOverrides[id]=showEdit?{view:view,edit:edit}:{view:view};
+      // S50: turning a sub-tab ON must also turn its parent page ON — a
+      // sub-tab can't be reached at all if the page hosting it is hidden.
+      if(view){
+        const parentId=_findParentPageId(id);
+        if(parentId){
+          const parentOv=all[i].tabOverrides[parentId];
+          const parentAlreadyVisible = parentOv!==undefined ? (typeof parentOv==='object'?parentOv.view!==false:!!parentOv) : true;
+          if(!parentAlreadyVisible){
+            all[i].tabOverrides[parentId]=typeof parentOv==='object'?Object.assign({},parentOv,{view:true}):{view:true};
+            toast('✓ Also enabled '+parentId+' — required for its sub-tabs to be reachable','#4f7cff');
+          }
+        }
+      }
       console.log('[VCS TAB DEBUG] Toggled tab:',id,'| new value:',JSON.stringify(all[i].tabOverrides[id]),'| tabOverrides BEFORE:',_before,'| tabOverrides AFTER:',JSON.stringify(all[i].tabOverrides));
       touchUser(all[i].email);
       setApprovedUsers(all,true);
@@ -26162,6 +26186,18 @@ window._buildConnectionsSection = _buildConnectionsSection;
         const savedOverrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
         if(!savedOverrides[role]) savedOverrides[role]={};
         savedOverrides[role][id]=showEdit?{view:view,edit:edit}:{view:view};
+        // S50: same parent/child dependency as the per-user Tab Access fix —
+        // a role-level default can't leave a sub-tab on while its parent
+        // page is off, since there'd be no way for anyone in that role to
+        // navigate to it at all.
+        let _forcedParent=null;
+        if(view){
+          const parentId=_findParentPageId(id);
+          if(parentId && !roleTabState(parentId).view){
+            savedOverrides[role][parentId]={view:true,edit:roleTabState(parentId).edit};
+            _forcedParent=parentId;
+          }
+        }
         localStorage.setItem('vcs_role_tab_overrides',JSON.stringify(savedOverrides));
         // Keep ROLE_PERMS[role].tabs in sync too — it's the in-memory source
         // several other places (roleDefaultTabs, sidebar nav fallback) read
@@ -26170,6 +26206,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
         if(!Array.isArray(ROLE_PERMS[role].tabs)) ROLE_PERMS[role].tabs=[];
         if(view){ if(!ROLE_PERMS[role].tabs.includes(id)) ROLE_PERMS[role].tabs.push(id); }
         else { ROLE_PERMS[role].tabs=ROLE_PERMS[role].tabs.filter(function(x){return x!==id;}); }
+        if(_forcedParent && !ROLE_PERMS[role].tabs.includes(_forcedParent)) ROLE_PERMS[role].tabs.push(_forcedParent);
         saveConfigToDrive().catch(function(){});
         // Update ALL users of this role immediately — no "next load" needed.
         try{
@@ -26178,10 +26215,12 @@ window._buildConnectionsSection = _buildConnectionsSection;
             if((u.role||'admin')!==role) return;
             if(!u.tabOverrides) u.tabOverrides={};
             u.tabOverrides[id]=showEdit?{view:view,edit:edit}:{view:view};
+            if(_forcedParent) u.tabOverrides[_forcedParent]={view:true};
           });
           allUsers.forEach(function(_u){ if(_u&&_u.email) touchUser(_u.email); });
           localStorage.setItem(AUTH_KEY,JSON.stringify(allUsers));
           setTimeout(function(){saveUsersViaProxy().catch(function(){});},2000);
+          if(_forcedParent) toast('✓ Also enabled '+_forcedParent+' for all '+role+' users — required for its sub-tabs to be reachable','#4f7cff');
         }catch(ue){ console.error('[RoleTab]',ue); }
       }
       function refreshOpenUserTabSections(){
