@@ -25103,20 +25103,23 @@ function buildPermTile(opts) {
     if (e.target.tagName === 'INPUT') return;
     opts.onToggleView();
   };
-  const labelSpan = el('span',{}, opts.label);
-  tile.appendChild(labelSpan);
-
+  // Item 3: edit checkbox (Field Visibility / Tab Access tiles only — every
+  // other buildPermTile() caller passes showEditCheckbox:false, so this is a
+  // no-op for them) now renders to the LEFT of the label instead of the
+  // right, per the Settings UI/UX pass. Purely a DOM-order/margin change.
   if (opts.showEditCheckbox) {
     const editCb = el('input',{type:'checkbox'});
     editCb.checked = !!opts.isEditChecked;
     editCb.disabled = !opts.isViewable; // real disabled state — see canEdit() gate too
     editCb.title = !opts.isViewable ? 'Enable View first to allow Edit' : 'Can edit';
     editCb.style.cssText = 'cursor:'+(opts.isViewable?'pointer':'not-allowed')
-      +';opacity:'+(opts.isViewable?'1':'.4')+';margin-left:2px';
+      +';opacity:'+(opts.isViewable?'1':'.4')+';margin-right:2px';
     editCb.onclick = function(e) { e.stopPropagation(); };
     editCb.onchange = function() { opts.onToggleEdit(editCb.checked); };
     tile.appendChild(editCb);
   }
+  const labelSpan = el('span',{}, opts.label);
+  tile.appendChild(labelSpan);
   return tile;
 }
 
@@ -25582,6 +25585,19 @@ function _buildConnectionsSection(){
     connBody.appendChild(buildIntegrationSubsection('Salesforce',
       function(){return USER&&USER.sfToken?'Connected as '+(USER.sfEmail||USER.email||''):'Not connected';},
       function(b){
+        // Item 4: migrated from the old standalone Salesforce Integration
+        // section (deleted below) — read-only disclaimer, connected-state
+        // org/last-sync detail, Setup Guide button, and the session-timeout
+        // warning were genuinely unique to that section.
+        b.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'4px',lineHeight:'1.5'}},'Connect to Salesforce with OAuth 2.0 (read-only). Each user authenticates with their own credentials — you only see data your SF profile allows. CMS never writes to Salesforce; it only reads and displays data for your reference.'));
+        b.appendChild(el('div',{style:{fontSize:'9px',color:'var(--green)',marginBottom:'6px',padding:'4px 8px',background:'rgba(34,197,94,.06)',border:'1px solid rgba(34,197,94,.2)',borderRadius:'3px'}},'🔒 Read-only: CMS will never create, update, or delete any Salesforce records.'));
+        if (USER && USER.sfToken) {
+          const orgDomain=USER.sfInstance?(USER.sfInstance.replace(/https?:\/\//,'').split('/')[0].split('.my.salesforce.com')[0]):'';
+          const orgName=USER.sfOrgName||orgDomain||'Salesforce';
+          if(orgName) b.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},'Org: '+orgName+(USER.sfInstance?' · '+USER.sfInstance.replace(/https?:\/\//,'').split('/')[0]:'')));
+          const lastSync=S._sfBoardLoadedAt||S._sfLastSync;
+          if(lastSync) b.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},'Last sync: '+fmtDate(new Date(lastSync))));
+        }
         const actionRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'8px',paddingTop:'6px',borderTop:'1px solid var(--border)'}});
         if (USER && USER.role === 'admin') {
         const sfRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
@@ -25623,8 +25639,11 @@ function _buildConnectionsSection(){
           }},'Disconnect'));
         } else {
           actionRow.appendChild(el('button',{class:'btn-xs',style:{background:'#1a73e8',color:'#fff'},title:'Sign in with Salesforce to sync data',onclick:function(){sfConnect();}},'Connect'));
+          actionRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){showSFSetupGuide();}},'📋 Setup Guide'));
         }
         b.appendChild(actionRow);
+        b.appendChild(el('p',{style:{fontSize:'9px',color:'var(--amber)',marginTop:'8px',lineHeight:'1.5'}},
+          '⚠ SF sessions expire after your org\'s session timeout (default 2 hours). To extend: Salesforce Setup → Session Settings → Session Timeout → set to 8 hours or Never. CMS will use the stored token until it expires.'));
       },
       function(){return !!(USER&&USER.sfToken);}
     ));
@@ -25645,6 +25664,9 @@ function _buildConnectionsSection(){
       },
       function(b){
         if(USER&&USER.role==='admin'){
+          // Item 4: migrated intro line from the old standalone MS365 section.
+          b.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px',lineHeight:'1.5'}},
+            'Enter your Azure App Client ID and Tenant ID, then click Connect to sign in with your Microsoft account. Credentials are stored only in this browser.'));
           const msClientRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
           msClientRow.appendChild(el('label',{style:{minWidth:'80px'}},'Client ID'));
           const msCidInp=el('input',{value:S.settings.msGraphClientId||'',style:{flex:'1',fontSize:'10px'}});
@@ -25858,6 +25880,9 @@ function _buildConnectionsSection(){
       connBody.appendChild(buildIntegrationSubsection('Renzo',
         function(){return S.settings&&S.settings.renzoConnectorUrl?'Configured':'Not configured';},
         function(b){
+          // Item 4: migrated intro line from the old standalone Renzo
+          // Integration Settings section.
+          b.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px'}},'Renzo connects to CMS via a Google Apps Script endpoint. Configure the connector URL and API key here.'));
           const rUrlRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
           rUrlRow.appendChild(el('label',{style:{minWidth:'80px'}},'Connector URL'));
           const rUrlInp=el('input',{value:S.settings.renzoConnectorUrl||'',style:{flex:'1',fontSize:'10px'}});
@@ -25873,7 +25898,7 @@ function _buildConnectionsSection(){
           b.appendChild(rKeyRow);
           const renzoActionRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',marginTop:'8px',paddingTop:'6px',borderTop:'1px solid var(--border)'}});
           const renzoTestResult=el('span',{style:{fontSize:'9px',color:'var(--muted)',alignSelf:'center'}});
-          renzoActionRow.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Test the Renzo connector',onclick:async function(){
+          const renzoTestBtn=el('button',{class:'btn-xs btn-ghost',title:'Test the Renzo connector',onclick:async function(){
             const url=S.settings.renzoConnectorUrl,key=S.settings.renzoApiKey;
             if(!url){toast('Enter the connector URL first','#f59e0b');return;}
             renzoTestResult.textContent='⏳ Testing...';renzoTestResult.style.color='var(--muted)';
@@ -25887,7 +25912,8 @@ function _buildConnectionsSection(){
               else if(inner.error==='Unauthorized'){renzoTestResult.textContent='❌ Wrong API key';renzoTestResult.style.color='var(--red)';}
               else{renzoTestResult.textContent='⚠ '+(inner.error||JSON.stringify(inner)).slice(0,80);renzoTestResult.style.color='var(--amber)';}
             }catch(e){renzoTestResult.textContent='❌ '+e.message;renzoTestResult.style.color='var(--red)';}
-          }},'Test'));
+          }},'Test');
+          renzoActionRow.appendChild(renzoTestBtn);
           renzoActionRow.appendChild(renzoTestResult);
           if(S.settings.renzoConnectorUrl){
             renzoActionRow.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Preview the next outreach records Renzo would generate',onclick:function(){
@@ -25899,6 +25925,109 @@ function _buildConnectionsSection(){
             refreshConnectionsSummary();toast('Renzo disconnected (this session only)','#f59e0b');
           }},'Disconnect'));
           b.appendChild(renzoActionRow);
+
+          // Item 4: migrated Quick Setup Wizard from the old standalone
+          // Renzo Integration Settings section — genuinely unique, no
+          // equivalent existed anywhere in Connections & API Keys. Adapted
+          // to call refreshConnectionsSummary() (this section's own local
+          // re-render) instead of the old section's full render(), and to
+          // reference the new named renzoTestBtn/rUrlInp in this scope
+          // instead of the old section's own local variables.
+          const renzoWizSec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',padding:'10px',marginTop:'8px'}});
+          renzoWizSec.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',marginBottom:'8px'}},'🚀 Quick Setup Wizard'));
+
+          if(!S._renzoWizStep) S._renzoWizStep=0;
+          const renzoSteps=[
+            {
+              title:'Generate API Key',
+              note:'CMS will generate a secure API key for the Renzo connector.',
+              btn:'Generate Key →',
+              onclick(){
+                const key='renzo-'+Math.random().toString(36).slice(2)+'-'+Math.random().toString(36).slice(2);
+                S.settings.renzoApiKey=key;
+                saveSettings();
+                S._renzoWizStep=1;
+                refreshConnectionsSummary();
+                toast('✓ API key generated and saved');
+              }
+            },
+            {
+              title:'Open Google Apps Script',
+              note:'This will open script.google.com in a new tab. Click "New project" and name it "CMS Renzo Connector".',
+              btn:'Open Google Apps Script →',
+              onclick(){
+                window.open('https://script.google.com/home','_blank');
+                S._renzoWizStep=2;
+                refreshConnectionsSummary();
+              }
+            },
+            {
+              title:'Paste the Connector Code',
+              note:'Copy the code below, then in Apps Script: delete everything in Code.gs and paste this in.',
+              btn:'Copy Connector Code →',
+              onclick(){
+                // Build the connector code with the current API key embedded
+                const apiKey=S.settings.renzoApiKey||'YOUR_API_KEY_HERE';
+                const connectorCode=`const RENZO_API_KEY='${apiKey}';
+function doGet(e){return handleReq(e);}
+function doPost(e){return handleReq(e);}
+function handleReq(e){
+  const p=Object.assign({},e.parameter||{});
+  if(e.postData){try{Object.assign(p,JSON.parse(e.postData.contents));}catch(err){}}
+  const key=(p.renzoKey||p.apiKey||'').trim();
+  if(key&&key!==RENZO_API_KEY)return out({error:'Unauthorized'});
+  if(p.action==='ping'||!p.action)return out({status:'ok',version:'1.0',message:'Prime Source CMS Renzo Connector is live!'});
+  return out({error:'Unknown action: '+p.action});
+}
+function out(o){return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);}`;
+                navigator.clipboard.writeText(connectorCode).then(()=>{
+                  toast('✓ Connector code copied — paste into Code.gs in Apps Script');
+                  S._renzoWizStep=3;
+                  refreshConnectionsSummary();
+                }).catch(()=>{
+                  toast('Could not auto-copy — see code below','#f59e0b');
+                });
+              }
+            },
+            {
+              title:'Deploy as Web App',
+              note:'In Apps Script: click Deploy → New Deployment → Type: Web App → Execute as: Me → Who has access: Anyone → Deploy → Copy the URL.',
+              btn:'I deployed it — paste URL above →',
+              onclick(){S._renzoWizStep=4;refreshConnectionsSummary();}
+            },
+            {
+              title:'Test the connection',
+              note:'Paste the web app URL in the "Connector URL" field above, then click Test Connection.',
+              btn:'Test Connection →',
+              onclick(){renzoTestBtn.click();}
+            },
+          ];
+
+          // Progress bar
+          const wDots=el('div',{style:{display:'flex',gap:'4px',marginBottom:'8px',alignItems:'center'}});
+          renzoSteps.forEach((_,i)=>{
+            const dot=el('div',{style:{width:'18px',height:'18px',borderRadius:'50%',display:'flex',alignItems:'center',
+              justifyContent:'center',fontSize:'8px',fontWeight:'700',cursor:'pointer',flexShrink:'0',
+              background:i<S._renzoWizStep?'var(--green)':i===S._renzoWizStep?'var(--blue)':'var(--border)',
+              color:i<=S._renzoWizStep?'white':'var(--muted)'},
+              onclick(){S._renzoWizStep=i;refreshConnectionsSummary();}
+            },''+( i<S._renzoWizStep?'✓':(i+1)));
+            wDots.appendChild(dot);
+            if(i<renzoSteps.length-1) wDots.appendChild(el('div',{style:{flex:'1',height:'1px',background:i<S._renzoWizStep?'var(--green)':'var(--border)'}}));
+          });
+          renzoWizSec.appendChild(wDots);
+
+          const curRStep=renzoSteps[Math.min(S._renzoWizStep,renzoSteps.length-1)];
+          const rStepCard=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'4px',padding:'10px'}});
+          rStepCard.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',marginBottom:'4px'}},'Step '+(S._renzoWizStep+1)+': '+curRStep.title));
+          rStepCard.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},curRStep.note));
+          const rBtnRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center'}});
+          if(S._renzoWizStep>0) rBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._renzoWizStep--;refreshConnectionsSummary();}},'← Back'));
+          rBtnRow.appendChild(el('button',{class:'btn-xs btn-blue',onclick:curRStep.onclick},curRStep.btn));
+          if(S._renzoWizStep<renzoSteps.length-1) rBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._renzoWizStep++;refreshConnectionsSummary();}},'Skip →'));
+          rStepCard.appendChild(rBtnRow);
+          renzoWizSec.appendChild(rStepCard);
+          b.appendChild(renzoWizSec);
         },
         function(){return !!(S.settings&&S.settings.renzoConnectorUrl);}
       ));
@@ -25912,6 +26041,10 @@ function _buildConnectionsSection(){
       connBody.appendChild(buildIntegrationSubsection('Supabase',
         function(){return S.settings&&S.settings.supabaseUrl?'Connected':'Not connected';},
         function(b){
+          // Item 4: migrated intro line from the old standalone Supabase
+          // Database section.
+          b.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px'}},
+            'Optional: connect a Supabase database for faster loads and a proper database backend. CMS continues to work without it — Excel/Drive remains the primary storage.'));
           const sbUrlRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
           sbUrlRow.appendChild(el('label',{style:{minWidth:'80px'}},'Project URL'));
           const sbUrlInp=el('input',{value:S.settings.supabaseUrl||'',style:{flex:'1',fontSize:'10px'}});
@@ -25941,18 +26074,210 @@ function _buildConnectionsSection(){
           }},'Test Connection'));
           dbBtns.appendChild(el('button',{class:'btn-xs',style:{background:'var(--blue)',color:'#fff'},title:'Load all vendor data from Supabase into the app',onclick:function(){if(typeof loadFromSupabase==='function')loadFromSupabase();else toast('loadFromSupabase not found','#f59e0b');}},'Load from Database'));
           dbBtns.appendChild(el('button',{class:'btn-xs btn-green',style:{flexWrap:'wrap'},title:'Push current in-memory vendor data to Supabase',onclick:function(){if(typeof seedSupabase==='function')seedSupabase();else toast('seedSupabase not found','#f59e0b');}},'Seed ALL to Supabase'));
-          dbBtns.appendChild(el('button',{class:'btn-xs btn-ghost',title:'Show row counts for vendors, contacts, and notes tables',onclick:async function(){
-            try{
-              const r=await SB.query('vendors','select=id');
-              toast('Vendors: '+(r||[]).length,'#10b981',5000);
-            }catch(e){toast('Count error: '+e.message,'#ef4444');}
-          }},'Check Record Counts'));
+          // Item 4: upgraded to the old standalone section's full 9-table
+          // breakdown (the version here previously only checked 'vendors').
+          const countsDiv=el('div',{style:{fontSize:'10px',color:'var(--muted)',marginTop:'6px',padding:'6px 8px',background:'var(--card)',borderRadius:'4px',border:'1px solid var(--border)',display:'none'}});
+          const checkCountsBtn=el('button',{class:'btn-xs btn-ghost',title:'Show row counts for every Supabase table CMS uses',onclick:async function(){
+            if(!SB.ready()){toast('Configure Supabase first','#f59e0b');return;}
+            checkCountsBtn.disabled=true;checkCountsBtn.textContent='Checking...';
+            const tables=['vendors','vendor_contacts','vendor_notes','vendor_documents','vendor_audit','itw_vendors','reviews','channel_partners','activity_log'];
+            const counts=await Promise.all(tables.map(t=>SB.count(t)));
+            countsDiv.style.display='block';
+            countsDiv.innerHTML='<b>Record counts:</b><br>'+tables.map((t,i)=>{
+              const n=counts[i];
+              return '<span style="display:inline-block;min-width:180px">'+t+':</span> <b>'+(n===null?'table missing':n)+'</b>';
+            }).join('<br>');
+            checkCountsBtn.disabled=false;checkCountsBtn.textContent='📊 Check Record Counts';
+          }},'📊 Check Record Counts');
+          dbBtns.appendChild(checkCountsBtn);
           dbBtns.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'},title:'Clear Supabase credentials (will break data loading)',onclick:async function(){
             S.settings.supabaseUrl='';S.settings.supabaseKey='';
             refreshConnectionsSummary();toast('Supabase disconnected — data will not load (this session only)','#ef4444');
           }},'Disconnect'));
           dbBtns.appendChild(el('button',{class:'btn-xs',title:'Export vendors, contacts, notes, channel partners, reviews, and pipeline to a multi-sheet Excel file',onclick:function(){if(typeof exportAllSupabaseData==='function')exportAllSupabaseData();else toast('exportAllSupabaseData not found','#f59e0b');}},'⬇ Export All Data'));
           b.appendChild(dbBtns);
+          b.appendChild(countsDiv);
+  // SQL schema
+  const schemaDetails=el('details',{style:{marginTop:'4px'}});
+  schemaDetails.appendChild(el('summary',{style:{cursor:'pointer',fontSize:'10px',color:'var(--muted)',userSelect:'none'}},'View SQL Schema (run in Supabase SQL editor)'));
+  const sqlBox=el('textarea',{readonly:true,style:{width:'100%',height:'200px',marginTop:'6px',padding:'6px',
+    fontSize:'9px',fontFamily:'monospace',background:'var(--sb)',color:'var(--text)',
+    border:'1px solid var(--border)',borderRadius:'4px',resize:'vertical',boxSizing:'border-box'}});
+  sqlBox.value=`-- VCS Database Schema v2.0 — run in Supabase SQL Editor
+-- Drop existing tables first if re-running (comment out if you want to keep data)
+-- DROP TABLE IF EXISTS activity_log, vendor_audit, vendor_documents, vendor_notes, vendor_contacts, schema_fields, channel_partners, reviews, itw_vendors, vendors CASCADE;
+
+CREATE OR REPLACE FUNCTION update_updated_at()
+RETURNS TRIGGER AS $$ BEGIN NEW.updated_at = NOW(); RETURN NEW; END; $$ LANGUAGE plpgsql;
+
+CREATE TABLE IF NOT EXISTS vendors (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT NOT NULL, aka TEXT, gpo TEXT, source TEXT DEFAULT 'psd',
+  category TEXT, sub_category TEXT, product TEXT, class_of_trade TEXT, markets TEXT, added_value TEXT,
+  contract_name TEXT, contract_no TEXT, agreement_type TEXT, assignment TEXT, exclusivity TEXT,
+  termination_notice TEXT, in_contract_since DATE, effective_date DATE, expiry DATE,
+  auto_renew TEXT, auto_renew_type TEXT, status TEXT, contract_term TEXT, current_term TEXT,
+  admin_fee TEXT, admin_fee_notes TEXT, tiers TEXT, perpetuity TEXT, tail TEXT, report_frequency TEXT,
+  proc_contact TEXT, title TEXT, biz_phone TEXT, mobile TEXT, email TEXT,
+  shared2 TEXT, title2 TEXT, mobile2 TEXT, email2 TEXT,
+  last_comm DATE, follow_up DATE, website TEXT, about TEXT, comments TEXT, notes TEXT,
+  trainual_url TEXT, vendor_alias_of TEXT, sf_account_id TEXT, vendor_aliases JSONB,
+  score NUMERIC DEFAULT 0, tier TEXT, extra_fields JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_by TEXT, excel_row INTEGER, last_synced_from_excel TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS vendors_name_idx ON vendors(name);
+CREATE INDEX IF NOT EXISTS vendors_source_idx ON vendors(source);
+CREATE INDEX IF NOT EXISTS vendors_status_idx ON vendors(status);
+CREATE TRIGGER tr_vendors_updated_at BEFORE UPDATE ON vendors FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TABLE IF NOT EXISTS vendor_contacts (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  vendor_id UUID REFERENCES vendors(id) ON DELETE CASCADE,
+  vendor_name TEXT NOT NULL, display_order INTEGER DEFAULT 0,
+  contact_type TEXT, name TEXT, title TEXT, department TEXT, company TEXT,
+  phones JSONB DEFAULT '[]', emails JSONB DEFAULT '[]', other JSONB DEFAULT '[]',
+  photo_url TEXT, notes TEXT, is_primary BOOLEAN DEFAULT false, is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(), created_by TEXT
+);
+CREATE INDEX IF NOT EXISTS contacts_vendor_name_idx ON vendor_contacts(vendor_name);
+CREATE TRIGGER tr_contacts_updated_at BEFORE UPDATE ON vendor_contacts FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TABLE IF NOT EXISTS vendor_notes (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  vendor_id UUID REFERENCES vendors(id) ON DELETE CASCADE,
+  vendor_name TEXT NOT NULL, note_type TEXT NOT NULL DEFAULT 'general',
+  body_html TEXT NOT NULL, body_plain TEXT, tag TEXT,
+  is_pinned BOOLEAN DEFAULT false, is_private BOOLEAN DEFAULT false,
+  author_email TEXT, author_name TEXT, author_role TEXT,
+  source TEXT DEFAULT 'vcs', source_id TEXT, source_url TEXT,
+  note_date DATE, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
+  deleted_at TIMESTAMPTZ, version INTEGER DEFAULT 1, previous_version_id UUID
+);
+CREATE INDEX IF NOT EXISTS notes_vendor_name_idx ON vendor_notes(vendor_name);
+CREATE INDEX IF NOT EXISTS notes_date_idx ON vendor_notes(note_date DESC);
+CREATE TRIGGER tr_notes_updated_at BEFORE UPDATE ON vendor_notes FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TABLE IF NOT EXISTS vendor_documents (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  vendor_id UUID REFERENCES vendors(id) ON DELETE CASCADE,
+  vendor_name TEXT NOT NULL, document_type TEXT NOT NULL,
+  file_name TEXT NOT NULL, file_size INTEGER, mime_type TEXT, file_extension TEXT,
+  storage_type TEXT DEFAULT 'supabase', storage_path TEXT, public_url TEXT,
+  title TEXT, description TEXT, version TEXT, is_current_version BOOLEAN DEFAULT true,
+  supersedes_id UUID REFERENCES vendor_documents(id),
+  contract_effective_date DATE, contract_expiry_date DATE, signed_by_vendor TEXT, signed_by_ps TEXT,
+  uploaded_by TEXT, uploaded_at TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(), deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS docs_vendor_name_idx ON vendor_documents(vendor_name);
+
+CREATE TABLE IF NOT EXISTS vendor_audit (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
+  vendor_name TEXT NOT NULL, table_name TEXT DEFAULT 'vendors', record_id UUID,
+  field_name TEXT NOT NULL, old_value TEXT, new_value TEXT,
+  change_type TEXT DEFAULT 'update', changed_by_email TEXT, changed_by_name TEXT,
+  changed_by_role TEXT, changed_at TIMESTAMPTZ DEFAULT NOW(),
+  source TEXT DEFAULT 'vcs', session_id TEXT, ip_address TEXT
+);
+CREATE INDEX IF NOT EXISTS audit_vendor_name_idx ON vendor_audit(vendor_name);
+CREATE INDEX IF NOT EXISTS audit_changed_at_idx ON vendor_audit(changed_at DESC);
+
+CREATE TABLE IF NOT EXISTS itw_vendors (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT NOT NULL, category TEXT, sub_category TEXT, product TEXT,
+  status TEXT, assignment TEXT, proc_contact TEXT, title TEXT,
+  biz_phone TEXT, mobile TEXT, email TEXT, website TEXT, about TEXT, notes TEXT,
+  follow_up DATE, last_comm DATE, sf_account_id TEXT, sf_opportunity_id TEXT,
+  psd_vendor_id UUID REFERENCES vendors(id), psd_name TEXT,
+  extra_fields JSONB DEFAULT '{}', score NUMERIC DEFAULT 0, tier TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_by TEXT, excel_row INTEGER
+);
+CREATE INDEX IF NOT EXISTS itw_name_idx ON itw_vendors(name);
+CREATE TRIGGER tr_itw_updated_at BEFORE UPDATE ON itw_vendors FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TABLE IF NOT EXISTS reviews (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  vendor_name TEXT NOT NULL, vendor_id UUID REFERENCES vendors(id),
+  reviewer TEXT, reviewer_email TEXT, review_date DATE, next_review DATE,
+  status TEXT, notes TEXT, progress_notes TEXT, contract_notes TEXT, sf_notes TEXT,
+  talking_points JSONB, score NUMERIC DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_by TEXT, excel_row INTEGER
+);
+CREATE INDEX IF NOT EXISTS reviews_vendor_name_idx ON reviews(vendor_name);
+CREATE TRIGGER tr_reviews_updated_at BEFORE UPDATE ON reviews FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TABLE IF NOT EXISTS channel_partners (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT NOT NULL, gpo TEXT, category TEXT, sub_category TEXT,
+  product TEXT, website TEXT, about TEXT, aka TEXT,
+  score NUMERIC DEFAULT 0, tier TEXT, source TEXT DEFAULT 'channel',
+  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS schema_fields (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  table_name TEXT NOT NULL, field_key TEXT NOT NULL, field_label TEXT NOT NULL,
+  field_type TEXT NOT NULL, field_options JSONB,
+  is_core BOOLEAN DEFAULT false, is_searchable BOOLEAN DEFAULT true,
+  is_visible_by_default BOOLEAN DEFAULT true, display_order INTEGER DEFAULT 100,
+  section TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), created_by TEXT,
+  UNIQUE(table_name, field_key)
+);
+
+CREATE TABLE IF NOT EXISTS activity_log (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
+  vendor_name TEXT NOT NULL,
+  itw_vendor_id UUID REFERENCES itw_vendors(id) ON DELETE SET NULL,
+  activity_type TEXT NOT NULL,
+  direction TEXT, contact_name TEXT, contact_email TEXT, contact_phone TEXT, contact_title TEXT,
+  vendor_contact_id UUID REFERENCES vendor_contacts(id) ON DELETE SET NULL,
+  ps_user_email TEXT, ps_user_name TEXT,
+  activity_date DATE NOT NULL, activity_time TIMETZ, duration_minutes INTEGER,
+  subject TEXT, summary TEXT, transcript TEXT, body_html TEXT,
+  outcome TEXT, next_action TEXT, follow_up_date DATE,
+  source TEXT DEFAULT 'manual', source_id TEXT, source_url TEXT,
+  recording_url TEXT, recording_transcript_url TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
+  created_by TEXT, is_private BOOLEAN DEFAULT false, tags JSONB DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS activity_vendor_name_idx ON activity_log(vendor_name);
+CREATE INDEX IF NOT EXISTS activity_date_idx ON activity_log(activity_date DESC);
+CREATE INDEX IF NOT EXISTS activity_type_idx ON activity_log(activity_type);
+CREATE INDEX IF NOT EXISTS activity_ps_user_idx ON activity_log(ps_user_email);
+CREATE TRIGGER tr_activity_updated_at BEFORE UPDATE ON activity_log FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- RLS: allow anon key full access (VCS manages its own auth)
+ALTER TABLE vendors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vendor_contacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vendor_notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vendor_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vendor_audit ENABLE ROW LEVEL SECURITY;
+ALTER TABLE itw_vendors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reviews ENABLE ROW LEVEL SECURITY;
+ALTER TABLE channel_partners ENABLE ROW LEVEL SECURITY;
+ALTER TABLE schema_fields ENABLE ROW LEVEL SECURITY;
+ALTER TABLE activity_log ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "anon_all" ON vendors FOR ALL USING (true);
+CREATE POLICY "anon_all" ON vendor_contacts FOR ALL USING (true);
+CREATE POLICY "anon_all" ON vendor_notes FOR ALL USING (true);
+CREATE POLICY "anon_all" ON vendor_documents FOR ALL USING (true);
+CREATE POLICY "anon_all" ON vendor_audit FOR ALL USING (true);
+CREATE POLICY "anon_all" ON itw_vendors FOR ALL USING (true);
+CREATE POLICY "anon_all" ON reviews FOR ALL USING (true);
+CREATE POLICY "anon_all" ON channel_partners FOR ALL USING (true);
+CREATE POLICY "anon_all" ON schema_fields FOR ALL USING (true);
+CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
+  const copyBtn=el('button',{class:'btn-xs btn-ghost',style:{marginTop:'4px'},
+    onclick:function(){navigator.clipboard.writeText(sqlBox.value);toast('SQL copied','#10b981');}
+  },'Copy SQL');
+  schemaDetails.appendChild(sqlBox);
+  schemaDetails.appendChild(copyBtn);
+  b.appendChild(schemaDetails);
         },
         function(){return !!(S.settings&&S.settings.supabaseUrl);}
       ));
@@ -25965,6 +26290,11 @@ function _buildConnectionsSection(){
     connBody.appendChild(buildIntegrationSubsection('Google Drive',
       function(){return S.settings&&S.settings.driveFileId?'Connected (file linked)':'Not connected';},
       function(b){
+        // Item 4: migrated intro line from the old standalone Google Drive
+        // Configuration section (the rest of that section's unique content —
+        // driveFileName, manual load/save buttons — was already migrated
+        // earlier this session; this line was the one piece still missing).
+        b.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'6px',lineHeight:'1.5'}},'Connect your Vendor Catalogue to Google Drive. CMS will load directly from Drive and save back to Drive — no manual file management.'));
         const gdFileRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
         gdFileRow.appendChild(el('label',{style:{minWidth:'80px'}},'File ID'));
         const gdFileInp=el('input',{value:S.settings.driveFileId||'',style:{flex:'1',fontSize:'10px'}});
@@ -26031,6 +26361,8 @@ function _buildConnectionsSection(){
             executeSave();
           }},'💾 Save to Google Drive'));
           b.appendChild(gdriveActionRow);
+          // Item 4: migrated closing note from the old standalone section.
+          b.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.5',marginTop:'4px'}},'Your config is saved to your browser and to Drive — it persists across sessions and devices. Other users share the same Drive file and sign in with their own Google accounts (which you grant access).'));
         }
       },
       function(){return !!(S.settings&&S.settings.driveFileId);}
@@ -26335,17 +26667,18 @@ window._buildConnectionsSection = _buildConnectionsSection;
       // ── Field Visibility Defaults for this role ──────────────────────────
       _roleBody.appendChild(_roleSub('🔒 Field Visibility Defaults (all '+role+' users)', false, function(b){
       const _rfKey='vcs_role_fields_'+role;
-      // S50 QA fix: this used to initialize from ONLY this localStorage key
-      // (defaulting to an empty array when unset), completely disconnected
-      // from getDefaultHiddenFields(role) — the actual hardcoded,
-      // spreadsheet-derived defaults that get applied to real users on role
-      // assignment. Since this key starts unset for every role, this
-      // section showed "everything visible" regardless of what a role's
-      // real restrictions actually were — exactly the mismatch reported
-      // between a user's actual assigned permissions and what this page
-      // displayed as the role's default. Now seeds from the real default
-      // the first time this section is viewed for a role, so the two only
-      // diverge after an admin explicitly changes something here on purpose.
+      // This used to initialize from ONLY this localStorage key (defaulting
+      // to an empty array when unset), completely disconnected from
+      // getDefaultHiddenFields(role) — the actual hardcoded, spreadsheet-
+      // derived defaults that get applied to real users on role assignment.
+      // Since this key started unset for every role, this section showed
+      // "everything visible" regardless of what a role's real restrictions
+      // actually were. Now seeds from the real default the first time this
+      // section is viewed for a role, and immediately persists that seed so
+      // this key is never actually unset again — this also means the
+      // toggle handlers below (and the "See Financials" bulk toggle further
+      // down, which reads this same key) always see a real, fully-seeded
+      // array rather than risking an empty one on a role's first edit.
       const _rfStored=localStorage.getItem(_rfKey);
       const _roleHF=_rfStored!==null ? new Set(JSON.parse(_rfStored)) : new Set(getDefaultHiddenFields(role));
       if(_rfStored===null){ localStorage.setItem(_rfKey, JSON.stringify([..._roleHF])); }
@@ -26366,7 +26699,13 @@ window._buildConnectionsSection = _buildConnectionsSection;
           fbtn.addEventListener('click',function(e){
             e.stopPropagation();e.preventDefault();
             const newH=!fbtn._hidden;
-            try{const rh=new Set(JSON.parse(localStorage.getItem(_rfKey)||'[]'));if(newH){rh.add(fKey);}else{rh.delete(fKey);}localStorage.setItem(_rfKey,JSON.stringify([...rh]));}catch(e2){}
+            // CRITICAL FIX: seed from the real current default (not an empty
+            // set) when this role has never been explicitly saved here --
+            // otherwise the very first toggle would persist ONLY this one
+            // field, and every other field this role's hardcoded defaults
+            // were hiding would silently become visible the moment
+            // getDefaultHiddenFields() reads this now-non-null key back.
+            try{const _rawNow=localStorage.getItem(_rfKey);const rh=new Set(_rawNow!==null?JSON.parse(_rawNow):getDefaultHiddenFields(role));if(newH){rh.add(fKey);}else{rh.delete(fKey);}localStorage.setItem(_rfKey,JSON.stringify([...rh]));}catch(e2){}
             try{const allU=getApprovedUsers();allU.forEach(u=>{if((u.role||'admin')!==role)return;if(!u.hiddenFields)u.hiddenFields=[];if(newH){if(!u.hiddenFields.includes(fKey))u.hiddenFields.push(fKey);}else{u.hiddenFields=u.hiddenFields.filter(k=>k!==fKey);}touchUser(u.email);});localStorage.setItem(AUTH_KEY,JSON.stringify(allU));scheduleUserSave(2000);}catch(e3){}
             fbtn._hidden=newH;upF(newH);
             toast('✓ '+lbl+' '+(newH?'hidden':'visible')+' for all '+role+' users','#22c55e');
@@ -26417,6 +26756,12 @@ window._buildConnectionsSection = _buildConnectionsSection;
         // storage) rather than a second, independent flag that could drift
         // out of sync with the field-level control.
         const _rfKey2='vcs_role_fields_'+role;
+        // Same seeding fix as Field Visibility Defaults above — seed from
+        // the real default when never explicitly saved, instead of an empty
+        // set. In practice this key is always already-seeded by the Field
+        // Visibility Defaults section above (which persists on first view
+        // and is always constructed first within a role's body), so this
+        // fallback only matters if that section's builder is ever reordered.
         const _rfStored2=localStorage.getItem(_rfKey2);
         const _roleHF2=_rfStored2!==null ? new Set(JSON.parse(_rfStored2)) : new Set(getDefaultHiddenFields(role));
         const finKeys2=FIELD_GROUPS['Financials']||[];
@@ -26426,7 +26771,11 @@ window._buildConnectionsSection = _buildConnectionsSection;
           label:'See Financials', isViewable:!finHidden, isOverridden:false, showEditCheckbox:false,
           onToggleView:function(){
             const makeHidden=!finHidden;
-            const rh=new Set(JSON.parse(localStorage.getItem(_rfKey2)||'[]'));
+            // CRITICAL FIX: seed from the real current default (not an empty
+            // set) so this bulk toggle doesn't wipe out every OTHER field
+            // this role was hiding the first time an admin uses it.
+            const _rfKey2RawNow=localStorage.getItem(_rfKey2);
+            const rh=new Set(_rfKey2RawNow!==null ? JSON.parse(_rfKey2RawNow) : getDefaultHiddenFields(role));
             finKeys2.forEach(function(k){ if(makeHidden){rh.add(k);}else{rh.delete(k);} });
             localStorage.setItem(_rfKey2,JSON.stringify([...rh]));
             try{
@@ -27146,487 +27495,26 @@ function buildUserSubSection(label,bodyBuilderFn){
     c.appendChild(noAccess);
   }
 
-  // ── Salesforce Configuration ──
-  if (hasPermission('configSF') || USER.role==='admin') {
-    const secSF=el('div',{class:'settings-section'});
-    secSF.appendChild(el('h3',{},'☁ Salesforce Integration'));
-    secSF.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Connect to Salesforce with OAuth 2.0 (read-only). Each user authenticates with their own credentials — you only see data your SF profile allows. CMS never writes to Salesforce; it only reads and displays data for your reference.'));
-    secSF.appendChild(el('div',{style:{fontSize:'9px',color:'var(--green)',marginBottom:'8px',padding:'4px 8px',background:'rgba(34,197,94,.06)',border:'1px solid rgba(34,197,94,.2)',borderRadius:'3px'}},'🔒 Read-only: CMS will never create, update, or delete any Salesforce records.'));
-    // Connection status
-    const statusBox=el('div',{style:{padding:'8px 10px',borderRadius:'5px',marginBottom:'10px',background:USER.sfToken?'rgba(34,197,94,.07)':'rgba(239,68,68,.06)',border:'1px solid '+(USER.sfToken?'rgba(34,197,94,.25)':'rgba(239,68,68,.2)')}});
-    if(USER.sfToken) {
-      const orgDomain=USER.sfInstance?(USER.sfInstance.replace(/https?:\/\//,'').split('/')[0].split('.my.salesforce.com')[0]):'';
-      const orgName=USER.sfOrgName||orgDomain||'Salesforce';
-      statusBox.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',color:'var(--green)',marginBottom:'3px'}},'✅ Connected as '+USER.email));
-      if(orgName)statusBox.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'5px'}},'Org: '+orgName+(USER.sfInstance?' · '+USER.sfInstance.replace(/https?:\/\//,'').split('/')[0]:'')));
-      const lastSync=S._sfBoardLoadedAt||S._sfLastSync;
-      if(lastSync)statusBox.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'5px'}},'Last sync: '+fmtDate(new Date(lastSync))));
-      const statusBtns=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}});
-      const testBtn=el('button',{class:'btn-xs btn-ghost'},  '🔄 Test Connection');
-      const testResult=el('span',{style:{fontSize:'9px',color:'var(--muted)',alignSelf:'center'}});
-      testBtn.onclick=async()=>{
-        testBtn.disabled=true;testBtn.textContent='⏳ Testing...';testResult.textContent='';
-        try{const r=await sfQuery("SELECT Id,Name FROM User WHERE Id='"+USER.userId+"' LIMIT 1");testResult.textContent='✅ '+(r.records?.[0]?.Name||r.totalSize+' record found');testResult.style.color='var(--green)';}
-        catch(e){testResult.textContent='❌ '+e.message;testResult.style.color='var(--red)';}
-        testBtn.disabled=false;testBtn.textContent='🔄 Test Connection';
-      };
-      statusBtns.appendChild(testBtn);statusBtns.appendChild(testResult);
-      statusBtns.appendChild(el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'auto'},onclick(){USER.sfToken=null;USER.sfInstance=null;sessionStorage.removeItem('vcs_sf_token');renderSettings(c);toast('Disconnected');}},'Disconnect'));
-      statusBox.appendChild(statusBtns);
-    } else {
-      statusBox.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',color:'var(--red)',marginBottom:'5px'}},'❌ Not connected to Salesforce'));
-      const statusBtns=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap'}});
-      statusBtns.appendChild(el('button',{class:'btn-xs btn-blue',onclick(){sfConnect();}},'🔗 Connect to Salesforce'));
-      statusBtns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){showSFSetupGuide();}},'📋 Setup Guide'));
-      statusBox.appendChild(statusBtns);
-    }
-    secSF.appendChild(statusBox);
-    // Config fields
-    ['sfClientId','sfRedirectUri','sfLoginUrl'].forEach(key=>{
-      const labels={sfClientId:'Client ID (from Connected App)',sfRedirectUri:'Redirect URI (default: this page URL)',sfLoginUrl:'Login URL (default: login.salesforce.com)'};
-      const row=el('div',{style:{marginBottom:'6px'}});
-      row.appendChild(el('label',{style:{fontSize:'9px',color:'var(--muted)',display:'block',marginBottom:'2px'}},labels[key]||key));
-      const inp=el('input',{type:'text',class:'modal-input',style:{fontSize:'10px',height:'24px'},placeholder:key==='sfLoginUrl'?'https://login.salesforce.com':'',value:S.settings[key]||''});
-      inp.addEventListener('change',()=>{
-      S.settings[key]=inp.value.trim();
-      debouncedSaveSettings();
-      // Immediately save to localStorage so it persists on reload
-      try{localStorage.setItem('vcs_settings_v2',JSON.stringify(S.settings));}catch(e){}
-    });
-      row.appendChild(inp);
-      secSF.appendChild(row);
-    });
-    secSF.appendChild(el('p',{style:{fontSize:'9px',color:'var(--amber)',marginTop:'8px',lineHeight:'1.5'}},
-      '⚠ SF sessions expire after your org\'s session timeout (default 2 hours). To extend: Salesforce Setup → Session Settings → Session Timeout → set to 8 hours or Never. CMS will use the stored token until it expires.'));
-    makeCollapsibleSection(secSF,'☁ Salesforce Integration','vcs_s_sf',true);
-    c.appendChild(secSF);
-  }
+  // Item 4: old standalone Salesforce Configuration section removed — all
+  // genuinely unique content (read-only disclaimer, org/last-sync detail,
+  // Setup Guide button, session-timeout warning) migrated into Connections
+  // & API Keys → Salesforce, verified rendering there first.
 
-  // ── Google Drive Configuration (Admin only) ──
-  if(hasPermission('configDrive')) {
-  const secDrive=el('div',{class:'settings-section'});
-  secDrive.appendChild(el('h3',{},'☁ Google Drive Connection'));
-  secDrive.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},'Connect your Vendor Catalogue to Google Drive. CMS will load directly from Drive and save back to Drive — no manual file management.'));
+  // Item 4: old standalone Google Drive Configuration section removed — all
+  // content (intro/closing text, File ID/name/Client ID fields, auto-sync
+  // toggle, Save & Connect) migrated into Connections & API Keys → Google
+  // Drive, verified rendering there first.
 
-  // Drive status
-  const driveStatus=el('div',{style:{fontSize:'10px',marginBottom:'8px',padding:'6px 8px',borderRadius:'4px',background:S.settings.driveFileId&&S.settings.googleClientId?'rgba(34,197,94,.08)':'rgba(255,255,255,.04)',border:'1px solid '+(S.settings.driveFileId&&S.settings.googleClientId?'rgba(34,197,94,.3)':'var(--border)')}});
-  driveStatus.textContent = S.settings.driveFileId&&S.settings.googleClientId ? '✅ Drive configured — "Load from Google Drive" button is active' : '⚠ Not configured — add File ID and Google Client ID below';
-  secDrive.appendChild(driveStatus);
+  // Item 4: old standalone Supabase Database section removed — all content
+  // (intro text, URL/key fields, Test/Load/Seed buttons, the full 9-table
+  // Check Record Counts, SQL schema/RLS reference) migrated into Connections
+  // & API Keys → Supabase, verified rendering there first.
 
-  [
-    ['Google Drive File ID', 'driveFileId', 'text', '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms', 'The ID from the file URL in Drive: drive.google.com/file/d/[THIS PART]/view'],
-    ['File name in Drive', 'driveFileName', 'text', 'Vendor_Catalogue.xlsm', 'Display name for the file in Drive'],
-    ['Google Client ID', 'googleClientId', 'text', '000000000000-xxxxxxxxxx.apps.googleusercontent.com', 'From Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID'],
-  ].forEach(([label, key, type, placeholder, hint])=>{
-    const row=el('div',{style:{marginBottom:'8px'}});
-    row.appendChild(el('label',{style:{fontSize:'9px',color:'var(--muted)',display:'block',marginBottom:'2px'}},label));
-    const inp=el('input',{type,class:'modal-input',style:{fontSize:'10px'},placeholder,value:S.settings[key]||''});
-    inp.addEventListener('change',()=>{S.settings[key]=inp.value.trim();debouncedSaveSettings();});
-    row.appendChild(inp);
-    if(hint) row.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'2px'}},hint));
-    secDrive.appendChild(row);
-  });
-
-  // Auto-sync toggle
-  const syncRow=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',marginBottom:'6px'}});
-  const syncCb=el('input',{type:'checkbox'});syncCb.checked=S.settings.driveAutoSync||false;
-  syncCb.addEventListener('change',()=>{S.settings.driveAutoSync=syncCb.checked;debouncedSaveSettings();});
-  syncRow.appendChild(syncCb);
-  syncRow.appendChild(el('label',{style:{fontSize:'10px',cursor:'pointer'}},'Auto-sync to Drive when you click Save'));
-  secDrive.appendChild(syncRow);
-
-  // Save & Connect button
-  const driveSaveBtnRow=el('div',{style:{display:'flex',gap:'8px',marginTop:'10px',marginBottom:'4px'}});
-  const driveSaveBtn=el('button',{class:'btn-primary',style:{flex:'1'},onclick:async()=>{
-    try{localStorage.setItem('vcs_settings_v2',JSON.stringify(S.settings));}catch(e){}
-    debouncedSaveSettings();
-    if(!S.settings.driveFileId||!S.settings.googleClientId){
-      toast('⚠ Enter Google Drive File ID and Client ID first','#f59e0b'); return;
-    }
-    driveSaveBtn.disabled=true; driveSaveBtn.textContent='⏳ Connecting...';
-    try{
-      await getGDriveToken();
-      await saveConfigToDrive();
-      driveStatus.textContent='✅ Drive configured — "Load from Google Drive" is active';
-      driveStatus.style.background='rgba(34,197,94,.08)'; driveStatus.style.borderColor='rgba(34,197,94,.3)';
-      toast('✅ Drive settings saved','#22c55e');
-      driveSaveBtn.disabled=false; driveSaveBtn.textContent='💾 Save & Connect Drive';
-    }catch(e){
-      toast('Drive connection failed: '+e.message,'#ef4444');
-      driveSaveBtn.disabled=false; driveSaveBtn.textContent='💾 Save & Connect Drive';
-    }
-  }},'💾 Save & Connect Drive');
-  driveSaveBtnRow.appendChild(driveSaveBtn);
-  secDrive.appendChild(driveSaveBtnRow);
-  secDrive.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',lineHeight:'1.5',marginTop:'4px'}},'Your config is saved to your browser and to Drive — it persists across sessions and devices. Other users share the same Drive file and sign in with their own Google accounts (which you grant access).'));
-  makeCollapsibleSection(secDrive,'📁 Google Drive','vcs_s_drive',true);
-  c.appendChild(secDrive);
-  } // end configDrive admin block
-
-  // ── Supabase Database ──────────────────────────────────────────────────────
-  // S48 Part D: HARD-CODED exclusion, same as the Connections & API Keys
-  // Supabase sub-section — hasPermission('configDrive') resolves straight
-  // to USER.role==='admin' (see hasPermission()'s special-case). Assistant
-  // Admin must NEVER gain access to this shared-DB-credential section. Do
-  // not add isAssistantAdmin() here.
-  if(hasPermission('configDrive')) {
-  const secSupa=el('div',{class:'settings-section'});
-  secSupa.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px'}},
-    'Optional: connect a Supabase database for faster loads and a proper database backend. '+
-    'CMS continues to work without it — Excel/Drive remains the primary storage.'));
-  // URL field
-  const supaUrlRow=el('div',{style:{marginBottom:'8px'}});
-  supaUrlRow.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'2px'}},'Supabase Project URL'));
-  const supaUrlInput=el('input',{type:'text',placeholder:'https://xxx.supabase.co',
-    style:{width:'100%',padding:'5px 8px',border:'1px solid var(--border)',borderRadius:'4px',
-           background:'var(--bg)',color:'var(--text)',fontSize:'11px'}});
-  supaUrlInput.value=S.settings.supabaseUrl||'';
-  supaUrlInput.addEventListener('input',function(){S.settings.supabaseUrl=supaUrlInput.value.trim();debouncedSaveSettings();});
-  supaUrlRow.appendChild(supaUrlInput);
-  secSupa.appendChild(supaUrlRow);
-  // Key field
-  const supaKeyRow=el('div',{style:{marginBottom:'8px'}});
-  supaKeyRow.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'2px'}},'Supabase Anon Key'));
-  const supaKeyInput=el('input',{type:'password',placeholder:'eyJ...',
-    style:{width:'100%',padding:'5px 8px',border:'1px solid var(--border)',borderRadius:'4px',
-           background:'var(--bg)',color:'var(--text)',fontSize:'11px'}});
-  supaKeyInput.value=S.settings.supabaseKey||'';
-  supaKeyInput.addEventListener('input',function(){S.settings.supabaseKey=supaKeyInput.value.trim();debouncedSaveSettings();});
-  supaKeyRow.appendChild(supaKeyInput);
-  secSupa.appendChild(supaKeyRow);
-  // Buttons
-  const supaBtnRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginBottom:'10px'}});
-  supaBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:async function(){
-    // Read directly from inputs in case settings haven't saved yet
-    const testUrl=(supaUrlInput.value||'').trim();
-    const testKey=(supaKeyInput.value||'').trim();
-    if(!testUrl||!testKey){toast('Enter Supabase URL and key first','#f59e0b');return;}
-    S.settings.supabaseUrl=testUrl; S.settings.supabaseKey=testKey;
-    try{
-      const r=await fetch(testUrl+'/rest/v1/vendors?select=id&limit=1',{
-        headers:{'apikey':testKey,'Authorization':'Bearer '+testKey}
-      });
-      if(r.ok||r.status===406) toast('✅ Supabase connected — vendors table accessible','#10b981');
-      else if(r.status===404) toast('⚠ Connected but vendors table not found — run SQL schema first','#f59e0b');
-      else toast('❌ Connection failed: HTTP '+r.status+' — check URL and key','#ef4444');
-    }catch(e){toast('❌ Supabase connection failed: '+e.message,'#ef4444');}
-  }},'🔌 Test Connection'));
-  supaBtnRow.appendChild(el('button',{class:'btn-xs btn-blue',onclick:async function(){
-    const ok=await loadFromSupabase();
-    if(!ok) toast('Load failed — check connection or populate DB first','#f59e0b');
-  }},'⬇ Load from Supabase'));
-  supaBtnRow.appendChild(el('button',{class:'btn-xs btn-blue',style:{background:'var(--green)'},onclick:async function(){
-    if(!SB.ready()){toast('Configure Supabase URL and key first','#f59e0b');return;}
-    if(!S.vendors||!S.vendors.length){toast('Load vendors from Drive first','#f59e0b');return;}
-    if(!confirm('Seed all tables (vendors, contacts, notes, ITW, reviews) to Supabase? This overwrites existing data.')) return;
-    await seedSupabase();
-  }},'🌱 Seed Database'));
-  // Record counts
-  const countsDiv=el('div',{style:{fontSize:'10px',color:'var(--muted)',marginTop:'6px',padding:'6px 8px',background:'var(--card)',borderRadius:'4px',border:'1px solid var(--border)',display:'none'}});
-  const checkCountsBtn=el('button',{class:'btn-xs btn-ghost',onclick:async function(){
-    if(!SB.ready()){toast('Configure Supabase first','#f59e0b');return;}
-    checkCountsBtn.disabled=true;checkCountsBtn.textContent='Checking...';
-    const tables=['vendors','vendor_contacts','vendor_notes','vendor_documents','vendor_audit','itw_vendors','reviews','channel_partners','activity_log'];
-    const counts=await Promise.all(tables.map(t=>SB.count(t)));
-    countsDiv.style.display='block';
-    countsDiv.innerHTML='<b>Record counts:</b><br>'+tables.map((t,i)=>{
-      const n=counts[i];
-      return '<span style="display:inline-block;min-width:180px">'+t+':</span> <b>'+(n===null?'table missing':n)+'</b>';
-    }).join('<br>');
-    checkCountsBtn.disabled=false;checkCountsBtn.textContent='📊 Check Record Counts';
-  }},'📊 Check Record Counts');
-  supaBtnRow.appendChild(checkCountsBtn);
-  secSupa.appendChild(supaBtnRow);
-  secSupa.appendChild(countsDiv);
-  // SQL schema
-  const schemaDetails=el('details',{style:{marginTop:'4px'}});
-  schemaDetails.appendChild(el('summary',{style:{cursor:'pointer',fontSize:'10px',color:'var(--muted)',userSelect:'none'}},'View SQL Schema (run in Supabase SQL editor)'));
-  const sqlBox=el('textarea',{readonly:true,style:{width:'100%',height:'200px',marginTop:'6px',padding:'6px',
-    fontSize:'9px',fontFamily:'monospace',background:'var(--sb)',color:'var(--text)',
-    border:'1px solid var(--border)',borderRadius:'4px',resize:'vertical',boxSizing:'border-box'}});
-  sqlBox.value=`-- VCS Database Schema v2.0 — run in Supabase SQL Editor
--- Drop existing tables first if re-running (comment out if you want to keep data)
--- DROP TABLE IF EXISTS activity_log, vendor_audit, vendor_documents, vendor_notes, vendor_contacts, schema_fields, channel_partners, reviews, itw_vendors, vendors CASCADE;
-
-CREATE OR REPLACE FUNCTION update_updated_at()
-RETURNS TRIGGER AS $$ BEGIN NEW.updated_at = NOW(); RETURN NEW; END; $$ LANGUAGE plpgsql;
-
-CREATE TABLE IF NOT EXISTS vendors (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  name TEXT NOT NULL, aka TEXT, gpo TEXT, source TEXT DEFAULT 'psd',
-  category TEXT, sub_category TEXT, product TEXT, class_of_trade TEXT, markets TEXT, added_value TEXT,
-  contract_name TEXT, contract_no TEXT, agreement_type TEXT, assignment TEXT, exclusivity TEXT,
-  termination_notice TEXT, in_contract_since DATE, effective_date DATE, expiry DATE,
-  auto_renew TEXT, auto_renew_type TEXT, status TEXT, contract_term TEXT, current_term TEXT,
-  admin_fee TEXT, admin_fee_notes TEXT, tiers TEXT, perpetuity TEXT, tail TEXT, report_frequency TEXT,
-  proc_contact TEXT, title TEXT, biz_phone TEXT, mobile TEXT, email TEXT,
-  shared2 TEXT, title2 TEXT, mobile2 TEXT, email2 TEXT,
-  last_comm DATE, follow_up DATE, website TEXT, about TEXT, comments TEXT, notes TEXT,
-  trainual_url TEXT, vendor_alias_of TEXT, sf_account_id TEXT, vendor_aliases JSONB,
-  score NUMERIC DEFAULT 0, tier TEXT, extra_fields JSONB DEFAULT '{}',
-  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_by TEXT, excel_row INTEGER, last_synced_from_excel TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS vendors_name_idx ON vendors(name);
-CREATE INDEX IF NOT EXISTS vendors_source_idx ON vendors(source);
-CREATE INDEX IF NOT EXISTS vendors_status_idx ON vendors(status);
-CREATE TRIGGER tr_vendors_updated_at BEFORE UPDATE ON vendors FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
-CREATE TABLE IF NOT EXISTS vendor_contacts (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  vendor_id UUID REFERENCES vendors(id) ON DELETE CASCADE,
-  vendor_name TEXT NOT NULL, display_order INTEGER DEFAULT 0,
-  contact_type TEXT, name TEXT, title TEXT, department TEXT, company TEXT,
-  phones JSONB DEFAULT '[]', emails JSONB DEFAULT '[]', other JSONB DEFAULT '[]',
-  photo_url TEXT, notes TEXT, is_primary BOOLEAN DEFAULT false, is_active BOOLEAN DEFAULT true,
-  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(), created_by TEXT
-);
-CREATE INDEX IF NOT EXISTS contacts_vendor_name_idx ON vendor_contacts(vendor_name);
-CREATE TRIGGER tr_contacts_updated_at BEFORE UPDATE ON vendor_contacts FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
-CREATE TABLE IF NOT EXISTS vendor_notes (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  vendor_id UUID REFERENCES vendors(id) ON DELETE CASCADE,
-  vendor_name TEXT NOT NULL, note_type TEXT NOT NULL DEFAULT 'general',
-  body_html TEXT NOT NULL, body_plain TEXT, tag TEXT,
-  is_pinned BOOLEAN DEFAULT false, is_private BOOLEAN DEFAULT false,
-  author_email TEXT, author_name TEXT, author_role TEXT,
-  source TEXT DEFAULT 'vcs', source_id TEXT, source_url TEXT,
-  note_date DATE, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
-  deleted_at TIMESTAMPTZ, version INTEGER DEFAULT 1, previous_version_id UUID
-);
-CREATE INDEX IF NOT EXISTS notes_vendor_name_idx ON vendor_notes(vendor_name);
-CREATE INDEX IF NOT EXISTS notes_date_idx ON vendor_notes(note_date DESC);
-CREATE TRIGGER tr_notes_updated_at BEFORE UPDATE ON vendor_notes FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
-CREATE TABLE IF NOT EXISTS vendor_documents (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  vendor_id UUID REFERENCES vendors(id) ON DELETE CASCADE,
-  vendor_name TEXT NOT NULL, document_type TEXT NOT NULL,
-  file_name TEXT NOT NULL, file_size INTEGER, mime_type TEXT, file_extension TEXT,
-  storage_type TEXT DEFAULT 'supabase', storage_path TEXT, public_url TEXT,
-  title TEXT, description TEXT, version TEXT, is_current_version BOOLEAN DEFAULT true,
-  supersedes_id UUID REFERENCES vendor_documents(id),
-  contract_effective_date DATE, contract_expiry_date DATE, signed_by_vendor TEXT, signed_by_ps TEXT,
-  uploaded_by TEXT, uploaded_at TIMESTAMPTZ DEFAULT NOW(),
-  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(), deleted_at TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS docs_vendor_name_idx ON vendor_documents(vendor_name);
-
-CREATE TABLE IF NOT EXISTS vendor_audit (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
-  vendor_name TEXT NOT NULL, table_name TEXT DEFAULT 'vendors', record_id UUID,
-  field_name TEXT NOT NULL, old_value TEXT, new_value TEXT,
-  change_type TEXT DEFAULT 'update', changed_by_email TEXT, changed_by_name TEXT,
-  changed_by_role TEXT, changed_at TIMESTAMPTZ DEFAULT NOW(),
-  source TEXT DEFAULT 'vcs', session_id TEXT, ip_address TEXT
-);
-CREATE INDEX IF NOT EXISTS audit_vendor_name_idx ON vendor_audit(vendor_name);
-CREATE INDEX IF NOT EXISTS audit_changed_at_idx ON vendor_audit(changed_at DESC);
-
-CREATE TABLE IF NOT EXISTS itw_vendors (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  name TEXT NOT NULL, category TEXT, sub_category TEXT, product TEXT,
-  status TEXT, assignment TEXT, proc_contact TEXT, title TEXT,
-  biz_phone TEXT, mobile TEXT, email TEXT, website TEXT, about TEXT, notes TEXT,
-  follow_up DATE, last_comm DATE, sf_account_id TEXT, sf_opportunity_id TEXT,
-  psd_vendor_id UUID REFERENCES vendors(id), psd_name TEXT,
-  extra_fields JSONB DEFAULT '{}', score NUMERIC DEFAULT 0, tier TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_by TEXT, excel_row INTEGER
-);
-CREATE INDEX IF NOT EXISTS itw_name_idx ON itw_vendors(name);
-CREATE TRIGGER tr_itw_updated_at BEFORE UPDATE ON itw_vendors FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
-CREATE TABLE IF NOT EXISTS reviews (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  vendor_name TEXT NOT NULL, vendor_id UUID REFERENCES vendors(id),
-  reviewer TEXT, reviewer_email TEXT, review_date DATE, next_review DATE,
-  status TEXT, notes TEXT, progress_notes TEXT, contract_notes TEXT, sf_notes TEXT,
-  talking_points JSONB, score NUMERIC DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_by TEXT, excel_row INTEGER
-);
-CREATE INDEX IF NOT EXISTS reviews_vendor_name_idx ON reviews(vendor_name);
-CREATE TRIGGER tr_reviews_updated_at BEFORE UPDATE ON reviews FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
-CREATE TABLE IF NOT EXISTS channel_partners (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  name TEXT NOT NULL, gpo TEXT, category TEXT, sub_category TEXT,
-  product TEXT, website TEXT, about TEXT, aka TEXT,
-  score NUMERIC DEFAULT 0, tier TEXT, source TEXT DEFAULT 'channel',
-  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS schema_fields (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  table_name TEXT NOT NULL, field_key TEXT NOT NULL, field_label TEXT NOT NULL,
-  field_type TEXT NOT NULL, field_options JSONB,
-  is_core BOOLEAN DEFAULT false, is_searchable BOOLEAN DEFAULT true,
-  is_visible_by_default BOOLEAN DEFAULT true, display_order INTEGER DEFAULT 100,
-  section TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), created_by TEXT,
-  UNIQUE(table_name, field_key)
-);
-
-CREATE TABLE IF NOT EXISTS activity_log (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  vendor_id UUID REFERENCES vendors(id) ON DELETE SET NULL,
-  vendor_name TEXT NOT NULL,
-  itw_vendor_id UUID REFERENCES itw_vendors(id) ON DELETE SET NULL,
-  activity_type TEXT NOT NULL,
-  direction TEXT, contact_name TEXT, contact_email TEXT, contact_phone TEXT, contact_title TEXT,
-  vendor_contact_id UUID REFERENCES vendor_contacts(id) ON DELETE SET NULL,
-  ps_user_email TEXT, ps_user_name TEXT,
-  activity_date DATE NOT NULL, activity_time TIMETZ, duration_minutes INTEGER,
-  subject TEXT, summary TEXT, transcript TEXT, body_html TEXT,
-  outcome TEXT, next_action TEXT, follow_up_date DATE,
-  source TEXT DEFAULT 'manual', source_id TEXT, source_url TEXT,
-  recording_url TEXT, recording_transcript_url TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW(),
-  created_by TEXT, is_private BOOLEAN DEFAULT false, tags JSONB DEFAULT '[]'
-);
-CREATE INDEX IF NOT EXISTS activity_vendor_name_idx ON activity_log(vendor_name);
-CREATE INDEX IF NOT EXISTS activity_date_idx ON activity_log(activity_date DESC);
-CREATE INDEX IF NOT EXISTS activity_type_idx ON activity_log(activity_type);
-CREATE INDEX IF NOT EXISTS activity_ps_user_idx ON activity_log(ps_user_email);
-CREATE TRIGGER tr_activity_updated_at BEFORE UPDATE ON activity_log FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
--- RLS: allow anon key full access (VCS manages its own auth)
-ALTER TABLE vendors ENABLE ROW LEVEL SECURITY;
-ALTER TABLE vendor_contacts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE vendor_notes ENABLE ROW LEVEL SECURITY;
-ALTER TABLE vendor_documents ENABLE ROW LEVEL SECURITY;
-ALTER TABLE vendor_audit ENABLE ROW LEVEL SECURITY;
-ALTER TABLE itw_vendors ENABLE ROW LEVEL SECURITY;
-ALTER TABLE reviews ENABLE ROW LEVEL SECURITY;
-ALTER TABLE channel_partners ENABLE ROW LEVEL SECURITY;
-ALTER TABLE schema_fields ENABLE ROW LEVEL SECURITY;
-ALTER TABLE activity_log ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "anon_all" ON vendors FOR ALL USING (true);
-CREATE POLICY "anon_all" ON vendor_contacts FOR ALL USING (true);
-CREATE POLICY "anon_all" ON vendor_notes FOR ALL USING (true);
-CREATE POLICY "anon_all" ON vendor_documents FOR ALL USING (true);
-CREATE POLICY "anon_all" ON vendor_audit FOR ALL USING (true);
-CREATE POLICY "anon_all" ON itw_vendors FOR ALL USING (true);
-CREATE POLICY "anon_all" ON reviews FOR ALL USING (true);
-CREATE POLICY "anon_all" ON channel_partners FOR ALL USING (true);
-CREATE POLICY "anon_all" ON schema_fields FOR ALL USING (true);
-CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
-  const copyBtn=el('button',{class:'btn-xs btn-ghost',style:{marginTop:'4px'},
-    onclick:function(){navigator.clipboard.writeText(sqlBox.value);toast('SQL copied','#10b981');}
-  },'Copy SQL');
-  schemaDetails.appendChild(sqlBox);
-  schemaDetails.appendChild(copyBtn);
-  secSupa.appendChild(schemaDetails);
-  makeCollapsibleSection(secSupa,'🗄 Supabase Database','vcs_s_supa',true);
-  c.appendChild(secSupa);
-  } // end Supabase admin block
-
-  // ── Microsoft 365 / Outlook Calendar Integration ──
-  if(hasPermission('configDrive')) {
-  const secMS = el('div',{class:'settings-section'});
-  secMS.appendChild(el('h3',{},'📅 Microsoft 365 — Outlook Calendar'));
-
-  // Status indicator
-  const msStatus = el('div',{style:{fontSize:'10px',marginBottom:'8px',padding:'6px 8px',borderRadius:'4px',background:'var(--card)'}});
-  const updateMSStatus = () => {
-    const tok = getMSToken();
-    const hasRefresh = !!getMSRefresh();
-    const name = getMSUserName();
-    if (tok && Date.now() < getMSTokenExp()) {
-      msStatus.textContent = '✅ Connected' + (name ? ' as ' + name : '') + (hasRefresh ? ' — auto-renews' : '');
-      msStatus.style.color = 'var(--green)';
-    } else if (hasRefresh) {
-      msStatus.innerHTML = '';
-      const refreshMsg = document.createElement('span');
-      refreshMsg.textContent = '🔄 Token expired' + (name ? ' (' + name + ')' : '') + ' — click to reconnect';
-      refreshMsg.style.color = 'var(--amber)';
-      msStatus.appendChild(refreshMsg);
-      const refreshNowBtn = document.createElement('button');
-      refreshNowBtn.className = 'btn-xs btn-primary';
-      refreshNowBtn.style.cssText = 'margin-left:8px;font-size:8px;';
-      refreshNowBtn.textContent = '⚡ Refresh Now';
-      refreshNowBtn.onclick = function(e) {
-        e.stopPropagation();
-        // S48 Part L: was a silent prompt=none popup re-auth (refresh_token
-        // direct call is CORS-blocked by MS) — prone to being blocked or
-        // coming back under-scoped. Now reuses the same interactive
-        // connectMicrosoft365() flow as "Connect Microsoft Account", which
-        // reliably establishes a genuinely working, correctly-scoped session.
-        const clientId = S.settings.msGraphClientId || localStorage.getItem('vcs_ms_clientid_temp') || '';
-        const tenantId = S.settings.msGraphTenantId || localStorage.getItem('vcs_ms_tenantid_temp') || '';
-        if (!clientId || !tenantId) {
-          toast('Enter MS Client ID and Tenant ID in settings first', '#f59e0b');
-          return;
-        }
-        refreshNowBtn.textContent = '⏳ Reconnecting...';
-        refreshNowBtn.disabled = true;
-        connectMicrosoft365(clientId, tenantId, function(ok){
-          refreshNowBtn.disabled = false;
-          if (ok) {
-            updateMSStatus();
-            refreshNowBtn.textContent = '✓ Connected';
-          } else {
-            refreshNowBtn.textContent = '⚡ Refresh Now';
-          }
-        });
-      };
-      msStatus.appendChild(refreshNowBtn);
-      msStatus.style.color = 'var(--amber)';
-    } else {
-      msStatus.textContent = '⚫ Not connected — click Connect to sign in with Microsoft';
-      msStatus.style.color = 'var(--muted)';
-    }
-  };
-  updateMSStatus();
-  secMS.appendChild(msStatus);
-
-  // Client ID + Tenant ID inputs (admin stores these once)
-  const msDesc = el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},
-    'Enter your Azure App Client ID and Tenant ID, then click Connect to sign in with your Microsoft account. Credentials are stored only in this browser.');
-  secMS.appendChild(msDesc);
-
-  const msGrid = el('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'6px',marginBottom:'8px'}});
-  const cidIn = el('input',{type:'text',class:'modal-input',placeholder:'Azure Client ID (xxxxxxxx-xxxx-...)',
-    value: S.settings.msGraphClientId || ''});
-  cidIn.addEventListener('change', () => { S.settings.msGraphClientId = cidIn.value.trim(); debouncedSaveSettings(); });
-  const tidIn = el('input',{type:'text',class:'modal-input',placeholder:'Azure Tenant ID (xxxxxxxx-xxxx-...)',
-    value: S.settings.msGraphTenantId || ''});
-  tidIn.addEventListener('change', () => { S.settings.msGraphTenantId = tidIn.value.trim(); debouncedSaveSettings(); });
-  msGrid.appendChild(cidIn);
-  msGrid.appendChild(tidIn);
-  secMS.appendChild(msGrid);
-
-  // Connect / Disconnect buttons
-  const msBtns = el('div',{style:{display:'flex',gap:'6px'}});
-  msBtns.appendChild(el('button',{class:'btn-primary btn-sm', onclick() {
-    const clientId = S.settings.msGraphClientId || cidIn.value.trim();
-    const tenantId = S.settings.msGraphTenantId || tidIn.value.trim();
-    if (!clientId || !tenantId) { toast('Enter Client ID and Tenant ID first','#f59e0b'); return; }
-    connectMicrosoft365(clientId, tenantId, function(ok){
-      if(ok){
-        S.settings.msGraphClientId = clientId;
-        S.settings.msGraphTenantId = tenantId;
-        updateMSStatus();
-      }
-    });
-  }},'🔗 Connect Microsoft Account'));
-  msBtns.appendChild(el('button',{class:'btn-xs btn-ghost', onclick() {
-    localStorage.removeItem('vcs_ms_token');
-    localStorage.removeItem('vcs_ms_token_exp');
-    clearMSTokens();
-    updateMSStatus();
-    toast('Disconnected from Microsoft','#f59e0b');
-  }},'Disconnect'));
-  secMS.appendChild(msBtns);
-
-  secMS.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',marginTop:'6px',lineHeight:'1.4'}},
-    'Redirect URI to register in Azure: ' + window.location.origin + window.location.pathname));
-
-  makeCollapsibleSection(secMS,'📅 Microsoft 365 / Outlook Calendar','vcs_s_ms',true);
-  c.appendChild(secMS);
-  } // end MS admin block
+  // Item 4: old standalone Microsoft 365 / Outlook Calendar Integration
+  // section removed — all content (status detail, intro text, Client
+  // ID/Tenant ID fields, Connect/Disconnect, redirect URI reference)
+  // migrated into Connections & API Keys → Microsoft 365, verified
+  // rendering there first.
 
   // S42: AI Configuration standalone section removed — fully superseded by
   // Connections & API Keys → Claude AI (provider selector, per-provider key,
@@ -27920,205 +27808,9 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
     });
   }
 
-  // ── Renzo Integration Settings (Admin only) ──
-  // S48 Part D: HARD-CODED exclusion, same as the Connections & API Keys
-  // Renzo sub-section. Assistant Admin must NEVER gain access here. Do not
-  // add isAssistantAdmin() to this condition.
-  if(USER.role==='admin'){
-    const renzoSec=el('div',{style:{background:'var(--card)',border:'1px solid rgba(79,124,255,.3)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
-    const _rnOpen=!!(S._settingsOpen&&S._settingsOpen.renzo===true);
-    const _rnHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'10px 14px',cursor:'pointer',background:_rnOpen?'rgba(79,124,255,.06)':'var(--sb)'},onclick(){if(!S._settingsOpen)S._settingsOpen={};S._settingsOpen.renzo=!_rnOpen;render();}});
-    _rnHdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'2px'}},_rnOpen?'▼':'▶'));
-    _rnHdr.appendChild(el('span',{style:{fontSize:'14px'}},'🔌'));
-    _rnHdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1',color:'var(--blue)'}},'Renzo Integration'));
-    _rnHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'AI Relationship Outreach'));
-    renzoSec.appendChild(_rnHdr);
-    if(_rnOpen){
-      const _rnBody=el('div',{style:{padding:'14px'}});
-      _rnBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'10px'}},'Renzo connects to CMS via a Google Apps Script endpoint. Configure the connector URL and API key here.'));
-
-      // Connector URL
-      const urlRow=el('div',{style:{marginBottom:'8px'}});
-      urlRow.appendChild(el('label',{style:{display:'block',fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.04em'}},'Connector URL (Apps Script Web App URL)'));
-      const urlIn=el('input',{type:'text',class:'modal-input',style:{width:'100%',marginBottom:'0',fontFamily:'monospace',fontSize:'10px'},placeholder:'https://script.google.com/macros/s/ABC.../exec',value:S.settings.renzoConnectorUrl||''});
-      urlIn.addEventListener('change',e=>{S.settings.renzoConnectorUrl=e.target.value.trim();saveSettings();});
-      urlRow.appendChild(urlIn);
-      _rnBody.appendChild(urlRow);
-
-      // API Key
-      const keyRow=el('div',{style:{marginBottom:'10px'}});
-      keyRow.appendChild(el('label',{style:{display:'block',fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.04em'}},'Renzo API Key (shared secret)'));
-      const keyIn=el('input',{type:'password',class:'modal-input',style:{width:'100%',marginBottom:'0',fontFamily:'monospace',fontSize:'10px'},placeholder:'renzo-vcs-key-...',value:S.settings.renzoApiKey||''});
-      keyIn.addEventListener('change',e=>{
-        S.settings.renzoApiKey=e.target.value.trim();
-        saveSettings();
-        saveConfigToDrive().then(()=>toast('✓ Renzo key saved & synced to Drive','#22c55e')).catch(()=>toast('Renzo key saved locally (Drive sync failed)','#f59e0b'));
-      });
-      keyRow.appendChild(keyIn);
-      _rnBody.appendChild(keyRow);
-
-      // Test connection button
-      const testRow=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'10px'}});
-      const testBtn=el('button',{class:'btn-xs btn-blue',onclick:async function(){
-        const url=S.settings.renzoConnectorUrl;
-        const key=S.settings.renzoApiKey;
-        if(!url){toast('Enter the connector URL first','#f59e0b');return;}
-        testBtn.textContent='⏳ Testing...';testBtn.disabled=true;
-        try{
-          // Route through VCS proxy to avoid browser CORS restriction
-          // VCS proxy → Renzo connector (server-to-server, no CORS)
-          console.log('[Renzo Test] Routing through VCS proxy...');
-          const r=await fetch(VCS_PROXY_URL, {
-            method:'POST',
-            headers:{'Content-Type':'text/plain'},
-            body:JSON.stringify({
-              action:'renzoProxy',
-              renzoUrl:url,
-              renzoKey:key||'',
-              renzoAction:'ping'
-            })
-          });
-          const text=await r.text();
-          console.log('[Renzo Test] Proxy response:', text);
-          let d;
-          try{ d=JSON.parse(text); }catch(e){ d={error:'Non-JSON: '+text.slice(0,200)}; }
-          
-          // Handle proxy wrapper vs direct response
-          const inner = d.renzoResult || d;
-          
-          if(inner.status==='ok'){
-            toast('✓ Renzo connector live! Version: '+(inner.version||'1.0'));
-            testBtn.textContent='✓ Connected';
-            testBtn.style.background='rgba(34,197,94,.2)';
-            testBtn.disabled=false;
-          } else if(d.proxyError){
-            toast('⚠ Proxy error: '+d.proxyError,'#f59e0b');
-            testBtn.textContent='⚠ Proxy error'; testBtn.disabled=false;
-          } else if(inner.error==='Unauthorized'){
-            toast('✗ Wrong API key — CMS key does not match Apps Script RENZO_API_KEY property','#ef4444');
-            testBtn.textContent='✗ Wrong key'; testBtn.disabled=false;
-          } else {
-            toast('⚠ '+(inner.error||JSON.stringify(inner)).slice(0,120),'#f59e0b');
-            testBtn.textContent='⚠ Error'; testBtn.disabled=false;
-          }
-        }catch(e){
-          console.error('[Renzo Test]',e);
-          toast('✗ '+e.message,'#ef4444');
-          testBtn.textContent='✗ Failed'; testBtn.disabled=false;
-        }
-        setTimeout(()=>{if(testBtn.textContent!=='✓ Connected'){testBtn.textContent='Test Connection';testBtn.style.background='';}},5000);
-      }},'Test Connection');
-      testRow.appendChild(testBtn);
-      if(S.settings.renzoConnectorUrl){
-        testRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){
-          const url=S.settings.renzoConnectorUrl;
-          const key=S.settings.renzoApiKey;
-          window.open(url+'?action=getVCSRecords&apiKey='+(key||'')+'&limit=5','_blank');
-        }},'Preview Records →'));
-      }
-      _rnBody.appendChild(testRow);
-
-      // ── Renzo Setup Wizard ──
-      const renzoWizSec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'4px',padding:'10px',marginTop:'8px'}});
-      renzoWizSec.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',marginBottom:'8px'}},'🚀 Quick Setup Wizard'));
-
-      if(!S._renzoWizStep) S._renzoWizStep=0;
-      const renzoSteps=[
-        {
-          title:'Generate API Key',
-          note:'CMS will generate a secure API key for the Renzo connector.',
-          btn:'Generate Key →',
-          onclick(){
-            const key='renzo-'+Math.random().toString(36).slice(2)+'-'+Math.random().toString(36).slice(2);
-            S.settings.renzoApiKey=key;
-            keyIn.value=key;
-            saveSettings();
-            S._renzoWizStep=1;
-            render();
-            toast('✓ API key generated and saved');
-          }
-        },
-        {
-          title:'Open Google Apps Script',
-          note:'This will open script.google.com in a new tab. Click "New project" and name it "CMS Renzo Connector".',
-          btn:'Open Google Apps Script →',
-          onclick(){
-            window.open('https://script.google.com/home','_blank');
-            S._renzoWizStep=2;
-            render();
-          }
-        },
-        {
-          title:'Paste the Connector Code',
-          note:'Copy the code below, then in Apps Script: delete everything in Code.gs and paste this in.',
-          btn:'Copy Connector Code →',
-          onclick(){
-            // Build the connector code with the current API key embedded
-            const apiKey=S.settings.renzoApiKey||'YOUR_API_KEY_HERE';
-            const connectorCode=`const RENZO_API_KEY='${apiKey}';
-function doGet(e){return handleReq(e);}
-function doPost(e){return handleReq(e);}
-function handleReq(e){
-  const p=Object.assign({},e.parameter||{});
-  if(e.postData){try{Object.assign(p,JSON.parse(e.postData.contents));}catch(err){}}
-  const key=(p.renzoKey||p.apiKey||'').trim();
-  if(key&&key!==RENZO_API_KEY)return out({error:'Unauthorized'});
-  if(p.action==='ping'||!p.action)return out({status:'ok',version:'1.0',message:'Prime Source CMS Renzo Connector is live!'});
-  return out({error:'Unknown action: '+p.action});
-}
-function out(o){return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);}`;
-            navigator.clipboard.writeText(connectorCode).then(()=>{
-              toast('✓ Connector code copied — paste into Code.gs in Apps Script');
-              S._renzoWizStep=3;
-              render();
-            }).catch(()=>{
-              toast('Could not auto-copy — see code below','#f59e0b');
-            });
-          }
-        },
-        {
-          title:'Deploy as Web App',
-          note:'In Apps Script: click Deploy → New Deployment → Type: Web App → Execute as: Me → Who has access: Anyone → Deploy → Copy the URL.',
-          btn:'I deployed it — paste URL above →',
-          onclick(){S._renzoWizStep=4;render();}
-        },
-        {
-          title:'Test the connection',
-          note:'Paste the web app URL in the "Connector URL" field above, then click Test Connection.',
-          btn:'Test Connection →',
-          onclick(){testBtn.click();}
-        },
-      ];
-
-      // Progress bar
-      const wDots=el('div',{style:{display:'flex',gap:'4px',marginBottom:'8px',alignItems:'center'}});
-      renzoSteps.forEach((_,i)=>{
-        const dot=el('div',{style:{width:'18px',height:'18px',borderRadius:'50%',display:'flex',alignItems:'center',
-          justifyContent:'center',fontSize:'8px',fontWeight:'700',cursor:'pointer',flexShrink:'0',
-          background:i<S._renzoWizStep?'var(--green)':i===S._renzoWizStep?'var(--blue)':'var(--border)',
-          color:i<=S._renzoWizStep?'white':'var(--muted)'},
-          onclick(){S._renzoWizStep=i;render();}
-        },''+( i<S._renzoWizStep?'✓':(i+1)));
-        wDots.appendChild(dot);
-        if(i<renzoSteps.length-1) wDots.appendChild(el('div',{style:{flex:'1',height:'1px',background:i<S._renzoWizStep?'var(--green)':'var(--border)'}}));
-      });
-      renzoWizSec.appendChild(wDots);
-
-      const curRStep=renzoSteps[Math.min(S._renzoWizStep,renzoSteps.length-1)];
-      const rStepCard=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'4px',padding:'10px'}});
-      rStepCard.appendChild(el('div',{style:{fontWeight:'700',fontSize:'10px',marginBottom:'4px'}},'Step '+(S._renzoWizStep+1)+': '+curRStep.title));
-      rStepCard.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},curRStep.note));
-      const rBtnRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center'}});
-      if(S._renzoWizStep>0) rBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._renzoWizStep--;render();}},'← Back'));
-      rBtnRow.appendChild(el('button',{class:'btn-xs btn-blue',onclick:curRStep.onclick},curRStep.btn));
-      if(S._renzoWizStep<renzoSteps.length-1) rBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){S._renzoWizStep++;render();}},'Skip →'));
-      rStepCard.appendChild(rBtnRow);
-      renzoWizSec.appendChild(rStepCard);
-      _rnBody.appendChild(renzoWizSec);
-      renzoSec.appendChild(_rnBody);
-    }
-    c.appendChild(renzoSec);
-  }
+  // Item 4: old standalone Renzo Integration Settings section removed — all
+  // genuinely unique content (intro text, Quick Setup Wizard) migrated into
+  // Connections & API Keys → Renzo, verified rendering there first.
 
   // ── API Usage Monitoring (Admin/Procurement, or Assistant Admin — S48 Part D) ──
   if(['admin','procurement'].includes(USER.role) || isAssistantAdmin()){
