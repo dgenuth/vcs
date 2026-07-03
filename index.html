@@ -2519,8 +2519,20 @@ async function loadFile(file) {
           k === ukey || k === emailPrefix || ukey.startsWith(k) || k.startsWith(emailPrefix)
         );
         if (scKey) {
+          // S50 QA fix: this used to also set u._customHiddenFields=true,
+          // treating a spreadsheet import as equivalent to an admin manually
+          // customizing a user's fields via the Field Visibility toggle UI.
+          // It isn't — and since this flag is what gates whether
+          // getApprovedUsers()/loginAs() ever re-derive hiddenFields from the
+          // user's role, setting it here permanently blocked role-based
+          // visibility for any matched user, in a way that persists in their
+          // saved record even after this code path stops running (this
+          // whole import only fires inside loadFile(), which normally never
+          // runs once Supabase is the primary data source — but the
+          // resulting flag doesn't go away on its own). Still applies the
+          // spreadsheet's hiddenFields as a one-time starting value, just
+          // doesn't lock out future role-based updates because of it.
           u.hiddenFields = scHiddenFields[scKey];
-          u._customHiddenFields = true;
           _scUpdated = true;
         }
       });
@@ -7734,6 +7746,34 @@ function _findParentPageId(childId){
     });
   } catch(e) {}
   localStorage.setItem('vcs_collapse_migration_v1','1');
+})();
+
+// S50: one-time migration clearing _customHiddenFields on every existing
+// user record. Three separate mechanisms were found this session that all
+// set this flag while treating a legacy/imported value (the hardcoded
+// SC_HIDDEN_FIELDS_BY_USER table, or a live "Share Criteria" spreadsheet
+// tab) as equivalent to an admin manually customizing that user's fields —
+// which then permanently blocked role-based field visibility from ever
+// being (re)applied for that user, even after a role change or "Reset to
+// role defaults". All three call sites are fixed, but the flag itself may
+// already be sitting in saved user records from before this fix existed,
+// so fixing the code alone doesn't undo already-saved damage. This clears
+// it once so role becomes authoritative immediately for everyone. If any
+// user genuinely has a hand-picked field-visibility exception an admin
+// wants to keep, it'll need to be re-applied once via the Field Visibility
+// toggle UI after this runs — there's no way to tell "genuinely customized
+// by a person" apart from "auto-set by an import" after the fact.
+(function _migrateRolePermissionsAuthorityV1(){
+  if (localStorage.getItem('vcs_role_perms_migration_v1')) return;
+  try {
+    const users = JSON.parse(localStorage.getItem('vcs_approved_users')||'[]');
+    let changed = false;
+    users.forEach(function(u){
+      if (u._customHiddenFields) { u._customHiddenFields = false; changed = true; }
+    });
+    if (changed) localStorage.setItem('vcs_approved_users', JSON.stringify(users));
+  } catch(e) {}
+  localStorage.setItem('vcs_role_perms_migration_v1','1');
 })();
 
 // ─── S44: Unified canView/canEdit permission layer ──────────────────────────
