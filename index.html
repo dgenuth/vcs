@@ -5958,7 +5958,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
       // Matched-as banner if name differs
       if(acct.Name&&acct.Name.toLowerCase()!==vendor.name.toLowerCase())
-        sfWrap.appendChild(el('div',{style:{fontSize:'9px',color:'var(--blue)',background:'rgba(59,130,246,.06)',padding:'3px 7px',borderRadius:'3px',marginBottom:'5px'}},'Matched SF Vendor: "'+acct.Name+'"'));
+        sfWrap.appendChild(el('a',{href:USER.sfInstance?USER.sfInstance+'/lightning/r/Vendor__c/'+acct.Id+'/view':'#',target:'_blank',rel:'noopener',title:'Open this Salesforce record',style:{display:'block',fontSize:'9px',color:'var(--blue)',background:'rgba(59,130,246,.06)',padding:'3px 7px',borderRadius:'3px',marginBottom:'5px',textDecoration:'none',cursor:'pointer'}},'Matched SF Vendor: "'+acct.Name+'" ↗'));
 
       // Vendor card with Vendor__c fields
       const card=el('div',{style:{background:'rgba(79,124,255,.05)',border:'1px solid rgba(79,124,255,.15)',borderRadius:'4px',padding:'7px 9px',marginBottom:'6px'}});
@@ -5987,7 +5987,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
 
       const accId=acct.Id;
       // Opportunities and Cases link to Vendor__c, not AccountId
-      const [opps,cases,tasks,spend]=await Promise.all([
+      const [opps,cases,tasks,spend,full,contacts]=await Promise.all([
         sfQuery("SELECT Id,Name,StageName,Amount,CloseDate,Owner.Name FROM Opportunity WHERE Vendor__c='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 20").catch(()=>
           sfQuery("SELECT Id,Name,StageName,Amount,CloseDate FROM Opportunity WHERE AccountId='"+accId+"' AND IsClosed=false ORDER BY CloseDate ASC LIMIT 20")),
         sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,Owner.Name,CreatedDate FROM Case WHERE Vendor__c='"+accId+"' ORDER BY CreatedDate DESC LIMIT 20").catch(()=>
@@ -5995,11 +5995,24 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
         sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM Task WHERE WhatId='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5").catch(()=>
           sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM Task WHERE WhatId='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5")),
         sfQuery("SELECT Id,Name,Reported_Date__c,Category__c,Sales__c,Admin_Fee__c FROM Spend__c WHERE Vendor__c='"+accId+"' ORDER BY Reported_Date__c DESC LIMIT 50").catch(()=>({records:[]})),
+        // S50: pulls every field that actually exists and is populated on this
+        // Vendor__c record, not just the fixed subset in vFields above — the
+        // hand-picked field list was missing whatever custom fields the SF
+        // admin has since filled in. Best-effort: if FIELDS(ALL) isn't
+        // permitted (older API edition/profile restriction), Details just
+        // falls back to the fixed field list exactly as before.
+        sfQuery("SELECT FIELDS(ALL) FROM Vendor__c WHERE Id='"+accId+"' LIMIT 1").catch(()=>({records:[]})),
+        // S50: Contacts tab — mirrors the same Vendor__c-then-AccountId
+        // fallback pattern already proven above for Opportunity/Case, since
+        // we don't know in advance which lookup field this org's Contact
+        // object actually uses to relate to a vendor record.
+        sfQuery("SELECT Id,Name,Title,Phone,MobilePhone,Email FROM Contact WHERE Vendor__c='"+accId+"' ORDER BY LastModifiedDate DESC LIMIT 50").catch(()=>
+          sfQuery("SELECT Id,Name,Title,Phone,MobilePhone,Email FROM Contact WHERE AccountId='"+accId+"' ORDER BY LastModifiedDate DESC LIMIT 50")).catch(()=>({records:[]})),
       ]);
-      console.log('[VCS SF] Opps:',opps?.records?.length||0,'Cases:',cases?.records?.length||0,'Tasks:',tasks?.records?.length||0,'Spend:',spend?.records?.length||0);
+      console.log('[VCS SF] Opps:',opps?.records?.length||0,'Cases:',cases?.records?.length||0,'Tasks:',tasks?.records?.length||0,'Spend:',spend?.records?.length||0,'Contacts:',contacts?.records?.length||0);
 
       // Cache results for tab switching
-      vendor._sfCache = {acct, opps, cases, tasks, spend};
+      vendor._sfCache = {acct, opps, cases, tasks, spend, full, contacts};
       sfWrap.innerHTML='';
       renderSFPanel();
     }
@@ -6015,7 +6028,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   }},"🔗 Connect"));
         sfWrap.appendChild(row); return;
       }
-      const sfTabs2=["Details","Spend","Opportunities","Cases"];
+      const sfTabs2=["Details","Contacts","Spend","Opportunities","Cases"];
       if(!vendor._sfTab) vendor._sfTab="Details";
       const tabBar2=el("div",{style:{display:"flex",gap:"2px",marginBottom:"6px",borderBottom:"1px solid var(--border)",paddingBottom:"2px",position:"sticky",top:"0",zIndex:"5",background:"var(--bg)"}});
       sfTabs2.forEach(tab=>{
@@ -6025,11 +6038,11 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       });
       sfWrap.appendChild(tabBar2);
       if(!vendor._sfCache){sfWrap.appendChild(el("button",{class:"btn-xs btn-blue",onclick(){doLoadSF();}},"☁ Load Salesforce Data"));return;}
-      const {acct:a,opps:o,cases:cs,tasks:ts,spend:sp}=vendor._sfCache;
+      const {acct:a,opps:o,cases:cs,tasks:ts,spend:sp,full:fl,contacts:ct}=vendor._sfCache;
       const tab=vendor._sfTab;
       const fin=["admin","procurement","manager","cro","finance_sr","finance_jr"].includes(USER.role);
       if(tab==="Details"){
-        if(a.Name&&a.Name.toLowerCase()!==vendor.name.toLowerCase()) sfWrap.appendChild(el("div",{style:{fontSize:"9px",color:"var(--blue)",background:"rgba(59,130,246,.06)",padding:"3px 7px",borderRadius:"3px",marginBottom:"5px"}},"Matched: \""+a.Name+"\""));
+        if(a.Name&&a.Name.toLowerCase()!==vendor.name.toLowerCase()) sfWrap.appendChild(el("a",{href:USER.sfInstance?USER.sfInstance+"/lightning/r/Vendor__c/"+a.Id+"/view":"#",target:"_blank",rel:"noopener",title:"Open this Salesforce record",style:{display:"block",fontSize:"9px",color:"var(--blue)",background:"rgba(59,130,246,.06)",padding:"3px 7px",borderRadius:"3px",marginBottom:"5px",textDecoration:"none",cursor:"pointer"}},"Matched: \""+a.Name+"\" ↗"));
         const g=el("div",{class:"detail-grid"});
         [["Phone",a.Business_Phone__c],["Mobile",a.Mobile_Number__c],["Vendor Type",a.Vendor_Type__c],["Category",a.Category_Type__c],
          ...(fin?[["PPD",a.PPD__c?"$"+a.PPD__c:""],["Admin Fee",a.Admin_Fee__c],["Rebates",a.Rebates__c?"Yes":""],["MFR Rebates",a.MFR_Rebates__c]]:[]),
@@ -6039,7 +6052,57 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
         if(a.SSA_Notes__c) sfWrap.appendChild(el("div",{style:{marginTop:"6px",padding:"5px 8px",background:"rgba(79,124,255,.04)",borderRadius:"3px",fontSize:"9px",color:"var(--muted)",lineHeight:"1.5"}},"SSA: "+a.SSA_Notes__c));
         if(a.Notes__c) sfWrap.appendChild(el("div",{style:{marginTop:"4px",padding:"5px 8px",background:"rgba(79,124,255,.04)",borderRadius:"3px",fontSize:"9px",color:"var(--muted)",lineHeight:"1.5"}},"Notes: "+a.Notes__c));
         if(a.Vendor_Alias__c) sfWrap.appendChild(el("div",{style:{fontSize:"9px",color:"var(--muted)",marginTop:"4px"}},"Aliases: "+a.Vendor_Alias__c));
-      } else if(tab==="Spend"){
+        // S50: everything above only ever showed the fixed subset of fields
+        // in vFields, so a field an admin filled in on the SF side but that
+        // was never hand-added here simply never appeared. This renders
+        // whatever else FIELDS(ALL) actually returned and is populated,
+        // skipping Id/attributes and anything already shown explicitly above.
+        const fullRec=fl?.records?.[0];
+        if(fullRec){
+          const _shownKeys=new Set(['Id','Name','Business_Phone__c','Mobile_Number__c','Vendor_Type__c','Category_Type__c','PPD__c','Admin_Fee__c','Rebates__c','MFR_Rebates__c','Owner','OwnerId','LastModifiedDate','SSA_Notes__c','Notes__c','Vendor_Alias__c','attributes']);
+          const extraEntries=Object.entries(fullRec).filter(function(kv){
+            const k=kv[0],v=kv[1];
+            if(_shownKeys.has(k)) return false;
+            if(v===null||v===undefined||v==='') return false;
+            if(typeof v==='object') return false; // skip nested relationship objects — not worth guessing their shape
+            if(!fin&&/fee|rebate|ppd|price|cost|margin/i.test(k)) return false; // keep financial-field gating consistent with the rest of this tab
+            return true;
+          });
+          if(extraEntries.length){
+            sfWrap.appendChild(el("div",{style:{fontSize:"8px",fontWeight:"700",color:"var(--muted)",marginTop:"8px",marginBottom:"3px",textTransform:"uppercase",letterSpacing:".04em",borderTop:"1px dashed var(--border)",paddingTop:"6px"}},"Additional Salesforce Fields"));
+            const g2=el("div",{class:"detail-grid"});
+            extraEntries.forEach(function(kv){
+              const label=kv[0].replace(/__c$/,'').replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();});
+              let val=kv[1];
+              if(typeof val==='boolean') val=val?'Yes':'No';
+              g2.appendChild(el("span",{class:"detail-label"},label));
+              g2.appendChild(el("span",{class:"detail-value"},String(val)));
+            });
+            sfWrap.appendChild(g2);
+          }
+        }
+      } else if(tab==="Contacts"){
+        // S50: new tab — SF often has more contacts on file than the vendor
+        // catalog originally captured (see doLoadSF's Contact query above).
+        if(!ct?.records?.length){sfWrap.appendChild(el("p",{style:{fontSize:"10px",color:"var(--muted)",fontStyle:"italic",padding:"4px 0"}},"No Salesforce contacts found for this vendor."));}
+        else{
+          sfWrap.appendChild(el("div",{style:{fontSize:"9px",fontWeight:"700",color:"var(--muted)",marginBottom:"3px",letterSpacing:".05em"}},"SALESFORCE CONTACTS ("+ct.records.length+(ct.totalSize>ct.records.length?" of "+ct.totalSize:"")+")"));
+          ct.records.forEach(function(c2){
+            const row2=el("div",{style:{border:"1px solid var(--border)",borderRadius:"3px",padding:"6px 8px",marginBottom:"4px"}});
+            const t2=el("div",{style:{display:"flex",gap:"6px",alignItems:"center",marginBottom:"2px"}});
+            t2.appendChild(el("span",{style:{flex:"1",fontWeight:"600",fontSize:"10px"}},c2.Name||"—"));
+            t2.appendChild(el("a",{href:USER.sfInstance?USER.sfInstance+"/lightning/r/Contact/"+c2.Id+"/view":"#",target:"_blank",rel:"noopener",title:"Open in Salesforce",style:{fontSize:"8px",color:"var(--blue)",textDecoration:"none"}},"↗ SF"));
+            row2.appendChild(t2);
+            if(c2.Title) row2.appendChild(el("div",{style:{fontSize:"9px",color:"var(--muted)",marginBottom:"2px"}},c2.Title));
+            const m2=el("div",{style:{display:"flex",gap:"10px",flexWrap:"wrap",fontSize:"9px"}});
+            if(c2.Phone) m2.appendChild(el("a",{href:"tel:"+c2.Phone,style:{color:"var(--blue)"}},"📞 "+c2.Phone));
+            if(c2.MobilePhone) m2.appendChild(el("a",{href:"tel:"+c2.MobilePhone,style:{color:"var(--blue)"}},"📱 "+c2.MobilePhone));
+            if(c2.Email) m2.appendChild(el("a",{href:"mailto:"+c2.Email,style:{color:"var(--blue)"}},"✉ "+c2.Email));
+            row2.appendChild(m2);
+            sfWrap.appendChild(row2);
+          });
+          if(ct.totalSize>ct.records.length) sfWrap.appendChild(el("div",{style:{fontSize:"9px",color:"var(--muted)",marginTop:"4px"}},"Showing first "+ct.records.length+" of "+ct.totalSize+" — open the record in Salesforce for the full list."));
+        }
         if(!sp?.records?.length){sfWrap.appendChild(el("p",{style:{fontSize:"10px",color:"var(--muted)",fontStyle:"italic",padding:"4px 0"}},"No spend records."));}
         else{
           const totalSales=sp.records.reduce((s2,r)=>s2+Number(r.Sales__c||0),0);
@@ -8694,6 +8757,7 @@ async function tryAutoLoadFromDrive(force=false){
     if (proxyResp.ok) {
       const data = await proxyResp.json();
       if (data.status === 'ok' && data.content) {
+        window._vcsDriveProxyVerified = true; // S50: proxy path confirmed working this session
         const bytes = Uint8Array.from(atob(data.content), c => c.charCodeAt(0));
         const fileName = data.name || S.settings.driveFileName || 'Vendor_Catalogue.xlsm';
         const file = new File([bytes], fileName, {type:'application/vnd.ms-excel.sheet.macroEnabled.12'});
@@ -25775,7 +25839,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
   // S3: Quick Setup Checklist — progress bar + 6 items, collapsed when all complete
   if(USER.role==='admin'||USER.role==='procurement'){
     const _setupItems=[
-      {key:'drive',label:'Connect Google Drive',done:!!window.GDriveToken,tip:'Go to Google Drive section below'},
+      {key:'drive',label:'Google Drive sync',done:!!(window._vcsDriveProxyVerified||window.GDriveToken),tip:S.settings&&S.settings.driveFileId?'Auto-sync is configured — verifying on next load':'Go to Google Drive section below to add a File ID'},
       {key:'sf',label:'Connect Salesforce',done:!!(USER.sfToken&&USER.sfInstance),tip:'Go to Salesforce section below'},
       {key:'api',label:'Set Claude API Key',done:!!(S.settings&&S.settings.apiKey),tip:'Go to AI Settings below'},
       {key:'users',label:'Add team members',done:(getApprovedUsers()||[]).length>1,tip:'Go to User Management below'},
