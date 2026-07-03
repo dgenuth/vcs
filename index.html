@@ -8551,6 +8551,21 @@ const SC_HIDDEN_FIELDS_BY_USER = {
 // Default hidden fields per role — pulled from Share Criteria tab in Vendor_Catalogue.xlsm
 // These are EXACT per-user values. For unknown users, falls back to role-based defaults.
 function getDefaultHiddenFields(role, emailOrUsername) {
+  // S50 QA fix: an admin customizing a role's defaults via the Field
+  // Visibility Defaults page (Settings → Role & Feature Defaults) saves to
+  // 'vcs_role_fields_'+role — but nothing in this function, or anywhere
+  // else in the real permission-resolution path, ever read that key. That
+  // made the entire editor cosmetic: toggling a field there changed what
+  // the page displayed, but had zero effect on any actual user's
+  // permissions. Checked first, before the hardcoded
+  // ROLE_HIDDEN fallback below, so an explicit admin customization here is
+  // now the real, live, authoritative default the moment it's saved.
+  if (role) {
+    var _customRoleFields = localStorage.getItem('vcs_role_fields_'+role);
+    if (_customRoleFields !== null) {
+      try { return JSON.parse(_customRoleFields); } catch(e) {}
+    }
+  }
   // Try exact user match first
   if (emailOrUsername) {
     var lk = String(emailOrUsername).toLowerCase().trim();
@@ -26320,7 +26335,20 @@ window._buildConnectionsSection = _buildConnectionsSection;
       // ── Field Visibility Defaults for this role ──────────────────────────
       _roleBody.appendChild(_roleSub('🔒 Field Visibility Defaults (all '+role+' users)', false, function(b){
       const _rfKey='vcs_role_fields_'+role;
-      const _roleHF=new Set(JSON.parse(localStorage.getItem(_rfKey)||'[]'));
+      // S50 QA fix: this used to initialize from ONLY this localStorage key
+      // (defaulting to an empty array when unset), completely disconnected
+      // from getDefaultHiddenFields(role) — the actual hardcoded,
+      // spreadsheet-derived defaults that get applied to real users on role
+      // assignment. Since this key starts unset for every role, this
+      // section showed "everything visible" regardless of what a role's
+      // real restrictions actually were — exactly the mismatch reported
+      // between a user's actual assigned permissions and what this page
+      // displayed as the role's default. Now seeds from the real default
+      // the first time this section is viewed for a role, so the two only
+      // diverge after an admin explicitly changes something here on purpose.
+      const _rfStored=localStorage.getItem(_rfKey);
+      const _roleHF=_rfStored!==null ? new Set(JSON.parse(_rfStored)) : new Set(getDefaultHiddenFields(role));
+      if(_rfStored===null){ localStorage.setItem(_rfKey, JSON.stringify([..._roleHF])); }
       const _fGroups={'Vendor Info':['gpo','name','category','subCategory','product','classOfTrade','markets','addedValue','website','status'],'Contacts':['procContact','contactType','title','bizPhone','mobile','email','sharedContact','contactType2','title2','mobile2','email2'],'Contract':['contractName','inContractSince','contractEffective','contractExpiry','autoRenewal','autoRenewalType','contractTerm','currentTerm','termEffective','termExpiry','terminationNotice','terminationWoCause','terminationReceived','assignment','assignmentConditions','exclusivity','signatory'],'Financials':['adminFee','adminFeeNotes','tiers','perpetuity','tail','minYears','contractNo','reportFrequency','agreementType','pricingCommitment'],'Docs & Pricing':['coverSheet','dataSheet','havePricing','pricingLocation','pricingDate','pricingFrequency','whitePapers','serviceSummary','videoRecording'],'Activity':['comments','notes','lastComm','followUp','engagementReminder','needsLOP']};
       const _fgC={'Vendor Info':'#4f7cff','Contacts':'#22c55e','Contract':'#f59e0b','Financials':'#8b5cf6','Docs & Pricing':'#06b6d4','Activity':'#ec4899'};
       Object.entries(_fGroups).forEach(([gName,gKeys])=>{
@@ -26389,7 +26417,8 @@ window._buildConnectionsSection = _buildConnectionsSection;
         // storage) rather than a second, independent flag that could drift
         // out of sync with the field-level control.
         const _rfKey2='vcs_role_fields_'+role;
-        const _roleHF2=new Set(JSON.parse(localStorage.getItem(_rfKey2)||'[]'));
+        const _rfStored2=localStorage.getItem(_rfKey2);
+        const _roleHF2=_rfStored2!==null ? new Set(JSON.parse(_rfStored2)) : new Set(getDefaultHiddenFields(role));
         const finKeys2=FIELD_GROUPS['Financials']||[];
         const finHidden=finKeys2.length>0 && finKeys2.every(function(k){return _roleHF2.has(k);});
         const finRow=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'6px',marginBottom:'6px'}});
