@@ -20649,24 +20649,47 @@ function renderDiscovery(c) {
   // ── Upload Section
   const uploadSec = el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',padding:'16px',marginBottom:'12px'}});
   uploadSec.appendChild(el('h3',{style:{margin:'0 0 10px',fontSize:'12px',fontWeight:'700'}},'Step 1: Upload Spend Data'));
-  const dropzone = el('div',{style:{border:'2px dashed var(--border)',borderRadius:'6px',padding:'24px',textAlign:'center',cursor:'pointer',marginBottom:'8px',background:DS.fileName?'rgba(34,197,94,.04)':'var(--bg)'}});
-  dropzone.appendChild(el('div',{style:{fontSize:'28px',marginBottom:'6px'}},DS.fileName?'\u2705':'\uD83D\uDCCE'));
-  dropzone.appendChild(el('div',{style:{fontSize:'11px',fontWeight:'600',color:DS.fileName?'var(--green)':'var(--text)',marginBottom:'4px'}},DS.fileName||'Drop file here or click to browse'));
-  dropzone.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},DS.fileName?'File ready':'Supports: PDF, Excel, CSV'));
-  const fileInput = el('input',{type:'file',accept:'.pdf,.xlsx,.xls,.csv',style:{display:'none'}});
+  const dropzone = el('div',{style:{border:'2px dashed var(--border)',borderRadius:'6px',padding:'24px',textAlign:'center',cursor:'pointer',marginBottom:'8px',background:(DS.files&&DS.files.length)?'rgba(34,197,94,.04)':'var(--bg)'}});
+  const _fileCount = (DS.files||[]).length;
+  dropzone.appendChild(el('div',{style:{fontSize:'28px',marginBottom:'6px'}},_fileCount?'\u2705':'\uD83D\uDCCE'));
+  dropzone.appendChild(el('div',{style:{fontSize:'11px',fontWeight:'600',color:_fileCount?'var(--green)':'var(--text)',marginBottom:'4px'}},_fileCount?(_fileCount+' file'+(_fileCount>1?'s':'')+' ready'):'Drop files here or click to browse'));
+  dropzone.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)'}},_fileCount?'Click to add more, or use the list below to remove one':'Supports: PDF, Excel, CSV — select or drop multiple at once'));
+  // S50: multi-file support — batch invoice uploads (dozens at a time) were
+  // previously impossible since this only ever read files[0]. DS.files is
+  // now an array; each entry is parsed and analyzed together as one report.
+  const fileInput = el('input',{type:'file',accept:'.pdf,.xlsx,.xls,.csv',multiple:true,style:{display:'none'}});
   fileInput.addEventListener('change',function(ev){
-    const file = ev.target.files[0]; if(!file) return;
-    DS.fileName = file.name; DS.fileData = null; DS.results = null;
-    const reader = new FileReader();
-    reader.onload = function(e){ DS.fileData = e.target.result; saveSessionState(); const c2=$('content');if(c2){c2.innerHTML='';renderDiscovery(c2);} };
-    reader.readAsDataURL(file);
+    const newFiles = Array.from(ev.target.files||[]); if(!newFiles.length) return;
+    if(!DS.files) DS.files=[];
+    DS.results = null;
+    let pending = newFiles.length;
+    newFiles.forEach(function(file){
+      const reader = new FileReader();
+      reader.onload = function(e){
+        DS.files.push({name:file.name, dataUrl:e.target.result});
+        pending--;
+        if(pending===0){ saveSessionState(); const c2=$('content');if(c2){c2.innerHTML='';renderDiscovery(c2);} }
+      };
+      reader.readAsDataURL(file);
+    });
   });
   dropzone.addEventListener('click',function(){fileInput.click();});
   dropzone.addEventListener('dragover',function(e){e.preventDefault();dropzone.style.borderColor='var(--blue)';});
   dropzone.addEventListener('dragleave',function(){dropzone.style.borderColor='var(--border)';});
-  dropzone.addEventListener('drop',function(e){e.preventDefault();const file=e.dataTransfer.files[0];if(file){const dt=new DataTransfer();dt.items.add(file);fileInput.files=dt.files;fileInput.dispatchEvent(new Event('change'));}});
+  dropzone.addEventListener('drop',function(e){e.preventDefault();const dt=new DataTransfer();Array.from(e.dataTransfer.files||[]).forEach(function(f){dt.items.add(f);});fileInput.files=dt.files;fileInput.dispatchEvent(new Event('change'));});
   uploadSec.appendChild(dropzone);
   uploadSec.appendChild(fileInput);
+  // File list with per-file remove buttons
+  if (DS.files && DS.files.length) {
+    const listWrap = el('div',{style:{marginBottom:'8px',maxHeight:'140px',overflowY:'auto'}});
+    DS.files.forEach(function(f,idx){
+      const row = el('div',{style:{display:'flex',alignItems:'center',gap:'6px',fontSize:'10px',padding:'3px 6px',borderBottom:'1px solid var(--border)'}});
+      row.appendChild(el('span',{style:{flex:'1'}},'\uD83D\uDCC4 '+f.name));
+      row.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'},onclick:function(){DS.files.splice(idx,1);DS.results=null;saveSessionState();const c2=$('content');if(c2){c2.innerHTML='';renderDiscovery(c2);}}},'\u2715'));
+      listWrap.appendChild(row);
+    });
+    uploadSec.appendChild(listWrap);
+  }
   const facRow = el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'8px'}});
   facRow.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',flexShrink:'0',minWidth:'80px'}},'Facility Name:'));
   const facInp = el('input',{type:'text',class:'detail-edit-field',placeholder:'e.g. Sunrise Senior Living',value:DS.facilityName||'',style:{flex:'1',height:'28px'}});
@@ -20674,21 +20697,53 @@ function renderDiscovery(c) {
   facRow.appendChild(facInp);
   uploadSec.appendChild(facRow);
   const extractBtn = el('button',{class:'btn-primary',style:{width:'100%'}});
-  extractBtn.textContent = DS.fileData ? '\uD83D\uDD0D Extract & Analyze Spend' : '\uD83D\uDCCE Upload File First';
-  if (!DS.fileData) extractBtn.disabled = true;
+  const _hasFiles = DS.files && DS.files.length;
+  extractBtn.textContent = _hasFiles ? '\uD83D\uDD0D Extract & Analyze Spend ('+DS.files.length+' file'+(DS.files.length>1?'s':'')+')' : '\uD83D\uDCCE Upload File(s) First';
+  if (!_hasFiles) extractBtn.disabled = true;
   extractBtn.addEventListener('click',async function(){
-    if (!DS.fileData) { toast('Upload a file first','#f59e0b'); return; }
+    if (!DS.files || !DS.files.length) { toast('Upload at least one file first','#f59e0b'); return; }
     const apiKey = S._anthropicKey||S.settings&&S.settings.apiKey||localStorage.getItem('vcs_api_key')||'';
     if (!apiKey) { toast('Claude API key required in Settings','#ef4444'); return; }
-    extractBtn.textContent = '\u23F3 Analyzing...'; extractBtn.disabled = true;
+    extractBtn.textContent = '\u23F3 Analyzing '+DS.files.length+' file(s)...'; extractBtn.disabled = true;
     try {
-      const isPDF = DS.fileName && DS.fileName.toLowerCase().endsWith('.pdf');
-      const b64 = DS.fileData.split(',')[1];
-      const mt = isPDF ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-      const promptText = 'You are analyzing a client spend report for a healthcare facility. Extract ALL spend categories and their amounts. For each category: name, psCategory (Medical Supplies/Pharmacy/Food Service/EVS/Laundry/IT/Staffing/Capital Equipment/Office/Maintenance/Other), periodAmount, periodType (monthly/quarterly/annual), annualEstimate, vendors (array), notes. Also provide facility name, period covered, totalAnnualSpend, and a summary. Facility: ' + (DS.facilityName||'Unknown') + '. Reply ONLY with JSON: {"facility":"name","period":"desc","totalAnnualSpend":0,"categories":[{"name":"","psCategory":"","periodAmount":0,"periodType":"","annualEstimate":0,"vendors":[],"notes":""}],"summary":""}';
-      const msgs = isPDF
-        ? [{role:'user',content:[{type:'document',source:{type:'base64',media_type:mt,data:b64}},{type:'text',text:promptText}]}]
-        : [{role:'user',content:promptText+' [Analyzing: '+DS.fileName+']'}];
+      // S50: combine every uploaded file into one prompt so the AI produces
+      // ONE consolidated report across however many invoices/reports were
+      // dropped in, rather than requiring one-at-a-time uploads.
+      const promptText = 'You are analyzing client spend reports for a healthcare facility, provided as '+DS.files.length+' separate file(s) below (they may be different invoices, categories, or time periods — combine them into one consolidated picture). Extract ALL spend categories and their amounts across ALL files. For each category: name, psCategory (Medical Supplies/Pharmacy/Food Service/EVS/Laundry/IT/Staffing/Capital Equipment/Office/Maintenance/Other), periodAmount, periodType (monthly/quarterly/annual), annualEstimate, vendors (array), notes. Also provide facility name, period covered, totalAnnualSpend, and a summary. Facility: ' + (DS.facilityName||'Unknown') + '. Reply ONLY with JSON: {"facility":"name","period":"desc","totalAnnualSpend":0,"categories":[{"name":"","psCategory":"","periodAmount":0,"periodType":"","annualEstimate":0,"vendors":[],"notes":""}],"summary":""}';
+      const pdfBlocks = [];
+      let combinedText = '';
+      let totalLen = 0;
+      const PER_FILE_CAP = 40000, TOTAL_CAP = 150000;
+      for (const f of DS.files) {
+        const isPDF = f.name.toLowerCase().endsWith('.pdf');
+        const isCSV = f.name.toLowerCase().endsWith('.csv');
+        const b64 = f.dataUrl.split(',')[1];
+        if (isPDF) {
+          pdfBlocks.push({type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}});
+          continue;
+        }
+        let extractedText = '';
+        try {
+          if (isCSV) {
+            extractedText = atob(b64);
+          } else {
+            const wb = XLSX.read(b64, {type:'base64'});
+            extractedText = wb.SheetNames.map(function(name){
+              const csv = XLSX.utils.sheet_to_csv(wb.Sheets[name]);
+              return '--- Sheet: '+name+' ---\n'+csv;
+            }).join('\n\n');
+          }
+        } catch(parseErr) {
+          throw new Error('Could not read '+f.name+': '+parseErr.message);
+        }
+        if (extractedText.length > PER_FILE_CAP) extractedText = extractedText.slice(0, PER_FILE_CAP) + '\n...[truncated — this file is larger than expected]';
+        totalLen += extractedText.length;
+        if (totalLen > TOTAL_CAP) { combinedText += '\n\n=== FILE: '+f.name+' ===\n[skipped — combined file size exceeded the analysis limit, consider running large batches in smaller groups]'; continue; }
+        combinedText += '\n\n=== FILE: '+f.name+' ===\n'+extractedText;
+      }
+      if (!combinedText.trim() && !pdfBlocks.length) throw new Error('No readable content found in the uploaded file(s)');
+      const contentBlocks = [...pdfBlocks, {type:'text',text:promptText+combinedText}];
+      const msgs = [{role:'user',content:contentBlocks}];
       const resp = await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
         headers:{'x-api-key':apiKey,'anthropic-version':'2023-06-01','Content-Type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
         body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:2000,messages:msgs})});
@@ -20760,7 +20815,7 @@ function renderDiscovery(c) {
     seedSec.appendChild(seedBtn);
     const clearBtn=el('button',{class:'btn-xs btn-ghost',style:{marginLeft:'8px',color:'var(--muted)'}});
     clearBtn.textContent='\u21BA Start Over';
-    clearBtn.addEventListener('click',function(){DS.results=null;DS.fileData=null;DS.fileName=null;saveSessionState();const c2=$('content');if(c2){c2.innerHTML='';renderDiscovery(c2);};});
+    clearBtn.addEventListener('click',function(){DS.results=null;DS.files=[];saveSessionState();const c2=$('content');if(c2){c2.innerHTML='';renderDiscovery(c2);};});
     seedSec.appendChild(clearBtn);
     wrap.appendChild(seedSec);
   }
