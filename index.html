@@ -1180,19 +1180,15 @@ function loginAs(userObj) {
   USER.loggedIn = true;
   USER.loginTime = new Date();
   if (typeof recordLogin === 'function') setTimeout(recordLogin, 2000);
-  // Always apply SC hidden fields — spreadsheet is source of truth
-  var _scKey = (userObj.email || userObj.name || '').toLowerCase().trim();
-  var _scPrefix = _scKey.split('@')[0];
-  var _scMatch = SC_HIDDEN_FIELDS_BY_USER[_scKey] || SC_HIDDEN_FIELDS_BY_USER[_scPrefix];
-  if (!_scMatch) {
-    _scMatch = (function() {
-      var k = Object.keys(SC_HIDDEN_FIELDS_BY_USER).find(function(k) {
-        return k.startsWith(_scPrefix) || _scPrefix.startsWith(k.split(' ')[0]);
-      });
-      return k ? SC_HIDDEN_FIELDS_BY_USER[k] : null;
-    })();
-  }
-  USER.hiddenFields = _scMatch !== null && _scMatch !== undefined ? _scMatch : (userObj.hiddenFields || getDefaultHiddenFields(userObj.role, userObj.email));
+  // S50 QA fix: this used to unconditionally apply the legacy
+  // SC_HIDDEN_FIELDS_BY_USER spreadsheet snapshot ("Always apply SC hidden
+  // fields — spreadsheet is source of truth") ahead of BOTH the user's own
+  // saved hiddenFields AND their role's default — meaning changing someone's
+  // role, or manually customizing their fields, had no visible effect for
+  // any of ~17 hardcoded legacy names (or anyone whose name fuzzy-matched
+  // one) the moment they next logged in. Role/saved-customization is now
+  // authoritative, matching the rest of the permission system.
+  USER.hiddenFields = userObj.hiddenFields || getDefaultHiddenFields(userObj.role);
   USER.tabOverrides = userObj.tabOverrides || {};
   // S44 fix: these per-user override objects were never copied onto the live
   // USER object, so userCan()'s USER.permissions check (and the new
@@ -8548,8 +8544,18 @@ function getApprovedUsers(){
       // checked by "Reset to role defaults", but never actually consulted
       // here, so customization never really persisted. Only auto-refresh
       // when the user has NOT been manually customized.
+      // S50 QA fix: this used to pass u.email||u.name here, which triggered
+      // the legacy SC_HIDDEN_FIELDS_BY_USER per-person lookup (with fuzzy
+      // partial-name matching) INSTEAD OF the role-based default, for any
+      // of ~17 hardcoded legacy names. Since this function runs on nearly
+      // every render, it silently re-overwrote a just-assigned role's field
+      // visibility back to a frozen old spreadsheet snapshot within moments
+      // of the change — confirmed root cause of role changes and "Reset to
+      // role defaults" appearing to work, then immediately reverting. Role
+      // is now the sole source of truth here, matching the role-dropdown's
+      // own (already-correct) call one function away.
       if (!u._customHiddenFields) {
-        u.hiddenFields = getDefaultHiddenFields(u.role, u.email || u.name);
+        u.hiddenFields = getDefaultHiddenFields(u.role);
         migrated = true;
       }
     });
