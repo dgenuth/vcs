@@ -25080,6 +25080,11 @@ function buildFieldAccess(container, userEmail) {
 
     container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'6px'}},
       'Green = visible · Red = hidden · Checkbox = can edit (grayed out when hidden)'));
+    // S50 QA fix: this section uses the same dashed-amber-outline convention
+    // as Tab Access to mean "this user's value differs from their role
+    // default" but never explained it — only Tab Access had the legend.
+    container.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'2px'}},
+      'Dashed amber outline = overriding role default · Changes save automatically'));
   }
 
 // S48 Part A: Tab Access, split out into its own function/wrapper so it
@@ -26752,6 +26757,14 @@ function buildUserSubSection(label,bodyBuilderFn){
           b.appendChild(aaRow);
         }
 
+        // S50 QA fix: "Full list browsable" above uses the same dashed-amber
+        // isOverridden styling as Tab Access/Field Visibility, but this
+        // panel never explained it. The other tiles in this panel
+        // (feature flags, AI/Renzo, Assistant Admin) don't have a role-level
+        // default to differ from, so this note only needs to apply to that
+        // one control, not the whole panel.
+        b.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'8px'}},
+          'Dashed amber outline (Vendor DB Browsing above) = overriding role default · Changes save automatically'));
         b.appendChild(buildApplyButton(u.email,'Permissions'));
       }));
 
