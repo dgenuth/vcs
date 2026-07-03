@@ -2552,7 +2552,17 @@ async function loadFile(file) {
     } catch(scErr) { console.warn('[VCS] Share Criteria parse error (non-fatal):', scErr.message); }
 
     S.dbHiddenCols = new Set(); // Reset: show all permitted cols by default on each load
-    S.loaded=true; sessionStorage.setItem('vcs_session_active','1'); setTimeout(applyCopyProtection, 300); S.view=(['settings','datacheck'].includes(S.view)?S.settings.defaultView||'today':S.view)||'today'; S.search=''; S.dirty.clear();
+    S.loaded=true; sessionStorage.setItem('vcs_session_active','1'); setTimeout(applyCopyProtection, 300);
+    // S50 QA fix: this used to read
+    // S.view=(['settings','datacheck'].includes(S.view)?S.settings.defaultView||'today':S.view)||'today'
+    // — S.view is always still its hardcoded initial value ('today') at this
+    // point on a real fresh load (S is in-memory only, never persisted), so
+    // that condition was essentially always false and defaultView was never
+    // actually applied except in the one narrow case where S.view had
+    // already been set to settings/datacheck by something else first. Now
+    // applies the configured default view directly, every time, as intended.
+    S.view = S.settings.defaultView || 'today';
+    S.search=''; S.dirty.clear();
     $('search').value = '';
     hideLoadingSpinner();
     $('app').style.display='flex';
@@ -7870,7 +7880,18 @@ function loadSettings() {
     }
     Object.keys(saved).forEach(function(k) {
       const v = saved[k];
-      if (v !== undefined && v !== '' && v !== null && !S.settings[k]) {
+      // S50 QA fix: this used to also require !S.settings[k] before restoring
+      // — i.e. only restore a saved value if the in-memory default was
+      // currently falsy. That guard makes sense in loadConfigFromDrive()
+      // (don't let a stale remote copy stomp a fresher local value), but this
+      // function only ever reads the user's OWN previously-saved choices from
+      // their OWN localStorage — there's no "which one is fresher" conflict
+      // to protect against. The guard silently blocked restoration for any
+      // setting whose hardcoded starting default happens to be truthy
+      // (theme:'dark', defaultView:'today', autoSortByScore:true,
+      // showScoreColor:true) — confirmed root cause of theme and startup-view
+      // choices never surviving a refresh.
+      if (v !== undefined && v !== '' && v !== null) {
         S.settings[k] = v;
       }
     });
@@ -10524,6 +10545,12 @@ function openStructuredNoteModal(vendor) {
 
       // Also update the vendor.notes string (backward compat + Excel sync)
       prependStructuredNote(vendor, bodyPlain, selectedTag);
+      // S50 QA fix: lastComm (what drives the Summary page's "Recently
+      // Contacted" section) was previously ONLY ever set by the separate
+      // Mark Done action — adding a note here never touched it at all, so
+      // anyone using Add Note instead of Mark Done would never show up as
+      // "contacted," no matter the date range selected.
+      vendor.lastComm = new Date();
       if(fuIn.value){vendor.followUp=new Date(fuIn.value+'T12:00:00');}
       if(vendor.source==='itw'){vendor._dirty=true;if(!S.dirtyITW)S.dirtyITW=new Set();S.dirtyITW.add(vendor._row);}
       else{markDirty(vendor);}
@@ -10677,7 +10704,12 @@ function openLogActivityModal(vendor) {
       }
 
       // Update vendor follow-up if set
-      if(fuIn.value){vendor.followUp=new Date(fuIn.value+'T12:00:00');markDirty(vendor);}
+      if(fuIn.value){vendor.followUp=new Date(fuIn.value+'T12:00:00');}
+      // S50 QA fix: same lastComm gap as Add Note — logging an activity is
+      // clearly a "contacted this vendor" event, but never updated the field
+      // the Summary page's Recently Contacted section actually reads.
+      vendor.lastComm = new Date();
+      markDirty(vendor);
       logHistory({date:actDate,time:new Date().toLocaleTimeString(),vendor:vendor.name,
         action:'Activity: '+typeSel.value+(subject?' — '+subject:''),note:summary.slice(0,60)});
       saveSessionState(); closeModal(); requestAnimationFrame(()=>refreshDetailIfOpen(vendor));
@@ -27547,7 +27579,7 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
    ['🌐 Network','network'],['🔧 In The Works','itw'],['📊 Reports','reports'],['🕘 History','history'],['📈 Analytics','analytics'],['⚙ Settings','settings']
   ].forEach(([label,val])=>{
     const active=(S.settings.defaultView||'today')===val;
-    viewRow.appendChild(el('button',{class:'col-toggle-btn'+(active?' on':''),onclick(){S.settings.defaultView=val;debouncedSaveSettings();renderSettings(c);}},label));
+    viewRow.appendChild(el('button',{class:'col-toggle-btn'+(active?' on':''),onclick(){S.settings.defaultView=val;debouncedSaveSettings();renderSettings(c);toast('✓ Startup view saved','#22c55e');}},label));
   });
   secDefaults.appendChild(viewRow);
 
@@ -27606,7 +27638,7 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
   for (const [label,val,bg,fg] of THEMES) {
     const active=S.settings.theme===val;
     const btn=el('button',{style:{padding:'6px 10px',borderRadius:'5px',border:'2px solid '+(active?'var(--blue)':'transparent'),background:bg,color:fg,fontFamily:'var(--font)',fontSize:'10px',cursor:'pointer',fontWeight:active?'700':'400',transition:'border .15s'},onclick(){
-      S.settings.theme=val; applyTheme(val); debouncedSaveSettings(); renderSettings(c);
+      S.settings.theme=val; applyTheme(val); debouncedSaveSettings(); renderSettings(c); toast('✓ Theme saved','#22c55e');
     }},label);
     themeBtns.appendChild(btn);
   }
@@ -27632,7 +27664,7 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
     const row=el('div',{class:'setting-row'});
     row.appendChild(el('label',{style:{fontSize:'10px',cursor:'pointer'}},label));
     const cb=el('input',{type:'checkbox'}); cb.checked=!!S.settings[key];
-    cb.addEventListener('change',()=>{S.settings[key]=cb.checked; onChangeFn(cb.checked); debouncedSaveSettings(); renderSettings(c);});
+    cb.addEventListener('change',()=>{S.settings[key]=cb.checked; onChangeFn(cb.checked); debouncedSaveSettings(); renderSettings(c); toast('✓ Saved','#22c55e');});
     row.appendChild(cb); secTheme.appendChild(row);
   }
   makeCollapsibleSection(secTheme,'🎨 Display Preferences','vcs_s_theme',true);
