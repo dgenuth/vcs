@@ -4008,9 +4008,14 @@ function getNavTabGroups() {
 // granted tab but clicking it bounced the content back to Today (with the
 // header already set to the new page's title, since that happened first).
 function isTabAllowedForUser(tabId){
-  if(tabId==='feedback') return true; // S50: universally available
   const _tabOverrides = USER.tabOverrides || {};
   if (tabId in _tabOverrides) return !!_tabOverrides[tabId];
+  // Feedback defaults to visible for everyone -- but this is a genuine
+  // DEFAULT, not a hardcoded exception: the tabOverrides check above runs
+  // FIRST, so an admin who explicitly toggles it off in Tab Access is
+  // still respected. Previously this returned true unconditionally before
+  // even checking overrides, meaning it could never actually be turned off.
+  if(tabId==='feedback') return true;
   if (USER.role === 'admin' || USER.role === 'manager') return true;
   if(typeof userCanSeeTab==='function'&&(tabId==='contracts'||tabId==='spend'||tabId==='network'||tabId==='economics'||tabId==='forecast'||tabId==='reports'||tabId==='tiers')){return userCanSeeTab(tabId);}
   const _roleBaseTabs = (ROLE_PERMS[USER.role||'viewer']||ROLE_PERMS.viewer).tabs || NAV_DEFS.map(n=>n[0]).filter(id=>!id.startsWith('_'));
@@ -7567,7 +7572,7 @@ const PAGE_HIERARCHY=[
   const known = new Set(PAGE_HIERARCHY.map(p=>p.id));
   NAV_DEFS.forEach(function(entry){
     const id = entry[0], label = entry[2];
-    if (id.startsWith('_div') || id === 'feedback' || known.has(id)) return;
+    if (id.startsWith('_div') || known.has(id)) return;
     PAGE_HIERARCHY.push({id:id, label:label, editable:true});
     console.warn('[VCS] Page "'+id+'" was in NAV_DEFS but missing from PAGE_HIERARCHY -- auto-added with a safe (hidden-by-default-for-non-admins) Tab Access entry. Consider adding it explicitly for a more deliberate default.');
   });
@@ -26512,7 +26517,7 @@ function buildUserSubSection(label,bodyBuilderFn){
       if(!isValidRole(roleIn.value)){toast('Invalid role selected','#f59e0b');return;}
       const all=getApprovedUsers();
       if(all.find(x=>x.email===e)){toast('User already exists','#f59e0b');return;}
-      all.push({email:e,name:e.split('@')[0],role:roleIn.value,password:pwNewIn.value.trim(),hiddenFields:[],featureFlags:getDefaultFeatureFlags(roleIn.value),added:isoDate(new Date()),addedBy:USER.email});
+      all.push({email:e,name:e.split('@')[0],role:roleIn.value,password:pwNewIn.value.trim(),hiddenFields:getDefaultHiddenFields(roleIn.value),featureFlags:getDefaultFeatureFlags(roleIn.value),added:isoDate(new Date()),addedBy:USER.email});
       touchUser(e);
       setApprovedUsers(all);
       emailIn.value='';pwNewIn.value='';
