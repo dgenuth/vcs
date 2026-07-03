@@ -25834,7 +25834,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
         const savedOverrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
         const roleOv=(savedOverrides[role]||{})[id];
         const builtInDefault=typeof fallbackDefault==='boolean'?fallbackDefault:new Set(Array.isArray(rolePerms.tabs)?rolePerms.tabs:[]).has(id);
-        if(roleOv===undefined) return {view:builtInDefault, edit:builtInDefault};
+        if(roleOv===undefined) return {view:builtInDefault, edit:false};
         if(typeof roleOv==='object') return {view:roleOv.view!==false, edit:roleOv.edit===true};
         return {view:!!roleOv, edit:!!roleOv}; // legacy bare boolean per role
       }
@@ -25847,7 +25847,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
         // several other places (roleDefaultTabs, sidebar nav fallback) read
         // synchronously without re-parsing localStorage.
         if(!ROLE_PERMS[role]) ROLE_PERMS[role]={tabs:[]};
-        if(!ROLE_PERMS[role].tabs) ROLE_PERMS[role].tabs=[];
+        if(!Array.isArray(ROLE_PERMS[role].tabs)) ROLE_PERMS[role].tabs=[];
         if(view){ if(!ROLE_PERMS[role].tabs.includes(id)) ROLE_PERMS[role].tabs.push(id); }
         else { ROLE_PERMS[role].tabs=ROLE_PERMS[role].tabs.filter(function(x){return x!==id;}); }
         saveConfigToDrive().catch(function(){});
