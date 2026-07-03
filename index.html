@@ -3971,10 +3971,19 @@ const NAV_DEFS=[
   ['summary','📈','Summary'],
   ['history','🕐','History'],
   ['datacheck','✅','Data Check'],
-  // S50: Feedback is universally available (not permission-gated) — see the
-  // explicit bypasses in updateSidebar()'s allowedTabs filter and render()'s
-  // redirect guard. Do not add it to PAGE_HIERARCHY (that would give it a
-  // per-role Tab Access toggle, which contradicts "universally available").
+  // S50 QA fix: the comment that used to be here said Feedback should NOT
+  // get a Tab Access entry because it's "universally available." That was
+  // stale — isTabAllowedForUser() checks tabOverrides FIRST and only
+  // defaults to visible when no override exists (an admin CAN toggle it
+  // off per role/user, and it's respected). Because this entry was
+  // deliberately kept out of the explicit PAGE_HIERARCHY array below based
+  // on that stale comment, Feedback only ever showed up in Tab Access via
+  // the generic auto-reconciliation catch-all, which tacks unlisted
+  // NAV_DEFS entries onto the END of the list regardless of where they
+  // actually sit here — which is the real reason it looked out of place.
+  // Now explicitly listed in PAGE_HIERARCHY in its natural Admin-group
+  // position (see below), so it sorts correctly instead of trailing after
+  // System Health.
   ['feedback','💬','Feedback'],
   ['settings','⚙','Settings'],
   ['health','🔍','System Health'],
@@ -7467,6 +7476,8 @@ function canAccessArchive(){
   if(role==='admin') return true; // admin always has access, unconditionally
   const override=(USER.featureFlags||{}).canAccessArchive;
   if(typeof override==='boolean') return override;
+  const roleDefault=getRolePermissionDefault(role,'canAccessArchive');
+  if(typeof roleDefault==='boolean') return roleDefault;
   return ['procurement','manager'].includes(role); // sensible default
 }
 
@@ -7479,6 +7490,8 @@ function userRequiresSearchToList(){
   const override=USER.requireSearchToList;
   if(typeof override==='boolean') return override;
   const role=(USER.role||'restricted').toLowerCase();
+  const roleDefault=getRolePermissionDefault(role,'requireSearchToList');
+  if(typeof roleDefault==='boolean') return roleDefault;
   return ['restricted','sales_rep'].includes(role);
 }
 function userCanEditTab(pageOrTab){
@@ -7554,6 +7567,7 @@ const PAGE_HIERARCHY=[
   {id:'summary',label:'Summary',editable:false},
   {id:'history',label:'History',editable:false},
   {id:'datacheck',label:'Data Check',editable:true},
+  {id:'feedback',label:'Feedback',editable:false},
   {id:'settings',label:'Settings',editable:true},
   {id:'health',label:'System Health',editable:true},
 ];
@@ -8712,6 +8726,21 @@ function hasPermission(p){
   if(!USER.loggedIn) return false;
   // configDrive — only admin
   if(p==='configDrive') return USER.role==='admin';
+  // S50 QA fix: 'addVendor' previously read ONLY the static ROLE_PERMS value
+  // here, completely ignoring the per-user featureFlags.addVendor override
+  // that the Permissions panel's "Add Vendor" toggle actually writes to —
+  // the exact same "toggle looks real but does nothing" bug class as the
+  // pre-S47 showFinancials issue, just never caught for this flag. Now
+  // checks the per-user override, then the new role-level default, and
+  // only then falls back to the original static per-role value so existing
+  // installs with no override set anywhere see zero behavior change.
+  if(p==='addVendor'){
+    const ffOverride=(USER.featureFlags||{}).addVendor;
+    if(typeof ffOverride==='boolean') return ffOverride;
+    const role=(USER.role||'restricted').toLowerCase();
+    const roleDefault=getRolePermissionDefault(role,'addVendor');
+    if(typeof roleDefault==='boolean') return roleDefault;
+  }
   return !!(ROLE_PERMS[USER.role]||{})[p];
 }
 function getRoleFeatureDefault(role, feature){
@@ -8727,14 +8756,36 @@ function setRoleFeatureDefault(role, feature, value){
   if(!S.settings.roleDefaults[role].features) S.settings.roleDefaults[role].features={};
   S.settings.roleDefaults[role].features[feature]=value;
 }
+// S50: role-level defaults for the permission toggles that previously only
+// existed per-user (Permissions panel: export/addVendor/showFinancials/
+// canAccessArchive, plus the separate requireSearchToList override). Kept
+// in its own `permissions` namespace (distinct from the `features` namespace
+// above, which covers page/module access like ai/renzo/discovery) so the two
+// Role & Feature Defaults sub-sections never collide on the same keys.
+// Returns undefined (not a boolean) when no role default has been set, so
+// every caller can tell "explicitly false" apart from "not configured" and
+// fall through to its own pre-existing hardcoded default — this is what
+// keeps existing installs behaving identically until an admin opts in.
+function getRolePermissionDefault(role, perm){
+  const val=S.settings&&S.settings.roleDefaults&&S.settings.roleDefaults[role]&&S.settings.roleDefaults[role].permissions&&S.settings.roleDefaults[role].permissions[perm];
+  return typeof val==='boolean' ? val : undefined;
+}
+function setRolePermissionDefault(role, perm, value){
+  if(!S.settings.roleDefaults) S.settings.roleDefaults={};
+  if(!S.settings.roleDefaults[role]) S.settings.roleDefaults[role]={};
+  if(!S.settings.roleDefaults[role].permissions) S.settings.roleDefaults[role].permissions={};
+  S.settings.roleDefaults[role].permissions[perm]=value;
+}
 function applyCopyProtection() {
   // S47: copy/paste is now tied to the export feature flag, not the
   // separate static ROLE_PERMS.canCopy value — export-capable users are
   // never copy-restricted. Falls back to the legacy role flag only if
   // featureFlags.export was never set on this user object at all.
+  var _exportRole=(USER.role||'restricted').toLowerCase();
+  var _exportRoleDefault=getRolePermissionDefault(_exportRole,'export');
   var hasExport = USER.featureFlags && typeof USER.featureFlags.export==='boolean'
     ? USER.featureFlags.export
-    : (ROLE_PERMS[USER.role||'restricted']||{}).canCopy;
+    : (typeof _exportRoleDefault==='boolean' ? _exportRoleDefault : (ROLE_PERMS[USER.role||'restricted']||{}).canCopy);
   var canCopy = hasExport;
   if (window._vcsCopyHandler) { document.removeEventListener('keydown', window._vcsCopyHandler, true); }
   if (window._vcsContextHandler) { document.removeEventListener('contextmenu', window._vcsContextHandler, true); }
@@ -14993,7 +15044,7 @@ function renderChecklist(c) {
 
   PSX_CHECKLIST.forEach(section=>{
     const secDiv=el('div',{style:'margin-bottom:6px;border:1px solid var(--border);border-radius:5px;overflow:hidden'});
-    const isOpen=S['_clOpen_'+section.label]!==false;
+    const isOpen=S['_clOpen_'+section.label]===true;
     const secHdr=el('div',{style:{background:'var(--card)',padding:'7px 12px',display:'flex',alignItems:'center',gap:'8px',cursor:'pointer',userSelect:'none',borderBottom:isOpen?'1px solid var(--border)':'none'},
       onclick(){S['_clOpen_'+section.label]=!isOpen;const c2=$('content');if(c2){c2.innerHTML='';renderChecklist(c2);}}});
     secHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'2px'}},isOpen?'▼':'▶'));
@@ -19821,7 +19872,7 @@ function renderToday(c) {
     return fuOverdue||(daysSinceComm>30&&(v.tier==='CALL'||v.tier==='EMAIL'));
   }).sort((a,b)=>_fuScore(b)-_fuScore(a)).slice(0,10);
   if(_fuVendors.length){
-    const _fuOpen=S._todayOpen.fu!==false;
+    const _fuOpen=S._todayOpen.fu===true;
     const fuSec=el('div',{style:{marginBottom:'4px'}});
     const fuHdr=el('div',{style:_SEC_HDR_STYLE,onclick(){S._todayOpen.fu=!_fuOpen;const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}});
     fuHdr.appendChild(el('span',{style:_SEC_CHEVRON_STYLE},_fuOpen?'▼':'▶'));
@@ -19871,7 +19922,7 @@ function renderToday(c) {
     return (b.currentSpend||b.lastYearSpend||0)-(a.currentSpend||a.lastYearSpend||0);
   }).slice(0,8);
   if(_revDue.length){
-    const _revOpen=S._todayOpen.rev!==false;
+    const _revOpen=S._todayOpen.rev===true;
     const revSec=el('div',{style:{marginBottom:'4px'}});
     const revHdr=el('div',{style:_SEC_HDR_STYLE,onclick(){S._todayOpen.rev=!_revOpen;const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}});
     revHdr.appendChild(el('span',{style:_SEC_CHEVRON_STYLE},_revOpen?'▼':'▶'));
@@ -19905,7 +19956,7 @@ function renderToday(c) {
   }
 
   // ── Smart Outreach Intelligence ──
-  const _outOpen=S._todayOpen.outreach!==false;
+  const _outOpen=S._todayOpen.outreach===true;
   const outreachSec=el('div',{style:{marginBottom:'4px'}});
   const outHdr=el('div',{style:_SEC_HDR_STYLE,onclick(){S._todayOpen.outreach=!_outOpen;const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}});
   outHdr.appendChild(el('span',{style:_SEC_CHEVRON_STYLE},_outOpen?'▼':'▶'));
@@ -19982,7 +20033,7 @@ function renderToday(c) {
   // ── SF Board Data (cases, opps, tasks due today) ─────────────────────────
   const sb=S._sfBoardData;
   if(sb&&sb.opps){
-    const _sfbOpen=S._todayOpen.sfboard!==false;
+    const _sfbOpen=S._todayOpen.sfboard===true;
     const sfSec=el('div',{class:'summary-section'});
     const sfSecHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:_sfbOpen?'8px':'0',cursor:'pointer',userSelect:'none'},onclick(){S._todayOpen.sfboard=!S._todayOpen.sfboard;render();}});
     sfSecHdr.appendChild(el('span',{style:{fontSize:'12px',color:'var(--muted)',minWidth:'16px'}},_sfbOpen?'▼':'▶'));
@@ -23589,7 +23640,7 @@ function renderSummary(c) {
     const rangeLabel=S.summaryRange==='all'?'All time':S.summaryRange==='custom'?`${S.summaryFrom} – ${S.summaryTo||'today'}`:`Last ${S.summaryRange}d`;
     sec4.appendChild(el('h3',{style:{color:'var(--blue)',marginBottom:'6px'}},`📝 Recently Contacted (${rangeLabel})`));
     sec4.appendChild(buildSortableTable(['Vendor','Last Comm','Note Preview'],notesVendors.sort((a,b)=>(parseDate(b.lastComm)||0)-(parseDate(a.lastComm)||0)).slice(0,30),v=>[vLink(v),fmtDate(parseDate(v.lastComm)),el('span',{class:'note-preview'},String(v.notes||'').split('|')[0]?.slice(0,100)||'')]));
-    makeCollapsibleSection(sec4,'🎨 Display Preferences','vcs_s_display',false);
+    makeCollapsibleSection(sec4,'🎨 Display Preferences','vcs_s_display',true);
   c.appendChild(sec4);
   }
 }
@@ -25055,7 +25106,7 @@ function renderSettings(c) {
   syncSec.appendChild(syncInfo);
   // D3: Expand/Collapse ALL known settings keys
   const _allSettingsKeys=['emailSig','fileInfo','dataActions','handover','renzo'];
-  const _allRawKeys=['vcs_s_sf','vcs_s_drive','vcs_s_ms','vcs_s_ai','vcs_s_dialer','vcs_s_cols','vcs_s_prefs','vcs_s_startup','vcs_s_theme','vcs_s_display','vcs_s_connections'];
+  const _allRawKeys=['vcs_s_sf','vcs_s_drive','vcs_s_ms','vcs_s_ai','vcs_s_dialer','vcs_s_cols','vcs_s_prefs','vcs_s_startup','vcs_s_theme','vcs_s_display','vcs_s_connections','vcs_s_supa'];
   syncSec.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},title:'Expand All (Ctrl+Shift+E)',onclick(){
     S._settingsExpandAll=true;
     if(!S._settingsOpen)S._settingsOpen={};
@@ -25712,7 +25763,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
   // ── Role Tab Defaults (Admin only, or Assistant Admin — S48 Part D) ──────
   if (hasPermission('manageUsers') || isAssistantAdmin()) {
     const secRoles=el('div',{class:'settings-section'});
-    const _rdCollapsed=localStorage.getItem('vcs_rd_collapsed')==='1';
+    const _rdCollapsed=localStorage.getItem('vcs_rd_collapsed')!=='0';
     const _rdHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',cursor:'pointer',userSelect:'none'},
       onclick(){
         const _c=!(_rdBody.style.display==='none');
@@ -25829,7 +25880,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
       // button here — this section IS what defines the defaults, so
       // "reset to defaults" doesn't apply to it the way it does for a
       // per-user override.
-      _roleBody.appendChild(_roleSub('📑 Tab Access Defaults (all '+role+' users)', true, function(b){
+      _roleBody.appendChild(_roleSub('📑 Tab Access Defaults (all '+role+' users)', false, function(b){
       function roleTabState(id, fallbackDefault){
         const savedOverrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
         const roleOv=(savedOverrides[role]||{})[id];
@@ -25951,6 +26002,97 @@ window._buildConnectionsSection = _buildConnectionsSection;
       b.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)',marginBottom:'4px'}},'✅ = visible to role · 🚫 = hidden from role'));
       }));
 
+      // ── Permissions Defaults for this role ─────────────────────────────────
+      // S50: role-level equivalents of the per-user Permissions panel toggles
+      // (Allow Export / Add Vendor / Access Archive / Full List Browsable),
+      // built with the same buildPermTile() component the per-user panel
+      // uses, per David's request to mirror that UI exactly. Any individual
+      // user's own override in User Management still always wins — this only
+      // changes what a user with NO override sees.
+      _roleBody.appendChild(_roleSub('🔑 Permissions Defaults (all '+role+' users)', false, function(b){
+        b.innerHTML='';
+        const permRow=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'6px',marginBottom:'6px'}});
+        const PERM_DEFS=[['export','Allow Export'],['addVendor','Add Vendor'],['canAccessArchive','Access Archive']];
+        PERM_DEFS.forEach(function(pd){
+          const permKey=pd[0], permLabel=pd[1];
+          // Each key's original hardcoded fallback, preserved exactly so a
+          // role with no explicit default set here behaves identically to
+          // before this section existed.
+          const staticFallback = permKey==='export' ? !!(ROLE_PERMS[role]||{}).canCopy
+            : permKey==='addVendor' ? !!(ROLE_PERMS[role]||{}).addVendor
+            : ['procurement','manager'].includes(role); // canAccessArchive
+          const roleVal=getRolePermissionDefault(role,permKey);
+          const isOn=typeof roleVal==='boolean' ? roleVal : staticFallback;
+          permRow.appendChild(buildPermTile({
+            label:permLabel, isViewable:isOn, isOverridden:false, showEditCheckbox:false,
+            onToggleView:function(){
+              setRolePermissionDefault(role,permKey,!isOn);
+              debouncedSaveSettings();
+              toast('✓ '+permLabel+' default '+(!isOn?'ON':'OFF')+' for all '+role+' users — saved','#22c55e');
+              const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+            }
+          }));
+        });
+        b.appendChild(permRow);
+
+        // "See Financials" role default drives the SAME Financials field-
+        // group hide/show mechanism as the per-user toggle and the Field
+        // Visibility Defaults sub-section above (same vcs_role_fields_<role>
+        // storage) rather than a second, independent flag that could drift
+        // out of sync with the field-level control.
+        const _rfKey2='vcs_role_fields_'+role;
+        const _roleHF2=new Set(JSON.parse(localStorage.getItem(_rfKey2)||'[]'));
+        const finKeys2=FIELD_GROUPS['Financials']||[];
+        const finHidden=finKeys2.length>0 && finKeys2.every(function(k){return _roleHF2.has(k);});
+        const finRow=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'6px',marginBottom:'6px'}});
+        finRow.appendChild(buildPermTile({
+          label:'See Financials', isViewable:!finHidden, isOverridden:false, showEditCheckbox:false,
+          onToggleView:function(){
+            const makeHidden=!finHidden;
+            const rh=new Set(JSON.parse(localStorage.getItem(_rfKey2)||'[]'));
+            finKeys2.forEach(function(k){ if(makeHidden){rh.add(k);}else{rh.delete(k);} });
+            localStorage.setItem(_rfKey2,JSON.stringify([...rh]));
+            try{
+              const allU=getApprovedUsers();
+              allU.forEach(function(u){
+                if((u.role||'admin')!==role) return;
+                if(!u.hiddenFields) u.hiddenFields=[];
+                finKeys2.forEach(function(k){
+                  if(makeHidden){ if(!u.hiddenFields.includes(k)) u.hiddenFields.push(k); }
+                  else { u.hiddenFields=u.hiddenFields.filter(function(fk){return fk!==k;}); }
+                });
+                touchUser(u.email);
+              });
+              localStorage.setItem(AUTH_KEY,JSON.stringify(allU));
+              scheduleUserSave(2000);
+            }catch(e2){}
+            toast('✓ Financials '+(makeHidden?'hidden':'visible')+' for all '+role+' users','#22c55e');
+            const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+          }
+        }));
+        b.appendChild(finRow);
+
+        // "Full list browsable" — same inverse-label convention already used
+        // in the per-user Permissions panel (label flips between "Requires
+        // search" and "Full list browsable" rather than showing a raw
+        // boolean field name).
+        const rstRoleVal=getRolePermissionDefault(role,'requireSearchToList');
+        const rstStaticFallback=['restricted','sales_rep'].includes(role);
+        const rstOn=typeof rstRoleVal==='boolean' ? rstRoleVal : rstStaticFallback; // true = requires search
+        const rstRow2=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'6px'}});
+        rstRow2.appendChild(buildPermTile({
+          label:rstOn?'Requires search':'Full list browsable', isViewable:!rstOn, isOverridden:false, showEditCheckbox:false,
+          onToggleView:function(){
+            setRolePermissionDefault(role,'requireSearchToList',!rstOn);
+            debouncedSaveSettings();
+            toast('✓ Vendor DB browsing default updated for all '+role+' users — saved','#22c55e');
+            const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+          }
+        }));
+        b.appendChild(rstRow2);
+        b.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)',marginTop:'4px'}},'Any individual user\'s own override in User Management always takes priority over these role defaults.'));
+      }));
+
       // ── Feature Defaults for this role ────────────────────────────────────
       _roleBody.appendChild(_roleSub('⚙ Feature Defaults (all '+role+' users)', false, function(b){
       const ROLE_FEATURES=[['ai','AI Assistant'],['renzo','Renzo Access'],['discovery','Discovery'],['sfboard','SF Board'],['spend','Spend Page'],['contracts','Contracts']];
@@ -26000,7 +26142,7 @@ function buildUserSubSection(label,bodyBuilderFn){
   if (hasPermission('manageUsers') || isAssistantAdmin()) {
     const secUsers=el('div',{class:'settings-section'});
     // Collapsible header
-    const _umCollapsed = localStorage.getItem('vcs_um_collapsed') === '1';
+    const _umCollapsed = localStorage.getItem('vcs_um_collapsed') !== '0';
     const _umHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none'},onclick(){
       const _c=!(_umBody.style.display==='none');
       _umBody.style.display=_c?'none':'';
@@ -26288,7 +26430,7 @@ function buildUserSubSection(label,bodyBuilderFn){
       }
 
       // ── SUB-SECTION 1: Permissions ────────────────────────────────────────
-      details.appendChild(_userSub('🔐 Permissions', true, function _buildPermissionsPanel(b) {
+      details.appendChild(_userSub('🔐 Permissions', false, function _buildPermissionsPanel(b) {
         b.innerHTML=''; // safe to call again after a toggle — buildPermTile needs a rebuild to show its new color, unlike a native checkbox
         // S48 QA fix: re-fetch this user fresh on every re-render instead of
         // reading the outer `u` closure var, which is fixed to whatever
@@ -27199,7 +27341,7 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
   phoneGuide.appendChild(optCard);
   secDialer.appendChild(phoneGuide);
 
-  makeCollapsibleSection(secDialer,'📞 Click-to-Call & Phone Connect','vcs_s_dialer',false);
+  makeCollapsibleSection(secDialer,'📞 Click-to-Call & Phone Connect','vcs_s_dialer',true);
   c.appendChild(secDialer);
 
   // Display preferences
@@ -27217,7 +27359,7 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
     cb.addEventListener('change',()=>{S.settings[key]=cb.checked;debouncedSaveSettings();renderSettings(c);render();});
     row.appendChild(cb); sec4.appendChild(row);
   }
-  makeCollapsibleSection(sec4,'🎨 Display Preferences','vcs_s_prefs',false);c.appendChild(sec4);
+  makeCollapsibleSection(sec4,'🎨 Display Preferences','vcs_s_prefs',true);c.appendChild(sec4);
 
   // Calendar / Availability
   const secCal=el('div',{class:'settings-section'});
@@ -27266,31 +27408,58 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
     }
   };
   renderDayLists();
-  if(['admin','procurement','manager'].includes(USER.role))if(['admin','procurement','manager'].includes(USER.role)){const _cc=localStorage.getItem('vcs_s_cal')!=='1';const _cch=el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'6px'}},_cc?'▼':'▶');const _coh=el('div',{style:{display:'flex',alignItems:'center',cursor:'pointer',userSelect:'none',padding:'4px 0'}});_coh.onclick=function(){const n=secCal.style.display==='none';secCal.style.display=n?'':'none';_cch.textContent=n?'▼':'▶';localStorage.setItem('vcs_s_cal',n?'0':'1');};_coh.appendChild(_cch);_coh.appendChild(el('h3',{style:{margin:'0',display:'inline',fontSize:'13px'}},'📅 Calendar Availability'));_coh.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'6px'}},_cc?'click to collapse':'click to expand'));const _cow=el('div',{class:'settings-section'});_cow.appendChild(_coh);secCal.style.display=_cc?'':'none';_cow.appendChild(secCal);c.appendChild(_cow);}
+  if(['admin','procurement','manager'].includes(USER.role))if(['admin','procurement','manager'].includes(USER.role)){const _cc=localStorage.getItem('vcs_s_cal')==='0';const _cch=el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'6px'}},_cc?'▼':'▶');const _coh=el('div',{style:{display:'flex',alignItems:'center',cursor:'pointer',userSelect:'none',padding:'4px 0'}});_coh.onclick=function(){const n=secCal.style.display==='none';secCal.style.display=n?'':'none';_cch.textContent=n?'▼':'▶';localStorage.setItem('vcs_s_cal',n?'0':'1');};_coh.appendChild(_cch);_coh.appendChild(el('h3',{style:{margin:'0',display:'inline',fontSize:'13px'}},'📅 Calendar Availability'));_coh.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'6px'}},_cc?'click to collapse':'click to expand'));const _cow=el('div',{class:'settings-section'});_cow.appendChild(_coh);secCal.style.display=_cc?'':'none';_cow.appendChild(secCal);c.appendChild(_cow);}
 
   // Default View on load
   const secDefaults=el('div',{class:'settings-section'});
   // header for Startup & Navigation added by makeCollapsibleSection below
   secDefaults.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'5px'}},'Default view on file load:'));
   const viewRow=el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginBottom:'12px'}});
-  [['📋 Today','today'],['📞 Call Sheet','callsheet'],['⏰ Expiring','expiring'],['🗂 Vendor DB','vendordb'],['📆 Forecast','forecast']].forEach(([label,val])=>{
+  // S50: expanded from 5 to 11 options — every page that render() actually
+  // knows how to route to on load (confirmed against the render() switch
+  // statement), so "always start on X" works for any of them, including
+  // Settings itself (useful for David during active development).
+  [['📋 Today','today'],['📞 Call Sheet','callsheet'],['⏰ Expiring','expiring'],['🗂 Vendor DB','vendordb'],['📆 Forecast','forecast'],
+   ['🌐 Network','network'],['🔧 In The Works','itw'],['📊 Reports','reports'],['🕘 History','history'],['📈 Analytics','analytics'],['⚙ Settings','settings']
+  ].forEach(([label,val])=>{
     const active=(S.settings.defaultView||'today')===val;
     viewRow.appendChild(el('button',{class:'col-toggle-btn'+(active?' on':''),onclick(){S.settings.defaultView=val;debouncedSaveSettings();renderSettings(c);}},label));
   });
   secDefaults.appendChild(viewRow);
 
   // Keyboard shortcuts reference
+  // S50: split into two columns (Navigation / Other & Context-Specific) and
+  // synced against the actual keydown handlers in code — G-N, G-H, G-E, G-A
+  // and the Settings-page expand/collapse-all shortcuts existed and worked
+  // but were never listed here; the notes-editor formatting shortcuts only
+  // apply while a notes field is focused, so they're called out separately
+  // rather than implying they work app-wide.
   secDefaults.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'5px',fontWeight:'600'}},'⌨️ Keyboard Shortcuts'));
-  const kbTable=el('div',{style:{display:'grid',gridTemplateColumns:'auto 1fr',gap:'3px 16px',fontSize:'10px',background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'4px',padding:'8px 12px'}});
-  [['G then T','Go to Today'],['G then V','Go to Vendor Database'],['G then C','Go to Calendar'],['G then F','Go to Forecast'],['G then I','Go to In The Works'],
-   ['G then R','Go to Reports'],['G then S','Open App Config'],
-   ['/ or F','Focus search box'],['Esc','Close panel / modal'],['?','Show this shortcut list'],
-  ].forEach(([key,desc])=>{
-    kbTable.appendChild(el('span',{style:{fontFamily:'monospace',background:'rgba(255,255,255,.06)',padding:'1px 5px',borderRadius:'3px',color:'var(--blue)',whiteSpace:'nowrap'}},key));
-    kbTable.appendChild(el('span',{style:{color:'var(--muted)'}},desc));
-  });
-  secDefaults.appendChild(kbTable);
-  if(['admin','procurement','manager'].includes(USER.role))if(['admin','procurement','manager'].includes(USER.role)){makeCollapsibleSection(secDefaults,'🚀 Startup & Navigation','vcs_s_startup',false);c.appendChild(secDefaults);}
+  const kbCols=el('div',{style:{display:'flex',gap:'12px',flexWrap:'wrap'}});
+  function buildKbTable(title,rows){
+    const wrap=el('div',{style:{flex:'1',minWidth:'220px'}});
+    wrap.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'700',color:'var(--muted)',marginBottom:'3px',textTransform:'uppercase'}},title));
+    const g=el('div',{style:{display:'grid',gridTemplateColumns:'auto 1fr',gap:'3px 16px',fontSize:'10px',background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'4px',padding:'8px 12px'}});
+    rows.forEach(([key,desc])=>{
+      g.appendChild(el('span',{style:{fontFamily:'monospace',background:'rgba(255,255,255,.06)',padding:'1px 5px',borderRadius:'3px',color:'var(--blue)',whiteSpace:'nowrap'}},key));
+      g.appendChild(el('span',{style:{color:'var(--muted)'}},desc));
+    });
+    wrap.appendChild(g);
+    return wrap;
+  }
+  kbCols.appendChild(buildKbTable('Navigation (press G, then...)',[
+    ['G then T','Go to Today'],['G then V','Go to Vendor Database'],['G then C','Go to Calendar'],['G then F','Go to Forecast'],
+    ['G then I','Go to In The Works'],['G then R','Go to Reports'],['G then S','Open App Config'],['G then N','Go to Network'],
+    ['G then H','Go to History'],['G then E','Go to Expiring'],['G then A','Go to Analytics'],
+  ]));
+  kbCols.appendChild(buildKbTable('Other & Context-Specific',[
+    ['/ or F','Focus search box'],['Esc','Close panel / modal'],['?','Show this shortcut list'],
+    ['Ctrl/⌘+Shift+E','Expand all (Settings page only)'],['Ctrl/⌘+Shift+C','Collapse all (Settings page only)'],
+    ['Ctrl/⌘+B','Bold (while editing a note)'],['Ctrl/⌘+I','Italic (while editing a note)'],
+    ['Ctrl/⌘+U','Underline (while editing a note)'],['Ctrl/⌘+S','Save note (while editing a note)'],
+  ]));
+  secDefaults.appendChild(kbCols);
+  if(['admin','procurement','manager'].includes(USER.role))if(['admin','procurement','manager'].includes(USER.role)){makeCollapsibleSection(secDefaults,'🚀 Startup & Navigation','vcs_s_startup',true);c.appendChild(secDefaults);}
 
   // Theme & Appearance
   const secTheme=el('div',{class:'settings-section'});
@@ -27342,7 +27511,7 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
     cb.addEventListener('change',()=>{S.settings[key]=cb.checked; onChangeFn(cb.checked); debouncedSaveSettings(); renderSettings(c);});
     row.appendChild(cb); secTheme.appendChild(row);
   }
-  makeCollapsibleSection(secTheme,'🌙 Theme & Font','vcs_s_theme',false);
+  makeCollapsibleSection(secTheme,'🌙 Theme & Font','vcs_s_theme',true);
   c.appendChild(secTheme);
 
   // Email Signature section removed -- signatures come from each user's
@@ -27380,7 +27549,7 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
   // add isAssistantAdmin() to this condition.
   if(USER.role==='admin'){
     const renzoSec=el('div',{style:{background:'var(--card)',border:'1px solid rgba(79,124,255,.3)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
-    const _rnOpen=!S._settingsOpen||(S._settingsOpen.renzo!==false);
+    const _rnOpen=!!(S._settingsOpen&&S._settingsOpen.renzo===true);
     const _rnHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'10px 14px',cursor:'pointer',background:_rnOpen?'rgba(79,124,255,.06)':'var(--sb)'},onclick(){if(!S._settingsOpen)S._settingsOpen={};S._settingsOpen.renzo=!_rnOpen;render();}});
     _rnHdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'2px'}},_rnOpen?'▼':'▶'));
     _rnHdr.appendChild(el('span',{style:{fontSize:'14px'}},'🔌'));
@@ -27578,11 +27747,11 @@ function out(o){return ContentService.createTextOutput(JSON.stringify(o)).setMim
   if(['admin','procurement'].includes(USER.role) || isAssistantAdmin()){
     const apiSec=el('div',{class:'summary-section'});
     const apiHdrRow=el('div',{style:{display:'flex',alignItems:'center',cursor:'pointer',marginBottom:'4px'},onclick(){const _ac=$('content');const _asp=_ac?_ac.scrollTop:0;S._apiSecOpen=!S._apiSecOpen;render();if(_ac) requestAnimationFrame(()=>{_ac.scrollTop=_asp;});}});
-    apiHdrRow.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'6px'}},S._apiSecOpen!==false?'▼':'▶'));
+    apiHdrRow.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'6px'}},S._apiSecOpen===true?'▼':'▶'));
     apiHdrRow.appendChild(el('h3',{style:{margin:'0',flex:'1'}},'📊 API Usage Monitor'));
     apiSec.appendChild(apiHdrRow);
 
-    if(S._apiSecOpen!==false){
+    if(S._apiSecOpen===true){
       const usageKeys=Object.keys(localStorage).filter(k=>k.startsWith('vcs_ai_usage_'));
       // Total cost summary
       let totalCents=0;
