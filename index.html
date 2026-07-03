@@ -25167,8 +25167,8 @@ function renderSettings(c) {
   }},'▶ Collapse All'));
   // A3: Keyboard shortcuts for expand/collapse all settings sections
   const _settingsKbHandler=(e)=>{
-    if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e.key==='E'){e.preventDefault();S._settingsExpandAll=true;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=true);_allRawKeys.forEach(k=>localStorage.setItem(k,'0'));localStorage.setItem('vcs_rd_collapsed','0');localStorage.setItem('vcs_um_collapsed','0');localStorage.setItem('vcs_s_cal','0');S._apiSecOpen=true;S._setupChecklistOpen=true;render();}
-    if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e.key==='C'){e.preventDefault();S._settingsExpandAll=false;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=false);_allRawKeys.forEach(k=>localStorage.setItem(k,'1'));localStorage.setItem('vcs_rd_collapsed','1');localStorage.setItem('vcs_um_collapsed','1');localStorage.setItem('vcs_s_cal','1');S._apiSecOpen=false;S._setupChecklistOpen=false;render();}
+    if((e.ctrlKey||e.metaKey)&&e.key==='e'&&!e.shiftKey){e.preventDefault();S._settingsExpandAll=true;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=true);_allRawKeys.forEach(k=>localStorage.setItem(k,'0'));localStorage.setItem('vcs_rd_collapsed','0');localStorage.setItem('vcs_um_collapsed','0');localStorage.setItem('vcs_s_cal','0');S._apiSecOpen=true;S._setupChecklistOpen=true;render();}
+    if((e.ctrlKey||e.metaKey)&&e.key==='k'){e.preventDefault();S._settingsExpandAll=false;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=false);_allRawKeys.forEach(k=>localStorage.setItem(k,'1'));localStorage.setItem('vcs_rd_collapsed','1');localStorage.setItem('vcs_um_collapsed','1');localStorage.setItem('vcs_s_cal','1');S._apiSecOpen=false;S._setupChecklistOpen=false;render();}
   };
   document.addEventListener('keydown',_settingsKbHandler);
   c.addEventListener('DOMNodeRemovedFromDocument',()=>document.removeEventListener('keydown',_settingsKbHandler),{once:true});
@@ -25337,7 +25337,18 @@ function _buildConnectionsSection(){
 
     // Microsoft 365
     connBody.appendChild(buildIntegrationSubsection('Microsoft 365',
-      function(){const msToken=getMSToken&&getMSToken();const msName=getMSUserName&&getMSUserName();return msToken&&Date.now()<(getMSTokenExp&&getMSTokenExp()||0)?'Connected as '+(msName||USER.email||''):'Not connected';},
+      function(){
+        const msToken=getMSToken&&getMSToken();
+        const msName=getMSUserName&&getMSUserName();
+        const hasRefresh=!!(getMSRefresh&&getMSRefresh());
+        if(msToken&&Date.now()<(getMSTokenExp&&getMSTokenExp()||0)) return 'Connected as '+(msName||USER.email||'');
+        // S50: migrated from the old legacy MS365 section — a user whose
+        // token merely expired (but who has a refresh token) is not the same
+        // situation as never having connected at all; collapsing both into
+        // "Not connected" reads like a surprise disconnect.
+        if(hasRefresh) return 'Token expired'+(msName?' ('+msName+')':'')+' — reconnect below';
+        return 'Not connected';
+      },
       function(b){
         if(USER&&USER.role==='admin'){
           const msClientRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px'}});
@@ -25354,6 +25365,11 @@ function _buildConnectionsSection(){
             S.settings.msGraphClientId=msCidInp.value.trim();S.settings.msGraphTenantId=msTenantInp.value.trim();
             await saveConfigToDrive();toast('MS settings saved','#10b981');
           }},'Save Settings'));
+          // S50: migrated from the old legacy MS365 section — the exact
+          // redirect URI an admin needs to register in the Azure App
+          // Registration; existed nowhere in the new section.
+          b.appendChild(el('p',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'6px',lineHeight:'1.4'}},
+            'Redirect URI to register in Azure: '+window.location.origin+window.location.pathname));
         }
         const actionRow=el('div',{style:{display:'flex',gap:'6px',flexWrap:'wrap',marginTop:'8px',paddingTop:'6px',borderTop:'1px solid var(--border)'}});
         const msToken=getMSToken&&getMSToken();
@@ -25661,6 +25677,17 @@ function _buildConnectionsSection(){
         gdFileRow.appendChild(gdFileInp);
         b.appendChild(gdFileRow);
 
+        // S50: migrated from the old legacy Google Drive section — this field
+        // exists nowhere else and is genuinely read by tryAutoLoadFromDrive()
+        // (falls back to 'Vendor_Catalogue.xlsm' when empty), so it needed a
+        // home in the consolidated section before the old one can go away.
+        const gdNameRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',fontSize:'10px',marginTop:'4px'}});
+        gdNameRow.appendChild(el('label',{style:{minWidth:'80px'}},'File name'));
+        const gdNameInp=el('input',{value:S.settings.driveFileName||'',placeholder:'Vendor_Catalogue.xlsm',style:{flex:'1',fontSize:'10px'}});
+        gdNameInp.addEventListener('change',function(){S.settings.driveFileName=gdNameInp.value.trim();debouncedSaveSettings();});
+        gdNameRow.appendChild(gdNameInp);
+        b.appendChild(gdNameRow);
+
         // S48 Part F: manual load/save buttons relocated here from the old
         // upload-screen (removed) — CMS now auto-loads from Supabase after
         // login, but these remain as a manual fallback, available to all users
@@ -25688,7 +25715,7 @@ function _buildConnectionsSection(){
           b.appendChild(gdSyncRow);
           const gdriveActionRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',flexWrap:'wrap',marginTop:'8px',paddingTop:'6px',borderTop:'1px solid var(--border)'}});
           gdriveActionRow.appendChild(el('button',{class:'btn-xs btn-green',title:'Save Drive File ID and Google Client ID',onclick:async function(){
-            S.settings.driveFileId=gdFileInp.value.trim();S.settings.googleClientId=gdClientInp.value.trim();
+            S.settings.driveFileId=gdFileInp.value.trim();S.settings.googleClientId=gdClientInp.value.trim();S.settings.driveFileName=gdNameInp.value.trim();
             await saveConfigToDrive();toast('Google Drive settings saved','#10b981');
           }},'Save'));
           const gdTestResult=el('span',{style:{fontSize:'9px',color:'var(--muted)',alignSelf:'center'}});
@@ -27481,7 +27508,7 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
   ]));
   kbCols.appendChild(buildKbTable('Other & Context-Specific',[
     ['/ or F','Focus search box'],['Esc','Close panel / modal'],['?','Show this shortcut list'],
-    ['Ctrl+Shift+E (⌘+Shift+E on Mac)','Expand all (Settings page only)'],['Ctrl+Shift+C (⌘+Shift+C on Mac)','Collapse all (Settings page only)'],
+    ['Ctrl+E (⌘+E on Mac)','Expand all (Settings page only)'],['Ctrl+K (⌘+K on Mac)','Collapse all (Settings page only)'],
     ['Ctrl+B (⌘+B on Mac)','Bold (while editing a note)'],['Ctrl+I (⌘+I on Mac)','Italic (while editing a note)'],
     ['Ctrl+U (⌘+U on Mac)','Underline (while editing a note)'],['Ctrl+S (⌘+S on Mac)','Save note (while editing a note)'],
   ]));
