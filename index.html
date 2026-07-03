@@ -61,7 +61,7 @@
   --blue:#4f7cff;--green:#22c55e;--red:#ef4444;--amber:#f59e0b;--orange:#f97316;
   --font:'DM Sans',sans-serif;--fs:11px;
 }
-body{font-size:var(--fs)}
+body{font-size:11px}
 /* Themes */
 body.light-theme{--bg:#f0f2f7;--sb:#fff;--card:#fff;--border:#d1d5e0;--text:#111827;--muted:#6b7280;--blue:#2563eb;--green:#16a34a;--red:#dc2626;--amber:#d97706;--orange:#ea580c}
 body.ocean-theme{--bg:#050d1a;--sb:#0a1628;--card:#0d1f35;--border:#1e3a5f;--text:#e0ecff;--muted:#5b7fa6;--blue:#38bdf8;--green:#34d399;--red:#f87171;--amber:#fbbf24;--orange:#fb923c}
@@ -345,12 +345,12 @@ body.compact .data-table th{padding:2px 4px!important}
 body.compact .nav-btn{padding:3px 12px!important}
 body.compact .kpi-card{padding:5px 7px!important}
 /* Font size — everything scales from --fs */
-body,.data-table td,.search-input,.modal-textarea,.modal-input,.nav-btn,.filter-tab,.btn-xs,.btn-action,.detail-value,.detail-label,.note-line,.log-entry{font-size:var(--fs)}
-.data-table th{font-size:calc(var(--fs) - 1px)}
-.kpi-val{font-size:calc(var(--fs)*1.8)}
-.kpi-label,.cal-heb,.cal-event-preview,.cal-date,.issue-type,.score-pill,.tier-tag,.note-tb-btn,.dismissed-badge,.snoozed-badge{font-size:calc(var(--fs) - 1.5px)}
-#view-title{font-size:calc(var(--fs)*1.2)}
-.detail-vendor-name{font-size:calc(var(--fs)*1.3)}
+body,.data-table td,.search-input,.modal-textarea,.modal-input,.nav-btn,.filter-tab,.btn-xs,.btn-action,.detail-value,.detail-label,.note-line,.log-entry{font-size:11px}
+.data-table th{font-size:10px}
+.kpi-val{font-size:19.8px}
+.kpi-label,.cal-heb,.cal-event-preview,.cal-date,.issue-type,.score-pill,.tier-tag,.note-tb-btn,.dismissed-badge,.snoozed-badge{font-size:9.5px}
+#view-title{font-size:13.2px}
+.detail-vendor-name{font-size:14.3px}
 /* Date picker white in dark themes */
 input[type='date']::-webkit-calendar-picker-indicator{filter:invert(0.8);cursor:pointer;opacity:0.7}
 input[type='date']::-webkit-calendar-picker-indicator:hover{opacity:1}
@@ -2041,9 +2041,8 @@ function applyTheme(theme) {
   if(!s){s=document.createElement('style');s.id='dyn-theme';document.head.appendChild(s);}
   s.textContent=`input[type='date']::-webkit-calendar-picker-indicator{filter:${isLight?'none':'invert(0.8)'};opacity:0.8;cursor:pointer}`;
 }
-function applyFontSize(px) {
-  document.documentElement.style.setProperty('--fs', px+'px');
-}
+// applyFontSize removed along with the Font Size setting -- CSS values
+// above are now hardcoded to their former default (11px base).
 
 function buildSimpleSheetXml(rows) {
   const esc=(s)=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -27321,15 +27320,9 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
   secTheme.appendChild(themeBtns);
 
   // Font size
-  secTheme.appendChild(el('div',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'5px'}},'Font Size'));
-  const sizeRow=el('div',{style:{display:'flex',gap:'4px',marginBottom:'10px'}});
-  for (const [label,val] of [['XS (9)','9'],['Small (10)','10'],['Normal (11)','11'],['Large (12)','12'],['XL (13)','13']]) {
-    const cur=S.settings.fontSize||'11';
-    sizeRow.appendChild(el('button',{class:'col-toggle-btn'+(cur===val?' on':''),onclick(){
-      S.settings.fontSize=val; applyFontSize(parseInt(val)); debouncedSaveSettings(); renderSettings(c);
-    }},label));
-  }
-  secTheme.appendChild(sizeRow);
+  // Font Size control removed -- it only affected 7 of 1600+ places using
+  // fixed pixel font sizes throughout the app, making it non-functional in
+  // any noticeable way. Users can use browser zoom instead.
 
   // Toggles
   const toggleDefs=[
@@ -27352,16 +27345,8 @@ CREATE POLICY "anon_all" ON activity_log FOR ALL USING (true);`;
   makeCollapsibleSection(secTheme,'🌙 Theme & Font','vcs_s_theme',false);
   c.appendChild(secTheme);
 
-  // Email Signature — collapsible via settingsCard
-  if(['admin','procurement','manager'].includes(USER.role)){
-    settingsCard(c,'Email Signature','✉️','emailSig',false,body=>{
-      body.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'4px'}},'Default email signature (appended to drafts):'));
-      const sigTa=el('textarea',{class:'modal-textarea',style:{height:'80px',marginTop:'5px'}});
-      sigTa.value=S.settings.emailSignature||'';
-      sigTa.addEventListener('change',()=>{S.settings.emailSignature=sigTa.value;toast('Signature saved');});
-      body.appendChild(sigTa);
-    });
-  }
+  // Email Signature section removed -- signatures come from each user's
+  // own email client when they actually send, not a separate app setting.
 
   // File Info — collapsible via settingsCard
   if (S.loaded) {
@@ -30035,11 +30020,9 @@ function hideKeywordSuggestions() {
 
   updateSidebar(); render();
   applyTheme(S.settings.theme||'dark');
-  if (S.settings.fontSize) applyFontSize(parseInt(S.settings.fontSize));
   if (S.settings.compactRows) document.body.classList.add('compact');
   loadSettings(); // Restore persisted settings (also sets S.dbHiddenCols if saved)
   applyTheme(S.settings.theme||'dark');
-  if (S.settings.fontSize) applyFontSize(parseInt(S.settings.fontSize));
   if (S.settings.compactRows) document.body.classList.add('compact');
   // Ensure dbHiddenCols is a valid Set (loadSettings handles this, this is a final safety net)
   if (!S.dbHiddenCols || typeof S.dbHiddenCols.has !== 'function') {
