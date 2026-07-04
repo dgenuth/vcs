@@ -26682,39 +26682,33 @@ window._buildConnectionsSection = _buildConnectionsSection;
       const _rfStored=localStorage.getItem(_rfKey);
       const _roleHF=_rfStored!==null ? new Set(JSON.parse(_rfStored)) : new Set(getDefaultHiddenFields(role));
       if(_rfStored===null){ localStorage.setItem(_rfKey, JSON.stringify([..._roleHF])); }
-      const _fGroups={'Vendor Info':['gpo','name','category','subCategory','product','classOfTrade','markets','addedValue','website','status'],'Contacts':['procContact','contactType','title','bizPhone','mobile','email','sharedContact','contactType2','title2','mobile2','email2'],'Contract':['contractName','inContractSince','contractEffective','contractExpiry','autoRenewal','autoRenewalType','contractTerm','currentTerm','termEffective','termExpiry','terminationNotice','terminationWoCause','terminationReceived','assignment','assignmentConditions','exclusivity','signatory'],'Financials':['adminFee','adminFeeNotes','tiers','perpetuity','tail','minYears','contractNo','reportFrequency','agreementType','pricingCommitment'],'Docs & Pricing':['coverSheet','dataSheet','havePricing','pricingLocation','pricingDate','pricingFrequency','whitePapers','serviceSummary','videoRecording'],'Activity':['comments','notes','lastComm','followUp','engagementReminder','needsLOP']};
-      const _fgC={'Vendor Info':'#4f7cff','Contacts':'#22c55e','Contract':'#f59e0b','Financials':'#8b5cf6','Docs & Pricing':'#06b6d4','Activity':'#ec4899'};
-      Object.entries(_fGroups).forEach(([gName,gKeys])=>{
-        const gColor=_fgC[gName]||'var(--muted)';
-        b.appendChild(el('div',{style:{fontSize:'7px',fontWeight:'700',color:gColor,marginTop:'5px',marginBottom:'2px',textTransform:'uppercase',letterSpacing:'.04em',borderBottom:'1px solid '+gColor+'33',paddingBottom:'2px'}},gName));
-        const fgrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',marginBottom:'3px'}});
-        gKeys.forEach(fKey=>{
-          const fieldDef=(typeof ALL_RESTRICTABLE_FIELDS!=='undefined'?ALL_RESTRICTABLE_FIELDS:[]).find(f=>f.key===fKey);
-          const lbl=fieldDef?fieldDef.label:fKey;
-          const isHidden=_roleHF.has(fKey);
-          const fbtn=document.createElement('button');
-          fbtn._hidden=isHidden;
-          const upF=h=>{fbtn.textContent=lbl+' '+(h?'🚫':'✅');fbtn.style.cssText='font-size:7px;padding:2px 6px;border-radius:3px;cursor:pointer;font-weight:500;border:1px solid '+(h?'rgba(239,68,68,.4)':'rgba(34,197,94,.4)')+';background:'+(h?'rgba(239,68,68,.1)':'rgba(34,197,94,.1)')+';color:'+(h?'#f87171':'#4ade80')+';';};
-          upF(isHidden);
-          fbtn.addEventListener('click',function(e){
-            e.stopPropagation();e.preventDefault();
-            const newH=!fbtn._hidden;
-            // CRITICAL FIX: seed from the real current default (not an empty
-            // set) when this role has never been explicitly saved here --
-            // otherwise the very first toggle would persist ONLY this one
-            // field, and every other field this role's hardcoded defaults
-            // were hiding would silently become visible the moment
-            // getDefaultHiddenFields() reads this now-non-null key back.
-            try{const _rawNow=localStorage.getItem(_rfKey);const rh=new Set(_rawNow!==null?JSON.parse(_rawNow):getDefaultHiddenFields(role));if(newH){rh.add(fKey);}else{rh.delete(fKey);}localStorage.setItem(_rfKey,JSON.stringify([...rh]));}catch(e2){}
-            try{const allU=getApprovedUsers();allU.forEach(u=>{if((u.role||'admin')!==role)return;if(!u.hiddenFields)u.hiddenFields=[];if(newH){if(!u.hiddenFields.includes(fKey))u.hiddenFields.push(fKey);}else{u.hiddenFields=u.hiddenFields.filter(k=>k!==fKey);}touchUser(u.email);});localStorage.setItem(AUTH_KEY,JSON.stringify(allU));scheduleUserSave(2000);}catch(e3){}
-            fbtn._hidden=newH;upF(newH);
-            toast('✓ '+lbl+' '+(newH?'hidden':'visible')+' for all '+role+' users','#22c55e');
-          });
-          fgrid.appendChild(fbtn);
+      // S50 QA fix: was plain document.createElement('button') tiles with
+      // different sizing/layout than the per-user Field Visibility panel
+      // (buildFieldAccess, which uses buildPermTile) — made the two
+      // impossible to visually compare side-by-side even when their
+      // underlying data matched exactly. Now uses the identical component.
+      Object.entries(FIELD_GROUPS).forEach(function(entry){
+        const gName=entry[0], gKeys=entry[1];
+        const gColor={'Vendor Info':'#4f7cff','Contacts':'#22c55e','Contract':'#f59e0b','Financials':'#8b5cf6','Docs & Pricing':'#06b6d4','Activity':'#ec4899'}[gName]||'var(--muted)';
+        b.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:gColor,marginTop:'8px',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.05em',borderBottom:'1px solid '+gColor+'44',paddingBottom:'2px'}},gName));
+        const fgrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',paddingLeft:'8px'}});
+        const groupFields=ALL_RESTRICTABLE_FIELDS.filter(function(f){return gKeys.includes(f.key);});
+        groupFields.forEach(function(f){
+          const isHidden=_roleHF.has(f.key);
+          fgrid.appendChild(buildPermTile({
+            label:f.label, isViewable:!isHidden, isOverridden:false, showEditCheckbox:false,
+            onToggleView:function(){
+              const newH=!isHidden;
+              try{const _rawNow=localStorage.getItem(_rfKey);const rh=new Set(_rawNow!==null?JSON.parse(_rawNow):getDefaultHiddenFields(role));if(newH){rh.add(f.key);}else{rh.delete(f.key);}localStorage.setItem(_rfKey,JSON.stringify([...rh]));}catch(e2){}
+              try{const allU=getApprovedUsers();allU.forEach(u=>{if((u.role||'admin')!==role)return;if(!u.hiddenFields)u.hiddenFields=[];if(newH){if(!u.hiddenFields.includes(f.key))u.hiddenFields.push(f.key);}else{u.hiddenFields=u.hiddenFields.filter(k=>k!==f.key);}touchUser(u.email);});localStorage.setItem(AUTH_KEY,JSON.stringify(allU));scheduleUserSave(2000);}catch(e3){}
+              toast('✓ '+f.label+' '+(newH?'hidden':'visible')+' for all '+role+' users','#22c55e');
+              const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+            }
+          }));
         });
         b.appendChild(fgrid);
       });
-      b.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)',marginBottom:'4px'}},'✅ = visible to role · 🚫 = hidden from role'));
+      b.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'6px'}},'Green = visible to role · Red = hidden from role'));
       }));
 
       // ── Permissions Defaults for this role ─────────────────────────────────
