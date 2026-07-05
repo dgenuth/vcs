@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
-**Last updated:** Sun Jul 05, 2026 — 10:00 PM EDT
-**Current checkpoint:** MD5 `7f00f42f4d88fd79e202d422df1ce190`, 31,576 lines
+**Last updated:** Sun Jul 05, 2026 — 11:00 PM EDT
+**Current checkpoint:** MD5 `46b218357e35504737042108c66d0b94`, 31,552 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -282,28 +282,85 @@ similar symptom reappears; don't rediscover them from scratch)
   to Selected → all pending changes land at once. **If a "my toggle
   changed an existing user immediately" report comes in, that's the bug —
   only the batch button should ever touch existing users.**
-- **`getApprovedUsers()`'s hiddenFields migration silently bypassed the
-  batch-gate above for Field Visibility Defaults specifically** (found
-  and fixed 2026-07-05, same session as the redesign above, via live
-  testing — NOT visible from reading the sync code alone). The function
-  re-mirrors every non-`_customHiddenFields` user's `hiddenFields` to
-  `getDefaultHiddenFields(u.role)` on EVERY call (i.e. every render), by
-  design, so a brand-new user or one just moved into a role picks up the
-  right defaults. But since it ran unconditionally for ALL such users
-  every time, it also re-applied any Field Visibility Default edit to
-  already-existing role members on the very next render — completely
-  skipping the new "Apply Changes to Existing Users" button for anyone
-  without a `_customHiddenFields` override (confirmed live: toggling a
-  field default changed an existing test user's `hiddenFields` before the
-  sync button was ever clicked). Fixed by adding a `_hiddenFieldsRole`
-  tracker: the re-seed now only fires when a user has never been seeded
-  (`hiddenFields === undefined`) or their role changed since the last seed
-  (`_hiddenFieldsRole !== u.role`) — i.e. exactly the "new or moved" cases
-  — leaving users who stay on the same role frozen until an explicit sync,
-  same as Permissions/Tab Access. **If hiddenFields ever seems to
-  "auto-update" for an existing user again, check this function first —
-  it's the only place a role default write can reach a user without going
-  through a sync button.**
+- **CRITICAL, DATA-AFFECTING BUG (2026-07-05, found and fixed same evening
+  as introduced) — `getApprovedUsers()` must NEVER auto-reseed any field on
+  read, not even gated by a "have I seen this user before" flag.** The
+  first attempt at fixing the migration bypass (documented in the entry
+  this replaces) added a `_hiddenFieldsRole` tracker to `getApprovedUsers()`
+  so it would only reseed `hiddenFields` for a "new or moved" user, not one
+  staying on the same role. This looked correct in isolated testing with
+  freshly-created fake users, but was fundamentally broken for the REAL
+  user base: no real user had ever had `_hiddenFieldsRole` set before this
+  code shipped, so EVERY existing real user looked "unseeded" on the very
+  first call after deploy — meaning `getApprovedUsers()` mass-reseeded
+  `hiddenFields` for the entire real, non-customized user base to whatever
+  the role default happened to be at that exact moment, the instant
+  ANYONE's browser (including a test session) called it — which happens on
+  nearly every render. Confirmed live against the actual shared backend
+  (24 real users, not test data — see the sandbox-isolation entry below):
+  several real sales_reps (`mdelora@primesourcex.com`,
+  `bflekel@primesourcex.com`, `swithers@primesourcex.com`,
+  `erock@primesourcex.com`, plus David's own `dgenuthps@gmail.com`) were
+  found with `hiddenFields: []` (nothing hidden) — not their intended
+  sales_rep-restricted set — almost certainly this bug catching them
+  mid-session while role defaults were being toggled during testing. This
+  is the real root cause of David's report that a restriction applied to
+  specific selected users bled out to "all users under that profile," and
+  of syncs appearing to silently revert. **Fix: removed ALL reseeding logic
+  from `getApprovedUsers()` — it is now a pure, side-effect-free read of
+  `localStorage`.** The "new or moved into a role" case doesn't need
+  reseeding-on-read at all; it's already handled correctly, deterministically,
+  exactly at the two moments a role actually changes: the individual
+  per-user role `<select>` change handler and the bulk role-change action
+  (both already seeded `hiddenFields`/`fieldEditPerms`/`featureFlags`/
+  `tabOverrides` from `getDefault*(newRole)` at that exact moment, before
+  this bug was ever introduced) — plus Add User seeds `hiddenFields`/
+  `featureFlags` from the role at creation. Verified the fix live: toggled
+  a role default back and forth, synced to ONE explicitly-selected test
+  user via the modal, confirmed every other real sales_rep's `hiddenFields`
+  stayed byte-for-byte unchanged both times. **General lesson: if
+  `getApprovedUsers()` (or any "get" function) ever needs to react to a
+  user's role, it must do so once, at the specific place the role actually
+  changes — never as a blanket "looks stale, refresh it" check on read, no
+  matter how it's gated. That gating always breaks the same way the first
+  time it meets data older than the gate itself.**
+  **David should re-run "Apply Changes to Existing Users" for Field
+  Visibility Defaults (and Permissions Defaults, since it also drives
+  Financials via the same key) for the sales_rep role once the real
+  intended defaults are set, to correct the real users named above —** this
+  fix stops further damage but does not retroactively repair state already
+  written by the bug.
+- **There is no isolated sandbox test environment — logging in during
+  live-browser testing (even with a fake/bypassed email) fetches the REAL,
+  shared production Supabase database and the real GAS proxy, and any
+  `saveUsersViaProxy()`/`debouncedSaveSettings()` call during that test
+  session writes back to that same real backend.** Confirmed 2026-07-05:
+  a test browser logged in as a fake `test-admin@primesourcex.com` still
+  pulled 24 real users (`dgenuth@primesourcex.com`,
+  `aschwartz@primesourcex.com`, etc.) via live network calls to
+  `sjooaeopwimukmhgfwxs.supabase.co` and the real
+  `script.googleusercontent.com` GAS proxy — confirmed via the preview's
+  network log, not assumed. `saveUsersViaProxy()`'s merge logic (see its
+  own code comment) does protect untouched real records from being
+  clobbered wholesale by a save from a stale/fake session, but any record a
+  test session explicitly touches DOES persist to the real backend. This is
+  almost certainly how `test-admin@primesourcex.com`, `jane@primesourcex.com`,
+  and `bob@primesourcex.com` ended up as real, persisted rows in David's
+  live user list — they're test artifacts from earlier sessions' testing
+  (this one included), not real employees, and Jane's record in particular
+  shows heavy contamination (every field visible, `fieldEditPerms` all
+  true, nearly every tab enabled) from repeated test cycles across this
+  whole engagement. **David should confirm whether these 3 accounts
+  (plus any `zztest-*@primesourcex.com` rows) should be deleted** — flagged,
+  not deleted unilaterally. **Going forward: any live-browser verification
+  step in this workflow must treat writes as reaching the real backend,
+  full stop — there is no safe-to-corrupt copy to test destructive actions
+  against.** Prefer read-only checks (`getApprovedUsers()`/`localStorage`
+  inspection) wherever a claim can be verified without a save; when a save
+  IS required to prove a fix, use a clearly-named, disposable test account
+  (like `zztest-*`) and never reuse or mutate the existing test artifacts
+  above, since their contaminated state makes them useless as a clean
+  before/after baseline.
 - **Tab Access Defaults was, briefly earlier the same day, the one section
   missing this confirm-before-propagating treatment at all** — its own
   code comment already said it should get this treatment (see

@@ -1,6 +1,6 @@
 # VCS — Master Task List
-**Last updated:** Sun Jul 05, 2026, 10:00 PM EDT (this session, Claude Code)
-**Checkpoint at this update:** MD5 `7f00f42f4d88fd79e202d422df1ce190`, 31,576 lines
+**Last updated:** Sun Jul 05, 2026, 11:00 PM EDT (this session, Claude Code)
+**Checkpoint at this update:** MD5 `46b218357e35504737042108c66d0b94`, 31,552 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,44 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **CRITICAL: real user data was being silently corrupted by the previous
+  fix below (2026-07-05, late evening) — David reported this himself after
+  testing** ("restrictions applied to specific users ended up affecting all
+  the users under that profile," Financials showing restricted right after
+  being explicitly synced as viewable). Root cause: the `_hiddenFieldsRole`
+  fix described in the entry below was itself broken — it couldn't tell a
+  genuinely new/moved user apart from a real, pre-existing user simply
+  encountering the new tracking flag for the first time, so it mass-
+  reseeded `hiddenFields` for the ENTIRE real user base to whatever the
+  role default happened to be at that instant, the first time anyone's
+  browser called `getApprovedUsers()` after the earlier fix went live —
+  which is nearly every render. Confirmed against the REAL shared backend
+  (not test data): several real sales_reps
+  (`mdelora@primesourcex.com`, `bflekel@primesourcex.com`,
+  `swithers@primesourcex.com`, `erock@primesourcex.com`, and David's own
+  `dgenuthps@gmail.com`) were found with `hiddenFields: []` instead of
+  their intended restricted set. **Fixed by removing ALL reseeding logic
+  from `getApprovedUsers()` — it's now a pure read.** The new/moved-user
+  case doesn't need it: role changes already correctly seed
+  `hiddenFields`/`featureFlags`/`tabOverrides` at the two places a role
+  actually changes (the per-user role dropdown and the bulk role-change
+  action), and Add User seeds at creation. Verified live: toggled a role
+  default twice, synced to exactly one explicitly-selected test account
+  both times, confirmed every other real sales_rep's `hiddenFields` stayed
+  byte-for-byte unchanged. **David: please re-run "Apply Changes to
+  Existing Users" for the sales_rep role (Field Visibility + Permissions
+  Defaults) once you're happy with the real defaults, to correct the real
+  users named above — this fix stops further damage but doesn't
+  retroactively repair what the bug already wrote.**
+  **Also discovered in the process, unrelated to this bug but important:**
+  there is no isolated sandbox — live-browser testing (even via a fake
+  bypass login) hits the real shared Supabase/GAS backend, and `jane@`/
+  `bob@`/`test-admin@primesourcex.com` are test artifacts from earlier
+  testing sessions (this one included) sitting in the real live user list,
+  not real employees — Jane's record in particular is heavily contaminated
+  from repeated test cycles. Flagging for David to confirm deletion; see
+  CLAUDE.md Known Traps for the full account and the new testing
+  discipline this requires going forward.
 - **Role & Feature Defaults propagation redesigned again, same evening
   (2026-07-05, later)** — supersedes the entry directly below. David's
   follow-up: the "confirm via popup after every toggle" design (just

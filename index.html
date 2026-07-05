@@ -9043,49 +9043,25 @@ const USER = {email:null,name:null,role:null,loggedIn:false,loginTime:null,sfTok
 const AUTH_KEY = 'vcs_approved_users';
 const LOGIN_LOG_KEY = 'vcs_login_log';
 function getApprovedUsers(){
+  // S51 fix: this used to also silently rewrite every non-customized user's
+  // hiddenFields to their role's CURRENT default on every call (a "one-time
+  // migration" guarded by a new _hiddenFieldsRole tracking field) — but since
+  // this function runs on nearly every render and no real user had that
+  // tracking field before this code shipped, EVERY existing user looked
+  // "unseeded" on the very first post-deploy call, so this mass-reseeded
+  // hiddenFields for the ENTIRE existing user base the moment anyone (any
+  // admin session, including a test session) loaded the app — completely
+  // bypassing the new "Apply Changes to Existing Users" batch button for
+  // everyone, not just the users a sync intentionally targeted. Confirmed
+  // live against the real shared user list (24 real users, not test data).
+  // The "new or moved into a role" case this was trying to cover is already
+  // handled correctly, deterministically, at the two places a role actually
+  // changes: the individual role dropdown and the bulk role-change action
+  // (both seed hiddenFields/featureFlags/tabOverrides from the new role's
+  // defaults at that exact moment) — plus Add User seeds them at creation.
+  // getApprovedUsers() itself needs no reseeding logic at all; it's a read.
   try{
-    const users = JSON.parse(localStorage.getItem(AUTH_KEY)||'[]');
-    // One-time migration: reset hiddenFields to role defaults if they look wrong
-    // (all-hidden or empty for roles that should have partial access)
-    let migrated = false;
-    users.forEach(u => {
-      // S47 fix: this used to refresh EVERY user's hiddenFields from SC/role
-      // defaults on every single call, unconditionally — silently discarding
-      // any admin customization made via the Field Visibility tiles the very
-      // next time anything called getApprovedUsers() (which is constant).
-      // _customHiddenFields was already being set by the toggle UI and
-      // checked by "Reset to role defaults", but never actually consulted
-      // here, so customization never really persisted. Only auto-refresh
-      // when the user has NOT been manually customized.
-      // S50 QA fix: this used to pass u.email||u.name here, which triggered
-      // the legacy SC_HIDDEN_FIELDS_BY_USER per-person lookup (with fuzzy
-      // partial-name matching) INSTEAD OF the role-based default, for any
-      // of ~17 hardcoded legacy names. Since this function runs on nearly
-      // every render, it silently re-overwrote a just-assigned role's field
-      // visibility back to a frozen old spreadsheet snapshot within moments
-      // of the change — confirmed root cause of role changes and "Reset to
-      // role defaults" appearing to work, then immediately reverting. Role
-      // is now the sole source of truth here, matching the role-dropdown's
-      // own (already-correct) call one function away.
-      // S51 fix: the block above kept EVERY non-customized user's hiddenFields
-      // live-mirrored to the role default on every single call (i.e. every
-      // render), which correctly seeds new users and users just moved into a
-      // role, but also silently re-applied any Field Visibility Default edit
-      // to already-existing role members immediately — bypassing the new
-      // "Apply Changes to Existing Users" batch-confirmation flow entirely
-      // (confirmed live: toggling a field default changed an existing user's
-      // hiddenFields before the sync button was ever clicked). Now only
-      // (re)syncs when the user has never been seeded, or their role changed
-      // since the last seed — i.e. exactly the "new or moved" cases — leaving
-      // users who stay on the same role untouched until an explicit sync.
-      if (!u._customHiddenFields && (u.hiddenFields === undefined || u._hiddenFieldsRole !== u.role)) {
-        u.hiddenFields = getDefaultHiddenFields(u.role);
-        u._hiddenFieldsRole = u.role;
-        migrated = true;
-      }
-    });
-    if (migrated) { S._usersChanged = true; localStorage.setItem(AUTH_KEY, JSON.stringify(users)); } // skip Drive sync during migration
-    return users;
+    return JSON.parse(localStorage.getItem(AUTH_KEY)||'[]');
   }catch(e){return [];}
 }
 // Shared debounced save -- a single pending timer, reset (not stacked) by
