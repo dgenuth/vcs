@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
-**Last updated:** Fri Jul 03, 2026 — 8:00 PM EDT
-**Current checkpoint:** MD5 `270c9d9d6d9cebc46fb058fa2d2690d0`, 30,600 lines
+**Last updated:** Sun Jul 05, 2026 — 5:30 AM EDT
+**Current checkpoint:** MD5 `8b2051e9fa9e71d293fabc61b6911074`, 30,869 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -142,6 +142,18 @@ similar symptom reappears; don't rediscover them from scratch)
   localStorage) clears pre-existing "open" state from before that audit —
   don't re-trigger confusion by adding new collapsible sections that
   default to open without a reason.
+- **`vcs_role_fields_<role>` / `vcs_role_field_edit_<role>` are pure
+  localStorage — never synced to the backend.** Unlike `vcs_role_tab_overrides`
+  (pushed via `saveConfigToDrive()` inline on every toggle) and
+  `S.settings.roleDefaults` (pushed via `debouncedSaveSettings()`), these two
+  Field Visibility Defaults keys are read/written directly against
+  localStorage and are not in `GLOBAL_SETTING_KEYS`, so no save path — not
+  even the section's own "Apply Changes" button — pushes them anywhere.
+  Found while wiring that button (2026-07-05): it only flushes the
+  *propagated per-user* `hiddenFields`/`fieldEditPerms` change via
+  `saveUsersViaProxy()`, since that's the only part of this section that
+  actually reaches the backend. If role-level Field Visibility Defaults ever
+  need to sync across an admin's devices, this is the gap to close.
 - **"Excel column map audit"** is substantially already built — don't
   redo it. `PSD_FIELD_MAP` (authoritative column-letter → field map, all 77
   columns, dated 2026-06-21) + `checkPsdSchemaDrift()` (compares live Excel

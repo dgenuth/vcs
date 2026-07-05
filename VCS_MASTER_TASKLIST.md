@@ -1,6 +1,6 @@
 # VCS — Master Task List
-**Last updated:** Fri Jul 03, 2026 (this session, Claude Code)
-**Checkpoint at this update:** MD5 `270c9d9d6d9cebc46fb058fa2d2690d0`, 30,600 lines
+**Last updated:** Sun Jul 05, 2026 (this session, Claude Code)
+**Checkpoint at this update:** MD5 `8b2051e9fa9e71d293fabc61b6911074`, 30,869 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,48 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Settings UI/UX consistency pass (4 items):**
+  - Role & Feature Defaults and User Management section order unified to
+    Permissions → Tab Access → Field Visibility (Connections stays last in
+    User Management). Found exact block boundaries via matching `}));` at
+    consistent indentation with assertion-guarded extraction, not
+    brace-counting, per standing practice for large embedded blocks.
+  - Bulk actions added to role-level Tab Access Defaults ("Make All
+    Visible"/"Restrict All") and Field Visibility Defaults (same two, plus
+    "Make All Editable"). Both route through the exact same persistence
+    functions the individual tiles already call (`persistRoleTabState()` for
+    Tab Access; new shared `_applyFieldVisibility()`/`_applyFieldEdit()` —
+    extracted from the individual tiles' inline logic, not duplicated —
+    for Field Visibility) so user propagation and the parent/child cascade
+    apply identically to a bulk click as to a manual one.
+  - Role-level Permissions Defaults now shows the same explanatory text as
+    the equivalent per-user Permissions panel toggles under AI Assistant
+    ("When disabled, AI calls return a 'contact admin' message") and Renzo
+    Access ("Renzo outreach button visibility per user") — verified these
+    are the *only* two toggles with per-toggle description text in the
+    per-user panel before adding matching text elsewhere.
+  - "Apply Changes" buttons added to all three role-level sections, reusing
+    `buildApplyButton()` (extended with an optional `customFlush` callback,
+    defaulting to its original `saveUsersViaProxy()`-only behavior — all 3
+    existing per-user call sites still pass exactly 2 args, confirmed
+    unchanged). Each section's flush was checked individually, not assumed:
+    Permissions Defaults needed its own wiring (`saveSettings()` +
+    `saveUsersViaProxy()`, since it writes to the debounced
+    `S.settings.roleDefaults`); Tab Access and Field Visibility only needed
+    `saveUsersViaProxy()` (their role-level keys already save synchronously
+    on every toggle — only the per-user propagation is debounced).
+    **Found in the process**: `vcs_role_fields_<role>` and
+    `vcs_role_field_edit_<role>` are pure localStorage, not included in
+    `GLOBAL_SETTING_KEYS`, and not pushed to the backend by any existing
+    code path — this predates this session's work and isn't something an
+    Apply button can fix on its own; flagging as a real gap if role-level
+    Field Visibility Defaults are ever expected to sync across devices.
+  - Landed on top of 5 parallel-session commits that touched this exact
+    area since the last checkpoint (Field Visibility Defaults refactored to
+    `buildPermTile`, old standalone "Feature Defaults" section merged into
+    Permissions Defaults, per-field edit defaults added, Tab Access gained
+    parent-restricts-children cascade) — re-verified the live structure
+    fresh rather than assuming the prior session's line numbers still held.
 - Role-based field/tab visibility now actually follows role (independently
   re-verified this session, holds correctly for at least two roles traced
   by hand — sales_rep and ops_qc — and structurally guaranteed for all

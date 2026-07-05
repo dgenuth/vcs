@@ -25240,13 +25240,19 @@ function buildPermTile(opts) {
 // Field Visibility/Tab Access sections. Flushes the debounced auto-save
 // immediately via saveUsersViaProxy() and gives the admin clear confirmation,
 // on top of (not instead of) the existing auto-save.
-function buildApplyButton(userEmail, sectionLabel){
+// customFlush lets a caller override what "Apply Changes" actually flushes --
+// the per-user sections all just need saveUsersViaProxy() (the default,
+// unchanged for every existing call site below), but role-level sections
+// write to a different save path (S.settings.roleDefaults for Permissions
+// Defaults, still debounced) and need their own flush wired in instead of
+// silently reusing the per-user assumption.
+function buildApplyButton(userEmail, sectionLabel, customFlush){
   const row=el('div',{style:{marginTop:'10px',paddingTop:'8px',borderTop:'1px dashed var(--border)',display:'flex',justifyContent:'flex-end'}});
   const btn=el('button',{class:'btn-xs btn-primary',style:{fontSize:'10px',padding:'5px 12px'},
     onclick:async function(){
       btn.disabled=true; btn.textContent='⏳ Applying...';
       try{
-        await saveUsersViaProxy();
+        if(typeof customFlush==='function'){ await customFlush(); } else { await saveUsersViaProxy(); }
         btn.textContent='✅ Applied';
         toast('✅ '+sectionLabel+' changes applied for '+userEmail,'#10b981');
         setTimeout(function(){btn.disabled=false;btn.textContent='✅ Apply Changes';},2000);
@@ -26689,199 +26695,6 @@ window._buildConnectionsSection = _buildConnectionsSection;
         return wrap;
       }
 
-      // S48 Part C: rebuilt to use buildPermTile/PAGE_HIERARCHY — matches
-      // the per-user Tab Access section's structure and adds Edit checkboxes
-      // (the old getNavTabGroups()-based buttons were View-only). No Reset
-      // button here — this section IS what defines the defaults, so
-      // "reset to defaults" doesn't apply to it the way it does for a
-      // per-user override.
-      _roleBody.appendChild(_roleSub('📑 Tab Access Defaults (all '+role+' users)', false, function(b){
-      function roleTabState(id, fallbackDefault){
-        const savedOverrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
-        const roleOv=(savedOverrides[role]||{})[id];
-        const builtInDefault=typeof fallbackDefault==='boolean'?fallbackDefault:new Set(Array.isArray(rolePerms.tabs)?rolePerms.tabs:[]).has(id);
-        if(roleOv===undefined) return {view:builtInDefault, edit:false};
-        if(typeof roleOv==='object') return {view:roleOv.view!==false, edit:roleOv.edit===true};
-        return {view:!!roleOv, edit:!!roleOv}; // legacy bare boolean per role
-      }
-      function persistRoleTabState(id, view, edit, showEdit){
-        const savedOverrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
-        if(!savedOverrides[role]) savedOverrides[role]={};
-        savedOverrides[role][id]=showEdit?{view:view,edit:edit}:{view:view};
-        // S50: same parent/child dependency as the per-user Tab Access fix —
-        // a role-level default can't leave a sub-tab on while its parent
-        // page is off, since there'd be no way for anyone in that role to
-        // navigate to it at all.
-        let _forcedParent=null;
-        let _restrictedChildren=[];
-        if(view){
-          const parentId=_findParentPageId(id);
-          if(parentId && !roleTabState(parentId).view){
-            savedOverrides[role][parentId]={view:true,edit:roleTabState(parentId).edit};
-            _forcedParent=parentId;
-          }
-        } else {
-          // S50: the missing reverse case, and the actual root cause of the
-          // inconsistency recurring even after the one-time data migration —
-          // nothing stopped an admin from directly restricting a parent page
-          // here while its children stayed visible, immediately recreating
-          // the exact bug the migration had just cleaned up. Restricting a
-          // parent now cascades down to all its children.
-          const pageEntry=PAGE_HIERARCHY.find(function(p){return p.id===id;});
-          if(pageEntry&&Array.isArray(pageEntry.children)&&pageEntry.children.length){
-            pageEntry.children.forEach(function(child){
-              if(roleTabState(child.id).view){
-                savedOverrides[role][child.id]={view:false};
-                _restrictedChildren.push(child.id);
-              }
-            });
-          }
-        }
-        localStorage.setItem('vcs_role_tab_overrides',JSON.stringify(savedOverrides));
-        // Keep ROLE_PERMS[role].tabs in sync too — it's the in-memory source
-        // several other places (roleDefaultTabs, sidebar nav fallback) read
-        // synchronously without re-parsing localStorage.
-        if(!ROLE_PERMS[role]) ROLE_PERMS[role]={tabs:[]};
-        if(!Array.isArray(ROLE_PERMS[role].tabs)) ROLE_PERMS[role].tabs=[];
-        if(view){ if(!ROLE_PERMS[role].tabs.includes(id)) ROLE_PERMS[role].tabs.push(id); }
-        else { ROLE_PERMS[role].tabs=ROLE_PERMS[role].tabs.filter(function(x){return x!==id;}); }
-        if(_forcedParent && !ROLE_PERMS[role].tabs.includes(_forcedParent)) ROLE_PERMS[role].tabs.push(_forcedParent);
-        if(_restrictedChildren.length) ROLE_PERMS[role].tabs=ROLE_PERMS[role].tabs.filter(function(x){return !_restrictedChildren.includes(x);});
-        saveConfigToDrive().catch(function(){});
-        // Update ALL users of this role immediately — no "next load" needed.
-        try{
-          const allUsers=getApprovedUsers();
-          allUsers.forEach(function(u){
-            if((u.role||'admin')!==role) return;
-            if(!u.tabOverrides) u.tabOverrides={};
-            u.tabOverrides[id]=showEdit?{view:view,edit:edit}:{view:view};
-            if(_forcedParent) u.tabOverrides[_forcedParent]={view:true};
-            _restrictedChildren.forEach(function(cid){ u.tabOverrides[cid]={view:false}; });
-          });
-          allUsers.forEach(function(_u){ if(_u&&_u.email) touchUser(_u.email); });
-          localStorage.setItem(AUTH_KEY,JSON.stringify(allUsers));
-          setTimeout(function(){saveUsersViaProxy().catch(function(){});},2000);
-          if(_forcedParent) toast('✓ Also enabled '+_forcedParent+' for all '+role+' users — required for its sub-tabs to be reachable','#4f7cff');
-          if(_restrictedChildren.length) toast('✓ Also restricted '+_restrictedChildren.join(', ')+' for all '+role+' users — unreachable with the parent restricted','#f59e0b');
-        }catch(ue){ console.error('[RoleTab]',ue); }
-      }
-      function refreshOpenUserTabSections(){
-        document.querySelectorAll('[data-bta-email]').forEach(function(el2){
-          const em=el2.dataset.btaEmail;
-          const uu=getApprovedUsers().find(function(u){return u.email===em;});
-          if(uu&&(uu.role||'admin')===role){ el2.innerHTML=''; buildTabAccessSection(el2,em); }
-        });
-      }
-
-      const roleTabGrid=el('div',{style:{display:'flex',flexDirection:'column',gap:'2px'}});
-      PAGE_HIERARCHY.forEach(function(page){
-        const st=roleTabState(page.id);
-        const pageRow=el('div',{style:{marginBottom:'2px'}});
-        const pageTile=buildPermTile({
-          label:page.label, isViewable:st.view, isOverridden:false, // no "overridden" concept at the role-default level
-          showEditCheckbox:!!page.editable, isEditChecked:st.edit,
-          onToggleView:function(){
-            const cur=roleTabState(page.id);
-            persistRoleTabState(page.id, !cur.view, cur.view?false:cur.edit, !!page.editable);
-            refreshOpenUserTabSections();
-            toast('Updated '+role+' default: '+page.label,'#10b981');
-            const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
-          },
-          onToggleEdit:function(checked){
-            const cur=roleTabState(page.id);
-            persistRoleTabState(page.id, checked?true:cur.view, checked, true);
-            refreshOpenUserTabSections();
-            toast('Updated '+role+' default: '+page.label,'#10b981');
-            const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
-          }
-        });
-        pageRow.appendChild(pageTile);
-        if(page.children&&page.children.length){
-          const childRow=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',paddingLeft:'16px',marginTop:'2px'}});
-          page.children.forEach(function(child){
-            const cst=roleTabState(child.id, true);
-            const childTile=buildPermTile({
-              label:child.label, isViewable:cst.view, isOverridden:false, showEditCheckbox:false,
-              onToggleView:function(){
-                const cur=roleTabState(child.id, true);
-                persistRoleTabState(child.id, !cur.view, false, false);
-                refreshOpenUserTabSections();
-                toast('Updated '+role+' default: '+child.label,'#10b981');
-                const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
-              }
-            });
-            childRow.appendChild(childTile);
-          });
-          pageRow.appendChild(childRow);
-        }
-        roleTabGrid.appendChild(pageRow);
-      });
-      b.appendChild(roleTabGrid);
-      }));
-
-      // ── Field Visibility Defaults for this role ──────────────────────────
-      _roleBody.appendChild(_roleSub('🔒 Field Visibility Defaults (all '+role+' users)', false, function(b){
-      const _rfKey='vcs_role_fields_'+role;
-      // This used to initialize from ONLY this localStorage key (defaulting
-      // to an empty array when unset), completely disconnected from
-      // getDefaultHiddenFields(role) — the actual hardcoded, spreadsheet-
-      // derived defaults that get applied to real users on role assignment.
-      // Since this key started unset for every role, this section showed
-      // "everything visible" regardless of what a role's real restrictions
-      // actually were. Now seeds from the real default the first time this
-      // section is viewed for a role, and immediately persists that seed so
-      // this key is never actually unset again — this also means the
-      // toggle handlers below (and the "See Financials" bulk toggle further
-      // down, which reads this same key) always see a real, fully-seeded
-      // array rather than risking an empty one on a role's first edit.
-      const _rfStored=localStorage.getItem(_rfKey);
-      const _roleHF=_rfStored!==null ? new Set(JSON.parse(_rfStored)) : new Set(getDefaultHiddenFields(role));
-      if(_rfStored===null){ localStorage.setItem(_rfKey, JSON.stringify([..._roleHF])); }
-      // S50: per-field edit defaults — seed the same way as visibility above,
-      // from the blanket ROLE_PERMS[role].save flag when never explicitly
-      // customized, so this key always holds a real, complete field list
-      // once touched rather than risking a partial one.
-      const _refKey='vcs_role_field_edit_'+role;
-      const _refStored=localStorage.getItem(_refKey);
-      const _roleEditableFields=_refStored!==null ? new Set(JSON.parse(_refStored)) : new Set(ALL_RESTRICTABLE_FIELDS.filter(function(f){return getRoleFieldEditDefault(role,f.key);}).map(function(f){return f.key;}));
-      if(_refStored===null){ localStorage.setItem(_refKey, JSON.stringify([..._roleEditableFields])); }
-      // S50 QA fix: was plain document.createElement('button') tiles with
-      // different sizing/layout than the per-user Field Visibility panel
-      // (buildFieldAccess, which uses buildPermTile) — made the two
-      // impossible to visually compare side-by-side even when their
-      // underlying data matched exactly. Now uses the identical component,
-      // including the same edit-checkbox the per-user panel has.
-      Object.entries(FIELD_GROUPS).forEach(function(entry){
-        const gName=entry[0], gKeys=entry[1];
-        const gColor={'Vendor Info':'#4f7cff','Contacts':'#22c55e','Contract':'#f59e0b','Financials':'#8b5cf6','Docs & Pricing':'#06b6d4','Activity':'#ec4899'}[gName]||'var(--muted)';
-        b.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:gColor,marginTop:'8px',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.05em',borderBottom:'1px solid '+gColor+'44',paddingBottom:'2px'}},gName));
-        const fgrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',paddingLeft:'8px'}});
-        const groupFields=ALL_RESTRICTABLE_FIELDS.filter(function(f){return gKeys.includes(f.key);});
-        groupFields.forEach(function(f){
-          const isHidden=_roleHF.has(f.key);
-          const isEditable=_roleEditableFields.has(f.key);
-          fgrid.appendChild(buildPermTile({
-            label:f.label, isViewable:!isHidden, isOverridden:false, showEditCheckbox:true, isEditChecked:isEditable,
-            onToggleView:function(){
-              const newH=!isHidden;
-              try{const _rawNow=localStorage.getItem(_rfKey);const rh=new Set(_rawNow!==null?JSON.parse(_rawNow):getDefaultHiddenFields(role));if(newH){rh.add(f.key);}else{rh.delete(f.key);}localStorage.setItem(_rfKey,JSON.stringify([...rh]));}catch(e2){}
-              try{const allU=getApprovedUsers();allU.forEach(u=>{if((u.role||'admin')!==role)return;if(!u.hiddenFields)u.hiddenFields=[];if(newH){if(!u.hiddenFields.includes(f.key))u.hiddenFields.push(f.key);}else{u.hiddenFields=u.hiddenFields.filter(k=>k!==f.key);}touchUser(u.email);});localStorage.setItem(AUTH_KEY,JSON.stringify(allU));scheduleUserSave(2000);}catch(e3){}
-              toast('✓ '+f.label+' '+(newH?'hidden':'visible')+' for all '+role+' users','#22c55e');
-              const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
-            },
-            onToggleEdit:function(checked){
-              try{const _rawNow=localStorage.getItem(_refKey);const re=new Set(_rawNow!==null?JSON.parse(_rawNow):[...(_roleEditableFields)]);if(checked){re.add(f.key);}else{re.delete(f.key);}localStorage.setItem(_refKey,JSON.stringify([...re]));}catch(e2){}
-              try{const allU=getApprovedUsers();allU.forEach(u=>{if((u.role||'admin')!==role)return;if(!u.fieldEditPerms)u.fieldEditPerms={};u.fieldEditPerms[f.key]=checked;touchUser(u.email);});localStorage.setItem(AUTH_KEY,JSON.stringify(allU));scheduleUserSave(2000);}catch(e3){}
-              toast('✓ '+f.label+' edit default '+(checked?'ON':'OFF')+' for all '+role+' users','#22c55e');
-              const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
-            }
-          }));
-        });
-        b.appendChild(fgrid);
-      });
-      b.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'6px'}},'Green = visible to role · Red = hidden from role'));
-      }));
-
       // ── Permissions Defaults for this role ─────────────────────────────────
       // S50: role-level equivalents of the per-user Permissions panel toggles
       // (Allow Export / Add Vendor / Access Archive / Full List Browsable),
@@ -26996,8 +26809,9 @@ window._buildConnectionsSection = _buildConnectionsSection;
         const renzoRoleOn=getRoleFeatureDefault(role,'renzo');
         const renzoStaticFallback=getDefaultFeatureFlags(role).renzoEnabled;
         const renzoIsOn=typeof renzoRoleOn==='boolean'?renzoRoleOn:renzoStaticFallback;
-        const featRow=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'6px',marginTop:'6px'}});
-        featRow.appendChild(buildPermTile({
+        const featRow=el('div',{style:{display:'flex',flexDirection:'column',gap:'4px',marginTop:'6px'}});
+        const aiFeatRow=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}});
+        aiFeatRow.appendChild(buildPermTile({
           label:'AI Assistant', isViewable:aiIsOn, isOverridden:false, showEditCheckbox:false,
           onToggleView:function(){
             setRoleFeatureDefault(role,'ai',!aiIsOn);
@@ -27006,7 +26820,11 @@ window._buildConnectionsSection = _buildConnectionsSection;
             const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
           }
         }));
-        featRow.appendChild(buildPermTile({
+        // Same wording as the per-user Permissions panel's AI Assistant toggle.
+        aiFeatRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'When disabled, AI calls return a "contact admin" message'));
+        featRow.appendChild(aiFeatRow);
+        const renzoFeatRow=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',flexWrap:'wrap'}});
+        renzoFeatRow.appendChild(buildPermTile({
           label:'Renzo Access', isViewable:renzoIsOn, isOverridden:false, showEditCheckbox:false,
           onToggleView:function(){
             setRoleFeatureDefault(role,'renzo',!renzoIsOn);
@@ -27015,8 +26833,281 @@ window._buildConnectionsSection = _buildConnectionsSection;
             const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
           }
         }));
+        // Same wording as the per-user Permissions panel's Renzo Access toggle.
+        renzoFeatRow.appendChild(el('span',{style:{fontSize:'8px',color:'var(--muted)'}},'Renzo outreach button visibility per user'));
+        featRow.appendChild(renzoFeatRow);
         b.appendChild(featRow);
         b.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)',marginTop:'4px'}},'Any individual user\'s own override in User Management always takes priority over these role defaults.'));
+        // debouncedSaveSettings() above already schedules both the local
+        // localStorage write and the Drive/proxy push -- this just runs both
+        // right now instead of waiting out that debounce.
+        b.appendChild(buildApplyButton('all '+role+' users','Permissions',async function(){
+          saveSettings();
+          await saveUsersViaProxy();
+        }));
+      }));
+
+      // S48 Part C: rebuilt to use buildPermTile/PAGE_HIERARCHY — matches
+      // the per-user Tab Access section's structure and adds Edit checkboxes
+      // (the old getNavTabGroups()-based buttons were View-only). No Reset
+      // button here — this section IS what defines the defaults, so
+      // "reset to defaults" doesn't apply to it the way it does for a
+      // per-user override.
+      _roleBody.appendChild(_roleSub('📑 Tab Access Defaults (all '+role+' users)', false, function(b){
+      function roleTabState(id, fallbackDefault){
+        const savedOverrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
+        const roleOv=(savedOverrides[role]||{})[id];
+        const builtInDefault=typeof fallbackDefault==='boolean'?fallbackDefault:new Set(Array.isArray(rolePerms.tabs)?rolePerms.tabs:[]).has(id);
+        if(roleOv===undefined) return {view:builtInDefault, edit:false};
+        if(typeof roleOv==='object') return {view:roleOv.view!==false, edit:roleOv.edit===true};
+        return {view:!!roleOv, edit:!!roleOv}; // legacy bare boolean per role
+      }
+      function persistRoleTabState(id, view, edit, showEdit){
+        const savedOverrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
+        if(!savedOverrides[role]) savedOverrides[role]={};
+        savedOverrides[role][id]=showEdit?{view:view,edit:edit}:{view:view};
+        // S50: same parent/child dependency as the per-user Tab Access fix —
+        // a role-level default can't leave a sub-tab on while its parent
+        // page is off, since there'd be no way for anyone in that role to
+        // navigate to it at all.
+        let _forcedParent=null;
+        let _restrictedChildren=[];
+        if(view){
+          const parentId=_findParentPageId(id);
+          if(parentId && !roleTabState(parentId).view){
+            savedOverrides[role][parentId]={view:true,edit:roleTabState(parentId).edit};
+            _forcedParent=parentId;
+          }
+        } else {
+          // S50: the missing reverse case, and the actual root cause of the
+          // inconsistency recurring even after the one-time data migration —
+          // nothing stopped an admin from directly restricting a parent page
+          // here while its children stayed visible, immediately recreating
+          // the exact bug the migration had just cleaned up. Restricting a
+          // parent now cascades down to all its children.
+          const pageEntry=PAGE_HIERARCHY.find(function(p){return p.id===id;});
+          if(pageEntry&&Array.isArray(pageEntry.children)&&pageEntry.children.length){
+            pageEntry.children.forEach(function(child){
+              if(roleTabState(child.id).view){
+                savedOverrides[role][child.id]={view:false};
+                _restrictedChildren.push(child.id);
+              }
+            });
+          }
+        }
+        localStorage.setItem('vcs_role_tab_overrides',JSON.stringify(savedOverrides));
+        // Keep ROLE_PERMS[role].tabs in sync too — it's the in-memory source
+        // several other places (roleDefaultTabs, sidebar nav fallback) read
+        // synchronously without re-parsing localStorage.
+        if(!ROLE_PERMS[role]) ROLE_PERMS[role]={tabs:[]};
+        if(!Array.isArray(ROLE_PERMS[role].tabs)) ROLE_PERMS[role].tabs=[];
+        if(view){ if(!ROLE_PERMS[role].tabs.includes(id)) ROLE_PERMS[role].tabs.push(id); }
+        else { ROLE_PERMS[role].tabs=ROLE_PERMS[role].tabs.filter(function(x){return x!==id;}); }
+        if(_forcedParent && !ROLE_PERMS[role].tabs.includes(_forcedParent)) ROLE_PERMS[role].tabs.push(_forcedParent);
+        if(_restrictedChildren.length) ROLE_PERMS[role].tabs=ROLE_PERMS[role].tabs.filter(function(x){return !_restrictedChildren.includes(x);});
+        saveConfigToDrive().catch(function(){});
+        // Update ALL users of this role immediately — no "next load" needed.
+        try{
+          const allUsers=getApprovedUsers();
+          allUsers.forEach(function(u){
+            if((u.role||'admin')!==role) return;
+            if(!u.tabOverrides) u.tabOverrides={};
+            u.tabOverrides[id]=showEdit?{view:view,edit:edit}:{view:view};
+            if(_forcedParent) u.tabOverrides[_forcedParent]={view:true};
+            _restrictedChildren.forEach(function(cid){ u.tabOverrides[cid]={view:false}; });
+          });
+          allUsers.forEach(function(_u){ if(_u&&_u.email) touchUser(_u.email); });
+          localStorage.setItem(AUTH_KEY,JSON.stringify(allUsers));
+          setTimeout(function(){saveUsersViaProxy().catch(function(){});},2000);
+          if(_forcedParent) toast('✓ Also enabled '+_forcedParent+' for all '+role+' users — required for its sub-tabs to be reachable','#4f7cff');
+          if(_restrictedChildren.length) toast('✓ Also restricted '+_restrictedChildren.join(', ')+' for all '+role+' users — unreachable with the parent restricted','#f59e0b');
+        }catch(ue){ console.error('[RoleTab]',ue); }
+      }
+      function refreshOpenUserTabSections(){
+        document.querySelectorAll('[data-bta-email]').forEach(function(el2){
+          const em=el2.dataset.btaEmail;
+          const uu=getApprovedUsers().find(function(u){return u.email===em;});
+          if(uu&&(uu.role||'admin')===role){ el2.innerHTML=''; buildTabAccessSection(el2,em); }
+        });
+      }
+
+      // Bulk actions route through the exact same persistRoleTabState() every
+      // individual tile above calls -- so propagation to existing users, the
+      // parent/child cascade, and the per-item toasts it fires all still
+      // apply. Only the outer "updated" toast/re-render is batched to one
+      // call instead of firing once per tab.
+      function bulkSetAllTabVisibility(makeVisible){
+        PAGE_HIERARCHY.forEach(function(page){
+          const cur=roleTabState(page.id);
+          if(cur.view!==makeVisible){
+            persistRoleTabState(page.id, makeVisible, makeVisible?cur.edit:false, !!page.editable);
+          }
+          if(page.children&&page.children.length){
+            page.children.forEach(function(child){
+              const ccur=roleTabState(child.id, true);
+              if(ccur.view!==makeVisible){
+                persistRoleTabState(child.id, makeVisible, false, false);
+              }
+            });
+          }
+        });
+        refreshOpenUserTabSections();
+        toast('✓ All tabs '+(makeVisible?'made visible':'restricted')+' for all '+role+' users','#22c55e');
+        const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+      }
+      const tabBulkRow=el('div',{style:{display:'flex',gap:'6px',marginBottom:'6px'}});
+      tabBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllTabVisibility(true);}},'Make All Visible'));
+      tabBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllTabVisibility(false);}},'Restrict All'));
+      b.appendChild(tabBulkRow);
+
+      const roleTabGrid=el('div',{style:{display:'flex',flexDirection:'column',gap:'2px'}});
+      PAGE_HIERARCHY.forEach(function(page){
+        const st=roleTabState(page.id);
+        const pageRow=el('div',{style:{marginBottom:'2px'}});
+        const pageTile=buildPermTile({
+          label:page.label, isViewable:st.view, isOverridden:false, // no "overridden" concept at the role-default level
+          showEditCheckbox:!!page.editable, isEditChecked:st.edit,
+          onToggleView:function(){
+            const cur=roleTabState(page.id);
+            persistRoleTabState(page.id, !cur.view, cur.view?false:cur.edit, !!page.editable);
+            refreshOpenUserTabSections();
+            toast('Updated '+role+' default: '+page.label,'#10b981');
+            const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+          },
+          onToggleEdit:function(checked){
+            const cur=roleTabState(page.id);
+            persistRoleTabState(page.id, checked?true:cur.view, checked, true);
+            refreshOpenUserTabSections();
+            toast('Updated '+role+' default: '+page.label,'#10b981');
+            const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+          }
+        });
+        pageRow.appendChild(pageTile);
+        if(page.children&&page.children.length){
+          const childRow=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',paddingLeft:'16px',marginTop:'2px'}});
+          page.children.forEach(function(child){
+            const cst=roleTabState(child.id, true);
+            const childTile=buildPermTile({
+              label:child.label, isViewable:cst.view, isOverridden:false, showEditCheckbox:false,
+              onToggleView:function(){
+                const cur=roleTabState(child.id, true);
+                persistRoleTabState(child.id, !cur.view, false, false);
+                refreshOpenUserTabSections();
+                toast('Updated '+role+' default: '+child.label,'#10b981');
+                const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+              }
+            });
+            childRow.appendChild(childTile);
+          });
+          pageRow.appendChild(childRow);
+        }
+        roleTabGrid.appendChild(pageRow);
+      });
+      b.appendChild(roleTabGrid);
+      // persistRoleTabState() above already pushes the role-level tab
+      // overrides synchronously on every toggle -- what's still debounced
+      // (up to 2s) is the propagated per-user tabOverrides update, via the
+      // same saveUsersViaProxy() the per-user Apply button already calls.
+      b.appendChild(buildApplyButton('all '+role+' users','Tab Access',async function(){
+        await saveUsersViaProxy();
+      }));
+      }));
+
+      // ── Field Visibility Defaults for this role ──────────────────────────
+      _roleBody.appendChild(_roleSub('🔒 Field Visibility Defaults (all '+role+' users)', false, function(b){
+      const _rfKey='vcs_role_fields_'+role;
+      // This used to initialize from ONLY this localStorage key (defaulting
+      // to an empty array when unset), completely disconnected from
+      // getDefaultHiddenFields(role) — the actual hardcoded, spreadsheet-
+      // derived defaults that get applied to real users on role assignment.
+      // Since this key started unset for every role, this section showed
+      // "everything visible" regardless of what a role's real restrictions
+      // actually were. Now seeds from the real default the first time this
+      // section is viewed for a role, and immediately persists that seed so
+      // this key is never actually unset again — this also means the
+      // toggle handlers below (and the "See Financials" bulk toggle further
+      // down, which reads this same key) always see a real, fully-seeded
+      // array rather than risking an empty one on a role's first edit.
+      const _rfStored=localStorage.getItem(_rfKey);
+      const _roleHF=_rfStored!==null ? new Set(JSON.parse(_rfStored)) : new Set(getDefaultHiddenFields(role));
+      if(_rfStored===null){ localStorage.setItem(_rfKey, JSON.stringify([..._roleHF])); }
+      // S50: per-field edit defaults — seed the same way as visibility above,
+      // from the blanket ROLE_PERMS[role].save flag when never explicitly
+      // customized, so this key always holds a real, complete field list
+      // once touched rather than risking a partial one.
+      const _refKey='vcs_role_field_edit_'+role;
+      const _refStored=localStorage.getItem(_refKey);
+      const _roleEditableFields=_refStored!==null ? new Set(JSON.parse(_refStored)) : new Set(ALL_RESTRICTABLE_FIELDS.filter(function(f){return getRoleFieldEditDefault(role,f.key);}).map(function(f){return f.key;}));
+      if(_refStored===null){ localStorage.setItem(_refKey, JSON.stringify([..._roleEditableFields])); }
+      // Shared persistence for a single field's visibility/edit default --
+      // both the individual tiles below AND the bulk buttons call these same
+      // two functions, so propagation to existing users stays identical
+      // either way (no separate bulk-only write path).
+      function _applyFieldVisibility(fieldKey, hide){
+        try{const _rawNow=localStorage.getItem(_rfKey);const rh=new Set(_rawNow!==null?JSON.parse(_rawNow):getDefaultHiddenFields(role));if(hide){rh.add(fieldKey);}else{rh.delete(fieldKey);}localStorage.setItem(_rfKey,JSON.stringify([...rh]));}catch(e2){}
+        try{const allU=getApprovedUsers();allU.forEach(u=>{if((u.role||'admin')!==role)return;if(!u.hiddenFields)u.hiddenFields=[];if(hide){if(!u.hiddenFields.includes(fieldKey))u.hiddenFields.push(fieldKey);}else{u.hiddenFields=u.hiddenFields.filter(k=>k!==fieldKey);}touchUser(u.email);});localStorage.setItem(AUTH_KEY,JSON.stringify(allU));scheduleUserSave(2000);}catch(e3){}
+      }
+      function _applyFieldEdit(fieldKey, editable){
+        try{const _rawNow=localStorage.getItem(_refKey);const re=new Set(_rawNow!==null?JSON.parse(_rawNow):[...(_roleEditableFields)]);if(editable){re.add(fieldKey);}else{re.delete(fieldKey);}localStorage.setItem(_refKey,JSON.stringify([...re]));}catch(e2){}
+        try{const allU=getApprovedUsers();allU.forEach(u=>{if((u.role||'admin')!==role)return;if(!u.fieldEditPerms)u.fieldEditPerms={};u.fieldEditPerms[fieldKey]=editable;touchUser(u.email);});localStorage.setItem(AUTH_KEY,JSON.stringify(allU));scheduleUserSave(2000);}catch(e3){}
+      }
+      function bulkSetAllFieldVisibility(makeVisible){
+        ALL_RESTRICTABLE_FIELDS.forEach(function(f){ _applyFieldVisibility(f.key, !makeVisible); });
+        toast('✓ All fields '+(makeVisible?'made visible':'restricted')+' for all '+role+' users','#22c55e');
+        const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+      }
+      function bulkSetAllFieldEditable(editable){
+        ALL_RESTRICTABLE_FIELDS.forEach(function(f){ _applyFieldEdit(f.key, editable); });
+        toast('✓ All fields edit default '+(editable?'ON':'OFF')+' for all '+role+' users','#22c55e');
+        const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+      }
+      const fvBulkRow=el('div',{style:{display:'flex',gap:'6px',marginBottom:'6px'}});
+      fvBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllFieldVisibility(true);}},'Make All Visible'));
+      fvBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllFieldVisibility(false);}},'Restrict All'));
+      fvBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllFieldEditable(true);}},'Make All Editable'));
+      b.appendChild(fvBulkRow);
+      // S50 QA fix: was plain document.createElement('button') tiles with
+      // different sizing/layout than the per-user Field Visibility panel
+      // (buildFieldAccess, which uses buildPermTile) — made the two
+      // impossible to visually compare side-by-side even when their
+      // underlying data matched exactly. Now uses the identical component,
+      // including the same edit-checkbox the per-user panel has.
+      Object.entries(FIELD_GROUPS).forEach(function(entry){
+        const gName=entry[0], gKeys=entry[1];
+        const gColor={'Vendor Info':'#4f7cff','Contacts':'#22c55e','Contract':'#f59e0b','Financials':'#8b5cf6','Docs & Pricing':'#06b6d4','Activity':'#ec4899'}[gName]||'var(--muted)';
+        b.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:gColor,marginTop:'8px',marginBottom:'3px',textTransform:'uppercase',letterSpacing:'.05em',borderBottom:'1px solid '+gColor+'44',paddingBottom:'2px'}},gName));
+        const fgrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'4px',paddingLeft:'8px'}});
+        const groupFields=ALL_RESTRICTABLE_FIELDS.filter(function(f){return gKeys.includes(f.key);});
+        groupFields.forEach(function(f){
+          const isHidden=_roleHF.has(f.key);
+          const isEditable=_roleEditableFields.has(f.key);
+          fgrid.appendChild(buildPermTile({
+            label:f.label, isViewable:!isHidden, isOverridden:false, showEditCheckbox:true, isEditChecked:isEditable,
+            onToggleView:function(){
+              const newH=!isHidden;
+              _applyFieldVisibility(f.key, newH);
+              toast('✓ '+f.label+' '+(newH?'hidden':'visible')+' for all '+role+' users','#22c55e');
+              const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+            },
+            onToggleEdit:function(checked){
+              _applyFieldEdit(f.key, checked);
+              toast('✓ '+f.label+' edit default '+(checked?'ON':'OFF')+' for all '+role+' users','#22c55e');
+              const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+            }
+          }));
+        });
+        b.appendChild(fgrid);
+      });
+      b.appendChild(el('div',{style:{fontSize:'8px',color:'var(--muted)',marginTop:'6px'}},'Green = visible to role · Red = hidden from role'));
+      // _applyFieldVisibility()/_applyFieldEdit() above already write this
+      // role's own vcs_role_fields_<role>/vcs_role_field_edit_<role> keys
+      // synchronously (local-only -- neither is currently synced to the
+      // backend by any path). What IS debounced is the propagated per-user
+      // hiddenFields/fieldEditPerms update, via the same saveUsersViaProxy()
+      // the per-user Apply button already calls.
+      b.appendChild(buildApplyButton('all '+role+' users','Field Visibility',async function(){
+        await saveUsersViaProxy();
+      }));
       }));
 
 
@@ -27508,15 +27599,6 @@ function buildUserSubSection(label,bodyBuilderFn){
       // "Field Visibility"-labeled wrapper, so Tab Access couldn't be
       // collapsed on its own and the section was very tall).
 
-      // ── SUB-SECTION 2: Field Visibility ───────────────────────────────────
-      details.appendChild(_userSub('🔒 Field Visibility', false, function(b) {
-        const fieldAccessContainer=el('div');
-        fieldAccessContainer.dataset.bfaEmail=u.email;
-        buildFieldAccess(fieldAccessContainer,u.email);
-        b.appendChild(fieldAccessContainer);
-        b.appendChild(buildApplyButton(u.email,'Field Visibility'));
-      }));
-
       // ── SUB-SECTION 2b: Tab Access ────────────────────────────────────────
       details.appendChild(_userSub('📑 Tab Access', false, function(b) {
         const tabAccessContainer=el('div');
@@ -27524,6 +27606,15 @@ function buildUserSubSection(label,bodyBuilderFn){
         buildTabAccessSection(tabAccessContainer,u.email);
         b.appendChild(tabAccessContainer);
         b.appendChild(buildApplyButton(u.email,'Tab Access'));
+      }));
+
+      // ── SUB-SECTION 2: Field Visibility ───────────────────────────────────
+      details.appendChild(_userSub('🔒 Field Visibility', false, function(b) {
+        const fieldAccessContainer=el('div');
+        fieldAccessContainer.dataset.bfaEmail=u.email;
+        buildFieldAccess(fieldAccessContainer,u.email);
+        b.appendChild(fieldAccessContainer);
+        b.appendChild(buildApplyButton(u.email,'Field Visibility'));
       }));
 
       // ── SUB-SECTION 3: Connections ────────────────────────────────────────
