@@ -8497,6 +8497,52 @@ try { BUILTIN_ROLE_LABEL_OVERRIDES = JSON.parse(localStorage.getItem('vcs_builti
 // gets the same always-available treatment as the label.
 let BUILTIN_ROLE_COLOR_OVERRIDES = {};
 try { BUILTIN_ROLE_COLOR_OVERRIDES = JSON.parse(localStorage.getItem('vcs_builtin_role_colors')||'{}'); } catch(e) { BUILTIN_ROLE_COLOR_OVERRIDES = {}; }
+// S50 v4: reusable confirmation modal for role-default changes that would
+// otherwise silently propagate to every existing user of a role. Per
+// David's explicit request: some users on a role may have been
+// deliberately given different permissions than the role default, and a
+// blanket role-level change shouldn't silently overwrite those deliberate
+// exceptions OR silently skip everyone. The admin gets to choose, per
+// change, which currently-assigned users are actually affected. Users NOT
+// selected keep whatever they currently have — which then behaves like a
+// per-user override relative to the new default, exactly as intended.
+// Declared top-level (not nested inside one specific section's builder
+// callback) so every role-default section — Permissions, Tab Access, and
+// Field Visibility — can all call it, not just whichever one happened to
+// define it first.
+function showAffectedUsersModal(roleKey, changeLabel, onConfirm){
+  const affected=getApprovedUsers().filter(function(u){return (u.role||'admin')===roleKey;});
+  if(!affected.length){ onConfirm([]); return; } // nobody on this role yet -- nothing to ask about
+  const overlay=el('div',{style:{position:'fixed',top:'0',left:'0',right:'0',bottom:'0',background:'rgba(0,0,0,.5)',zIndex:'9999',display:'flex',alignItems:'center',justifyContent:'center'}});
+  const modal=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'8px',padding:'20px',width:'380px',maxHeight:'70vh',display:'flex',flexDirection:'column'}});
+  modal.appendChild(el('h3',{style:{margin:'0 0 6px'}},'Apply to existing users?'));
+  modal.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',margin:'0 0 10px',lineHeight:'1.4'}},
+    changeLabel+' — this always becomes the default for any NEW '+(ROLES[roleKey]||roleKey)+' user. Choose which of the '+affected.length+' EXISTING user(s) on this role should also get this change now. Anyone left unchecked keeps their current setting.'));
+  const selRow=el('div',{style:{display:'flex',gap:'8px',marginBottom:'8px'}});
+  const listWrap=el('div',{style:{overflowY:'auto',flex:'1',border:'1px solid var(--border)',borderRadius:'4px',padding:'6px'}});
+  const checkboxes=[];
+  affected.forEach(function(u){
+    const row=el('label',{style:{display:'flex',alignItems:'center',gap:'6px',fontSize:'10px',padding:'3px 0',cursor:'pointer'}});
+    const cb=el('input',{type:'checkbox'}); cb.checked=true; checkboxes.push({cb:cb,user:u});
+    row.appendChild(cb);
+    row.appendChild(document.createTextNode((u.name||u.email)+(u._customHiddenFields?' (has other customizations)':'')));
+    listWrap.appendChild(row);
+  });
+  selRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){checkboxes.forEach(function(x){x.cb.checked=true;});}},'Select All'));
+  selRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){checkboxes.forEach(function(x){x.cb.checked=false;});}},'Select None'));
+  modal.appendChild(selRow);
+  modal.appendChild(listWrap);
+  const btnRow=el('div',{style:{display:'flex',gap:'8px',justifyContent:'flex-end',marginTop:'12px'}});
+  btnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){document.body.removeChild(overlay);}},'Cancel'));
+  btnRow.appendChild(el('button',{class:'btn-xs btn-green',onclick(){
+    const selected=checkboxes.filter(function(x){return x.cb.checked;}).map(function(x){return x.user;});
+    document.body.removeChild(overlay);
+    onConfirm(selected);
+  }},'Apply to Selected'));
+  modal.appendChild(btnRow);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+}
 function mergeCustomRoles(){
   Object.entries(CUSTOM_ROLES).forEach(function(entry){
     const key=entry[0], def=entry[1];
@@ -27122,6 +27168,38 @@ window._buildConnectionsSection = _buildConnectionsSection;
       // changes what a user with NO override sees.
       _roleBody.appendChild(_roleSub('🔑 Permissions Defaults (all '+role+' users)', false, function(b){
         b.innerHTML='';
+        // S50 QA fix: every toggle in this section previously only ever
+        // updated the role-level default (setRolePermissionDefault /
+        // setRoleFeatureDefault) — despite each one's own toast literally
+        // claiming "for all X users," NOTHING here ever actually touched
+        // any existing user's real data. Confirmed directly from David's
+        // test: toggling Add Vendor for sales_rep changed nothing on an
+        // actual sales_rep user. This maps each permission key to its real
+        // storage location on a user object (most live under featureFlags,
+        // but requireSearchToList is a top-level field, and ai/renzo use
+        // differently-named featureFlags keys) so propagation actually
+        // works, and routes through the same confirmation modal Field
+        // Visibility Defaults already uses, for consistency.
+        function _applyPermissionToUser(u, permKey, value){
+          if(permKey==='requireSearchToList'){ u.requireSearchToList=value; return; }
+          if(!u.featureFlags) u.featureFlags={};
+          if(permKey==='ai'){ u.featureFlags.aiEnabled=value; return; }
+          if(permKey==='renzo'){ u.featureFlags.renzoEnabled=value; return; }
+          u.featureFlags[permKey]=value; // export, addVendor, canAccessArchive
+        }
+        function _applyPermissionsToUsers(changes, targetUsers){
+          try{
+            const allU=getApprovedUsers();
+            targetUsers.forEach(function(su){
+              const u=allU.find(function(x){return x.email===su.email;});
+              if(!u) return;
+              changes.forEach(function(ch){ _applyPermissionToUser(u, ch.permKey, ch.value); });
+              touchUser(u.email);
+            });
+            localStorage.setItem(AUTH_KEY,JSON.stringify(allU));
+            scheduleUserSave(2000);
+          }catch(e3){}
+        }
         // S50: bulk actions covering all 7 toggles in this section, which
         // span three different underlying storage mechanisms
         // (setRolePermissionDefault, the Financials field-group hide, and
@@ -27139,23 +27217,31 @@ window._buildConnectionsSection = _buildConnectionsSection;
           const finKeysBulk=FIELD_GROUPS['Financials']||[];
           finKeysBulk.forEach(function(k){ if(enable){rhBulk.delete(k);}else{rhBulk.add(k);} });
           localStorage.setItem(_rfKeyBulk,JSON.stringify([...rhBulk]));
-          try{
-            const allU=getApprovedUsers();
-            allU.forEach(function(u){
-              if((u.role||'admin')!==role) return;
-              if(!u.hiddenFields) u.hiddenFields=[];
-              finKeysBulk.forEach(function(k){
-                if(enable){ u.hiddenFields=u.hiddenFields.filter(function(fk){return fk!==k;}); }
-                else if(!u.hiddenFields.includes(k)){ u.hiddenFields.push(k); }
-              });
-              touchUser(u.email);
-            });
-            localStorage.setItem(AUTH_KEY,JSON.stringify(allU));
-            scheduleUserSave(2000);
-          }catch(e2){}
           debouncedSaveSettings();
-          toast('✓ All permissions '+(enable?'enabled':'restricted')+' for all '+role+' users','#22c55e');
-          const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+          showAffectedUsersModal(role, 'All permissions '+(enable?'enabled':'restricted'), function(selectedUsers){
+            const changes=[
+              {permKey:'export',value:enable},{permKey:'addVendor',value:enable},{permKey:'canAccessArchive',value:enable},
+              {permKey:'requireSearchToList',value:!enable},{permKey:'ai',value:enable},{permKey:'renzo',value:enable},
+            ];
+            _applyPermissionsToUsers(changes, selectedUsers);
+            try{
+              const allU2=getApprovedUsers();
+              selectedUsers.forEach(function(su){
+                const u=allU2.find(function(x){return x.email===su.email;});
+                if(!u) return;
+                if(!u.hiddenFields) u.hiddenFields=[];
+                finKeysBulk.forEach(function(k){
+                  if(enable){ u.hiddenFields=u.hiddenFields.filter(function(fk){return fk!==k;}); }
+                  else if(!u.hiddenFields.includes(k)){ u.hiddenFields.push(k); }
+                });
+                touchUser(u.email);
+              });
+              localStorage.setItem(AUTH_KEY,JSON.stringify(allU2));
+              scheduleUserSave(2000);
+            }catch(e2){}
+            toast('✓ All permissions '+(enable?'enabled':'restricted')+' for default'+(selectedUsers.length?' — applied to '+selectedUsers.length+' existing user(s)':''),'#22c55e');
+            const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+          });
         }
         const permBulkRow=el('div',{style:{display:'flex',gap:'6px',marginBottom:'6px'}});
         permBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllPermissions(false);}},'Restrict All'));
@@ -27179,8 +27265,11 @@ window._buildConnectionsSection = _buildConnectionsSection;
             onToggleView:function(){
               setRolePermissionDefault(role,permKey,!isOn);
               debouncedSaveSettings();
-              toast('✓ '+permLabel+' default '+(!isOn?'ON':'OFF')+' for all '+role+' users — saved','#22c55e');
-              const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+              showAffectedUsersModal(role, permLabel+' default '+(!isOn?'ON':'OFF'), function(selectedUsers){
+                _applyPermissionsToUsers([{permKey:permKey,value:!isOn}], selectedUsers);
+                toast('✓ '+permLabel+' default '+(!isOn?'ON':'OFF')+(selectedUsers.length?' — applied to '+selectedUsers.length+' existing user(s)':''),'#22c55e');
+                const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+              });
             }
           }));
         });
@@ -27247,8 +27336,11 @@ window._buildConnectionsSection = _buildConnectionsSection;
           onToggleView:function(){
             setRolePermissionDefault(role,'requireSearchToList',!rstOn);
             debouncedSaveSettings();
-            toast('✓ Vendor DB browsing default updated for all '+role+' users — saved','#22c55e');
-            const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+            showAffectedUsersModal(role, 'Vendor DB browsing default updated', function(selectedUsers){
+              _applyPermissionsToUsers([{permKey:'requireSearchToList',value:!rstOn}], selectedUsers);
+              toast('✓ Vendor DB browsing default updated'+(selectedUsers.length?' — applied to '+selectedUsers.length+' existing user(s)':''),'#22c55e');
+              const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+            });
           }
         }));
         b.appendChild(rstRow2);
@@ -27274,8 +27366,11 @@ window._buildConnectionsSection = _buildConnectionsSection;
           onToggleView:function(){
             setRoleFeatureDefault(role,'ai',!aiIsOn);
             debouncedSaveSettings();
-            toast('✓ AI Assistant default '+(!aiIsOn?'ON':'OFF')+' for all '+role+' users — saved','#22c55e');
-            const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+            showAffectedUsersModal(role, 'AI Assistant default '+(!aiIsOn?'ON':'OFF'), function(selectedUsers){
+              _applyPermissionsToUsers([{permKey:'ai',value:!aiIsOn}], selectedUsers);
+              toast('✓ AI Assistant default '+(!aiIsOn?'ON':'OFF')+(selectedUsers.length?' — applied to '+selectedUsers.length+' existing user(s)':''),'#22c55e');
+              const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+            });
           }
         }));
         // Same wording as the per-user Permissions panel's AI Assistant toggle.
@@ -27287,8 +27382,11 @@ window._buildConnectionsSection = _buildConnectionsSection;
           onToggleView:function(){
             setRoleFeatureDefault(role,'renzo',!renzoIsOn);
             debouncedSaveSettings();
-            toast('✓ Renzo Access default '+(!renzoIsOn?'ON':'OFF')+' for all '+role+' users — saved','#22c55e');
-            const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+            showAffectedUsersModal(role, 'Renzo Access default '+(!renzoIsOn?'ON':'OFF'), function(selectedUsers){
+              _applyPermissionsToUsers([{permKey:'renzo',value:!renzoIsOn}], selectedUsers);
+              toast('✓ Renzo Access default '+(!renzoIsOn?'ON':'OFF')+(selectedUsers.length?' — applied to '+selectedUsers.length+' existing user(s)':''),'#22c55e');
+              const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+            });
           }
         }));
         // Same wording as the per-user Permissions panel's Renzo Access toggle.
@@ -27526,49 +27624,6 @@ window._buildConnectionsSection = _buildConnectionsSection;
       const _refStored=localStorage.getItem(_refKey);
       const _roleEditableFields=_refStored!==null ? new Set(JSON.parse(_refStored)) : new Set(ALL_RESTRICTABLE_FIELDS.filter(function(f){return getRoleFieldEditDefault(role,f.key);}).map(function(f){return f.key;}));
       if(_refStored===null){ localStorage.setItem(_refKey, JSON.stringify([..._roleEditableFields])); }
-      // S50 v4: reusable confirmation modal for role-default changes that
-      // would otherwise silently propagate to every existing user of a
-      // role. Per David's explicit request: some users on a role may have
-      // been deliberately given different permissions than the role
-      // default, and a blanket role-level change shouldn't silently
-      // overwrite those deliberate exceptions OR silently skip everyone.
-      // The admin gets to choose, per change, which currently-assigned
-      // users are actually affected. Users NOT selected keep whatever they
-      // currently have — which then behaves like a per-user override
-      // relative to the new default, exactly as intended.
-      function showAffectedUsersModal(roleKey, changeLabel, onConfirm){
-        const affected=getApprovedUsers().filter(function(u){return (u.role||'admin')===roleKey;});
-        if(!affected.length){ onConfirm([]); return; } // nobody on this role yet -- nothing to ask about
-        const overlay=el('div',{style:{position:'fixed',top:'0',left:'0',right:'0',bottom:'0',background:'rgba(0,0,0,.5)',zIndex:'9999',display:'flex',alignItems:'center',justifyContent:'center'}});
-        const modal=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'8px',padding:'20px',width:'380px',maxHeight:'70vh',display:'flex',flexDirection:'column'}});
-        modal.appendChild(el('h3',{style:{margin:'0 0 6px'}},'Apply to existing users?'));
-        modal.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',margin:'0 0 10px',lineHeight:'1.4'}},
-          changeLabel+' — this always becomes the default for any NEW '+(ROLES[roleKey]||roleKey)+' user. Choose which of the '+affected.length+' EXISTING user(s) on this role should also get this change now. Anyone left unchecked keeps their current setting.'));
-        const selRow=el('div',{style:{display:'flex',gap:'8px',marginBottom:'8px'}});
-        const listWrap=el('div',{style:{overflowY:'auto',flex:'1',border:'1px solid var(--border)',borderRadius:'4px',padding:'6px'}});
-        const checkboxes=[];
-        affected.forEach(function(u){
-          const row=el('label',{style:{display:'flex',alignItems:'center',gap:'6px',fontSize:'10px',padding:'3px 0',cursor:'pointer'}});
-          const cb=el('input',{type:'checkbox'}); cb.checked=true; checkboxes.push({cb:cb,user:u});
-          row.appendChild(cb);
-          row.appendChild(document.createTextNode((u.name||u.email)+(u._customHiddenFields?' (has other customizations)':'')));
-          listWrap.appendChild(row);
-        });
-        selRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){checkboxes.forEach(function(x){x.cb.checked=true;});}},'Select All'));
-        selRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){checkboxes.forEach(function(x){x.cb.checked=false;});}},'Select None'));
-        modal.appendChild(selRow);
-        modal.appendChild(listWrap);
-        const btnRow=el('div',{style:{display:'flex',gap:'8px',justifyContent:'flex-end',marginTop:'12px'}});
-        btnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){document.body.removeChild(overlay);}},'Cancel'));
-        btnRow.appendChild(el('button',{class:'btn-xs btn-green',onclick(){
-          const selected=checkboxes.filter(function(x){return x.cb.checked;}).map(function(x){return x.user;});
-          document.body.removeChild(overlay);
-          onConfirm(selected);
-        }},'Apply to Selected'));
-        modal.appendChild(btnRow);
-        overlay.appendChild(modal);
-        document.body.appendChild(overlay);
-      }
       // Core write logic, no modal -- both the single-field path and the
       // bulk path funnel through this so there's one real implementation,
       // not two that could drift apart.
