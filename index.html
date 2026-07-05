@@ -26916,7 +26916,12 @@ window._buildConnectionsSection = _buildConnectionsSection;
       // now makes this safe to open up universally. Delete keeps its one
       // hard exception (admin can never be deleted) plus the existing
       // block-if-users-assigned rule for everything else.
-      roleSectionHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){
+      // S50 v3: built as standalone elements now instead of appending
+      // immediately, so they can be placed at the far right of the row
+      // (after the tabs/fields info) instead of right after the role name
+      // — role names vary in length, which made the buttons land in a
+      // different horizontal position for every role. Icon-only now too.
+      const _editRoleBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'10px',padding:'2px 6px'},title:'Edit role',onclick(e){
         e.stopPropagation();
         const overlay=el('div',{style:{position:'fixed',top:'0',left:'0',right:'0',bottom:'0',background:'rgba(0,0,0,.5)',zIndex:'9999',display:'flex',alignItems:'center',justifyContent:'center'},onclick(ev){if(ev.target===overlay)document.body.removeChild(overlay);}});
         const modal=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'8px',padding:'20px',width:'360px'}});
@@ -26948,15 +26953,15 @@ window._buildConnectionsSection = _buildConnectionsSection;
         modal.appendChild(btnRow2);
         overlay.appendChild(modal);
         document.body.appendChild(overlay);
-      }},'✎ Edit'));
-      roleSectionHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',color:'var(--red)'},onclick(e){
+      }},'✎');
+      const _deleteRoleBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'10px',padding:'2px 6px',color:'var(--red)'},title:'Delete role',onclick(e){
         e.stopPropagation();
         if(!confirm('Delete the role "'+(ROLES[role]||role)+'"? This cannot be undone. Blocked if any user is still assigned to it (and admin can never be deleted).')) return;
         const result=deleteRole(role);
         if(!result.ok){ toast('⚠ '+result.error,'#ef4444'); return; }
         toast('✓ Role deleted','#22c55e');
         const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
-      }},'🗑 Delete'));
+      }},'✕');
       // Show tab count enabled + hidden field count
       const _savedRT=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
       const _rtabs=_savedRT[role]||(ROLE_PERMS[role]||{}).tabs||[];
@@ -26965,6 +26970,8 @@ window._buildConnectionsSection = _buildConnectionsSection;
       _roleInfoWrap.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_rtabs.length+' tabs on'));
       if(_rhidden.length>0)_roleInfoWrap.appendChild(el('span',{style:{fontSize:'9px',color:'var(--amber)',background:'rgba(245,158,11,.08)',borderRadius:'9px',padding:'0 5px',border:'1px solid rgba(245,158,11,.2)'}},_rhidden.length+' fields hidden'));
       roleSectionHdr.appendChild(_roleInfoWrap);
+      roleSectionHdr.appendChild(_editRoleBtn);
+      roleSectionHdr.appendChild(_deleteRoleBtn);
       roleSection.appendChild(roleSectionHdr);
       const _roleBody=el('div',{style:{display:_rColl?'none':'',padding:'8px 10px'}});
 
