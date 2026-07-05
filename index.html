@@ -26777,10 +26777,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
       const srcSel=el('select',{class:'modal-input',style:{width:'100%',marginBottom:'8px'}});
       Object.keys(ROLES).forEach(function(r){ srcSel.appendChild(el('option',{value:r},ROLES[r]||r)); });
       modal.appendChild(srcSel);
-      modal.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'New role key (lowercase, no spaces — e.g. "senior_sales_rep"):'));
-      const keyIn=el('input',{class:'modal-input',style:{width:'100%',marginBottom:'8px'},placeholder:'senior_sales_rep'});
-      modal.appendChild(keyIn);
-      modal.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'Display label:'));
+      modal.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'Display label (this is what everyone sees — the internal key is generated automatically):'));
       const labelIn=el('input',{class:'modal-input',style:{width:'100%',marginBottom:'8px'},placeholder:'Senior Sales Rep'});
       modal.appendChild(labelIn);
       modal.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'Color:'));
@@ -26789,9 +26786,21 @@ window._buildConnectionsSection = _buildConnectionsSection;
       const btnRow=el('div',{style:{display:'flex',gap:'8px',justifyContent:'flex-end'}});
       btnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){document.body.removeChild(overlay);}},'Cancel'));
       btnRow.appendChild(el('button',{class:'btn-xs btn-green',onclick(){
-        const result=createCustomRole(keyIn.value.trim().toLowerCase(), labelIn.value.trim(), colorIn.value, srcSel.value);
+        const lbl=labelIn.value.trim();
+        if(!lbl){ toast('⚠ Enter a display label','#ef4444'); return; }
+        // S50 QA fix: was a manual text field the user had to fill in
+        // correctly (lowercase, no spaces) — the key is a backend/storage
+        // detail (Supabase, permissions lookups) that shouldn't be
+        // something a person has to think about. Auto-generated from the
+        // label instead: slugify, then append a number if that key is
+        // already taken by another role.
+        let baseKey=lbl.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+        if(!baseKey || !/^[a-z]/.test(baseKey)) baseKey='role_'+baseKey;
+        let genKey=baseKey, n=2;
+        while(ROLE_PERMS[genKey] || CUSTOM_ROLES[genKey]){ genKey=baseKey+'_'+n; n++; }
+        const result=createCustomRole(genKey, lbl, colorIn.value, srcSel.value);
         if(!result.ok){ toast('⚠ '+result.error,'#ef4444'); return; }
-        toast('✓ Role "'+(labelIn.value.trim()||keyIn.value.trim())+'" created — cloned from '+(ROLES[srcSel.value]||srcSel.value),'#22c55e');
+        toast('✓ Role "'+lbl+'" created — cloned from '+(ROLES[srcSel.value]||srcSel.value),'#22c55e');
         document.body.removeChild(overlay);
         const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
       }},'Create'));
@@ -27224,23 +27233,26 @@ window._buildConnectionsSection = _buildConnectionsSection;
       // made editable, and only if currently visible — a restricted page
       // can't meaningfully be "editable" (there's nothing to edit if you
       // can't see it), same rule buildPermTile already applies visually by
-      // graying out the checkbox for hidden items.
-      function bulkSetAllTabEditable(){
+      // graying out the checkbox for hidden items. Takes a boolean instead
+      // of always forcing true, so "Make All Non-Editable" can reuse the
+      // exact same function rather than a parallel path.
+      function bulkSetAllTabEditable(editable){
         PAGE_HIERARCHY.forEach(function(page){
           if(!page.editable) return;
           const cur=roleTabState(page.id);
-          if(cur.view && !cur.edit){
-            persistRoleTabState(page.id, true, true, true);
+          if(cur.view && cur.edit!==editable){
+            persistRoleTabState(page.id, true, editable, true);
           }
         });
         refreshOpenUserTabSections();
-        toast('✓ All editable tabs made editable for all '+role+' users','#22c55e');
+        toast('✓ All editable tabs made '+(editable?'editable':'non-editable')+' for all '+role+' users','#22c55e');
         const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
       }
       const tabBulkRow=el('div',{style:{display:'flex',gap:'6px',marginBottom:'6px'}});
       tabBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllTabVisibility(false);}},'Restrict All'));
       tabBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllTabVisibility(true);}},'Make All Visible'));
-      tabBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllTabEditable();}},'Make All Editable'));
+      tabBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllTabEditable(true);}},'Make All Editable'));
+      tabBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllTabEditable(false);}},'Make All Non-Editable'));
       b.appendChild(tabBulkRow);
 
       const roleTabGrid=el('div',{style:{display:'flex',flexDirection:'column',gap:'2px'}});
@@ -27348,6 +27360,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
       fvBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllFieldVisibility(false);}},'Restrict All'));
       fvBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllFieldVisibility(true);}},'Make All Visible'));
       fvBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllFieldEditable(true);}},'Make All Editable'));
+      fvBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllFieldEditable(false);}},'Make All Non-Editable'));
       b.appendChild(fvBulkRow);
       // S50 QA fix: was plain document.createElement('button') tiles with
       // different sizing/layout than the per-user Field Visibility panel
