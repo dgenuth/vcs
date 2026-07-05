@@ -24849,7 +24849,7 @@ function renderDataCheck(c) {
 }
 
 // Makes a settings section collapsible with a toggle header
-function makeCollapsibleSection(sec, title, storageKey, defaultCollapsed) {
+function makeCollapsibleSection(sec, title, storageKey, defaultCollapsed, badge) {
   const isCollapsed = localStorage.getItem(storageKey) !== null
     ? localStorage.getItem(storageKey) === '1'
     : (defaultCollapsed === true);
@@ -24859,7 +24859,7 @@ function makeCollapsibleSection(sec, title, storageKey, defaultCollapsed) {
     chev.textContent=c?'▼':'▶';
     localStorage.setItem(storageKey,c?'0':'1');
   }});
-  const chev=el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'6px'}},isCollapsed?'▶':'▼');
+  const chev=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},isCollapsed?'▶':'▼');
   hdr.appendChild(chev);
   // S50 QA fix: unified to match the Connections & API Keys reference style
   // David pointed to (fontSize 11px, weight 600, blue) — this helper used to
@@ -24868,7 +24868,11 @@ function makeCollapsibleSection(sec, title, storageKey, defaultCollapsed) {
   // Settings, since 7 sections are built through this one function. Also
   // dropped the separate "click to expand/collapse" text — the chevron
   // arrow already says that, and the reference sections don't repeat it.
-  hdr.appendChild(el('h3',{style:{margin:'0',display:'inline',fontSize:'11px',fontWeight:'600',color:'var(--blue)'}},title));
+  hdr.appendChild(el('h3',{style:{margin:'0',display:'inline',flex:'1',fontSize:'11px',fontWeight:'600',color:'var(--blue)'}},title));
+  // Optional at-a-glance summary shown to the right of the title, visible
+  // even while collapsed -- same badge styling as Connections/Role/User
+  // Management's indicators, so every section's summary reads consistently.
+  if(badge) hdr.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--muted)',marginLeft:'6px',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)'}},badge));
   // Wrap existing content
   const body=el('div',{style:{display:isCollapsed?'none':''}});
   while(sec.firstChild) body.appendChild(sec.firstChild);
@@ -25124,11 +25128,11 @@ function refreshConnectionsSummary(){
   },50);
 }
 
-function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
+function settingsCard(c, title, icon, key, defaultOpen, buildFn, badge) {
   // Creates a collapsible settings card
   const card=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
   const isOpen=S._settingsExpandAll===true?true:S._settingsExpandAll===false?false:(S._settingsOpen?.[key] ?? defaultOpen);
-  const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'8px 12px',cursor:'pointer',userSelect:'none',background:isOpen?'var(--card)':'var(--sb)',transition:'background .15s'},
+  const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',padding:'8px 12px',cursor:'pointer',userSelect:'none',background:isOpen?'var(--card)':'var(--sb)',transition:'background .15s'},
     onclick(){
       if(!S._settingsOpen) S._settingsOpen={};
       S._settingsOpen[key]=!isOpen;
@@ -25137,8 +25141,11 @@ function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
       render();
       requestAnimationFrame(()=>{const _el=document.getElementById('content');if(_el)_el.scrollTop=_sY;});
     }});
-  hdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',fontWeight:'400',marginRight:'2px'}},isOpen?'▼':'▶'));
+  hdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',fontWeight:'400'}},isOpen?'▼':'▶'));
   hdr.appendChild(el('span',{style:{fontWeight:'600',fontSize:'11px',flex:'1',color:'var(--blue)'}},icon+' '+title));
+  // Optional at-a-glance summary, visible even while collapsed -- same
+  // badge styling as every other section's indicator.
+  if(badge) hdr.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--muted)',marginLeft:'6px',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)'}},badge));
   card.appendChild(hdr);
   if(isOpen){
     const body=el('div',{style:{padding:'14px'}});
@@ -27057,11 +27064,27 @@ window._buildConnectionsSection = _buildConnectionsSection;
       roleSectionHdr.appendChild(_roleChev);
       roleSectionHdr.appendChild(el('span',{style:{textTransform:'capitalize',color:'var(--blue)'}},role));
       // Show tab count enabled + hidden field count
-      const _savedRT=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
-      const _rtabs=_savedRT[role]||(ROLE_PERMS[role]||{}).tabs||[];
+      // S50 QA fix: this used to read vcs_role_tab_overrides[role] directly
+      // and assume it was always an array -- true only when the role had
+      // ZERO overrides yet (then it fell through to ROLE_PERMS[role].tabs,
+      // a real array). The moment any single tab got toggled for a role,
+      // that entry becomes the {tabId:{view,edit}} object every override
+      // actually uses, and `.length` on it is silently `undefined` --
+      // exactly what showed up as "undefined tabs on" for sales_rep once it
+      // had any real customization. Now counts via resolveRoleTabState()
+      // (the same real per-tab resolver everything else in this file
+      // funnels through), across every PAGE_HIERARCHY entry, regardless of
+      // whether this role has 0 or 100 explicit overrides.
+      let _rtabsOnCount=0;
+      PAGE_HIERARCHY.forEach(function(page){
+        if(resolveRoleTabState(role,page.id).view) _rtabsOnCount++;
+        (page.children||[]).forEach(function(child){
+          if(resolveRoleTabState(role,child.id,true).view) _rtabsOnCount++;
+        });
+      });
       const _rhidden=typeof getDefaultHiddenFields==='function'?getDefaultHiddenFields(role):[];
       const _roleInfoWrap=el('div',{style:{marginLeft:'auto',display:'flex',gap:'8px',alignItems:'center',fontWeight:'400'}});
-      _roleInfoWrap.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_rtabs.length+' tabs on'));
+      _roleInfoWrap.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_rtabsOnCount+' tabs on'));
       if(_rhidden.length>0)_roleInfoWrap.appendChild(el('span',{style:{fontSize:'9px',color:'var(--amber)',background:'rgba(245,158,11,.08)',borderRadius:'9px',padding:'0 5px',border:'1px solid rgba(245,158,11,.2)'}},_rhidden.length+' fields hidden'));
       roleSectionHdr.appendChild(_roleInfoWrap);
       // Rename works for ANY role. Delete works for any role except admin
@@ -27470,22 +27493,37 @@ window._buildConnectionsSection = _buildConnectionsSection;
         if(_forcedParent && !ROLE_PERMS[role].tabs.includes(_forcedParent)) ROLE_PERMS[role].tabs.push(_forcedParent);
         if(_restrictedChildren.length) ROLE_PERMS[role].tabs=ROLE_PERMS[role].tabs.filter(function(x){return !_restrictedChildren.includes(x);});
         saveConfigToDrive().catch(function(){});
-        // Update ALL users of this role immediately — no "next load" needed.
+        if(_forcedParent) toast('✓ Also enabled '+_forcedParent+' as the role default — required for its sub-tabs to be reachable','#4f7cff');
+        if(_restrictedChildren.length) toast('✓ Also restricted '+_restrictedChildren.join(', ')+' as the role default — unreachable with the parent restricted','#f59e0b');
+        // S50 QA fix: this used to propagate to every existing user of the
+        // role unconditionally, right here, with no way to say "just the
+        // role default for now" -- the ONE role-default section that never
+        // got the showAffectedUsersModal treatment Permissions and Field
+        // Visibility Defaults already have, despite this exact function's
+        // own design intent (see resolveRoleTabState's comment above) always
+        // covering all three. Now returns the role-level change(s) this call
+        // made -- the one requested, plus any parent-forced/children-
+        // restricted cascade -- so the caller can hand them to
+        // _applyTabStateToUsers() after the admin picks who else gets them,
+        // via showAffectedUsersModal, same as the other two sections.
+        const _changes=[{id:id, view:view, edit:edit, showEdit:showEdit}];
+        if(_forcedParent) _changes.push({id:_forcedParent, view:true, edit:roleTabState(_forcedParent).edit, showEdit:true});
+        _restrictedChildren.forEach(function(cid){ _changes.push({id:cid, view:false, edit:false, showEdit:false}); });
+        return _changes;
+      }
+      function _applyTabStateToUsers(changes, targetUsers){
         try{
-          const allUsers=getApprovedUsers();
-          allUsers.forEach(function(u){
-            if((u.role||'admin')!==role) return;
+          const allU=getApprovedUsers();
+          targetUsers.forEach(function(su){
+            const u=allU.find(function(x){return x.email===su.email;});
+            if(!u) return;
             if(!u.tabOverrides) u.tabOverrides={};
-            u.tabOverrides[id]=showEdit?{view:view,edit:edit}:{view:view};
-            if(_forcedParent) u.tabOverrides[_forcedParent]={view:true};
-            _restrictedChildren.forEach(function(cid){ u.tabOverrides[cid]={view:false}; });
+            changes.forEach(function(ch){ u.tabOverrides[ch.id]=ch.showEdit?{view:ch.view,edit:ch.edit}:{view:ch.view}; });
+            touchUser(u.email);
           });
-          allUsers.forEach(function(_u){ if(_u&&_u.email) touchUser(_u.email); });
-          localStorage.setItem(AUTH_KEY,JSON.stringify(allUsers));
-          setTimeout(function(){saveUsersViaProxy().catch(function(){});},2000);
-          if(_forcedParent) toast('✓ Also enabled '+_forcedParent+' for all '+role+' users — required for its sub-tabs to be reachable','#4f7cff');
-          if(_restrictedChildren.length) toast('✓ Also restricted '+_restrictedChildren.join(', ')+' for all '+role+' users — unreachable with the parent restricted','#f59e0b');
-        }catch(ue){ console.error('[RoleTab]',ue); }
+          localStorage.setItem(AUTH_KEY,JSON.stringify(allU));
+          scheduleUserSave(2000);
+        }catch(e3){}
       }
       function refreshOpenUserTabSections(){
         document.querySelectorAll('[data-bta-email]').forEach(function(el2){
@@ -27501,23 +27539,27 @@ window._buildConnectionsSection = _buildConnectionsSection;
       // apply. Only the outer "updated" toast/re-render is batched to one
       // call instead of firing once per tab.
       function bulkSetAllTabVisibility(makeVisible){
+        const _allChanges=[];
         PAGE_HIERARCHY.forEach(function(page){
           const cur=roleTabState(page.id);
           if(cur.view!==makeVisible){
-            persistRoleTabState(page.id, makeVisible, makeVisible?cur.edit:false, !!page.editable);
+            _allChanges.push.apply(_allChanges, persistRoleTabState(page.id, makeVisible, makeVisible?cur.edit:false, !!page.editable));
           }
           if(page.children&&page.children.length){
             page.children.forEach(function(child){
               const ccur=roleTabState(child.id, true);
               if(ccur.view!==makeVisible){
-                persistRoleTabState(child.id, makeVisible, false, false);
+                _allChanges.push.apply(_allChanges, persistRoleTabState(child.id, makeVisible, false, false));
               }
             });
           }
         });
-        refreshOpenUserTabSections();
-        toast('✓ All tabs '+(makeVisible?'made visible':'restricted')+' for all '+role+' users','#22c55e');
-        const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+        showAffectedUsersModal(role, 'All tabs '+(makeVisible?'made visible':'restricted'), function(selectedUsers){
+          _applyTabStateToUsers(_allChanges, selectedUsers);
+          refreshOpenUserTabSections();
+          toast('✓ All tabs '+(makeVisible?'made visible':'restricted')+' for default'+(selectedUsers.length?' — applied to '+selectedUsers.length+' existing user(s)':''),'#22c55e');
+          const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+        });
       }
       // S50: only pages with an edit checkbox at all (page.editable) can be
       // made editable, and only if currently visible — a restricted page
@@ -27527,16 +27569,20 @@ window._buildConnectionsSection = _buildConnectionsSection;
       // of always forcing true, so "Make All Non-Editable" can reuse the
       // exact same function rather than a parallel path.
       function bulkSetAllTabEditable(editable){
+        const _allChanges=[];
         PAGE_HIERARCHY.forEach(function(page){
           if(!page.editable) return;
           const cur=roleTabState(page.id);
           if(cur.view && cur.edit!==editable){
-            persistRoleTabState(page.id, true, editable, true);
+            _allChanges.push.apply(_allChanges, persistRoleTabState(page.id, true, editable, true));
           }
         });
-        refreshOpenUserTabSections();
-        toast('✓ All editable tabs made '+(editable?'editable':'non-editable')+' for all '+role+' users','#22c55e');
-        const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+        showAffectedUsersModal(role, 'All editable tabs made '+(editable?'editable':'non-editable'), function(selectedUsers){
+          _applyTabStateToUsers(_allChanges, selectedUsers);
+          refreshOpenUserTabSections();
+          toast('✓ All editable tabs made '+(editable?'editable':'non-editable')+' for default'+(selectedUsers.length?' — applied to '+selectedUsers.length+' existing user(s)':''),'#22c55e');
+          const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+        });
       }
       const tabBulkRow=el('div',{style:{display:'flex',gap:'6px',marginBottom:'6px',flexWrap:'wrap'}});
       tabBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllTabVisibility(false);}},'Restrict All'));
@@ -27554,17 +27600,23 @@ window._buildConnectionsSection = _buildConnectionsSection;
           showEditCheckbox:!!page.editable, isEditChecked:st.edit,
           onToggleView:function(){
             const cur=roleTabState(page.id);
-            persistRoleTabState(page.id, !cur.view, cur.view?false:cur.edit, !!page.editable);
-            refreshOpenUserTabSections();
-            toast('Updated '+role+' default: '+page.label,'#10b981');
-            const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+            const _changes=persistRoleTabState(page.id, !cur.view, cur.view?false:cur.edit, !!page.editable);
+            showAffectedUsersModal(role, 'Updated: '+page.label, function(selectedUsers){
+              _applyTabStateToUsers(_changes, selectedUsers);
+              refreshOpenUserTabSections();
+              toast('✓ Updated '+role+' default: '+page.label+(selectedUsers.length?' — applied to '+selectedUsers.length+' existing user(s)':''),'#22c55e');
+              const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+            });
           },
           onToggleEdit:function(checked){
             const cur=roleTabState(page.id);
-            persistRoleTabState(page.id, checked?true:cur.view, checked, true);
-            refreshOpenUserTabSections();
-            toast('Updated '+role+' default: '+page.label,'#10b981');
-            const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+            const _changes=persistRoleTabState(page.id, checked?true:cur.view, checked, true);
+            showAffectedUsersModal(role, 'Updated: '+page.label, function(selectedUsers){
+              _applyTabStateToUsers(_changes, selectedUsers);
+              refreshOpenUserTabSections();
+              toast('✓ Updated '+role+' default: '+page.label+(selectedUsers.length?' — applied to '+selectedUsers.length+' existing user(s)':''),'#22c55e');
+              const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+            });
           }
         });
         pageRow.appendChild(pageTile);
@@ -27576,10 +27628,13 @@ window._buildConnectionsSection = _buildConnectionsSection;
               label:child.label, isViewable:cst.view, isOverridden:false, showEditCheckbox:false,
               onToggleView:function(){
                 const cur=roleTabState(child.id, true);
-                persistRoleTabState(child.id, !cur.view, false, false);
-                refreshOpenUserTabSections();
-                toast('Updated '+role+' default: '+child.label,'#10b981');
-                const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+                const _changes=persistRoleTabState(child.id, !cur.view, false, false);
+                showAffectedUsersModal(role, 'Updated: '+child.label, function(selectedUsers){
+                  _applyTabStateToUsers(_changes, selectedUsers);
+                  refreshOpenUserTabSections();
+                  toast('✓ Updated '+role+' default: '+child.label+(selectedUsers.length?' — applied to '+selectedUsers.length+' existing user(s)':''),'#22c55e');
+                  const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+                });
               }
             });
             childRow.appendChild(childTile);
@@ -28531,7 +28586,7 @@ function buildUserSubSection(label,bodyBuilderFn){
   phoneGuide.appendChild(optCard);
   secDialer.appendChild(phoneGuide);
 
-  makeCollapsibleSection(secDialer,'📞 Click-to-Call & Phone Connect','vcs_s_dialer',true);
+  makeCollapsibleSection(secDialer,'📞 Click-to-Call & Phone Connect','vcs_s_dialer',true,(S.settings.dialerUrl&&S.settings.dialerUrl.trim())?'Configured':'Not configured');
   c.appendChild(secDialer);
 
   // S50: removed the old 3-option Display Preferences section here (compact
@@ -28588,7 +28643,7 @@ function buildUserSubSection(label,bodyBuilderFn){
     }
   };
   renderDayLists();
-  if(['admin','procurement','manager'].includes(USER.role)){const _cc=localStorage.getItem('vcs_s_cal')==='0';const _cch=el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'6px'}},_cc?'▼':'▶');const _coh=el('div',{style:{display:'flex',alignItems:'center',cursor:'pointer',userSelect:'none',padding:'8px 12px'}});_coh.onclick=function(){const n=secCal.style.display==='none';secCal.style.display=n?'':'none';_cch.textContent=n?'▼':'▶';localStorage.setItem('vcs_s_cal',n?'0':'1');};_coh.appendChild(_cch);_coh.appendChild(el('h3',{style:{margin:'0',display:'inline'}},'📅 Calendar Availability'));const _cow=el('div',{class:'settings-section'});_cow.appendChild(_coh);secCal.style.display=_cc?'':'none';_cow.appendChild(secCal);c.appendChild(_cow);}
+  if(['admin','procurement','manager'].includes(USER.role)){const _cc=localStorage.getItem('vcs_s_cal')==='0';const _cch=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_cc?'▼':'▶');const _coh=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px'}});_coh.onclick=function(){const n=secCal.style.display==='none';secCal.style.display=n?'':'none';_cch.textContent=n?'▼':'▶';localStorage.setItem('vcs_s_cal',n?'0':'1');};_coh.appendChild(_cch);_coh.appendChild(el('h3',{style:{margin:'0',display:'inline',flex:'1'}},'📅 Calendar Availability'));const _blockedDays=(S.settings.closedDays||[]).length+(S.settings.oooDays||[]).length;_coh.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--muted)',marginLeft:'6px',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)'}},_blockedDays+' day'+(_blockedDays!==1?'s':'')+' blocked'));const _cow=el('div',{class:'settings-section'});_cow.appendChild(_coh);secCal.style.display=_cc?'':'none';_cow.appendChild(secCal);c.appendChild(_cow);}
 
   // Default View on load
   const secDefaults=el('div',{class:'settings-section'});
@@ -28639,7 +28694,7 @@ function buildUserSubSection(label,bodyBuilderFn){
     ['Ctrl+U (⌘+U on Mac)','Underline (while editing a note)'],['Ctrl+S (⌘+S on Mac)','Save note (while editing a note)'],
   ]));
   secDefaults.appendChild(kbCols);
-  if(['admin','procurement','manager'].includes(USER.role))if(['admin','procurement','manager'].includes(USER.role)){makeCollapsibleSection(secDefaults,'🚀 Startup & Navigation','vcs_s_startup',true);c.appendChild(secDefaults);}
+  if(['admin','procurement','manager'].includes(USER.role)){const _dv=S.settings.defaultView||'today';makeCollapsibleSection(secDefaults,'🚀 Startup & Navigation','vcs_s_startup',true,'Opens to: '+_dv.charAt(0).toUpperCase()+_dv.slice(1));c.appendChild(secDefaults);}
 
   // Theme & Appearance
   const secTheme=el('div',{class:'settings-section'});
@@ -28691,7 +28746,7 @@ function buildUserSubSection(label,bodyBuilderFn){
     cb.addEventListener('change',()=>{S.settings[key]=cb.checked; onChangeFn(cb.checked); debouncedSaveSettings(); renderSettings(c); toast('✓ Saved','#22c55e');});
     row.appendChild(cb); secTheme.appendChild(row);
   }
-  makeCollapsibleSection(secTheme,'🎨 Display Preferences','vcs_s_theme',true);
+  makeCollapsibleSection(secTheme,'🎨 Display Preferences','vcs_s_theme',true,(S.settings.theme||'dark')==='dark'?'Dark':'Light');
   c.appendChild(secTheme);
 
   // Email Signature section removed -- signatures come from each user's
@@ -28701,7 +28756,7 @@ function buildUserSubSection(label,bodyBuilderFn){
   if (S.loaded) {
     settingsCard(c,'File Info','📂','fileInfo',false,body=>{
       [[`File`,S.fileName],[`PSD Vendors`,S.vendors.length],[`Pipeline`,S.itw.length],[`Reviews`,S.reviews.length],[`Comments loaded`,Object.keys(S.commentsMap).map(k=>`${Object.keys(S.commentsMap[k]).length} from comments${k}.xml`).join(', ')||'none'],[`Sheet File`,S.psdSheetFile||'auto-detected'],[`Unsaved Changes`,S.dirty.size]].forEach(([l,v])=>body.appendChild(el('div',{class:'setting-row'},el('span',{},l),el('span',{style:{fontWeight:'600',color:'var(--muted)'}},v))));
-    });
+    }, S.vendors.length+' vendors'+(S.dirty.size?' · '+S.dirty.size+' unsaved':''));
   }
 
   // Data Actions — collapsible via settingsCard
@@ -28730,16 +28785,23 @@ function buildUserSubSection(label,bodyBuilderFn){
   // ── API Usage Monitoring (Admin/Procurement, or Assistant Admin — S48 Part D) ──
   if(['admin','procurement'].includes(USER.role) || isAssistantAdmin()){
     const apiSec=el('div',{class:'summary-section'});
-    const apiHdrRow=el('div',{style:{display:'flex',alignItems:'center',cursor:'pointer',marginBottom:'4px'},onclick(){const _ac=$('content');const _asp=_ac?_ac.scrollTop:0;S._apiSecOpen=!S._apiSecOpen;render();if(_ac) requestAnimationFrame(()=>{_ac.scrollTop=_asp;});}});
-    apiHdrRow.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'6px'}},S._apiSecOpen===true?'▼':'▶'));
+    // Computed unconditionally (not gated behind S._apiSecOpen) so the
+    // header's cost indicator is visible at a glance while collapsed --
+    // cheap (just sums already-loaded localStorage keys), unlike the full
+    // per-key breakdown further below, which stays gated behind expansion.
+    const _apiUsageKeys=Object.keys(localStorage).filter(k=>k.startsWith('vcs_ai_usage_'));
+    let _apiTotalCents=0;
+    _apiUsageKeys.forEach(k=>{try{const d=JSON.parse(localStorage.getItem(k)||'{}');_apiTotalCents+=(d.estimatedCostCents||0);}catch(e){}});
+    const apiHdrRow=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',marginBottom:'4px',padding:'8px 12px'},onclick(){const _ac=$('content');const _asp=_ac?_ac.scrollTop:0;S._apiSecOpen=!S._apiSecOpen;render();if(_ac) requestAnimationFrame(()=>{_ac.scrollTop=_asp;});}});
+    apiHdrRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},S._apiSecOpen===true?'▼':'▶'));
     apiHdrRow.appendChild(el('h3',{style:{margin:'0',flex:'1'}},'📊 API Usage Monitor'));
+    apiHdrRow.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--muted)',marginLeft:'6px',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)'}},(_apiTotalCents>100?'$'+(_apiTotalCents/100).toFixed(2):_apiTotalCents.toFixed(1)+'¢')+' est.'));
     apiSec.appendChild(apiHdrRow);
 
     if(S._apiSecOpen===true){
-      const usageKeys=Object.keys(localStorage).filter(k=>k.startsWith('vcs_ai_usage_'));
+      const usageKeys=_apiUsageKeys;
       // Total cost summary
-      let totalCents=0;
-      usageKeys.forEach(k=>{try{const d=JSON.parse(localStorage.getItem(k)||'{}');totalCents+=(d.estimatedCostCents||0);}catch(e){}});
+      let totalCents=_apiTotalCents;
       const summaryRow=el('div',{style:{display:'flex',gap:'12px',marginBottom:'8px',padding:'8px',background:'var(--card)',borderRadius:'4px'}});
       summaryRow.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)'}},'Est. total cost: '));
       summaryRow.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:'var(--blue)'}},totalCents>100?'$'+(totalCents/100).toFixed(2):(totalCents.toFixed(1)+'¢')));
@@ -28886,12 +28948,12 @@ function buildUserSubSection(label,bodyBuilderFn){
   // ── Field Registry ──────────────────────────────────────────────────────────
   if(USER.role==='admin'){
     const frSec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
-    const frHdrRow=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'8px 12px',cursor:'pointer',background:'rgba(79,124,255,.06)'},onclick(){frBody.style.display=frBody.style.display==='none'?'':'none';frChev.textContent=frBody.style.display===''?'▼':'▶';}});
-    const frChev=el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'2px'}},'▼');
+    const frHdrRow=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',padding:'8px 12px',cursor:'pointer',background:'rgba(79,124,255,.06)'},onclick(){frBody.style.display=frBody.style.display==='none'?'':'none';frChev.textContent=frBody.style.display===''?'▼':'▶';}});
+    const frChev=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'▼');
     frHdrRow.appendChild(frChev);
     frHdrRow.appendChild(el('span',{style:{fontSize:'14px'}},'🗂'));
     frHdrRow.appendChild(el('span',{style:{fontWeight:'600',fontSize:'11px',flex:'1',color:'var(--blue)'}},'Field Registry'));
-    frHdrRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Custom vendor fields'));
+    frHdrRow.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--muted)',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)'}},Array.isArray(S._customFields)?S._customFields.length+' custom field'+(S._customFields.length!==1?'s':''):'Custom vendor fields'));
     frSec.appendChild(frHdrRow);
     const frBody=el('div',{style:{padding:'10px',display:'flex',flexDirection:'column',gap:'8px'}});
     const hdr=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'4px'}});

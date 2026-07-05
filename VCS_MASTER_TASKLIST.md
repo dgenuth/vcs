@@ -1,6 +1,6 @@
 # VCS — Master Task List
-**Last updated:** Sun Jul 05, 2026 (this session, Claude Code)
-**Checkpoint at this update:** MD5 `a0a926393f1777361a35ff297f9ea4d0`, 31,335 lines
+**Last updated:** Sun Jul 05, 2026, 8:00 PM EDT (this session, Claude Code)
+**Checkpoint at this update:** MD5 `f4c8daf477adebaedb71c895fd36c368`, 31,577 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,49 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Role & Feature Defaults: Tab Access Defaults changes weren't reliably
+  reaching existing users** (David's report, 2026-07-05 evening). Root
+  cause: Tab Access was the one of the three role-default sections that
+  never got the "ask which existing users" confirmation flow (Permissions
+  and Field Visibility already had it) — it silently applied every change
+  to every existing user unconditionally instead, with no way to say
+  "just update the default for now." Wired in `showAffectedUsersModal()`
+  the same way the other two sections use it: `persistRoleTabState()` now
+  returns the change(s) it made instead of writing to users directly, bulk
+  actions accumulate all their changes into one combined modal instead of
+  one per tab, and a new `_applyTabStateToUsers()` does the actual per-user
+  write only after the admin confirms who. Verified live end-to-end
+  (individual toggle + bulk "Restrict All"), not just traced through
+  source. **Also found and fixed in the process**: the per-role "N tabs on"
+  badge could show "undefined tabs on" once a role had any real tab
+  override (it assumed the stored value was always an array; it's an
+  object after the first toggle) — now computed via `resolveRoleTabState()`
+  across `PAGE_HIERARCHY`, correct regardless of override count.
+  **Worth confirming with David**: whether he tested this on sandbox or
+  production — production only updates on an explicit separate deploy, so
+  if he tested production, this fix won't be visible there until that
+  deploy happens.
+- **Settings title bar consistency, round 2 (2026-07-05 evening).** A prior
+  pass fixed most sections' font/color/padding but missed a few: API Usage
+  Monitor's header row had no padding at all, and every section's collapse
+  arrow had an inconsistent, redundant margin on top of (or instead of) the
+  row's own flex `gap` — normalized everything to one mechanism (`gap:
+  6px` on the row, no margin on the arrow) so spacing is now byte-for-byte
+  identical across all 12 top-level Settings sections, not just
+  visually close.
+- **Status indicators added to every remaining title bar** (previously
+  only Connections & API Keys, Role & Feature Defaults, and User
+  Management had one): Click-to-Call ("Configured"/"Not configured"),
+  Calendar Availability ("N days blocked"), Startup & Navigation ("Opens
+  to: X"), Display Preferences ("Dark"/"Light"), File Info ("N vendors"
+  + unsaved-changes count), API Usage Monitor (estimated cost total, now
+  computed unconditionally instead of only when expanded), and Field
+  Registry (custom field count, when known). `makeCollapsibleSection()`
+  and `settingsCard()` both gained an optional `badge` parameter — all
+  existing call sites that don't pass one are unaffected. Data Actions and
+  Session Handover Generator deliberately left without a badge — neither
+  has a single piece of state worth summarizing (the former is a list of
+  export/import actions, the latter a one-shot document generator).
 - **Deployment takeover (2026-07-05):** the other conversation's manual
   GitHub-web-editor deploys were unreliable at this file's size and had
   started creating stray duplicate files (`index (4).html`) instead of

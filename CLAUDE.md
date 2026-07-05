@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
-**Last updated:** Sun Jul 05, 2026 — 1:00 PM EDT
-**Current checkpoint:** MD5 `a0a926393f1777361a35ff297f9ea4d0`, 31,335 lines
+**Last updated:** Sun Jul 05, 2026 — 8:00 PM EDT
+**Current checkpoint:** MD5 `f4c8daf477adebaedb71c895fd36c368`, 31,577 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -221,13 +221,48 @@ similar symptom reappears; don't rediscover them from scratch)
   the literal spec) and its role-color-editing field in the rename modal
   (real enhancement, safe for custom roles, not persisted for built-in
   roles since there's no override store for that — same gap class as
-  `BUILTIN_ROLE_LABEL_OVERRIDES` had to solve for labels). **Unresolved
-  ambiguity, not a bug**: the two lineages independently guessed different
-  sets for "the 6" in the Connections & API Keys "N/6 connected" badge —
-  this lineage excludes Claude AI (a feature/provider toggle) and counts
-  Fathom; the other excluded Fathom and counted Claude AI. Neither reading
-  is clearly more correct than the other from the code alone — worth
-  confirming with David directly rather than guessing again.
+  `BUILTIN_ROLE_LABEL_OVERRIDES` had to solve for labels). The "which 6"
+  ambiguity flagged during that reconciliation resolved itself in the merge
+  — only this lineage's version of the Connections badge survived (SF/
+  MS365/Fathom/Renzo/Supabase/Drive, excluding Claude AI and Deploy to
+  Production), so it's settled, not still open.
+- **Role & Feature Defaults propagating a change to existing users of a
+  role is now consistently gated behind `showAffectedUsersModal()` —
+  Permissions, Tab Access, AND Field Visibility Defaults all confirm which
+  currently-assigned users should get a role-level change before touching
+  their records** (2026-07-05). Tab Access Defaults was the one holdout —
+  its own code comment already said it should get this treatment (see
+  `resolveRoleTabState`'s doc comment) but it never actually got wired up;
+  it silently applied to every existing user unconditionally instead.
+  `persistRoleTabState()` was split so the ROLE-level write (plus its
+  parent/child cascade) happens immediately and returns the list of
+  changes made, while a new `_applyTabStateToUsers()` does the actual
+  per-user write — called only after the admin picks who via the modal,
+  same as the other two sections. Bulk actions (`bulkSetAllTabVisibility`/
+  `bulkSetAllTabEditable`) accumulate the full change list across their
+  loop and show ONE combined modal at the end, not one per tab. **If a
+  "my change isn't reaching existing users" report comes in again, check
+  whether the modal's "Apply to Selected" button was actually clicked** —
+  cancelling it (or closing the browser) leaves the role-level default
+  updated but every existing user untouched, by design.
+- **The per-role "N tabs on" badge could show "undefined tabs on."**
+  It read `vcs_role_tab_overrides[role]` directly and assumed it was always
+  an array — true only when a role had zero explicit tab overrides yet
+  (then it fell through to `ROLE_PERMS[role].tabs`, a real array). The
+  moment any single tab got toggled for that role, the stored value became
+  the real `{tabId:{view,edit}}` object shape every override actually
+  uses, and `.length` on a plain object is `undefined`. Fixed: now counts
+  by calling `resolveRoleTabState()` for every `PAGE_HIERARCHY` entry and
+  tallying how many resolve to `view:true`, regardless of how many explicit
+  overrides exist. **Same lesson as the legacy-array-value traps already
+  in this file — don't assume a role-level storage key's shape without
+  checking whether it's ever been written to.**
+- **When a bug report says a fix "isn't working" and the sandbox code looks
+  correct, check whether it's actually a sandbox-vs-production gap before
+  assuming a code bug.** Production (`primesource-cms`) only updates on an
+  explicit, separate deploy step — a fix landing in `dgenuth/vcs` has no
+  effect on what real users see until that deploy happens. Worth asking
+  directly rather than re-diagnosing sandbox code that already works.
 - **"Excel column map audit"** is substantially already built — don't
   redo it. `PSD_FIELD_MAP` (authoritative column-letter → field map, all 77
   columns, dated 2026-06-21) + `checkPsdSchemaDrift()` (compares live Excel
