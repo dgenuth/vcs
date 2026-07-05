@@ -8800,7 +8800,18 @@ function getDefaultFeatureFlags(role) {
   const map={admin:full,procurement:full,manager:{export:true,addVendor:true,showFinancials:true,editContracts:true,aiEnabled:true,canAccessArchive:true},
     cro:noFin,finance_sr:full,finance_jr:{...full,addVendor:false,editContracts:false},
     viewer:viewer,sales:{...noFin,export:false},sales_rep:{...viewer,showFinancials:false},restricted:viewer};
-  return Object.assign({},viewer,map[role]||viewer);
+  const result=Object.assign({},viewer,map[role]||viewer);
+  // S50 QA fix: same disconnect bug as getDefaultHiddenFields — an admin
+  // customizing AI/Renzo access for a role via the Role & Feature Defaults
+  // page (setRoleFeatureDefault) saved the change, but this function never
+  // read it back, so the toggle had zero effect on what a real user
+  // assigned to that role actually got. Checked here, overriding the
+  // hardcoded map above only when explicitly customized.
+  const aiOverride=getRoleFeatureDefault(role,'ai');
+  const renzoOverride=getRoleFeatureDefault(role,'renzo');
+  if(typeof aiOverride==='boolean') result.aiEnabled=aiOverride;
+  if(typeof renzoOverride==='boolean') result.renzoEnabled=renzoOverride;
+  return result;
 }
 // Login attempt log — stored in localStorage, admin-viewable
 function getLoginLog(){try{return JSON.parse(localStorage.getItem(LOGIN_LOG_KEY)||'[]');}catch(e){return[];}}
@@ -26835,31 +26846,44 @@ window._buildConnectionsSection = _buildConnectionsSection;
           }
         }));
         b.appendChild(rstRow2);
+        // S50: merged in from the old separate "Feature Defaults" section —
+        // David asked for the role-level page to match the per-user
+        // Permissions panel's structure (one combined section, not split
+        // in two). AI Assistant and Renzo Access are the only two of that
+        // old section's six toggles confirmed to actually do anything at
+        // runtime (getDefaultFeatureFlags now reads them, see the fix
+        // above) — discovery/sfboard/spend/contracts were verified dead
+        // (zero consumers anywhere in the codebase, fully superseded by
+        // Tab Access) and were not carried over.
+        const aiRoleOn=getRoleFeatureDefault(role,'ai');
+        const aiStaticFallback=getDefaultFeatureFlags(role).aiEnabled;
+        const aiIsOn=typeof aiRoleOn==='boolean'?aiRoleOn:aiStaticFallback;
+        const renzoRoleOn=getRoleFeatureDefault(role,'renzo');
+        const renzoStaticFallback=getDefaultFeatureFlags(role).renzoEnabled;
+        const renzoIsOn=typeof renzoRoleOn==='boolean'?renzoRoleOn:renzoStaticFallback;
+        const featRow=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'6px',marginTop:'6px'}});
+        featRow.appendChild(buildPermTile({
+          label:'AI Assistant', isViewable:aiIsOn, isOverridden:false, showEditCheckbox:false,
+          onToggleView:function(){
+            setRoleFeatureDefault(role,'ai',!aiIsOn);
+            debouncedSaveSettings();
+            toast('✓ AI Assistant default '+(!aiIsOn?'ON':'OFF')+' for all '+role+' users — saved','#22c55e');
+            const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+          }
+        }));
+        featRow.appendChild(buildPermTile({
+          label:'Renzo Access', isViewable:renzoIsOn, isOverridden:false, showEditCheckbox:false,
+          onToggleView:function(){
+            setRoleFeatureDefault(role,'renzo',!renzoIsOn);
+            debouncedSaveSettings();
+            toast('✓ Renzo Access default '+(!renzoIsOn?'ON':'OFF')+' for all '+role+' users — saved','#22c55e');
+            const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+          }
+        }));
+        b.appendChild(featRow);
         b.appendChild(el('div',{style:{fontSize:'7px',color:'var(--muted)',marginTop:'4px'}},'Any individual user\'s own override in User Management always takes priority over these role defaults.'));
       }));
 
-      // ── Feature Defaults for this role ────────────────────────────────────
-      _roleBody.appendChild(_roleSub('⚙ Feature Defaults (all '+role+' users)', false, function(b){
-      const ROLE_FEATURES=[['ai','AI Assistant'],['renzo','Renzo Access'],['discovery','Discovery'],['sfboard','SF Board'],['spend','Spend Page'],['contracts','Contracts']];
-      const featGrid=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'3px',marginBottom:'4px'}});
-      ROLE_FEATURES.forEach(function([feat,featLabel]){
-        const fOn=getRoleFeatureDefault(role,feat);
-        const fbtn2=document.createElement('button');
-        fbtn2._on=fOn;
-        const upFeat=function(f){fbtn2.textContent=featLabel+' '+(f?'✅':'🚫');fbtn2.style.cssText='font-size:7px;padding:2px 6px;border-radius:3px;cursor:pointer;font-weight:500;border:1px solid '+(f?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)')+';background:'+(f?'rgba(34,197,94,.08)':'rgba(239,68,68,.05)')+';color:'+(f?'#4ade80':'#f87171')+';';};
-        upFeat(fOn);
-        fbtn2.addEventListener('click',function(e){
-          e.stopPropagation();e.preventDefault();
-          const newOn2=!fbtn2._on;
-          setRoleFeatureDefault(role,feat,newOn2);
-          debouncedSaveSettings();
-          fbtn2._on=newOn2;upFeat(newOn2);
-          toast('✓ '+featLabel+' '+(newOn2?'ON':'OFF')+' for all '+role+' users — saved','#22c55e');
-        });
-        featGrid.appendChild(fbtn2);
-      });
-      b.appendChild(featGrid);
-      }));
 
       roleSection.appendChild(_roleBody);
       _rdBody.appendChild(roleSection);
