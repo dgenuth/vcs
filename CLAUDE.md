@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
-**Last updated:** Sun Jul 05, 2026 — 11:00 PM EDT
-**Current checkpoint:** MD5 `46b218357e35504737042108c66d0b94`, 31,552 lines
+**Last updated:** Sun Jul 05, 2026 — 11:15 PM EDT
+**Current checkpoint:** MD5 `36d5721eea230af4b7aa11b097941f50`, 31,557 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -204,6 +204,55 @@ similar symptom reappears; don't rediscover them from scratch)
   by its gap/arrow-size/arrow-margin/font-weight/color signature) rather
   than re-eyeballing a screenshot — that sweep is what actually found all
   three misses here.**
+- **Title bars, third report same day — David said it again after the fix
+  above was confirmed live (round 3 had already deployed successfully by
+  then).** Ran an even broader sweep this time: every bold-weight leaf text
+  node on the fully-expanded Settings page, grouped by font-size/weight/
+  color signature (not just clickable rows), plus explicit checks for every
+  known top-level section by name. Found exactly one more genuine miss:
+  the "☁ Config Sync" status banner (a non-collapsible sticky info bar, not
+  a section header — but visually reads as one at the top of the page) was
+  10px/`var(--text)` instead of 11px/`var(--blue)`. Fixed to match. Every
+  other top-level section (User Management, Calendar Availability, Data
+  Actions, API Usage Monitor, Session Handover Generator, Field Registry,
+  Connections & API Keys, Quick Setup, Role & Feature Defaults) and every
+  nested tier (role rows, `_roleSub`/`_userSub`, Connections' integration
+  sub-rows) independently re-confirmed byte-identical within their own
+  tier. **Given round 3 WAS confirmed live before this third report came
+  in, and this session separately discovered GitHub Pages can silently
+  fail a deploy and keep serving stale content with no visible error (see
+  the deploy-failure entry below) — if "still doesn't match" comes in a
+  FOURTH time, check the deployment status FIRST via
+  `curl -s "https://api.github.com/repos/dgenuth/vcs/deployments?per_page=3"`
+  then that deployment's `/statuses` endpoint, before assuming another
+  code gap exists.** The code-side sweep is now about as exhaustive as it
+  can get without a visual diffing tool.
+- **GitHub Pages can silently fail a deploy and keep serving the previous
+  commit's content indefinitely, with no error visible anywhere in the app
+  or a normal `curl`.** Found 2026-07-05: a push (`e61edb5`) looked
+  successful (`git push` returned normal output, `origin/main` updated),
+  but the live site kept serving the prior commit's content. `curl`'s
+  response headers looked like ordinary CDN caching (`Cache-Control:
+  max-age=600`, growing `Age`) and were the first, wrong, explanation
+  tried. The real cause only surfaced via GitHub's deployments API:
+  `curl -s "https://api.github.com/repos/{owner}/{repo}/deployments?per_page=5"`
+  to find the deployment for the commit SHA in question, then
+  `curl -s ".../deployments/{id}/statuses"` — this showed a `state:
+  "failure"` with description "Deployment failed, try again later" (a
+  transient GitHub-side error; the Jekyll build step itself succeeded,
+  only the deploy step failed). No public, unauthenticated way was found
+  to see WHY beyond that generic message (the Pages-specific `/pages/
+  builds/latest` API 404s without auth even on a public repo; the Actions
+  job's own annotation was the only place the real error string appeared:
+  `curl -s ".../check-runs/{deploy_job_id}/annotations"`). Fix: an empty
+  `git commit --allow-empty` + push retriggers a fresh deploy attempt —
+  this succeeded on retry. **If a push appears to have no effect on the
+  live site and plain caching explanations don't pan out (cache-busting
+  query strings, explicit `no-cache` headers all still show the OLD
+  `Last-Modified`/`ETag`), check the deployments API before spending more
+  time on CDN theories — it directly says whether the deploy for that
+  exact commit succeeded, and this class of failure is otherwise
+  invisible.**
 - **A newly created custom role must clone the REAL, live-resolved value
   for every one of the 4 role-level default stores, not just copy a raw
   storage key.** `createCustomRole()` clones tab access via

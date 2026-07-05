@@ -1,6 +1,6 @@
 # VCS — Master Task List
-**Last updated:** Sun Jul 05, 2026, 11:00 PM EDT (this session, Claude Code)
-**Checkpoint at this update:** MD5 `46b218357e35504737042108c66d0b94`, 31,552 lines
+**Last updated:** Sun Jul 05, 2026, 11:15 PM EDT (this session, Claude Code)
+**Checkpoint at this update:** MD5 `36d5721eea230af4b7aa11b097941f50`, 31,557 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,24 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Title bars, third report same day — one real remaining miss found and
+  fixed: "☁ Config Sync"** (the sticky status banner at the top of
+  Settings) was still 10px/default-color instead of the 11px/blue every
+  other section header uses. Fixed. Re-verified EVERY other top-level
+  section and every nested tier via a broader sweep (all bold-weight text
+  on the page, not just clickable rows) — all confirmed byte-identical
+  within their tier. **Also important: this session confirmed GitHub Pages
+  can silently fail a deploy and keep serving stale content indefinitely
+  with no visible error** — a push earlier this session (`e61edb5`) looked
+  successful but the live site didn't update because the deploy step
+  itself failed server-side (confirmed via GitHub's deployments API, not
+  visible any other way); an empty-commit retrigger fixed it. Given round 3
+  of the title-bar fix WAS confirmed live before this third report came in,
+  it's possible some of David's "still doesn't match" reports were partly
+  hitting this same silent-deploy-failure class of issue rather than a pure
+  code gap — worth keeping in mind if reports continue after this push.
+  See CLAUDE.md Known Traps for the deployment-debugging steps if it
+  recurs.
 - **CRITICAL: real user data was being silently corrupted by the previous
   fix below (2026-07-05, late evening) — David reported this himself after
   testing** ("restrictions applied to specific users ended up affecting all

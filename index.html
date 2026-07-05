@@ -25966,7 +25966,12 @@ function renderSettings(c) {
   const lastSync=localStorage.getItem('vcs_last_drive_sync');
   const lastSyncStr=lastSync?'Last synced: '+new Date(parseInt(lastSync)).toLocaleTimeString():'Not yet synced this session';
   const syncInfo=el('div',{style:{flex:'1'}});
-  syncInfo.appendChild(el('div',{style:{fontWeight:'600',fontSize:'10px',color:'var(--text)',marginBottom:'2px'}},'☁ Config Sync'));
+  // S51 fix: this was 10px/var(--text) (default, non-blue) — the one other
+  // header-styled element on the page not sharing the 11px/600/var(--blue)
+  // title convention every collapsible section uses. Not itself collapsible
+  // (it's a persistent status banner, not a section), but visually reads as
+  // a settings title bar, so kept consistent with the rest for uniformity.
+  syncInfo.appendChild(el('div',{style:{fontWeight:'600',fontSize:'11px',color:'var(--blue)',marginBottom:'2px'}},'☁ Config Sync'));
   // S50: reworded — this used to say "Not connected to Drive" based only on
   // a personal Google OAuth token, which most users never have (and don't
   // need — the GAS proxy is the real sync path for config and vendor data).
