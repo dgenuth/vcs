@@ -8483,6 +8483,34 @@ const ROLE_PERMS = {
 // etc.). This is cheap (walks the small PAGE_HIERARCHY parent/child list)
 // and idempotent (does nothing once everything's already consistent), so
 // there's no real cost to checking on every load instead of once.
+// S50: permanent safety check, not a one-time migration (same reasoning as
+// the parent/child consistency check below) — normalizes any legacy
+// array-format entries in vcs_role_tab_overrides into the proper object
+// format. Two roles (confirmed via direct browser inspection: procurement
+// and sales_rep) were stored as plain arrays (e.g. ["vendordb","settings"])
+// instead of the {tabId:{view,edit}} object shape every other role uses.
+// persistRoleTabState's writes (savedOverrides[role][id] = {...}) succeed
+// silently against an array in memory, but JSON.stringify on an array only
+// serializes its numbered elements — any extra named property gets
+// silently dropped the moment it's saved. That's the confirmed root cause
+// of "toggle shows a success toast but the value never actually changes,"
+// and only for whichever roles happened to be in this legacy array format.
+(function _normalizeRoleTabOverridesFormat(){
+  try {
+    const overrides = JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
+    let changed = false;
+    Object.keys(overrides).forEach(function(role){
+      if (Array.isArray(overrides[role])) {
+        const converted = {};
+        overrides[role].forEach(function(tabId){ converted[tabId] = {view:true, edit:false}; });
+        overrides[role] = converted;
+        changed = true;
+      }
+    });
+    if (changed) localStorage.setItem('vcs_role_tab_overrides', JSON.stringify(overrides));
+  } catch(e) { console.error('[VCS role-tab-overrides format normalize]', e); }
+})();
+
 (function _enforceParentChildTabConsistency(){
   try {
     const roleOverrides = JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
@@ -25437,7 +25465,7 @@ function buildTabAccessSection(container, userEmail) {
           : roleDefaultTabs.has(id);
       const roleDefaultEdit = _rOv!==undefined
         ? (typeof _rOv==='object' ? _rOv.edit===true : !!_rOv)
-        : roleDefault;
+        : false;
       if(ov===undefined) return {view:roleDefault, edit:roleDefaultEdit, overridden:false};
       if(typeof ov==='object'){
         const v=ov.view!==false, e=ov.edit===true;
