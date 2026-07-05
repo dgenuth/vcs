@@ -8515,9 +8515,22 @@ const ROLE_PERMS = {
   try {
     const roleOverrides = JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
     let roleChanged = false;
+    // S50 QA fix: confirmed via David's own localStorage dumps that
+    // sales_rep and procurement were stored as plain arrays here (a legacy
+    // format) instead of the {tabId:{view,edit}} object every other role
+    // uses. Any lookup or write against an array silently misses/drops —
+    // normalize proactively on every load instead of waiting for the next
+    // toggle click to self-heal it, so existing sessions get a clean slate
+    // immediately rather than needing one throwaway click first.
+    Object.keys(roleOverrides).forEach(function(role){
+      if(Array.isArray(roleOverrides[role])){ roleOverrides[role]={}; roleChanged=true; }
+    });
     const allRoles = new Set([...Object.keys(ROLE_PERMS), ...Object.keys(roleOverrides)]);
     allRoles.forEach(function(role){
-      const roleOv = roleOverrides[role]||{};
+      // S50 QA fix: same legacy-array bug as roleTabState/persistRoleTabState
+      // — normalize before reading, not just before writing, since an array
+      // here would make every child/parent lookup below silently miss.
+      const roleOv = (roleOverrides[role] && typeof roleOverrides[role]==='object' && !Array.isArray(roleOverrides[role])) ? roleOverrides[role] : {};
       PAGE_HIERARCHY.forEach(function(page){
         if(!page.children||!page.children.length) return;
         page.children.forEach(function(child){
@@ -8532,7 +8545,7 @@ const ROLE_PERMS = {
           const parentVisible = pOv!==undefined ? (typeof pOv==='object'?pOv.view!==false:!!pOv)
             : new Set(Array.isArray((ROLE_PERMS[role]||{}).tabs)?ROLE_PERMS[role].tabs:[]).has(page.id);
           if(!parentVisible){
-            if(!roleOverrides[role]) roleOverrides[role]={};
+            if(!roleOverrides[role] || typeof roleOverrides[role]!=='object' || Array.isArray(roleOverrides[role])) roleOverrides[role]={};
             roleOverrides[role][page.id] = typeof pOv==='object' ? Object.assign({},pOv,{view:true}) : {view:true};
             roleChanged = true;
           }
@@ -26894,7 +26907,15 @@ window._buildConnectionsSection = _buildConnectionsSection;
       _roleBody.appendChild(_roleSub('📑 Tab Access Defaults (all '+role+' users)', false, function(b){
       function roleTabState(id, fallbackDefault){
         const savedOverrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
-        const roleOv=(savedOverrides[role]||{})[id];
+        // S50 QA fix: some roles (confirmed: sales_rep, procurement) had a
+        // legacy ARRAY value here (e.g. ["vendordb","settings"]) instead of
+        // the {tabId:{view,edit}} object every other role uses — leftover
+        // from an older format. `(arrayValue||{})[id]` silently returns
+        // undefined for any named lookup on an array, so this always fell
+        // through to the built-in default, completely ignoring any real
+        // saved state for these two roles.
+        const roleEntry = savedOverrides[role];
+        const roleOv=(roleEntry && typeof roleEntry==='object' && !Array.isArray(roleEntry) ? roleEntry : {})[id];
         const builtInDefault=typeof fallbackDefault==='boolean'?fallbackDefault:new Set(Array.isArray(rolePerms.tabs)?rolePerms.tabs:[]).has(id);
         if(roleOv===undefined) return {view:builtInDefault, edit:false};
         if(typeof roleOv==='object') return {view:roleOv.view!==false, edit:roleOv.edit===true};
@@ -26902,7 +26923,16 @@ window._buildConnectionsSection = _buildConnectionsSection;
       }
       function persistRoleTabState(id, view, edit, showEdit){
         const savedOverrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
-        if(!savedOverrides[role]) savedOverrides[role]={};
+        // S50 QA fix: same legacy-array issue as roleTabState() above — a
+        // truthy-but-wrong-shape value (an array) passed the old `if(!x)`
+        // guard unchanged, so the write below silently attached a named
+        // property to an array, which JSON.stringify then drops entirely
+        // (arrays only serialize numeric-index elements). The toast said
+        // "updated" because nothing threw — the data just never actually
+        // persisted. Confirmed directly from David's localStorage dumps:
+        // sales_rep/procurement stayed byte-for-byte identical arrays
+        // across multiple toggle clicks.
+        if(!savedOverrides[role] || typeof savedOverrides[role]!=='object' || Array.isArray(savedOverrides[role])) savedOverrides[role]={};
         savedOverrides[role][id]=showEdit?{view:view,edit:edit}:{view:view};
         // S50: same parent/child dependency as the per-user Tab Access fix —
         // a role-level default can't leave a sub-tab on while its parent
