@@ -8489,6 +8489,14 @@ try { CUSTOM_ROLES = JSON.parse(localStorage.getItem('vcs_custom_roles')||'{}');
 // concept to store here.
 let BUILTIN_ROLE_LABEL_OVERRIDES = {};
 try { BUILTIN_ROLE_LABEL_OVERRIDES = JSON.parse(localStorage.getItem('vcs_builtin_role_labels')||'{}'); } catch(e) { BUILTIN_ROLE_LABEL_OVERRIDES = {}; }
+// S50 QA fix: mirrors BUILTIN_ROLE_LABEL_OVERRIDES exactly — a merge earlier
+// bundled color editing in with the (legitimately restricted) key-editing
+// for built-in roles, so color changes on a built-in role were either
+// hidden from the UI entirely or silently dropped on save. Color has none
+// of key-rename's risk (nothing hardcoded checks a role's color), so it
+// gets the same always-available treatment as the label.
+let BUILTIN_ROLE_COLOR_OVERRIDES = {};
+try { BUILTIN_ROLE_COLOR_OVERRIDES = JSON.parse(localStorage.getItem('vcs_builtin_role_colors')||'{}'); } catch(e) { BUILTIN_ROLE_COLOR_OVERRIDES = {}; }
 function mergeCustomRoles(){
   Object.entries(CUSTOM_ROLES).forEach(function(entry){
     const key=entry[0], def=entry[1];
@@ -8500,6 +8508,10 @@ function mergeCustomRoles(){
     const key=entry[0], label=entry[1];
     if(ROLE_PERMS[key] && !CUSTOM_ROLES[key]) ROLES[key]=label;
   });
+  Object.entries(BUILTIN_ROLE_COLOR_OVERRIDES).forEach(function(entry){
+    const key=entry[0], color=entry[1];
+    if(ROLE_PERMS[key] && !CUSTOM_ROLES[key]) ROLE_COLORS[key]=color;
+  });
 }
 mergeCustomRoles();
 function saveCustomRoles(){
@@ -8508,6 +8520,10 @@ function saveCustomRoles(){
 }
 function saveBuiltinRoleLabels(){
   localStorage.setItem('vcs_builtin_role_labels', JSON.stringify(BUILTIN_ROLE_LABEL_OVERRIDES));
+  if(typeof saveConfigToDrive==='function') saveConfigToDrive().catch(function(){});
+}
+function saveBuiltinRoleColors(){
+  localStorage.setItem('vcs_builtin_role_colors', JSON.stringify(BUILTIN_ROLE_COLOR_OVERRIDES));
   if(typeof saveConfigToDrive==='function') saveConfigToDrive().catch(function(){});
 }
 // Shared, global tab-state resolver for a (role, page/tab id) pair --
@@ -25076,8 +25092,7 @@ function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
       requestAnimationFrame(()=>{const _el=document.getElementById('content');if(_el)_el.scrollTop=_sY;});
     }});
   hdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',fontWeight:'400',marginRight:'2px'}},isOpen?'▼':'▶'));
-  hdr.appendChild(el('span',{style:{fontSize:'14px'}},icon));
-  hdr.appendChild(el('span',{style:{fontWeight:'600',fontSize:'11px',flex:'1',color:'var(--blue)'}},title));
+  hdr.appendChild(el('span',{style:{fontWeight:'600',fontSize:'11px',flex:'1',color:'var(--blue)'}},icon+' '+title));
   card.appendChild(hdr);
   if(isOpen){
     const body=el('div',{style:{padding:'14px'}});
@@ -27018,28 +27033,37 @@ window._buildConnectionsSection = _buildConnectionsSection;
         modal.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'Display label:'));
         const labelIn=el('input',{class:'modal-input',style:{width:'100%',marginBottom:'8px'},value:ROLES[role]||role});
         modal.appendChild(labelIn);
-        let keyIn=null, colorIn=null;
+        let keyIn=null;
         if(isCustom){
           modal.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'Internal key (optional — changes every assigned user and all role-level settings at once):'));
           keyIn=el('input',{class:'modal-input',style:{width:'100%',marginBottom:'8px'},value:role});
           modal.appendChild(keyIn);
-          modal.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'Color:'));
-          colorIn=el('input',{type:'color',style:{width:'100%',marginBottom:'12px',height:'28px'},value:ROLE_COLORS[role]||'#94a3b8'});
-          modal.appendChild(colorIn);
         } else {
-          modal.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'8px'}},'Built-in roles can only have their display label changed — the internal key "'+role+'" stays the same. Color isn\'t editable for built-in roles.'));
+          modal.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'8px'}},'Built-in roles can only have their display label and color changed — the internal key "'+role+'" stays the same.'));
         }
+        // S50 QA fix: color editing was incorrectly bundled inside the
+        // isCustom-only block during a merge — it has none of the risk key
+        // renaming does (no hardcoded references anywhere check a role's
+        // color), so it should be available for every role, same as the
+        // label. Moved outside the isCustom gate.
+        modal.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'Color:'));
+        const colorIn=el('input',{type:'color',style:{width:'100%',marginBottom:'12px',height:'28px'},value:ROLE_COLORS[role]||'#94a3b8'});
+        modal.appendChild(colorIn);
         const btnRow=el('div',{style:{display:'flex',gap:'8px',justifyContent:'flex-end'}});
         btnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){document.body.removeChild(overlay);}},'Cancel'));
         btnRow.appendChild(el('button',{class:'btn-xs btn-green',onclick(){
           const newKeyVal=keyIn?keyIn.value.trim().toLowerCase():undefined;
           const result=renameRole(role, labelIn.value.trim(), (newKeyVal&&newKeyVal!==role)?newKeyVal:undefined);
           if(!result.ok){ toast('⚠ '+result.error,'#ef4444'); return; }
-          // Color lives in CUSTOM_ROLES itself (persisted by renameRole's
-          // own saveCustomRoles() call above) -- only custom roles offer
-          // this field, and only after a successful rename, using the
-          // final (possibly just-migrated) key.
-          if(colorIn && CUSTOM_ROLES[result.key]){ CUSTOM_ROLES[result.key].color=colorIn.value; ROLE_COLORS[result.key]=colorIn.value; saveCustomRoles(); }
+          // S50 QA fix: color now saves for every role, not just custom
+          // ones — built-in roles persist via BUILTIN_ROLE_COLOR_OVERRIDES
+          // (mirroring how label overrides already work), custom roles keep
+          // using their existing CUSTOM_ROLES.color storage.
+          if(CUSTOM_ROLES[result.key]){
+            CUSTOM_ROLES[result.key].color=colorIn.value; ROLE_COLORS[result.key]=colorIn.value; saveCustomRoles();
+          } else {
+            BUILTIN_ROLE_COLOR_OVERRIDES[result.key]=colorIn.value; ROLE_COLORS[result.key]=colorIn.value; saveBuiltinRoleColors();
+          }
           toast('✓ Role updated','#22c55e');
           document.body.removeChild(overlay);
           const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
