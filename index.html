@@ -8542,25 +8542,82 @@ function createCustomRole(newKey, label, color, sourceRole){
   saveCustomRoles();
   return {ok:true};
 }
-function renameCustomRole(key, newLabel){
-  if(!CUSTOM_ROLES[key]) return {ok:false, error:'Only custom roles can be renamed, not built-in ones.'};
-  CUSTOM_ROLES[key].label=newLabel;
+// S50 v2: generalized to work for ANY role, not just custom ones — label-only
+// rename is always safe (nothing about a user's stored role key changes, so
+// this cascades to every assigned user automatically with zero extra work).
+// Key rename is the real operation: every place that role's key is used as
+// a storage lookup needs to move together, atomically, or data silently
+// goes missing. Migrates: ROLES/ROLE_COLORS/ROLE_PERMS, CUSTOM_ROLES entry
+// (if applicable), every assigned user's `.role` field, the role-level
+// settings namespace (S.settings.roleDefaults, used by
+// getRolePermissionDefault/getRoleFeatureDefault), and the two flat
+// localStorage keys (vcs_role_fields_<role>, vcs_role_field_edit_<role>)
+// and the vcs_role_tab_overrides entry.
+function renameRole(oldKey, newLabel, newKey){
+  if(!ROLE_PERMS[oldKey]) return {ok:false, error:'Role not found.'};
+  const changingKey = newKey && newKey!==oldKey;
+  if(changingKey){
+    if(!/^[a-z][a-z0-9_]*$/.test(newKey)) return {ok:false, error:'Role key must be lowercase letters, numbers, and underscores only, starting with a letter.'};
+    if(ROLE_PERMS[newKey]) return {ok:false, error:'A role with that key already exists.'};
+  }
+  const finalKey = changingKey ? newKey : oldKey;
+  if(changingKey){
+    ROLE_PERMS[finalKey]=ROLE_PERMS[oldKey]; delete ROLE_PERMS[oldKey];
+    ROLE_COLORS[finalKey]=ROLE_COLORS[oldKey]; delete ROLE_COLORS[oldKey];
+    if(CUSTOM_ROLES[oldKey]){ CUSTOM_ROLES[finalKey]=CUSTOM_ROLES[oldKey]; delete CUSTOM_ROLES[oldKey]; }
+    // Role-level settings namespace (Permissions Defaults + Feature Defaults)
+    try{
+      if(S.settings.roleDefaults && S.settings.roleDefaults[oldKey]){
+        S.settings.roleDefaults[finalKey]=S.settings.roleDefaults[oldKey];
+        delete S.settings.roleDefaults[oldKey];
+        debouncedSaveSettings();
+      }
+    }catch(e){}
+    // Tab Access Defaults
+    try{
+      const tabOv=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
+      if(tabOv[oldKey]){ tabOv[finalKey]=tabOv[oldKey]; delete tabOv[oldKey]; localStorage.setItem('vcs_role_tab_overrides', JSON.stringify(tabOv)); }
+    }catch(e){}
+    // Field Visibility Defaults + per-field edit defaults (flat keys, not nested)
+    ['vcs_role_fields_','vcs_role_field_edit_'].forEach(function(prefix){
+      const val=localStorage.getItem(prefix+oldKey);
+      if(val!==null){ localStorage.setItem(prefix+finalKey, val); localStorage.removeItem(prefix+oldKey); }
+    });
+    // Every user currently assigned to the old key
+    try{
+      const allU=getApprovedUsers();
+      let changed=false;
+      allU.forEach(function(u){ if(u.role===oldKey){ u.role=finalKey; touchUser(u.email); changed=true; } });
+      if(changed){ localStorage.setItem(AUTH_KEY, JSON.stringify(allU)); scheduleUserSave(2000); }
+    }catch(e){}
+  }
+  ROLES[finalKey]=newLabel;
   mergeCustomRoles();
   saveCustomRoles();
-  return {ok:true};
+  return {ok:true, finalKey:finalKey};
 }
-// S50: deletion is intentionally blocked while any user is still assigned
-// to the role — reassigning them automatically to some fallback role would
-// be a silent, surprising permission change for that person. An admin must
-// explicitly move affected users to a different role first, then delete.
-function deleteCustomRole(key){
-  if(!CUSTOM_ROLES[key]) return {ok:false, error:'Only custom roles can be deleted, not built-in ones.'};
+// S50 v2: generalized to allow deleting any role, built-in or custom, with
+// one hard exception — 'admin' can never be deleted, regardless of whether
+// anyone's currently assigned to it. Some logic elsewhere in this codebase
+// checks for that exact key directly rather than going through the
+// flexible role systems built tonight; if that key stopped existing,
+// administrative access could be locked out with no way back in through
+// the app itself. Every other role follows the existing rule: blocked only
+// if a user is currently assigned to it.
+function deleteRole(key){
+  if(key==='admin') return {ok:false, error:'The admin role can never be deleted — this is a hard safety rule, not a per-role setting.'};
+  if(!ROLE_PERMS[key]) return {ok:false, error:'Role not found.'};
   const usersOnRole=(typeof getApprovedUsers==='function'?getApprovedUsers():[]).filter(function(u){return u.role===key;});
   if(usersOnRole.length) return {ok:false, error:usersOnRole.length+' user(s) are still assigned to this role ('+usersOnRole.map(function(u){return u.email;}).join(', ')+'). Reassign them to a different role first.'};
   delete CUSTOM_ROLES[key];
   delete ROLES[key]; delete ROLE_COLORS[key]; delete ROLE_PERMS[key];
   localStorage.removeItem('vcs_role_fields_'+key);
   localStorage.removeItem('vcs_role_field_edit_'+key);
+  try{
+    const tabOv=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
+    if(tabOv[key]){ delete tabOv[key]; localStorage.setItem('vcs_role_tab_overrides', JSON.stringify(tabOv)); }
+  }catch(e){}
+  try{ if(S.settings.roleDefaults && S.settings.roleDefaults[key]){ delete S.settings.roleDefaults[key]; debouncedSaveSettings(); } }catch(e){}
   saveCustomRoles();
   return {ok:true};
 }
@@ -26852,27 +26909,54 @@ window._buildConnectionsSection = _buildConnectionsSection;
       const _roleChev=el('span',{style:{fontSize:'10px',color:'var(--muted)'}},_rColl?'▶':'▼');
       roleSectionHdr.appendChild(_roleChev);
       roleSectionHdr.appendChild(el('span',{style:{textTransform:'capitalize',color:'var(--blue)'}},role));
-      // S50: Rename/Delete — only ever shown for custom (admin-created)
-      // roles, never the built-in ones, per the approved design.
-      if(CUSTOM_ROLES[role]){
-        roleSectionHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){
-          e.stopPropagation();
-          const newLabel=prompt('Rename role (display label only — the internal key "'+role+'" stays the same):', ROLES[role]||role);
-          if(newLabel===null) return;
-          const result=renameCustomRole(role, newLabel.trim());
+      // S50 v2: Edit/Delete now shown for ALL roles, built-in or custom, per
+      // David's explicit request — the earlier custom-roles-only
+      // restriction was the safer default while this was new, but a full
+      // Edit Role modal (label, key, color) with real migration underneath
+      // now makes this safe to open up universally. Delete keeps its one
+      // hard exception (admin can never be deleted) plus the existing
+      // block-if-users-assigned rule for everything else.
+      roleSectionHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){
+        e.stopPropagation();
+        const overlay=el('div',{style:{position:'fixed',top:'0',left:'0',right:'0',bottom:'0',background:'rgba(0,0,0,.5)',zIndex:'9999',display:'flex',alignItems:'center',justifyContent:'center'},onclick(ev){if(ev.target===overlay)document.body.removeChild(overlay);}});
+        const modal=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'8px',padding:'20px',width:'360px'}});
+        modal.appendChild(el('h3',{style:{margin:'0 0 12px'}},'✎ Edit Role'));
+        modal.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'Display label:'));
+        const labelIn2=el('input',{class:'modal-input',style:{width:'100%',marginBottom:'8px'},value:ROLES[role]||role});
+        modal.appendChild(labelIn2);
+        modal.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'Internal key (advanced — changing this reassigns every user currently on this role automatically):'));
+        const keyIn2=el('input',{class:'modal-input',style:{width:'100%',marginBottom:'8px'},value:role});
+        modal.appendChild(keyIn2);
+        modal.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'Color:'));
+        const colorIn2=el('input',{type:'color',style:{width:'100%',marginBottom:'12px',height:'28px'},value:ROLE_COLORS[role]||'#94a3b8'});
+        modal.appendChild(colorIn2);
+        const btnRow2=el('div',{style:{display:'flex',gap:'8px',justifyContent:'flex-end'}});
+        btnRow2.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){document.body.removeChild(overlay);}},'Cancel'));
+        btnRow2.appendChild(el('button',{class:'btn-xs btn-green',onclick(){
+          const newLabel2=labelIn2.value.trim();
+          const newKey2=keyIn2.value.trim().toLowerCase();
+          if(!newLabel2){ toast('⚠ Enter a display label','#ef4444'); return; }
+          if(newKey2!==role && !confirm('Changing the key will reassign every user currently on "'+(ROLES[role]||role)+'" to the new key. Continue?')) return;
+          const result=renameRole(role, newLabel2, newKey2!==role?newKey2:undefined);
+          ROLE_COLORS[result.ok?result.finalKey:role]=colorIn2.value;
           if(!result.ok){ toast('⚠ '+result.error,'#ef4444'); return; }
-          toast('✓ Renamed to "'+newLabel.trim()+'"','#22c55e');
+          saveCustomRoles();
+          toast('✓ Role updated','#22c55e');
+          document.body.removeChild(overlay);
           const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
-        }},'✎ Rename'));
-        roleSectionHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',color:'var(--red)'},onclick(e){
-          e.stopPropagation();
-          if(!confirm('Delete the role "'+(ROLES[role]||role)+'"? This cannot be undone. Blocked if any user is still assigned to it.')) return;
-          const result=deleteCustomRole(role);
-          if(!result.ok){ toast('⚠ '+result.error,'#ef4444'); return; }
-          toast('✓ Role deleted','#22c55e');
-          const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
-        }},'🗑 Delete'));
-      }
+        }},'Save'));
+        modal.appendChild(btnRow2);
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+      }},'✎ Edit'));
+      roleSectionHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',color:'var(--red)'},onclick(e){
+        e.stopPropagation();
+        if(!confirm('Delete the role "'+(ROLES[role]||role)+'"? This cannot be undone. Blocked if any user is still assigned to it (and admin can never be deleted).')) return;
+        const result=deleteRole(role);
+        if(!result.ok){ toast('⚠ '+result.error,'#ef4444'); return; }
+        toast('✓ Role deleted','#22c55e');
+        const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+      }},'🗑 Delete'));
       // Show tab count enabled + hidden field count
       const _savedRT=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
       const _rtabs=_savedRT[role]||(ROLE_PERMS[role]||{}).tabs||[];
