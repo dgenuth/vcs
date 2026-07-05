@@ -7801,6 +7801,65 @@ function _findParentPageId(childId){
   localStorage.setItem('vcs_tab_overrides_migration_v1','1');
 })();
 
+// S50: one-time migration retroactively enforcing parent/child Tab Access
+// visibility. persistTabState/persistRoleTabState correctly force a parent
+// page visible whenever a child is turned ON going forward — but that only
+// fires at the moment of a NEW toggle. Any role or user whose data already
+// had a child marked visible while its parent was marked restricted (set
+// before this dependency existed) stays inconsistent forever, since nothing
+// ever revisits already-saved data. This walks PAGE_HIERARCHY once, finds
+// every currently-visible child whose parent isn't visible, and fixes the
+// parent — for both role-level defaults and any remaining per-user
+// overrides (belt-and-suspenders, since the tabOverrides migration above
+// should already have cleared per-user data, but doesn't hurt to also
+// correct it here if some other flow re-populated it since).
+(function _migrateParentChildTabVisibilityV1(){
+  if (localStorage.getItem('vcs_parent_child_tab_migration_v1')) return;
+  try {
+    const roleOverrides = JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
+    let roleChanged = false;
+    Object.keys(roleOverrides).forEach(function(role){
+      const roleOv = roleOverrides[role]||{};
+      Object.keys(roleOv).forEach(function(childId){
+        const cv = roleOv[childId];
+        const isVisible = typeof cv==='object' ? cv.view!==false : !!cv;
+        if(!isVisible) return;
+        const parentId=_findParentPageId(childId);
+        if(!parentId) return;
+        const pv = roleOv[parentId];
+        const parentVisible = pv!==undefined ? (typeof pv==='object'?pv.view!==false:!!pv)
+          : new Set(Array.isArray((ROLE_PERMS[role]||{}).tabs)?ROLE_PERMS[role].tabs:[]).has(parentId);
+        if(!parentVisible){
+          roleOv[parentId] = typeof pv==='object' ? Object.assign({},pv,{view:true}) : {view:true};
+          roleChanged = true;
+        }
+      });
+    });
+    if (roleChanged) localStorage.setItem('vcs_role_tab_overrides', JSON.stringify(roleOverrides));
+
+    const users = JSON.parse(localStorage.getItem('vcs_approved_users')||'[]');
+    let usersChanged = false;
+    users.forEach(function(u){
+      if(!u.tabOverrides) return;
+      Object.keys(u.tabOverrides).forEach(function(childId){
+        const cv = u.tabOverrides[childId];
+        const isVisible = typeof cv==='object' ? cv.view!==false : !!cv;
+        if(!isVisible) return;
+        const parentId=_findParentPageId(childId);
+        if(!parentId) return;
+        const pv = u.tabOverrides[parentId];
+        const parentVisible = pv!==undefined ? (typeof pv==='object'?pv.view!==false:!!pv) : true;
+        if(!parentVisible){
+          u.tabOverrides[parentId] = typeof pv==='object' ? Object.assign({},pv,{view:true}) : {view:true};
+          usersChanged = true;
+        }
+      });
+    });
+    if (usersChanged) localStorage.setItem('vcs_approved_users', JSON.stringify(users));
+  } catch(e) {}
+  localStorage.setItem('vcs_parent_child_tab_migration_v1','1');
+})();
+
 // ─── S44: Unified canView/canEdit permission layer ──────────────────────────
 // New capability, additive on top of the existing hiddenFields/tabOverrides/
 // ROLE_PERMISSION_DEFAULTS/TAB_PAGE_DEFAULTS systems above (which stay live —
@@ -8575,6 +8634,24 @@ const SC_HIDDEN_FIELDS_BY_USER = {
 
 // Default hidden fields per role — pulled from Share Criteria tab in Vendor_Catalogue.xlsm
 // These are EXACT per-user values. For unknown users, falls back to role-based defaults.
+// S50: per-field edit defaults at the role level. Previously the only
+// role-level "can edit" signal was a single blanket flag (ROLE_PERMS[role]
+// .save) applied to every field uniformly — there was no way to say "this
+// role can view Admin Fee but not edit it, while being able to edit
+// Comments." Mirrors getDefaultHiddenFields's storage pattern: an explicit
+// per-field entry here wins; otherwise falls back to the blanket flag so
+// every role behaves identically to before until an admin customizes a
+// specific field.
+function getRoleFieldEditDefault(role, fieldKey){
+  try{
+    const stored=localStorage.getItem('vcs_role_field_edit_'+role);
+    if(stored!==null){
+      const arr=JSON.parse(stored);
+      if(Array.isArray(arr)) return arr.includes(fieldKey);
+    }
+  }catch(e){}
+  return !!(ROLE_PERMS[role]||{}).save;
+}
 function getDefaultHiddenFields(role, emailOrUsername) {
   // S50 QA fix: an admin customizing a role's defaults via the Field
   // Visibility Defaults page (Settings → Role & Feature Defaults) saves to
@@ -25215,7 +25292,9 @@ function buildFieldAccess(container, userEmail) {
     container.appendChild(fvHdr);
 
     const hf=cu.hiddenFields||[];
-    const canRoleEdit=!!rolePerms.save;
+    // S50: was a single blanket flag applied to every field uniformly; now
+    // computed per-field just below via getRoleFieldEditDefault(), so a
+    // role can have different edit defaults for different fields.
     // Pure ROLE defaults only -- deliberately NOT passing cu.email here.
     // getDefaultHiddenFields(role, email) checks a legacy per-user
     // spreadsheet mapping first (with fuzzy prefix matching), which is only
@@ -25238,15 +25317,16 @@ function buildFieldAccess(container, userEmail) {
       groupFields.forEach(function(f){
         const isHidden=hf.includes(f.key);
         const isViewable=!isHidden;
+        const roleFieldEditDefault=getRoleFieldEditDefault(cu.role,f.key);
         const editOverride=(cu.fieldEditPerms||{})[f.key];
-        const isEditChecked=typeof editOverride==='boolean'?editOverride:canRoleEdit;
+        const isEditChecked=typeof editOverride==='boolean'?editOverride:roleFieldEditDefault;
         // Genuinely overridden only if THIS field's view or edit state differs
         // from the role default -- previously any customization anywhere on
         // the user (_customHiddenFields) marked every single field tile as
         // overridden, even ones that still matched the default exactly.
         const roleDefaultHidden=_roleDefaultHf.includes(f.key);
         const viewDiffers=isHidden!==roleDefaultHidden;
-        const editDiffers=(typeof editOverride==='boolean'&&editOverride!==canRoleEdit);
+        const editDiffers=(typeof editOverride==='boolean'&&editOverride!==roleFieldEditDefault);
         const isOverridden=viewDiffers||editDiffers;
 
         const tile=buildPermTile({
@@ -26718,11 +26798,20 @@ window._buildConnectionsSection = _buildConnectionsSection;
       const _rfStored=localStorage.getItem(_rfKey);
       const _roleHF=_rfStored!==null ? new Set(JSON.parse(_rfStored)) : new Set(getDefaultHiddenFields(role));
       if(_rfStored===null){ localStorage.setItem(_rfKey, JSON.stringify([..._roleHF])); }
+      // S50: per-field edit defaults — seed the same way as visibility above,
+      // from the blanket ROLE_PERMS[role].save flag when never explicitly
+      // customized, so this key always holds a real, complete field list
+      // once touched rather than risking a partial one.
+      const _refKey='vcs_role_field_edit_'+role;
+      const _refStored=localStorage.getItem(_refKey);
+      const _roleEditableFields=_refStored!==null ? new Set(JSON.parse(_refStored)) : new Set(ALL_RESTRICTABLE_FIELDS.filter(function(f){return getRoleFieldEditDefault(role,f.key);}).map(function(f){return f.key;}));
+      if(_refStored===null){ localStorage.setItem(_refKey, JSON.stringify([..._roleEditableFields])); }
       // S50 QA fix: was plain document.createElement('button') tiles with
       // different sizing/layout than the per-user Field Visibility panel
       // (buildFieldAccess, which uses buildPermTile) — made the two
       // impossible to visually compare side-by-side even when their
-      // underlying data matched exactly. Now uses the identical component.
+      // underlying data matched exactly. Now uses the identical component,
+      // including the same edit-checkbox the per-user panel has.
       Object.entries(FIELD_GROUPS).forEach(function(entry){
         const gName=entry[0], gKeys=entry[1];
         const gColor={'Vendor Info':'#4f7cff','Contacts':'#22c55e','Contract':'#f59e0b','Financials':'#8b5cf6','Docs & Pricing':'#06b6d4','Activity':'#ec4899'}[gName]||'var(--muted)';
@@ -26731,13 +26820,20 @@ window._buildConnectionsSection = _buildConnectionsSection;
         const groupFields=ALL_RESTRICTABLE_FIELDS.filter(function(f){return gKeys.includes(f.key);});
         groupFields.forEach(function(f){
           const isHidden=_roleHF.has(f.key);
+          const isEditable=_roleEditableFields.has(f.key);
           fgrid.appendChild(buildPermTile({
-            label:f.label, isViewable:!isHidden, isOverridden:false, showEditCheckbox:false,
+            label:f.label, isViewable:!isHidden, isOverridden:false, showEditCheckbox:true, isEditChecked:isEditable,
             onToggleView:function(){
               const newH=!isHidden;
               try{const _rawNow=localStorage.getItem(_rfKey);const rh=new Set(_rawNow!==null?JSON.parse(_rawNow):getDefaultHiddenFields(role));if(newH){rh.add(f.key);}else{rh.delete(f.key);}localStorage.setItem(_rfKey,JSON.stringify([...rh]));}catch(e2){}
               try{const allU=getApprovedUsers();allU.forEach(u=>{if((u.role||'admin')!==role)return;if(!u.hiddenFields)u.hiddenFields=[];if(newH){if(!u.hiddenFields.includes(f.key))u.hiddenFields.push(f.key);}else{u.hiddenFields=u.hiddenFields.filter(k=>k!==f.key);}touchUser(u.email);});localStorage.setItem(AUTH_KEY,JSON.stringify(allU));scheduleUserSave(2000);}catch(e3){}
               toast('✓ '+f.label+' '+(newH?'hidden':'visible')+' for all '+role+' users','#22c55e');
+              const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+            },
+            onToggleEdit:function(checked){
+              try{const _rawNow=localStorage.getItem(_refKey);const re=new Set(_rawNow!==null?JSON.parse(_rawNow):[...(_roleEditableFields)]);if(checked){re.add(f.key);}else{re.delete(f.key);}localStorage.setItem(_refKey,JSON.stringify([...re]));}catch(e2){}
+              try{const allU=getApprovedUsers();allU.forEach(u=>{if((u.role||'admin')!==role)return;if(!u.fieldEditPerms)u.fieldEditPerms={};u.fieldEditPerms[f.key]=checked;touchUser(u.email);});localStorage.setItem(AUTH_KEY,JSON.stringify(allU));scheduleUserSave(2000);}catch(e3){}
+              toast('✓ '+f.label+' edit default '+(checked?'ON':'OFF')+' for all '+role+' users','#22c55e');
               const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
             }
           }));
