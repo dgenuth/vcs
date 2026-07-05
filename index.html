@@ -25454,6 +25454,25 @@ function buildTabAccessSection(container, userEmail) {
             toast('✓ Also enabled '+parentId+' — required for its sub-tabs to be reachable','#4f7cff');
           }
         }
+      } else {
+        // S50: the missing reverse case — restricting a PARENT page must
+        // cascade-restrict its children too. Without this, directly
+        // restricting a parent while children stayed visible immediately
+        // recreated the exact inconsistency the one-time migration had
+        // just cleaned up, since nothing stopped it from happening again.
+        const pageEntry=PAGE_HIERARCHY.find(function(p){return p.id===id;});
+        if(pageEntry&&Array.isArray(pageEntry.children)&&pageEntry.children.length){
+          let anyChildWasVisible=false;
+          pageEntry.children.forEach(function(child){
+            const childOv=all[i].tabOverrides[child.id];
+            const childVisible=childOv!==undefined?(typeof childOv==='object'?childOv.view!==false:!!childOv):true;
+            if(childVisible){
+              all[i].tabOverrides[child.id]=typeof childOv==='object'?Object.assign({},childOv,{view:false}):{view:false};
+              anyChildWasVisible=true;
+            }
+          });
+          if(anyChildWasVisible) toast('✓ Also restricted '+id+'\u2019s sub-tabs — unreachable with the parent restricted','#f59e0b');
+        }
       }
       console.log('[VCS TAB DEBUG] Toggled tab:',id,'| new value:',JSON.stringify(all[i].tabOverrides[id]),'| tabOverrides BEFORE:',_before,'| tabOverrides AFTER:',JSON.stringify(all[i].tabOverrides));
       touchUser(all[i].email);
@@ -26694,11 +26713,28 @@ window._buildConnectionsSection = _buildConnectionsSection;
         // page is off, since there'd be no way for anyone in that role to
         // navigate to it at all.
         let _forcedParent=null;
+        let _restrictedChildren=[];
         if(view){
           const parentId=_findParentPageId(id);
           if(parentId && !roleTabState(parentId).view){
             savedOverrides[role][parentId]={view:true,edit:roleTabState(parentId).edit};
             _forcedParent=parentId;
+          }
+        } else {
+          // S50: the missing reverse case, and the actual root cause of the
+          // inconsistency recurring even after the one-time data migration —
+          // nothing stopped an admin from directly restricting a parent page
+          // here while its children stayed visible, immediately recreating
+          // the exact bug the migration had just cleaned up. Restricting a
+          // parent now cascades down to all its children.
+          const pageEntry=PAGE_HIERARCHY.find(function(p){return p.id===id;});
+          if(pageEntry&&Array.isArray(pageEntry.children)&&pageEntry.children.length){
+            pageEntry.children.forEach(function(child){
+              if(roleTabState(child.id).view){
+                savedOverrides[role][child.id]={view:false};
+                _restrictedChildren.push(child.id);
+              }
+            });
           }
         }
         localStorage.setItem('vcs_role_tab_overrides',JSON.stringify(savedOverrides));
@@ -26710,6 +26746,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
         if(view){ if(!ROLE_PERMS[role].tabs.includes(id)) ROLE_PERMS[role].tabs.push(id); }
         else { ROLE_PERMS[role].tabs=ROLE_PERMS[role].tabs.filter(function(x){return x!==id;}); }
         if(_forcedParent && !ROLE_PERMS[role].tabs.includes(_forcedParent)) ROLE_PERMS[role].tabs.push(_forcedParent);
+        if(_restrictedChildren.length) ROLE_PERMS[role].tabs=ROLE_PERMS[role].tabs.filter(function(x){return !_restrictedChildren.includes(x);});
         saveConfigToDrive().catch(function(){});
         // Update ALL users of this role immediately — no "next load" needed.
         try{
@@ -26719,11 +26756,13 @@ window._buildConnectionsSection = _buildConnectionsSection;
             if(!u.tabOverrides) u.tabOverrides={};
             u.tabOverrides[id]=showEdit?{view:view,edit:edit}:{view:view};
             if(_forcedParent) u.tabOverrides[_forcedParent]={view:true};
+            _restrictedChildren.forEach(function(cid){ u.tabOverrides[cid]={view:false}; });
           });
           allUsers.forEach(function(_u){ if(_u&&_u.email) touchUser(_u.email); });
           localStorage.setItem(AUTH_KEY,JSON.stringify(allUsers));
           setTimeout(function(){saveUsersViaProxy().catch(function(){});},2000);
           if(_forcedParent) toast('✓ Also enabled '+_forcedParent+' for all '+role+' users — required for its sub-tabs to be reachable','#4f7cff');
+          if(_restrictedChildren.length) toast('✓ Also restricted '+_restrictedChildren.join(', ')+' for all '+role+' users — unreachable with the parent restricted','#f59e0b');
         }catch(ue){ console.error('[RoleTab]',ue); }
       }
       function refreshOpenUserTabSections(){
