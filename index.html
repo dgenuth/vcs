@@ -24713,13 +24713,13 @@ function makeCollapsibleSection(sec, title, storageKey, defaultCollapsed) {
   const isCollapsed = localStorage.getItem(storageKey) !== null
     ? localStorage.getItem(storageKey) === '1'
     : (defaultCollapsed === true);
-  const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'4px 0'},onclick(){
+  const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px'},onclick(){
     const c=body.style.display==='none';
     body.style.display=c?'':'none';
     chev.textContent=c?'▼':'▶';
     localStorage.setItem(storageKey,c?'0':'1');
   }});
-  const chev=el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'6px'}},isCollapsed?'▶':'▼');
+  const chev=el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'6px'}},isCollapsed?'▶':'▼');
   hdr.appendChild(chev);
   // S50 QA fix: unified to match the Connections & API Keys reference style
   // David pointed to (fontSize 11px, weight 600, blue) — this helper used to
@@ -25901,6 +25901,26 @@ function _buildConnectionsSection(){
     }});
     connHdr.appendChild(connArrow);
     connHdr.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'600',color:'var(--blue)'}},'🔌 Connections & API Keys'));
+    // S50 v3: connected-count indicator, per David's request. Each check
+    // mirrors the real signal that integration's own section already uses
+    // for its own status (not a separate, possibly-inconsistent check) —
+    // see CLAUDE.md's Known Traps entry on Drive specifically, which is why
+    // Drive checks the proxy-verified/token signal rather than driveFileId
+    // alone (that alone doesn't mean the connection actually works).
+    (function(){
+      const checks=[
+        !!(S.settings&&S.settings.sfClientId&&(USER.sfToken)),
+        !!(window._vcsDriveProxyVerified||window.GDriveToken),
+        !!(S.settings&&S.settings.supabaseUrl&&S.settings.supabaseKey),
+        !!(typeof getMSToken==='function'&&getMSToken()&&Date.now()<(typeof getMSTokenExp==='function'?getMSTokenExp():0)),
+        !!(S.settings&&S.settings.renzoApiKey),
+        !!(S.settings&&S.settings.apiKey),
+      ];
+      const connectedCount=checks.filter(Boolean).length;
+      const total=checks.length;
+      const cColor=connectedCount===total?'#22c55e':connectedCount===0?'#ef4444':'#f59e0b';
+      connHdr.appendChild(el('span',{style:{fontSize:'9px',color:cColor,marginLeft:'4px',fontWeight:'600'}},connectedCount+'/'+total+' connected'));
+    })();
     connWrap.appendChild(connHdr);
     const connBody=el('div',{style:{display:_connOpen?'flex':'none',padding:'12px',flexDirection:'column',gap:'8px'}});
     connBody.appendChild(connectAllBtn);
@@ -26790,16 +26810,25 @@ window._buildConnectionsSection = _buildConnectionsSection;
   if (hasPermission('manageUsers') || isAssistantAdmin()) {
     const secRoles=el('div',{class:'settings-section'});
     const _rdCollapsed=localStorage.getItem('vcs_rd_collapsed')!=='0';
-    const _rdHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',cursor:'pointer',userSelect:'none'},
+    const _rdHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px'},
       onclick(){
         const _c=!(_rdBody.style.display==='none');
         _rdBody.style.display=_c?'none':'';
         _rdChev.textContent=_c?'▶':'▼';
         localStorage.setItem('vcs_rd_collapsed',_c?'1':'0');
       }});
-    const _rdChev=el('span',{style:{fontSize:'12px',color:'var(--muted)'}},_rdCollapsed?'▶':'▼');
+    const _rdChev=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_rdCollapsed?'▶':'▼');
     _rdHdr.appendChild(_rdChev);
-    _rdHdr.appendChild(el('h3',{style:{margin:'0'}},'🎭 Role & Feature Defaults'));
+    _rdHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'11px',fontWeight:'600',color:'var(--blue)'}},'🎭 Role & Feature Defaults'));
+    // S50 v3: role-count indicator, per David's request — how many roles
+    // currently exist, at a glance, without expanding the section.
+    (function(){
+      const _rc=new Set(getApprovedUsers().map(function(u){return u.role||'admin';}));
+      if(typeof EMPLOYEE_DIRECTORY!=='undefined') EMPLOYEE_DIRECTORY.forEach(function(e){_rc.add(e.role||'admin');});
+      ['admin','procurement','manager','cro'].forEach(function(r){_rc.add(r);});
+      Object.keys(CUSTOM_ROLES).forEach(function(r){_rc.add(r);});
+      _rdHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'4px'}},_rc.size+' role'+(_rc.size!==1?'s':'')));
+    })();
     // Expand/Collapse all role rows
     const rdBtnRow=el('div',{style:{display:'flex',gap:'4px',marginLeft:'auto'},onclick(e){e.stopPropagation();}});
     rdBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){
@@ -26898,15 +26927,15 @@ window._buildConnectionsSection = _buildConnectionsSection;
       const _rKey='vcs_rtd_'+role;
       const _rColl=localStorage.getItem(_rKey)!=='0';
       const roleSection=el('div',{style:{marginBottom:'8px',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
-      const roleSectionHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'6px 10px',
-        background:'var(--bg)',cursor:'pointer',userSelect:'none',fontWeight:'700',fontSize:'11px'},
+      const roleSectionHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'4px 10px',
+        background:'var(--bg)',cursor:'pointer',userSelect:'none',fontWeight:'600',fontSize:'11px'},
         onclick(){
           const c2=!(_roleBody.style.display==='none');
           _roleBody.style.display=c2?'none':'';
           _roleChev.textContent=c2?'▶':'▼';
           localStorage.setItem(_rKey,c2?'1':'0');
         }});
-      const _roleChev=el('span',{style:{fontSize:'10px',color:'var(--muted)'}},_rColl?'▶':'▼');
+      const _roleChev=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_rColl?'▶':'▼');
       roleSectionHdr.appendChild(_roleChev);
       roleSectionHdr.appendChild(el('span',{style:{textTransform:'capitalize',color:'var(--blue)'}},role));
       // S50 v2: Edit/Delete now shown for ALL roles, built-in or custom, per
@@ -27525,7 +27554,7 @@ function buildUserSubSection(label,bodyBuilderFn){
     const secUsers=el('div',{class:'settings-section'});
     // Collapsible header
     const _umCollapsed = localStorage.getItem('vcs_um_collapsed') !== '0';
-    const _umHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none'},onclick(){
+    const _umHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px'},onclick(){
       const _c=!(_umBody.style.display==='none');
       _umBody.style.display=_c?'none':'';
       _umChev.textContent=_c?'▶':'▼';
@@ -27533,7 +27562,14 @@ function buildUserSubSection(label,bodyBuilderFn){
     }});
     const _umChev=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_umCollapsed?'▶':'▼');
     _umHdr.appendChild(_umChev);
-    _umHdr.appendChild(el('h3',{style:{margin:'0'}},'👥 User Management'));
+    _umHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'11px',fontWeight:'600',color:'var(--blue)'}},'👥 User Management'));
+    // S50 v3: user-count indicator, per David's request — total users and
+    // how many have actually logged in at least once, at a glance.
+    (function(){
+      const _allU=getApprovedUsers();
+      const _loggedIn=_allU.filter(function(u){return u.lastLogin;}).length;
+      _umHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'4px'}},_allU.length+' user'+(_allU.length!==1?'s':'')+' · '+_loggedIn+' logged in'));
+    })();
     // S50 QA fix: removed "(click to expand/collapse)" — same redundant-text
     // cleanup as makeCollapsibleSection, for consistency with Connections &
     // API Keys and Role & Feature Defaults, neither of which repeats this.
