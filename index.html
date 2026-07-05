@@ -27526,27 +27526,117 @@ window._buildConnectionsSection = _buildConnectionsSection;
       const _refStored=localStorage.getItem(_refKey);
       const _roleEditableFields=_refStored!==null ? new Set(JSON.parse(_refStored)) : new Set(ALL_RESTRICTABLE_FIELDS.filter(function(f){return getRoleFieldEditDefault(role,f.key);}).map(function(f){return f.key;}));
       if(_refStored===null){ localStorage.setItem(_refKey, JSON.stringify([..._roleEditableFields])); }
-      // Shared persistence for a single field's visibility/edit default --
-      // both the individual tiles below AND the bulk buttons call these same
-      // two functions, so propagation to existing users stays identical
-      // either way (no separate bulk-only write path).
+      // S50 v4: reusable confirmation modal for role-default changes that
+      // would otherwise silently propagate to every existing user of a
+      // role. Per David's explicit request: some users on a role may have
+      // been deliberately given different permissions than the role
+      // default, and a blanket role-level change shouldn't silently
+      // overwrite those deliberate exceptions OR silently skip everyone.
+      // The admin gets to choose, per change, which currently-assigned
+      // users are actually affected. Users NOT selected keep whatever they
+      // currently have — which then behaves like a per-user override
+      // relative to the new default, exactly as intended.
+      function showAffectedUsersModal(roleKey, changeLabel, onConfirm){
+        const affected=getApprovedUsers().filter(function(u){return (u.role||'admin')===roleKey;});
+        if(!affected.length){ onConfirm([]); return; } // nobody on this role yet -- nothing to ask about
+        const overlay=el('div',{style:{position:'fixed',top:'0',left:'0',right:'0',bottom:'0',background:'rgba(0,0,0,.5)',zIndex:'9999',display:'flex',alignItems:'center',justifyContent:'center'}});
+        const modal=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'8px',padding:'20px',width:'380px',maxHeight:'70vh',display:'flex',flexDirection:'column'}});
+        modal.appendChild(el('h3',{style:{margin:'0 0 6px'}},'Apply to existing users?'));
+        modal.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',margin:'0 0 10px',lineHeight:'1.4'}},
+          changeLabel+' — this always becomes the default for any NEW '+(ROLES[roleKey]||roleKey)+' user. Choose which of the '+affected.length+' EXISTING user(s) on this role should also get this change now. Anyone left unchecked keeps their current setting.'));
+        const selRow=el('div',{style:{display:'flex',gap:'8px',marginBottom:'8px'}});
+        const listWrap=el('div',{style:{overflowY:'auto',flex:'1',border:'1px solid var(--border)',borderRadius:'4px',padding:'6px'}});
+        const checkboxes=[];
+        affected.forEach(function(u){
+          const row=el('label',{style:{display:'flex',alignItems:'center',gap:'6px',fontSize:'10px',padding:'3px 0',cursor:'pointer'}});
+          const cb=el('input',{type:'checkbox'}); cb.checked=true; checkboxes.push({cb:cb,user:u});
+          row.appendChild(cb);
+          row.appendChild(document.createTextNode((u.name||u.email)+(u._customHiddenFields?' (has other customizations)':'')));
+          listWrap.appendChild(row);
+        });
+        selRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){checkboxes.forEach(function(x){x.cb.checked=true;});}},'Select All'));
+        selRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){checkboxes.forEach(function(x){x.cb.checked=false;});}},'Select None'));
+        modal.appendChild(selRow);
+        modal.appendChild(listWrap);
+        const btnRow=el('div',{style:{display:'flex',gap:'8px',justifyContent:'flex-end',marginTop:'12px'}});
+        btnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){document.body.removeChild(overlay);}},'Cancel'));
+        btnRow.appendChild(el('button',{class:'btn-xs btn-green',onclick(){
+          const selected=checkboxes.filter(function(x){return x.cb.checked;}).map(function(x){return x.user;});
+          document.body.removeChild(overlay);
+          onConfirm(selected);
+        }},'Apply to Selected'));
+        modal.appendChild(btnRow);
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+      }
+      // Core write logic, no modal -- both the single-field path and the
+      // bulk path funnel through this so there's one real implementation,
+      // not two that could drift apart.
+      function _applyFieldVisibilityToUsers(fieldKeys, hide, targetUsers){
+        try{
+          const allU=getApprovedUsers();
+          targetUsers.forEach(function(su){
+            const u=allU.find(function(x){return x.email===su.email;});
+            if(!u) return;
+            if(!u.hiddenFields)u.hiddenFields=[];
+            fieldKeys.forEach(function(fieldKey){
+              if(hide){if(!u.hiddenFields.includes(fieldKey))u.hiddenFields.push(fieldKey);}else{u.hiddenFields=u.hiddenFields.filter(k=>k!==fieldKey);}
+            });
+            touchUser(u.email);
+          });
+          localStorage.setItem(AUTH_KEY,JSON.stringify(allU));
+          scheduleUserSave(2000);
+        }catch(e3){}
+      }
+      function _applyFieldEditToUsers(fieldKeys, editable, targetUsers){
+        try{
+          const allU=getApprovedUsers();
+          targetUsers.forEach(function(su){
+            const u=allU.find(function(x){return x.email===su.email;});
+            if(!u) return;
+            if(!u.fieldEditPerms)u.fieldEditPerms={};
+            fieldKeys.forEach(function(fieldKey){ u.fieldEditPerms[fieldKey]=editable; });
+            touchUser(u.email);
+          });
+          localStorage.setItem(AUTH_KEY,JSON.stringify(allU));
+          scheduleUserSave(2000);
+        }catch(e3){}
+      }
+      // Single-field path (individual tile toggle) -- role default updates
+      // immediately, one confirmation modal for this one field.
       function _applyFieldVisibility(fieldKey, hide){
         try{const _rawNow=localStorage.getItem(_rfKey);const rh=new Set(_rawNow!==null?JSON.parse(_rawNow):getDefaultHiddenFields(role));if(hide){rh.add(fieldKey);}else{rh.delete(fieldKey);}localStorage.setItem(_rfKey,JSON.stringify([...rh]));}catch(e2){}
-        try{const allU=getApprovedUsers();allU.forEach(u=>{if((u.role||'admin')!==role)return;if(!u.hiddenFields)u.hiddenFields=[];if(hide){if(!u.hiddenFields.includes(fieldKey))u.hiddenFields.push(fieldKey);}else{u.hiddenFields=u.hiddenFields.filter(k=>k!==fieldKey);}touchUser(u.email);});localStorage.setItem(AUTH_KEY,JSON.stringify(allU));scheduleUserSave(2000);}catch(e3){}
+        showAffectedUsersModal(role, (hide?'Hide':'Show')+' "'+((ALL_RESTRICTABLE_FIELDS.find(f=>f.key===fieldKey)||{}).label||fieldKey)+'"', function(selectedUsers){
+          _applyFieldVisibilityToUsers([fieldKey], hide, selectedUsers);
+          toast('✓ Default updated'+(selectedUsers.length?' — applied to '+selectedUsers.length+' existing user(s)':''),'#22c55e');
+          const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+        });
       }
       function _applyFieldEdit(fieldKey, editable){
         try{const _rawNow=localStorage.getItem(_refKey);const re=new Set(_rawNow!==null?JSON.parse(_rawNow):[...(_roleEditableFields)]);if(editable){re.add(fieldKey);}else{re.delete(fieldKey);}localStorage.setItem(_refKey,JSON.stringify([...re]));}catch(e2){}
-        try{const allU=getApprovedUsers();allU.forEach(u=>{if((u.role||'admin')!==role)return;if(!u.fieldEditPerms)u.fieldEditPerms={};u.fieldEditPerms[fieldKey]=editable;touchUser(u.email);});localStorage.setItem(AUTH_KEY,JSON.stringify(allU));scheduleUserSave(2000);}catch(e3){}
+        showAffectedUsersModal(role, (editable?'Make editable':'Make non-editable')+': "'+((ALL_RESTRICTABLE_FIELDS.find(f=>f.key===fieldKey)||{}).label||fieldKey)+'"', function(selectedUsers){
+          _applyFieldEditToUsers([fieldKey], editable, selectedUsers);
+          toast('✓ Default updated'+(selectedUsers.length?' — applied to '+selectedUsers.length+' existing user(s)':''),'#22c55e');
+          const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+        });
       }
       function bulkSetAllFieldVisibility(makeVisible){
-        ALL_RESTRICTABLE_FIELDS.forEach(function(f){ _applyFieldVisibility(f.key, !makeVisible); });
-        toast('✓ All fields '+(makeVisible?'made visible':'restricted')+' for all '+role+' users','#22c55e');
-        const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+        const allKeys=ALL_RESTRICTABLE_FIELDS.map(function(f){return f.key;});
+        try{localStorage.setItem(_rfKey,JSON.stringify(makeVisible?[]:allKeys));}catch(e2){}
+        showAffectedUsersModal(role, (makeVisible?'Make all fields visible':'Restrict all fields'), function(selectedUsers){
+          _applyFieldVisibilityToUsers(allKeys, !makeVisible, selectedUsers);
+          toast('✓ All fields '+(makeVisible?'made visible':'restricted')+' for default'+(selectedUsers.length?' — applied to '+selectedUsers.length+' existing user(s)':''),'#22c55e');
+          const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+        });
       }
       function bulkSetAllFieldEditable(editable){
-        ALL_RESTRICTABLE_FIELDS.forEach(function(f){ _applyFieldEdit(f.key, editable); });
-        toast('✓ All fields edit default '+(editable?'ON':'OFF')+' for all '+role+' users','#22c55e');
-        const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+        const allKeys=ALL_RESTRICTABLE_FIELDS.map(function(f){return f.key;});
+        try{localStorage.setItem(_refKey,JSON.stringify(editable?allKeys:[]));}catch(e2){}
+        showAffectedUsersModal(role, 'Make all fields '+(editable?'editable':'non-editable'), function(selectedUsers){
+          _applyFieldEditToUsers(allKeys, editable, selectedUsers);
+          toast('✓ All fields edit default '+(editable?'ON':'OFF')+(selectedUsers.length?' — applied to '+selectedUsers.length+' existing user(s)':''),'#22c55e');
+          const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+        });
       }
       const fvBulkRow=el('div',{style:{display:'flex',gap:'6px',marginBottom:'6px',flexWrap:'wrap'}});
       fvBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllFieldVisibility(false);}},'Restrict All'));
@@ -27706,7 +27796,7 @@ function buildUserSubSection(label,bodyBuilderFn){
       if(action==='set_role'){
         const newRole=prompt('Enter role for '+checked.length+' user(s): admin, procurement, manager, viewer, sales, restricted');
         if(!isValidRole(newRole)){toast('Invalid role — must be one of: '+Object.keys(ROLE_PERMS).join(', '),'var(--amber)');return;}
-        all.forEach(u=>{if(checked.includes(u.email)){u.role=newRole;u.featureFlags=getDefaultFeatureFlags(newRole);if(!u._customHiddenFields)u.hiddenFields=getDefaultHiddenFields(newRole);u.tabOverrides={};}});
+        all.forEach(u=>{if(checked.includes(u.email)){u.role=newRole;u.featureFlags=getDefaultFeatureFlags(newRole);if(!u._customHiddenFields){u.hiddenFields=getDefaultHiddenFields(newRole);u.fieldEditPerms={};}u.tabOverrides={};}});
         checked.forEach(touchUser);
         setApprovedUsers(all);
         try{await saveUsersViaProxy();toast('✓ Role set to '+newRole+' for '+checked.length+' user(s) and saved');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
@@ -27774,7 +27864,18 @@ function buildUserSubSection(label,bodyBuilderFn){
           if(i>=0 && isValidRole(sel.value)){
             all[i].role=sel.value;
             // Auto-apply default hidden fields and feature flags for new role (only if not manually customized)
-            if(!all[i]._customHiddenFields) all[i].hiddenFields = getDefaultHiddenFields(sel.value);
+            if(!all[i]._customHiddenFields){
+              all[i].hiddenFields = getDefaultHiddenFields(sel.value);
+              // S50 QA fix: this was the one piece of per-user state that
+              // never got reset on role change — hiddenFields and
+              // tabOverrides both correctly reset below/above, but a field
+              // explicitly marked editable under the OLD role stuck around
+              // and kept showing as editable under the NEW role too, which
+              // is exactly the "doesn't fully adapt to the new role"
+              // symptom. Same fix condition as hiddenFields, since both are
+              // set together via the same Field Visibility panel.
+              all[i].fieldEditPerms = {};
+            }
             all[i].featureFlags = getDefaultFeatureFlags(sel.value);
             // Reset per-user tab overrides -- switching profile means adopting
             // the NEW role's tab visibility. Without this, grants/blocks made
