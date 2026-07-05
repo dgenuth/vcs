@@ -26755,6 +26755,46 @@ window._buildConnectionsSection = _buildConnectionsSection;
       // changes what a user with NO override sees.
       _roleBody.appendChild(_roleSub('🔑 Permissions Defaults (all '+role+' users)', false, function(b){
         b.innerHTML='';
+        // S50: bulk actions covering all 7 toggles in this section, which
+        // span three different underlying storage mechanisms
+        // (setRolePermissionDefault, the Financials field-group hide, and
+        // setRoleFeatureDefault) — each handled through its own real setter
+        // rather than a parallel path, same principle as the Tab Access and
+        // Field Visibility bulk actions.
+        function bulkSetAllPermissions(enable){
+          ['export','addVendor','canAccessArchive'].forEach(function(k){ setRolePermissionDefault(role,k,enable); });
+          setRolePermissionDefault(role,'requireSearchToList', !enable); // enable = full list browsable
+          setRoleFeatureDefault(role,'ai',enable);
+          setRoleFeatureDefault(role,'renzo',enable);
+          const _rfKeyBulk='vcs_role_fields_'+role;
+          const _rawBulk=localStorage.getItem(_rfKeyBulk);
+          const rhBulk=new Set(_rawBulk!==null?JSON.parse(_rawBulk):getDefaultHiddenFields(role));
+          const finKeysBulk=FIELD_GROUPS['Financials']||[];
+          finKeysBulk.forEach(function(k){ if(enable){rhBulk.delete(k);}else{rhBulk.add(k);} });
+          localStorage.setItem(_rfKeyBulk,JSON.stringify([...rhBulk]));
+          try{
+            const allU=getApprovedUsers();
+            allU.forEach(function(u){
+              if((u.role||'admin')!==role) return;
+              if(!u.hiddenFields) u.hiddenFields=[];
+              finKeysBulk.forEach(function(k){
+                if(enable){ u.hiddenFields=u.hiddenFields.filter(function(fk){return fk!==k;}); }
+                else if(!u.hiddenFields.includes(k)){ u.hiddenFields.push(k); }
+              });
+              touchUser(u.email);
+            });
+            localStorage.setItem(AUTH_KEY,JSON.stringify(allU));
+            scheduleUserSave(2000);
+          }catch(e2){}
+          debouncedSaveSettings();
+          toast('✓ All permissions '+(enable?'enabled':'restricted')+' for all '+role+' users','#22c55e');
+          const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+        }
+        const permBulkRow=el('div',{style:{display:'flex',gap:'6px',marginBottom:'6px'}});
+        permBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllPermissions(false);}},'Restrict All'));
+        permBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllPermissions(true);}},'Enable All'));
+        b.appendChild(permBulkRow);
+
         const permRow=el('div',{style:{display:'flex',flexWrap:'wrap',gap:'6px',marginBottom:'6px'}});
         const PERM_DEFS=[['export','Allow Export'],['addVendor','Add Vendor'],['canAccessArchive','Access Archive']];
         PERM_DEFS.forEach(function(pd){
@@ -27023,9 +27063,27 @@ window._buildConnectionsSection = _buildConnectionsSection;
         toast('✓ All tabs '+(makeVisible?'made visible':'restricted')+' for all '+role+' users','#22c55e');
         const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
       }
+      // S50: only pages with an edit checkbox at all (page.editable) can be
+      // made editable, and only if currently visible — a restricted page
+      // can't meaningfully be "editable" (there's nothing to edit if you
+      // can't see it), same rule buildPermTile already applies visually by
+      // graying out the checkbox for hidden items.
+      function bulkSetAllTabEditable(){
+        PAGE_HIERARCHY.forEach(function(page){
+          if(!page.editable) return;
+          const cur=roleTabState(page.id);
+          if(cur.view && !cur.edit){
+            persistRoleTabState(page.id, true, true, true);
+          }
+        });
+        refreshOpenUserTabSections();
+        toast('✓ All editable tabs made editable for all '+role+' users','#22c55e');
+        const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+      }
       const tabBulkRow=el('div',{style:{display:'flex',gap:'6px',marginBottom:'6px'}});
-      tabBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllTabVisibility(true);}},'Make All Visible'));
       tabBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllTabVisibility(false);}},'Restrict All'));
+      tabBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllTabVisibility(true);}},'Make All Visible'));
+      tabBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllTabEditable();}},'Make All Editable'));
       b.appendChild(tabBulkRow);
 
       const roleTabGrid=el('div',{style:{display:'flex',flexDirection:'column',gap:'2px'}});
@@ -27130,8 +27188,8 @@ window._buildConnectionsSection = _buildConnectionsSection;
         const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
       }
       const fvBulkRow=el('div',{style:{display:'flex',gap:'6px',marginBottom:'6px'}});
-      fvBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllFieldVisibility(true);}},'Make All Visible'));
       fvBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllFieldVisibility(false);}},'Restrict All'));
+      fvBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllFieldVisibility(true);}},'Make All Visible'));
       fvBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllFieldEditable(true);}},'Make All Editable'));
       b.appendChild(fvBulkRow);
       // S50 QA fix: was plain document.createElement('button') tiles with
