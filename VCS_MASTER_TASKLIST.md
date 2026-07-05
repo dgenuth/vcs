@@ -1,6 +1,6 @@
 # VCS — Master Task List
-**Last updated:** Sun Jul 05, 2026, 8:00 PM EDT (this session, Claude Code)
-**Checkpoint at this update:** MD5 `f4c8daf477adebaedb71c895fd36c368`, 31,577 lines
+**Last updated:** Sun Jul 05, 2026, 10:00 PM EDT (this session, Claude Code)
+**Checkpoint at this update:** MD5 `7f00f42f4d88fd79e202d422df1ce190`, 31,576 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,8 +9,51 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Role & Feature Defaults propagation redesigned again, same evening
+  (2026-07-05, later)** — supersedes the entry directly below. David's
+  follow-up: the "confirm via popup after every toggle" design (just
+  shipped that same evening) interrupted making several changes in a row.
+  New architecture: every toggle in Permissions/Tab Access/Field
+  Visibility Defaults now only writes the role-level default immediately
+  (no modal) — new/moved-into-role users pick this up automatically.
+  Syncing already-existing role members is now a separate, explicit
+  action: each section's old "Apply Changes" button is now **"✅ Apply
+  Changes to Existing Users,"** and clicking it is what shows the "which
+  users" confirmation modal — once, applying the section's FULL current
+  state (every pending toggle, not just the last one) in a single batch.
+  Verified live end-to-end for all three sections: toggle → no modal, no
+  change on an existing test user → click the batch button → modal →
+  confirm → all pending changes land at once. **Also found and fixed in
+  the process** (not visible from reading the sync code, only from live
+  testing): `getApprovedUsers()` had a pre-existing per-render migration
+  that re-mirrored every non-customized user's `hiddenFields` to the
+  current role default on every single call — which silently bypassed the
+  new batch-gate for Field Visibility Defaults specifically, re-applying a
+  role-default edit to existing users immediately regardless of the batch
+  button. Fixed to only re-seed a user's `hiddenFields` when they've never
+  been seeded or their role just changed, not on every render. See
+  CLAUDE.md Known Traps for full mechanism detail on both fixes.
+- **Settings title bar consistency, round 3 (2026-07-05, later same
+  evening)** — David reported, a second time that day, that the title bars
+  still didn't match after the "round 2" fix directly below. A live
+  computed-style sweep (not a screenshot) found the round-2 pass only
+  covered TOP-level section headers; three more deeply-nested bespoke
+  headers still had the old inconsistent styling: `_roleSub()` (the
+  Permissions/Tab Access/Field Visibility Defaults headers inside each
+  role — the exact section under active testing that day),
+  `_userSub()` (the same three panels' per-user equivalents in User
+  Management), and `buildIntegrationSubsection()` (the Salesforce/MS365/
+  Fathom/etc. rows nested inside Connections & API Keys), plus the Quick
+  Setup checklist header. All four reconciled to the same convention;
+  `_roleSub`/`_userSub` additionally gained the same right-aligned
+  summary-badge treatment the top-level headers already had (e.g. "2/7
+  on," "17 tabs on," "56 fields hidden"). See CLAUDE.md Known Traps for
+  why this recurred and what to check first if it comes back a third time.
 - **Role & Feature Defaults: Tab Access Defaults changes weren't reliably
-  reaching existing users** (David's report, 2026-07-05 evening). Root
+  reaching existing users (superseded by the redesign above — this
+  entry's per-toggle-modal mechanism no longer exists, but the underlying
+  per-user write helper it introduced is still in use)** (David's report,
+  2026-07-05 evening). Root
   cause: Tab Access was the one of the three role-default sections that
   never got the "ask which existing users" confirmation flow (Permissions
   and Field Visibility already had it) — it silently applied every change

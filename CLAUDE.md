@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
-**Last updated:** Sun Jul 05, 2026 — 8:00 PM EDT
-**Current checkpoint:** MD5 `f4c8daf477adebaedb71c895fd36c368`, 31,577 lines
+**Last updated:** Sun Jul 05, 2026 — 10:00 PM EDT
+**Current checkpoint:** MD5 `7f00f42f4d88fd79e202d422df1ce190`, 31,576 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -167,14 +167,43 @@ similar symptom reappears; don't rediscover them from scratch)
   `makeCollapsibleSection()` and `settingsCard()` are actually shared
   functions; Connections & API Keys, Role & Feature Defaults, User
   Management, Calendar Availability, and Field Registry each build their
-  own bespoke header inline. Found 2026-07-05: every one of those had
-  drifted from the Connections & API Keys reference style (11px/600/blue
-  title, 9px arrow, 8px 12px row padding) in at least one dimension — some
-  in padding only, some in the title's font-weight/color too (`settingsCard`
-  was 700/var(--text) instead of 600/var(--blue)). All reconciled to match.
-  **If a "sections look inconsistent" report comes in again, check each
-  section's OWN header-building code — don't assume fixing the shared
-  helpers covers the bespoke ones.**
+  own bespoke header inline. Found 2026-07-05 (morning pass): every one of
+  those had drifted from the Connections & API Keys reference style
+  (11px/600/blue title, 9px arrow, 8px 12px row padding) in at least one
+  dimension — some in padding only, some in the title's font-weight/color
+  too (`settingsCard` was 700/var(--text) instead of 600/var(--blue)). All
+  reconciled to match — but this only covered the TOP-level section
+  headers.
+- **The morning pass above missed every NESTED bespoke header one level
+  deeper** — found 2026-07-05 (evening) after David reported, for the
+  second time in one day, "I still don't see the title bars matching."
+  A live computed-style sweep of every collapsible header on the Settings
+  page (not just eyeballing a screenshot) turned up three more one-off
+  headers the morning pass never touched, all still using an arrow with a
+  hardcoded `marginRight` instead of the `gap:'6px'`-on-the-row convention,
+  and a plain/non-blue title: `_roleSub()` (Permissions/Tab Access/Field
+  Visibility Defaults headers inside each role — the exact section this
+  whole engagement was actively testing that day), its sibling `_userSub()`
+  (the same three panels' per-USER equivalents in User Management), and
+  `buildIntegrationSubsection()` (Salesforce/Microsoft 365/Fathom/etc. rows
+  nested inside Connections & API Keys). Also found the Quick Setup
+  checklist header using its own 8px gap / 700-weight / non-blue title with
+  an oversized 13px emoji in a separate span. All four fixed to the same
+  `gap:'6px'`, no-margin 9px arrow, `var(--blue)` title, `fontWeight:'600'`
+  mechanics as everything else — `_roleSub` and `_userSub` additionally
+  gained a right-aligned summary badge (e.g. "2/7 on", "17 tabs on", "56
+  fields hidden"), matching the "visible at a glance while collapsed"
+  indicator convention the top-level cards and role rows already had but
+  these nested headers were missing entirely. **This confirms the lesson
+  from the morning pass was too narrow: it's not just "check each
+  section's OWN header code," it's "check every NESTING LEVEL of bespoke
+  header code" — a fix scoped to top-level cards will miss role-level,
+  per-user, and doubly-nested integration-row headers every time. If a
+  "still doesn't match" report comes in a THIRD time, do the live
+  computed-style sweep first (group every clickable `▼`/`▶`-prefixed row
+  by its gap/arrow-size/arrow-margin/font-weight/color signature) rather
+  than re-eyeballing a screenshot — that sweep is what actually found all
+  three misses here.**
 - **A newly created custom role must clone the REAL, live-resolved value
   for every one of the 4 role-level default stores, not just copy a raw
   storage key.** `createCustomRole()` clones tab access via
@@ -226,25 +255,64 @@ similar symptom reappears; don't rediscover them from scratch)
   — only this lineage's version of the Connections badge survived (SF/
   MS365/Fathom/Renzo/Supabase/Drive, excluding Claude AI and Deploy to
   Production), so it's settled, not still open.
-- **Role & Feature Defaults propagating a change to existing users of a
-  role is now consistently gated behind `showAffectedUsersModal()` —
-  Permissions, Tab Access, AND Field Visibility Defaults all confirm which
-  currently-assigned users should get a role-level change before touching
-  their records** (2026-07-05). Tab Access Defaults was the one holdout —
-  its own code comment already said it should get this treatment (see
+- **Role & Feature Defaults propagation was redesigned again same day
+  (2026-07-05, evening)** — the "confirm via `showAffectedUsersModal()`
+  after every single toggle" design two entries below/above (same date,
+  earlier that day) was replaced per David's explicit follow-up: an admin
+  making several changes in a row was getting interrupted by a popup after
+  each one. Current, current architecture: **every individual toggle in
+  Permissions/Tab Access/Field Visibility Defaults now ONLY writes the
+  role-level default** (immediate, no modal, no per-user propagation) —
+  this is what any NEW user or a user moved into that role picks up
+  automatically. Syncing that change onto ALREADY-existing role members is
+  a separate, deliberate action: each of the three sections has its own
+  bottom button, built via the shared `buildApplyToExistingUsersButton(role,
+  sectionLabel, doSync)`, reading **"✅ Apply Changes to Existing Users."**
+  Clicking it shows `showAffectedUsersModal()` (checkbox list of that
+  role's current users) exactly once, and `doSync(selectedUsers)` applies
+  the section's FULL current state (not just the one most-recent change) —
+  so several toggles made in a row all land in one batch when the admin is
+  ready. The three `doSync` implementations: `_syncPermissionsToUsers`,
+  `_syncTabAccessToUsers`, and an inline callback wrapping
+  `syncFieldVisibilityDefaultsToUsers(role, selectedUsers)` (also reused
+  by the Permissions sync, since "See Financials" writes the same
+  `vcs_role_fields_<role>` key Field Visibility Defaults owns). Verified
+  live end-to-end for all three sections 2026-07-05: toggle → no modal, no
+  change on an existing test user → click the batch button → modal → Apply
+  to Selected → all pending changes land at once. **If a "my toggle
+  changed an existing user immediately" report comes in, that's the bug —
+  only the batch button should ever touch existing users.**
+- **`getApprovedUsers()`'s hiddenFields migration silently bypassed the
+  batch-gate above for Field Visibility Defaults specifically** (found
+  and fixed 2026-07-05, same session as the redesign above, via live
+  testing — NOT visible from reading the sync code alone). The function
+  re-mirrors every non-`_customHiddenFields` user's `hiddenFields` to
+  `getDefaultHiddenFields(u.role)` on EVERY call (i.e. every render), by
+  design, so a brand-new user or one just moved into a role picks up the
+  right defaults. But since it ran unconditionally for ALL such users
+  every time, it also re-applied any Field Visibility Default edit to
+  already-existing role members on the very next render — completely
+  skipping the new "Apply Changes to Existing Users" button for anyone
+  without a `_customHiddenFields` override (confirmed live: toggling a
+  field default changed an existing test user's `hiddenFields` before the
+  sync button was ever clicked). Fixed by adding a `_hiddenFieldsRole`
+  tracker: the re-seed now only fires when a user has never been seeded
+  (`hiddenFields === undefined`) or their role changed since the last seed
+  (`_hiddenFieldsRole !== u.role`) — i.e. exactly the "new or moved" cases
+  — leaving users who stay on the same role frozen until an explicit sync,
+  same as Permissions/Tab Access. **If hiddenFields ever seems to
+  "auto-update" for an existing user again, check this function first —
+  it's the only place a role default write can reach a user without going
+  through a sync button.**
+- **Tab Access Defaults was, briefly earlier the same day, the one section
+  missing this confirm-before-propagating treatment at all** — its own
+  code comment already said it should get this treatment (see
   `resolveRoleTabState`'s doc comment) but it never actually got wired up;
-  it silently applied to every existing user unconditionally instead.
-  `persistRoleTabState()` was split so the ROLE-level write (plus its
-  parent/child cascade) happens immediately and returns the list of
-  changes made, while a new `_applyTabStateToUsers()` does the actual
-  per-user write — called only after the admin picks who via the modal,
-  same as the other two sections. Bulk actions (`bulkSetAllTabVisibility`/
-  `bulkSetAllTabEditable`) accumulate the full change list across their
-  loop and show ONE combined modal at the end, not one per tab. **If a
-  "my change isn't reaching existing users" report comes in again, check
-  whether the modal's "Apply to Selected" button was actually clicked** —
-  cancelling it (or closing the browser) leaves the role-level default
-  updated but every existing user untouched, by design.
+  it silently applied to every existing user unconditionally. That gap is
+  now moot under the redesign above (nothing propagates to existing users
+  without the batch button, for any of the three sections) but the
+  underlying per-user write helper from that fix, `_applyTabStateToUsers()`,
+  is still what the current `_syncTabAccessToUsers` calls.
 - **The per-role "N tabs on" badge could show "undefined tabs on."**
   It read `vcs_role_tab_overrides[role]` directly and assumed it was always
   an array — true only when a role had zero explicit tab overrides yet
