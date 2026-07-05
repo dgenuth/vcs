@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
-**Last updated:** Sun Jul 05, 2026 — 2:15 PM EDT
-**Current checkpoint:** MD5 `88dda15dd8e071de63421627fb0237e7`, 31,319 lines
+**Last updated:** Sun Jul 05, 2026 — 1:00 PM EDT
+**Current checkpoint:** MD5 `a0a926393f1777361a35ff297f9ea4d0`, 31,335 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -200,6 +200,34 @@ similar symptom reappears; don't rediscover them from scratch)
   nothing else keys off the display label. Deleting a built-in role (not
   renaming its key) is comparatively low-risk — see `deleteRole()`'s own
   comment — so that IS allowed for any role except `admin`.
+- **The parallel session independently built almost this exact same body
+  of work (header consistency, status indicators, role rename/delete,
+  bulk-action 4th buttons) in parallel, same session window, 2026-07-05 —
+  the second time this has happened for role management specifically (see
+  the `getDefaultHiddenFields` entry above for the first).** Reconciled via
+  `git rebase`, 9 conflict regions. Two of those had NO conflict markers at
+  all — both sides added a near-identical status-indicator badge
+  (Role & Feature Defaults role-count, User Management user-count) with
+  different variable names, so git's 3-way merge spliced both in side by
+  side instead of flagging a conflict. **Grepping for the specific
+  indicator/badge text after any rebase in an area both lineages are known
+  to be working in is not optional — conflict markers alone do not surface
+  this class of duplication.** Where actual conflicts existed: kept this
+  lineage's `createCustomRole` (the other session's never cloned Tab Access
+  or per-field Edit defaults) and this lineage's built-in-role-key-rename
+  block (the other session's `renameRole` allowed changing ANY role's key
+  unconditionally — a real risk given the 275+ hardcoded-literal count
+  above); adopted the other session's icon-only ✎/✕ buttons (closer to
+  the literal spec) and its role-color-editing field in the rename modal
+  (real enhancement, safe for custom roles, not persisted for built-in
+  roles since there's no override store for that — same gap class as
+  `BUILTIN_ROLE_LABEL_OVERRIDES` had to solve for labels). **Unresolved
+  ambiguity, not a bug**: the two lineages independently guessed different
+  sets for "the 6" in the Connections & API Keys "N/6 connected" badge —
+  this lineage excludes Claude AI (a feature/provider toggle) and counts
+  Fathom; the other excluded Fathom and counted Claude AI. Neither reading
+  is clearly more correct than the other from the code alone — worth
+  confirming with David directly rather than guessing again.
 - **"Excel column map audit"** is substantially already built — don't
   redo it. `PSD_FIELD_MAP` (authoritative column-letter → field map, all 77
   columns, dated 2026-06-21) + `checkPsdSchemaDrift()` (compares live Excel

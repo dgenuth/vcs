@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Sun Jul 05, 2026 (this session, Claude Code)
-**Checkpoint at this update:** MD5 `88dda15dd8e071de63421627fb0237e7`, 31,319 lines
+**Checkpoint at this update:** MD5 `a0a926393f1777361a35ff297f9ea4d0`, 31,335 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -52,6 +52,22 @@ never silently drop something that isn't actually finished.
   - All of the above tested live in a browser preview (bypassed
     OAuth/Supabase by mutating `USER`/`getApprovedUsers()` state directly
     and calling `completeLogin()`), not just traced through source.
+  - **Mid-session, the parallel session pushed 7 more commits building
+    almost this exact same body of work independently** (see CLAUDE.md's
+    Known Traps for the full account). Reconciled via `git rebase` — 9
+    conflict regions, plus 2 silently-duplicated status-indicator badges
+    that had NO conflict markers at all (git spliced both sides' near-
+    identical additions in side by side). Kept this lineage's more-complete
+    `createCustomRole` cloning and its stricter built-in-role-key-rename
+    block; adopted the other lineage's icon-only ✎/✕ buttons and its
+    role-color-editing field. Re-ran the full test suite above (create,
+    clone-verify, rename+color, built-in label rename, built-in key-rename
+    block, admin-delete block, delete-blocked-then-succeeds) against the
+    final reconciled file — all still passing. One open, unresolved
+    ambiguity from the reconciliation: which 6 services count toward
+    Connections & API Keys' "N/6 connected" badge (this lineage: SF/MS365/
+    Fathom/Renzo/Supabase/Drive; the other: SF/MS365/Claude AI/Renzo/
+    Supabase/Drive) — worth confirming directly with David.
 - **Settings header consistency** — Connections & API Keys was the only
   section actually matching its own reference style. `makeCollapsibleSection`,
   `settingsCard`, and the bespoke headers for Role & Feature Defaults, User
