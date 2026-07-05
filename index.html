@@ -7801,65 +7801,6 @@ function _findParentPageId(childId){
   localStorage.setItem('vcs_tab_overrides_migration_v1','1');
 })();
 
-// S50: one-time migration retroactively enforcing parent/child Tab Access
-// visibility. persistTabState/persistRoleTabState correctly force a parent
-// page visible whenever a child is turned ON going forward — but that only
-// fires at the moment of a NEW toggle. Any role or user whose data already
-// had a child marked visible while its parent was marked restricted (set
-// before this dependency existed) stays inconsistent forever, since nothing
-// ever revisits already-saved data. This walks PAGE_HIERARCHY once, finds
-// every currently-visible child whose parent isn't visible, and fixes the
-// parent — for both role-level defaults and any remaining per-user
-// overrides (belt-and-suspenders, since the tabOverrides migration above
-// should already have cleared per-user data, but doesn't hurt to also
-// correct it here if some other flow re-populated it since).
-(function _migrateParentChildTabVisibilityV1(){
-  if (localStorage.getItem('vcs_parent_child_tab_migration_v1')) return;
-  try {
-    const roleOverrides = JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
-    let roleChanged = false;
-    Object.keys(roleOverrides).forEach(function(role){
-      const roleOv = roleOverrides[role]||{};
-      Object.keys(roleOv).forEach(function(childId){
-        const cv = roleOv[childId];
-        const isVisible = typeof cv==='object' ? cv.view!==false : !!cv;
-        if(!isVisible) return;
-        const parentId=_findParentPageId(childId);
-        if(!parentId) return;
-        const pv = roleOv[parentId];
-        const parentVisible = pv!==undefined ? (typeof pv==='object'?pv.view!==false:!!pv)
-          : new Set(Array.isArray((ROLE_PERMS[role]||{}).tabs)?ROLE_PERMS[role].tabs:[]).has(parentId);
-        if(!parentVisible){
-          roleOv[parentId] = typeof pv==='object' ? Object.assign({},pv,{view:true}) : {view:true};
-          roleChanged = true;
-        }
-      });
-    });
-    if (roleChanged) localStorage.setItem('vcs_role_tab_overrides', JSON.stringify(roleOverrides));
-
-    const users = JSON.parse(localStorage.getItem('vcs_approved_users')||'[]');
-    let usersChanged = false;
-    users.forEach(function(u){
-      if(!u.tabOverrides) return;
-      Object.keys(u.tabOverrides).forEach(function(childId){
-        const cv = u.tabOverrides[childId];
-        const isVisible = typeof cv==='object' ? cv.view!==false : !!cv;
-        if(!isVisible) return;
-        const parentId=_findParentPageId(childId);
-        if(!parentId) return;
-        const pv = u.tabOverrides[parentId];
-        const parentVisible = pv!==undefined ? (typeof pv==='object'?pv.view!==false:!!pv) : true;
-        if(!parentVisible){
-          u.tabOverrides[parentId] = typeof pv==='object' ? Object.assign({},pv,{view:true}) : {view:true};
-          usersChanged = true;
-        }
-      });
-    });
-    if (usersChanged) localStorage.setItem('vcs_approved_users', JSON.stringify(users));
-  } catch(e) {}
-  localStorage.setItem('vcs_parent_child_tab_migration_v1','1');
-})();
-
 // ─── S44: Unified canView/canEdit permission layer ──────────────────────────
 // New capability, additive on top of the existing hiddenFields/tabOverrides/
 // ROLE_PERMISSION_DEFAULTS/TAB_PAGE_DEFAULTS systems above (which stay live —
@@ -8526,6 +8467,75 @@ const ROLE_PERMS = {
   viewer:     {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,viewFees:true,viewContacts:false,viewFinancials:true,canCopy:false,tabs:['today', 'expiring', 'vendordb', 'network', 'economics', 'analytics', 'reports', 'summary', 'history', 'settings'],settingsPersonalOnly:true},
   restricted: {editAll:false,manageUsers:false,deleteHistory:false,configAI:false,configDrive:false,configSF:false,exportData:false,addVendor:false,editNotes:false,editContract:false,editContact:false,save:false,viewFees:false,viewContacts:false,viewFinancials:false,canCopy:false,tabs:['vendordb', 'settings'],settingsPersonalOnly:true},
 };
+
+// S50 v2 QA fix: this consistency check used to sit much earlier in the
+// file, BEFORE the ROLE_PERMS declaration above — referencing ROLE_PERMS
+// there threw a ReferenceError (const is not hoisted) on every single
+// load, silently swallowed by its own try/catch. It has never actually run
+// successfully. Moved here, after ROLE_PERMS actually exists, and before
+// the "apply saved overrides into memory" step below so any correction
+// made here is picked up immediately on this same load.
+//
+// Always-running (not gated behind a one-time flag) because a one-time
+// migration can only ever fix data that existed at the moment it ran —
+// this exact bug kept resurfacing because new inconsistent data got
+// created afterward through other paths (manual testing, bulk actions,
+// etc.). This is cheap (walks the small PAGE_HIERARCHY parent/child list)
+// and idempotent (does nothing once everything's already consistent), so
+// there's no real cost to checking on every load instead of once.
+(function _enforceParentChildTabConsistency(){
+  try {
+    const roleOverrides = JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
+    let roleChanged = false;
+    const allRoles = new Set([...Object.keys(ROLE_PERMS), ...Object.keys(roleOverrides)]);
+    allRoles.forEach(function(role){
+      const roleOv = roleOverrides[role]||{};
+      PAGE_HIERARCHY.forEach(function(page){
+        if(!page.children||!page.children.length) return;
+        page.children.forEach(function(child){
+          // Effective visibility = explicit override if present, else the
+          // role's hardcoded default tabs list — same logic roleTabState()
+          // itself uses, so this check matches what actually renders.
+          const cOv=roleOv[child.id];
+          const childVisible = cOv!==undefined ? (typeof cOv==='object'?cOv.view!==false:!!cOv)
+            : new Set(Array.isArray((ROLE_PERMS[role]||{}).tabs)?ROLE_PERMS[role].tabs:[]).has(child.id);
+          if(!childVisible) return;
+          const pOv=roleOv[page.id];
+          const parentVisible = pOv!==undefined ? (typeof pOv==='object'?pOv.view!==false:!!pOv)
+            : new Set(Array.isArray((ROLE_PERMS[role]||{}).tabs)?ROLE_PERMS[role].tabs:[]).has(page.id);
+          if(!parentVisible){
+            if(!roleOverrides[role]) roleOverrides[role]={};
+            roleOverrides[role][page.id] = typeof pOv==='object' ? Object.assign({},pOv,{view:true}) : {view:true};
+            roleChanged = true;
+          }
+        });
+      });
+    });
+    if (roleChanged) localStorage.setItem('vcs_role_tab_overrides', JSON.stringify(roleOverrides));
+
+    const users = JSON.parse(localStorage.getItem('vcs_approved_users')||'[]');
+    let usersChanged = false;
+    users.forEach(function(u){
+      const uOv = u.tabOverrides||{};
+      PAGE_HIERARCHY.forEach(function(page){
+        if(!page.children||!page.children.length) return;
+        page.children.forEach(function(child){
+          const cOv=uOv[child.id];
+          const childVisible = cOv!==undefined ? (typeof cOv==='object'?cOv.view!==false:!!cOv) : true;
+          if(!childVisible) return;
+          const pOv=uOv[page.id];
+          const parentVisible = pOv!==undefined ? (typeof pOv==='object'?pOv.view!==false:!!pOv) : true;
+          if(!parentVisible){
+            if(!u.tabOverrides) u.tabOverrides={};
+            u.tabOverrides[page.id] = typeof pOv==='object' ? Object.assign({},pOv,{view:true}) : {view:true};
+            usersChanged = true;
+          }
+        });
+      });
+    });
+    if (usersChanged) localStorage.setItem('vcs_approved_users', JSON.stringify(users));
+  } catch(e) { console.error('[VCS parent/child consistency check]', e); }
+})();
 
 // Apply any saved role tab overrides from Settings → Role Tab Defaults
 (function(){
