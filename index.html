@@ -7776,6 +7776,31 @@ function _findParentPageId(childId){
   localStorage.setItem('vcs_role_perms_migration_v1','1');
 })();
 
+// S50: one-time migration clearing tabOverrides on every existing user
+// record. The role-change handler correctly resets tabOverrides={} when an
+// admin changes someone's role (so old-role customizations don't linger and
+// fight the new role's defaults) — but that only protects role changes made
+// AFTER that fix existed. Anyone whose role was set before it would still
+// be carrying stale tabOverrides from whatever role they had previously,
+// permanently showing as "overridden" against their current role's default
+// even though nobody touched Tab Access for them under their current role.
+// Same tradeoff as the earlier _customHiddenFields migration: if any user
+// genuinely has a deliberate per-tab customization an admin wants kept,
+// it'll need to be re-applied once via Tab Access after this runs — there's
+// no flag distinguishing "genuinely customized" from "stale" here either.
+(function _migrateTabOverridesAuthorityV1(){
+  if (localStorage.getItem('vcs_tab_overrides_migration_v1')) return;
+  try {
+    const users = JSON.parse(localStorage.getItem('vcs_approved_users')||'[]');
+    let changed = false;
+    users.forEach(function(u){
+      if (u.tabOverrides && Object.keys(u.tabOverrides).length) { u.tabOverrides = {}; changed = true; }
+    });
+    if (changed) localStorage.setItem('vcs_approved_users', JSON.stringify(users));
+  } catch(e) {}
+  localStorage.setItem('vcs_tab_overrides_migration_v1','1');
+})();
+
 // ─── S44: Unified canView/canEdit permission layer ──────────────────────────
 // New capability, additive on top of the existing hiddenFields/tabOverrides/
 // ROLE_PERMISSION_DEFAULTS/TAB_PAGE_DEFAULTS systems above (which stay live —
