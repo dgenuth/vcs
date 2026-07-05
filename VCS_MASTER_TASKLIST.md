@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Sun Jul 05, 2026 (this session, Claude Code)
-**Checkpoint at this update:** MD5 `8b2051e9fa9e71d293fabc61b6911074`, 30,869 lines
+**Checkpoint at this update:** MD5 `88dda15dd8e071de63421627fb0237e7`, 31,319 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,68 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Deployment takeover (2026-07-05):** the other conversation's manual
+  GitHub-web-editor deploys were unreliable at this file's size and had
+  started creating stray duplicate files (`index (4).html`) instead of
+  overwriting `index.html` — removed the stray file; all further pushes for
+  either lineage now go through this git workflow, no more browser paste
+  deploys. See CLAUDE.md rule 12.
+- **Role creation/rename/delete — verified against the fuller spec David
+  described, not just re-confirmed as "present."** Found and fixed real
+  gaps in what had been deployed:
+  - `createCustomRole` took a manual key field; now auto-generates the key
+    from the display label (slugified, de-duplicated with a numeric suffix
+    on collision) — no key field in the Create modal anymore.
+  - `createCustomRole` was NOT cloning Tab Access or per-field Edit
+    defaults at all (only Field Visibility + feature flags + the two
+    hardcoded-fallback permissions were being cloned) — now clones all
+    four role-level stores via their real accessors (`resolveRoleTabState`,
+    `getDefaultHiddenFields`, `getRoleFieldEditDefault`,
+    `getDefaultFeatureFlags`/`getRoleFeatureDefault`), verified by direct
+    comparison against the source role after cloning `sales_rep`.
+  - `renameCustomRole`/`deleteCustomRole` only ever worked on custom roles.
+    Replaced with `renameRole`/`deleteRole`: rename now works for ANY role
+    (built-in or custom) for a label-only change, tested live; KEY changes
+    remain custom-roles-only — grepped 275+ hardcoded built-in-role-name
+    string literals across the file, confirmed extending key-migration to
+    built-in roles is unsafe without auditing all of them, so it's blocked
+    with a clear message rather than silently risking a mismatch. Custom
+    role key-rename (atomic across all 4 storage locations + reassigning
+    every affected user) tested live and confirmed correct. Delete now
+    works for any role except `admin` (hard-blocked unconditionally) —
+    tested live: blocked while a user was assigned (named them in the
+    error), succeeded immediately after reassignment, role fully removed
+    from `ROLES`/`ROLE_PERMS`/`ROLE_COLORS`/all localStorage keys.
+  - Bulk actions on Tab Access Defaults and Field Visibility Defaults only
+    had 3 of the required 4 buttons (missing "Make All Non-Editable" on
+    both) — added, same shared-function-reuse pattern as the other three.
+  - Per-role row: font-weight was 700 (spec: 600), vertical padding was 6px
+    (spec: 4px), and Rename/Delete sat immediately after the role name
+    instead of after the tabs/fields-count info at the far right — all
+    three fixed and confirmed via live computed-style inspection, not just
+    source reading.
+  - All of the above tested live in a browser preview (bypassed
+    OAuth/Supabase by mutating `USER`/`getApprovedUsers()` state directly
+    and calling `completeLogin()`), not just traced through source.
+- **Settings header consistency** — Connections & API Keys was the only
+  section actually matching its own reference style. `makeCollapsibleSection`,
+  `settingsCard`, and the bespoke headers for Role & Feature Defaults, User
+  Management, Calendar Availability, and Field Registry all had at least
+  one drifted value (row padding almost everywhere; `settingsCard`'s title
+  was also 700-weight `var(--text)` instead of 600-weight `var(--blue)`;
+  Calendar Availability's title was 13px instead of 11px and still had the
+  redundant "click to expand/collapse" text removed from every other
+  section 2 sessions ago). Reconciled all of them to the reference values;
+  confirmed live via computed-style inspection, not just source reading.
+- **Three status indicators added** (none existed before this session,
+  confirmed by direct code search before assuming otherwise):
+  Connections & API Keys now shows "N/6 connected" (color-coded
+  green/amber/red, tracking the same 6 real connections — Salesforce,
+  MS365, Fathom, Renzo, Supabase, Drive — each already has its own
+  `isConnectedFn` for; deliberately excludes Claude AI and Deploy to
+  Production, neither of which is a data connection). Role & Feature
+  Defaults shows the role count. User Management shows user count plus how
+  many have ever logged in (`u.lastLogin` truthy).
 - **Settings UI/UX consistency pass (4 items):**
   - Role & Feature Defaults and User Management section order unified to
     Permissions → Tab Access → Field Visibility (Connections stays last in
@@ -158,26 +220,15 @@ never silently drop something that isn't actually finished.
    whether the Excel-side gap is still worth finishing too.
 2. Verify Discovery Step 3 (Seed Checklist) + downstream flow now that
    Steps 1–2 are fixed.
-3. **New role/profile creation — design approved, implementation not
-   started.** Design: a `CUSTOM_ROLES` store (localStorage + synced via the
-   existing GAS proxy/Drive config path) merged into `ROLE_PERMS`/`ROLES`/
-   `ROLE_COLORS` at load time (before first render), so all ~57 existing
-   read sites need zero changes. Two functions (`getDefaultHiddenFields`,
-   `getDefaultFeatureFlags`) need one added early-return check each, since
-   their per-role data lives in function-local objects that can't be
-   merged into from outside. Two hardcoded role-list arrays (role-
-   assignment dropdowns) get replaced with `Object.keys(ROLES)`. New
-   "Create Role" UI: clone an existing role's full permission/tab/field/
-   feature-flag set into a new custom role. Known dependency: syncing
-   custom roles across devices needs a schema addition to the GAS Apps
-   Script backend (separate project, not in this file) — David has
-   pre-approved that change when it's time to build it. Explicitly out of
-   scope for this design: edit/delete/rename of an existing custom role.
-   **Do not start implementation without confirming with David first** —
-   design approval was not a green light to build.
-4. Settings sub-section-level Tab Access (which Settings sub-sections a
-   role/user can see, separate from main-page Tab Access) — still blocked
-   on #3 landing first.
+3. Settings sub-section-level Tab Access (which Settings sub-sections a
+   role/user can see, separate from main-page Tab Access) — was blocked on
+   role creation landing; role creation is done (see JUST FIXED above), so
+   this is now unblocked whenever it's prioritized.
+4. **Custom roles are still localStorage-only, not synced via the GAS
+   proxy/Drive config path** — same known gap as the Field Visibility
+   Defaults customizations (see CLAUDE.md Known Traps). David has
+   pre-approved the GAS Apps Script schema addition needed for cross-device
+   sync when it's time to build it — not started.
 
 ## NOT STARTED — real features
 - Add Channel Partner Vendor flow (doesn't exist at all currently)

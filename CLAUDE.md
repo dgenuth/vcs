@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
-**Last updated:** Sun Jul 05, 2026 — 5:30 AM EDT
-**Current checkpoint:** MD5 `8b2051e9fa9e71d293fabc61b6911074`, 30,869 lines
+**Last updated:** Sun Jul 05, 2026 — 2:15 PM EDT
+**Current checkpoint:** MD5 `88dda15dd8e071de63421627fb0237e7`, 31,319 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -66,6 +66,14 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
     assuming. Both lineages independently use "S<N>" labels in code comments
     for unrelated content — an "S50" comment does not reliably identify
     which lineage wrote it.
+12. **As of 2026-07-05, all pushes to `dgenuth/vcs` go through this git
+    workflow — the other conversation no longer deploys via GitHub's
+    web-based file editor.** Manual paste-deploys were unreliable at this
+    file's size (~2MB, 31k+ lines) and once created stray duplicate files
+    (`index (4).html`) instead of overwriting `index.html` — the likely
+    cause of a run of "I don't see any changes" reports. If a stray
+    `index (N).html` ever reappears in the repo root, it's dead (the site
+    only ever serves `index.html`) — delete it, don't try to reconcile it.
 
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
@@ -154,6 +162,44 @@ similar symptom reappears; don't rediscover them from scratch)
   `saveUsersViaProxy()`, since that's the only part of this section that
   actually reaches the backend. If role-level Field Visibility Defaults ever
   need to sync across an admin's devices, this is the gap to close.
+- **Settings section header styling drifts independently per section —
+  there is no single shared component every section uses.** Only
+  `makeCollapsibleSection()` and `settingsCard()` are actually shared
+  functions; Connections & API Keys, Role & Feature Defaults, User
+  Management, Calendar Availability, and Field Registry each build their
+  own bespoke header inline. Found 2026-07-05: every one of those had
+  drifted from the Connections & API Keys reference style (11px/600/blue
+  title, 9px arrow, 8px 12px row padding) in at least one dimension — some
+  in padding only, some in the title's font-weight/color too (`settingsCard`
+  was 700/var(--text) instead of 600/var(--blue)). All reconciled to match.
+  **If a "sections look inconsistent" report comes in again, check each
+  section's OWN header-building code — don't assume fixing the shared
+  helpers covers the bespoke ones.**
+- **A newly created custom role must clone the REAL, live-resolved value
+  for every one of the 4 role-level default stores, not just copy a raw
+  storage key.** `createCustomRole()` clones tab access via
+  `resolveRoleTabState()` (shared with the Tab Access Defaults page's own
+  `roleTabState()` — a thin per-role wrapper around it), field visibility
+  via `getDefaultHiddenFields()`, per-field edit defaults via
+  `getRoleFieldEditDefault()`, and feature flags via
+  `getDefaultFeatureFlags()`/`getRoleFeatureDefault()` — all real accessors
+  that already handle the source role's own hardcoded-fallback vs.
+  admin-customized-override distinction correctly. A version found
+  2026-07-05 only cloned field visibility and feature flags, silently
+  dropping tab access and per-field edit defaults for every new role.
+- **Renaming a role's internal KEY (not just its display label) is
+  intentionally restricted to custom roles.** Built-in role keys are
+  referenced by 275+ hardcoded string-literal checks across this file
+  (`grep -oE "'(admin|procurement|...)'"` — confirmed count 2026-07-05,
+  e.g. `['procurement','manager'].includes(role)`-style patterns). Auditing
+  and safely migrating all of them is a much larger undertaking than
+  `renameRole()` can guarantee, so it blocks a key change on any non-custom
+  role with a clear message rather than risking a silent mismatch — label-
+  only rename (`BUILTIN_ROLE_LABEL_OVERRIDES`, a separate localStorage-only
+  store from `CUSTOM_ROLES`) is unconditionally safe for any role, since
+  nothing else keys off the display label. Deleting a built-in role (not
+  renaming its key) is comparatively low-risk — see `deleteRole()`'s own
+  comment — so that IS allowed for any role except `admin`.
 - **"Excel column map audit"** is substantially already built — don't
   redo it. `PSD_FIELD_MAP` (authoritative column-letter → field map, all 77
   columns, dated 2026-06-21) + `checkPsdSchemaDrift()` (compares live Excel

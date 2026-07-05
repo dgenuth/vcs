@@ -8481,6 +8481,14 @@ const ROLE_PERMS = {
 // {label, color, permFlags: {...same shape as a ROLE_PERMS entry}}.
 let CUSTOM_ROLES = {};
 try { CUSTOM_ROLES = JSON.parse(localStorage.getItem('vcs_custom_roles')||'{}'); } catch(e) { CUSTOM_ROLES = {}; }
+// Display-label-only overrides for BUILT-IN roles (e.g. renaming "Sales Rep"
+// to "Account Executive"). Deliberately separate from CUSTOM_ROLES: a
+// built-in role's KEY is referenced by hundreds of hardcoded string-literal
+// checks throughout this file (see renameRole's comment below), so only the
+// label is ever safe to change for them -- there is no equivalent "key"
+// concept to store here.
+let BUILTIN_ROLE_LABEL_OVERRIDES = {};
+try { BUILTIN_ROLE_LABEL_OVERRIDES = JSON.parse(localStorage.getItem('vcs_builtin_role_labels')||'{}'); } catch(e) { BUILTIN_ROLE_LABEL_OVERRIDES = {}; }
 function mergeCustomRoles(){
   Object.entries(CUSTOM_ROLES).forEach(function(entry){
     const key=entry[0], def=entry[1];
@@ -8488,35 +8496,99 @@ function mergeCustomRoles(){
     ROLE_COLORS[key]=def.color||'#94a3b8';
     ROLE_PERMS[key]=Object.assign({}, def.permFlags||{});
   });
+  Object.entries(BUILTIN_ROLE_LABEL_OVERRIDES).forEach(function(entry){
+    const key=entry[0], label=entry[1];
+    if(ROLE_PERMS[key] && !CUSTOM_ROLES[key]) ROLES[key]=label;
+  });
 }
 mergeCustomRoles();
 function saveCustomRoles(){
   localStorage.setItem('vcs_custom_roles', JSON.stringify(CUSTOM_ROLES));
   if(typeof saveConfigToDrive==='function') saveConfigToDrive().catch(function(){});
 }
-// S50: create a new role by cloning an existing one — deep-clones the
-// source's ROLE_PERMS entry, hidden-fields default, and feature-flags
-// default into the new CUSTOM_ROLES entry, then re-runs the merge so it's
-// immediately usable everywhere without a page reload.
-function createCustomRole(newKey, label, color, sourceRole){
-  if(!newKey || !/^[a-z][a-z0-9_]*$/.test(newKey)) return {ok:false, error:'Role key must be lowercase letters, numbers, and underscores only, starting with a letter.'};
-  if(ROLE_PERMS[newKey] || CUSTOM_ROLES[newKey]) return {ok:false, error:'A role with that key already exists.'};
+function saveBuiltinRoleLabels(){
+  localStorage.setItem('vcs_builtin_role_labels', JSON.stringify(BUILTIN_ROLE_LABEL_OVERRIDES));
+  if(typeof saveConfigToDrive==='function') saveConfigToDrive().catch(function(){});
+}
+// Shared, global tab-state resolver for a (role, page/tab id) pair --
+// used by BOTH the Tab Access Defaults page's own roleTabState() (a thin
+// per-role-closure wrapper around this) and createCustomRole()'s clone
+// step below, so a newly created role picks up the SAME live-resolved tab
+// state an existing role's own Tab Access Defaults page would show
+// (including any admin customization already made), not just its static
+// ROLE_PERMS[role].tabs baseline.
+function resolveRoleTabState(role, id, fallbackDefault){
+  const savedOverrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
+  // Same legacy-array guard as the Tab Access Defaults page's own
+  // roleTabState() — some roles had a legacy ARRAY value here instead of
+  // the {tabId:{view,edit}} object every other role uses; `(arrayValue||{})
+  // [id]` silently returns undefined for a named lookup on an array, so
+  // this must explicitly fall back to {} for that shape too.
+  const roleEntry=savedOverrides[role];
+  const roleOv=(roleEntry && typeof roleEntry==='object' && !Array.isArray(roleEntry) ? roleEntry : {})[id];
+  const rolePerms=ROLE_PERMS[role]||{};
+  const builtInDefault=typeof fallbackDefault==='boolean'?fallbackDefault:new Set(Array.isArray(rolePerms.tabs)?rolePerms.tabs:[]).has(id);
+  if(roleOv===undefined) return {view:builtInDefault, edit:false};
+  if(typeof roleOv==='object') return {view:roleOv.view!==false, edit:roleOv.edit===true};
+  return {view:!!roleOv, edit:!!roleOv}; // legacy bare boolean per role
+}
+function slugifyRoleLabel(label){
+  let s=String(label||'').toLowerCase().trim().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+  if(!s) s='role';
+  if(!/^[a-z]/.test(s)) s='r_'+s;
+  return s;
+}
+// S50: create a new role by cloning an existing one — the key is
+// auto-generated from the display label (slugified, de-duplicated with a
+// numeric suffix if needed) rather than manually typed, since there's no
+// meaningful reason for an admin to pick the internal key by hand. Deep-
+// clones ROLE_PERMS, tab access, field visibility, per-field edit defaults,
+// permissions, and feature flags from the source role into the new
+// CUSTOM_ROLES entry, then re-runs the merge so it's immediately usable
+// everywhere without a page reload.
+function createCustomRole(label, color, sourceRole){
   const sourcePerm=ROLE_PERMS[sourceRole];
   if(!sourcePerm) return {ok:false, error:'Source role not found.'};
+  if(!label || !label.trim()) return {ok:false, error:'Display label is required.'};
+  let newKey=slugifyRoleLabel(label);
+  if(ROLE_PERMS[newKey] || CUSTOM_ROLES[newKey]){
+    let n=2;
+    while(ROLE_PERMS[newKey+'_'+n] || CUSTOM_ROLES[newKey+'_'+n]) n++;
+    newKey=newKey+'_'+n;
+  }
   CUSTOM_ROLES[newKey]={
-    label: label||newKey,
+    label: label.trim(),
     color: color||'#94a3b8',
     permFlags: JSON.parse(JSON.stringify(sourcePerm)),
     clonedFrom: sourceRole,
   };
-  // Clone the source role's real hidden-fields and feature-flag defaults
-  // too, using the exact same accessors real users get, not the hardcoded
-  // fallback tables directly — this correctly picks up any admin
-  // customization already made to the source role via Role & Feature
-  // Defaults, not just its original hardcoded starting point.
+  // Clone the source role's real hidden-fields, per-field edit, tab access,
+  // and feature-flag defaults too, using the exact same accessors real
+  // users get, not the hardcoded fallback tables directly — this correctly
+  // picks up any admin customization already made to the source role via
+  // Role & Feature Defaults, not just its original hardcoded starting point.
   try{
     const srcHidden = getDefaultHiddenFields(sourceRole);
     localStorage.setItem('vcs_role_fields_'+newKey, JSON.stringify(srcHidden));
+  }catch(e){}
+  try{
+    const srcEditableFields = ALL_RESTRICTABLE_FIELDS.filter(function(f){return getRoleFieldEditDefault(sourceRole,f.key);}).map(function(f){return f.key;});
+    localStorage.setItem('vcs_role_field_edit_'+newKey, JSON.stringify(srcEditableFields));
+  }catch(e){}
+  try{
+    const savedOverrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
+    if(!savedOverrides[newKey]) savedOverrides[newKey]={};
+    PAGE_HIERARCHY.forEach(function(page){
+      const st=resolveRoleTabState(sourceRole, page.id);
+      savedOverrides[newKey][page.id]={view:st.view, edit:st.edit};
+      if(page.children&&page.children.length){
+        page.children.forEach(function(child){
+          const cst=resolveRoleTabState(sourceRole, child.id, true);
+          savedOverrides[newKey][child.id]={view:cst.view};
+        });
+      }
+    });
+    localStorage.setItem('vcs_role_tab_overrides', JSON.stringify(savedOverrides));
   }catch(e){}
   try{
     const srcFeatFlags = getDefaultFeatureFlags(sourceRole);
@@ -8540,85 +8612,91 @@ function createCustomRole(newKey, label, color, sourceRole){
   }catch(e){}
   mergeCustomRoles();
   saveCustomRoles();
-  return {ok:true};
+  if(typeof saveSettings==='function') saveSettings();
+  return {ok:true, key:newKey};
 }
-// S50 v2: generalized to work for ANY role, not just custom ones — label-only
-// rename is always safe (nothing about a user's stored role key changes, so
-// this cascades to every assigned user automatically with zero extra work).
-// Key rename is the real operation: every place that role's key is used as
-// a storage lookup needs to move together, atomically, or data silently
-// goes missing. Migrates: ROLES/ROLE_COLORS/ROLE_PERMS, CUSTOM_ROLES entry
-// (if applicable), every assigned user's `.role` field, the role-level
-// settings namespace (S.settings.roleDefaults, used by
-// getRolePermissionDefault/getRoleFeatureDefault), and the two flat
-// localStorage keys (vcs_role_fields_<role>, vcs_role_field_edit_<role>)
-// and the vcs_role_tab_overrides entry.
-function renameRole(oldKey, newLabel, newKey){
-  if(!ROLE_PERMS[oldKey]) return {ok:false, error:'Role not found.'};
-  const changingKey = newKey && newKey!==oldKey;
-  if(changingKey){
+// Works for ANY role. Label-only changes (newKey omitted) are always safe —
+// nothing else in the codebase keys off the display label, only the
+// internal key. Changing the KEY itself is restricted to custom roles:
+// built-in role keys are referenced by hundreds of hardcoded string-literal
+// checks scattered through this file (e.g. ['procurement','manager']
+// .includes(role)-style patterns — grep confirms 275+ such literal
+// references across the 12 built-in roles), and safely migrating all of
+// them is a much larger audit than this function can guarantee; blocked
+// explicitly with a clear reason rather than silently risking a mismatch.
+function renameRole(key, newLabel, newKey){
+  if(!ROLE_PERMS[key]) return {ok:false, error:'Role not found.'};
+  const isCustom=!!CUSTOM_ROLES[key];
+  if(newKey && newKey!==key){
+    if(!isCustom) return {ok:false, error:'Built-in role keys can\'t be changed — only custom roles support changing the internal key. The display label can still be renamed.'};
     if(!/^[a-z][a-z0-9_]*$/.test(newKey)) return {ok:false, error:'Role key must be lowercase letters, numbers, and underscores only, starting with a letter.'};
-    if(ROLE_PERMS[newKey]) return {ok:false, error:'A role with that key already exists.'};
-  }
-  const finalKey = changingKey ? newKey : oldKey;
-  if(changingKey){
-    ROLE_PERMS[finalKey]=ROLE_PERMS[oldKey]; delete ROLE_PERMS[oldKey];
-    ROLE_COLORS[finalKey]=ROLE_COLORS[oldKey]; delete ROLE_COLORS[oldKey];
-    if(CUSTOM_ROLES[oldKey]){ CUSTOM_ROLES[finalKey]=CUSTOM_ROLES[oldKey]; delete CUSTOM_ROLES[oldKey]; }
-    // Role-level settings namespace (Permissions Defaults + Feature Defaults)
-    try{
-      if(S.settings.roleDefaults && S.settings.roleDefaults[oldKey]){
-        S.settings.roleDefaults[finalKey]=S.settings.roleDefaults[oldKey];
-        delete S.settings.roleDefaults[oldKey];
-        debouncedSaveSettings();
-      }
-    }catch(e){}
-    // Tab Access Defaults
+    if(ROLE_PERMS[newKey] || CUSTOM_ROLES[newKey]) return {ok:false, error:'A role with that key already exists.'};
+    // Atomic migration across all 4 role-level storage locations, plus
+    // every currently-assigned user's role field.
+    CUSTOM_ROLES[newKey]=Object.assign({}, CUSTOM_ROLES[key], {label: newLabel||CUSTOM_ROLES[key].label});
+    delete CUSTOM_ROLES[key];
+    delete ROLES[key]; delete ROLE_COLORS[key]; delete ROLE_PERMS[key];
+    ['vcs_role_fields_','vcs_role_field_edit_'].forEach(function(prefix){
+      const raw=localStorage.getItem(prefix+key);
+      if(raw!==null){ localStorage.setItem(prefix+newKey, raw); localStorage.removeItem(prefix+key); }
+    });
     try{
       const tabOv=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
-      if(tabOv[oldKey]){ tabOv[finalKey]=tabOv[oldKey]; delete tabOv[oldKey]; localStorage.setItem('vcs_role_tab_overrides', JSON.stringify(tabOv)); }
+      if(tabOv[key]){ tabOv[newKey]=tabOv[key]; delete tabOv[key]; localStorage.setItem('vcs_role_tab_overrides',JSON.stringify(tabOv)); }
     }catch(e){}
-    // Field Visibility Defaults + per-field edit defaults (flat keys, not nested)
-    ['vcs_role_fields_','vcs_role_field_edit_'].forEach(function(prefix){
-      const val=localStorage.getItem(prefix+oldKey);
-      if(val!==null){ localStorage.setItem(prefix+finalKey, val); localStorage.removeItem(prefix+oldKey); }
-    });
-    // Every user currently assigned to the old key
+    try{
+      if(S.settings.roleDefaults && S.settings.roleDefaults[key]){
+        S.settings.roleDefaults[newKey]=S.settings.roleDefaults[key];
+        delete S.settings.roleDefaults[key];
+      }
+    }catch(e){}
     try{
       const allU=getApprovedUsers();
-      let changed=false;
-      allU.forEach(function(u){ if(u.role===oldKey){ u.role=finalKey; touchUser(u.email); changed=true; } });
-      if(changed){ localStorage.setItem(AUTH_KEY, JSON.stringify(allU)); scheduleUserSave(2000); }
+      let anyChanged=false;
+      allU.forEach(function(u){ if(u.role===key){ u.role=newKey; touchUser(u.email); anyChanged=true; } });
+      if(anyChanged){ localStorage.setItem(AUTH_KEY, JSON.stringify(allU)); scheduleUserSave(2000); }
     }catch(e){}
+    mergeCustomRoles();
+    saveCustomRoles();
+    if(typeof saveSettings==='function') saveSettings();
+    return {ok:true, key:newKey};
   }
-  ROLES[finalKey]=newLabel;
-  mergeCustomRoles();
-  saveCustomRoles();
-  return {ok:true, finalKey:finalKey};
+  // Label-only rename.
+  if(isCustom){ CUSTOM_ROLES[key].label=newLabel; mergeCustomRoles(); saveCustomRoles(); }
+  else { BUILTIN_ROLE_LABEL_OVERRIDES[key]=newLabel; mergeCustomRoles(); saveBuiltinRoleLabels(); }
+  return {ok:true, key:key};
 }
-// S50 v2: generalized to allow deleting any role, built-in or custom, with
-// one hard exception — 'admin' can never be deleted, regardless of whether
-// anyone's currently assigned to it. Some logic elsewhere in this codebase
-// checks for that exact key directly rather than going through the
-// flexible role systems built tonight; if that key stopped existing,
-// administrative access could be locked out with no way back in through
-// the app itself. Every other role follows the existing rule: blocked only
-// if a user is currently assigned to it.
+// Works for any role except 'admin', which is hard-blocked unconditionally
+// regardless of assignment count — losing the one role every recovery path
+// assumes exists is a different class of mistake than losing a
+// less-privileged one. Deletion is otherwise intentionally blocked while
+// any user is still assigned to the role — reassigning them automatically
+// to some fallback role would be a silent, surprising permission change for
+// that person. An admin must explicitly move affected users to a different
+// role first, then delete. A deleted BUILT-IN role's key becomes simply
+// unassignable going forward (isValidRole() reads ROLE_PERMS, which this
+// removes) — any hardcoded literal check elsewhere for that key just stops
+// matching, which is safe precisely because nothing can be assigned that
+// key again afterward.
 function deleteRole(key){
-  if(key==='admin') return {ok:false, error:'The admin role can never be deleted — this is a hard safety rule, not a per-role setting.'};
+  if(key==='admin') return {ok:false, error:'The admin role can never be deleted.'};
   if(!ROLE_PERMS[key]) return {ok:false, error:'Role not found.'};
   const usersOnRole=(typeof getApprovedUsers==='function'?getApprovedUsers():[]).filter(function(u){return u.role===key;});
   if(usersOnRole.length) return {ok:false, error:usersOnRole.length+' user(s) are still assigned to this role ('+usersOnRole.map(function(u){return u.email;}).join(', ')+'). Reassign them to a different role first.'};
-  delete CUSTOM_ROLES[key];
+  const isCustom=!!CUSTOM_ROLES[key];
+  if(isCustom) delete CUSTOM_ROLES[key];
+  else delete BUILTIN_ROLE_LABEL_OVERRIDES[key];
   delete ROLES[key]; delete ROLE_COLORS[key]; delete ROLE_PERMS[key];
   localStorage.removeItem('vcs_role_fields_'+key);
   localStorage.removeItem('vcs_role_field_edit_'+key);
   try{
     const tabOv=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
-    if(tabOv[key]){ delete tabOv[key]; localStorage.setItem('vcs_role_tab_overrides', JSON.stringify(tabOv)); }
+    if(tabOv[key]){ delete tabOv[key]; localStorage.setItem('vcs_role_tab_overrides',JSON.stringify(tabOv)); }
   }catch(e){}
-  try{ if(S.settings.roleDefaults && S.settings.roleDefaults[key]){ delete S.settings.roleDefaults[key]; debouncedSaveSettings(); } }catch(e){}
-  saveCustomRoles();
+  try{
+    if(S.settings.roleDefaults && S.settings.roleDefaults[key]){ delete S.settings.roleDefaults[key]; if(typeof saveSettings==='function') saveSettings(); }
+  }catch(e){}
+  if(isCustom) saveCustomRoles(); else saveBuiltinRoleLabels();
   return {ok:true};
 }
 
@@ -24988,7 +25066,7 @@ function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
   // Creates a collapsible settings card
   const card=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
   const isOpen=S._settingsExpandAll===true?true:S._settingsExpandAll===false?false:(S._settingsOpen?.[key] ?? defaultOpen);
-  const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'10px 14px',cursor:'pointer',userSelect:'none',background:isOpen?'var(--card)':'var(--sb)',transition:'background .15s'},
+  const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'8px 12px',cursor:'pointer',userSelect:'none',background:isOpen?'var(--card)':'var(--sb)',transition:'background .15s'},
     onclick(){
       if(!S._settingsOpen) S._settingsOpen={};
       S._settingsOpen[key]=!isOpen;
@@ -24997,9 +25075,9 @@ function settingsCard(c, title, icon, key, defaultOpen, buildFn) {
       render();
       requestAnimationFrame(()=>{const _el=document.getElementById('content');if(_el)_el.scrollTop=_sY;});
     }});
-  hdr.appendChild(el('span',{style:{fontSize:'10px',color:'var(--muted)',fontWeight:'400',marginRight:'2px'}},isOpen?'▼':'▶'));
+  hdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',fontWeight:'400',marginRight:'2px'}},isOpen?'▼':'▶'));
   hdr.appendChild(el('span',{style:{fontSize:'14px'}},icon));
-  hdr.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1',color:'var(--text)'}},title));
+  hdr.appendChild(el('span',{style:{fontWeight:'600',fontSize:'11px',flex:'1',color:'var(--blue)'}},title));
   card.appendChild(hdr);
   if(isOpen){
     const body=el('div',{style:{padding:'14px'}});
@@ -25901,26 +25979,23 @@ function _buildConnectionsSection(){
     }});
     connHdr.appendChild(connArrow);
     connHdr.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'600',color:'var(--blue)'}},'🔌 Connections & API Keys'));
-    // S50 v3: connected-count indicator, per David's request. Each check
-    // mirrors the real signal that integration's own section already uses
-    // for its own status (not a separate, possibly-inconsistent check) —
-    // see CLAUDE.md's Known Traps entry on Drive specifically, which is why
-    // Drive checks the proxy-verified/token signal rather than driveFileId
-    // alone (that alone doesn't mean the connection actually works).
-    (function(){
-      const checks=[
-        !!(S.settings&&S.settings.sfClientId&&(USER.sfToken)),
-        !!(window._vcsDriveProxyVerified||window.GDriveToken),
-        !!(S.settings&&S.settings.supabaseUrl&&S.settings.supabaseKey),
-        !!(typeof getMSToken==='function'&&getMSToken()&&Date.now()<(typeof getMSTokenExp==='function'?getMSTokenExp():0)),
-        !!(S.settings&&S.settings.renzoApiKey),
-        !!(S.settings&&S.settings.apiKey),
-      ];
-      const connectedCount=checks.filter(Boolean).length;
-      const total=checks.length;
-      const cColor=connectedCount===total?'#22c55e':connectedCount===0?'#ef4444':'#f59e0b';
-      connHdr.appendChild(el('span',{style:{fontSize:'9px',color:cColor,marginLeft:'4px',fontWeight:'600'}},connectedCount+'/'+total+' connected'));
-    })();
+    // Counts the same 6 real data connections each have their own
+    // isConnectedFn for below (Salesforce/MS365/Fathom/Renzo/Supabase/Drive)
+    // -- deliberately excludes Claude AI (a feature toggle, not a data
+    // connection) and Deploy to Production (an action, not a connection).
+    // Deliberately mirrors each subsection's OWN isConnectedFn exactly
+    // rather than reconstructing independent checks, so this badge can
+    // never disagree with what the individual rows below it show.
+    const _connectedCount=[
+      !!(USER&&USER.sfToken),
+      !!((typeof getMSToken==='function'?getMSToken():null)&&Date.now()<((typeof getMSTokenExp==='function'?getMSTokenExp():0)||0)),
+      !!((S.settings&&S.settings.fathomApiKey)||localStorage.getItem(getFathomKeyStorageKey())),
+      !!(S.settings&&S.settings.renzoConnectorUrl),
+      !!(S.settings&&S.settings.supabaseUrl),
+      !!(S.settings&&S.settings.driveFileId)
+    ].filter(Boolean).length;
+    const _connCountColor=_connectedCount===6?'var(--green)':_connectedCount===0?'var(--red)':'var(--amber)';
+    connHdr.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:_connCountColor,marginLeft:'6px',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)',border:'1px solid '+_connCountColor}},_connectedCount+'/6 connected'));
     connWrap.appendChild(connHdr);
     const connBody=el('div',{style:{display:_connOpen?'flex':'none',padding:'12px',flexDirection:'column',gap:'8px'}});
     connBody.appendChild(connectAllBtn);
@@ -26820,15 +26895,6 @@ window._buildConnectionsSection = _buildConnectionsSection;
     const _rdChev=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_rdCollapsed?'▶':'▼');
     _rdHdr.appendChild(_rdChev);
     _rdHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'11px',fontWeight:'600',color:'var(--blue)'}},'🎭 Role & Feature Defaults'));
-    // S50 v3: role-count indicator, per David's request — how many roles
-    // currently exist, at a glance, without expanding the section.
-    (function(){
-      const _rc=new Set(getApprovedUsers().map(function(u){return u.role||'admin';}));
-      if(typeof EMPLOYEE_DIRECTORY!=='undefined') EMPLOYEE_DIRECTORY.forEach(function(e){_rc.add(e.role||'admin');});
-      ['admin','procurement','manager','cro'].forEach(function(r){_rc.add(r);});
-      Object.keys(CUSTOM_ROLES).forEach(function(r){_rc.add(r);});
-      _rdHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'4px'}},_rc.size+' role'+(_rc.size!==1?'s':'')));
-    })();
     // Expand/Collapse all role rows
     const rdBtnRow=el('div',{style:{display:'flex',gap:'4px',marginLeft:'auto'},onclick(e){e.stopPropagation();}});
     rdBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){
@@ -26874,19 +26940,9 @@ window._buildConnectionsSection = _buildConnectionsSection;
       btnRow.appendChild(el('button',{class:'btn-xs btn-green',onclick(){
         const lbl=labelIn.value.trim();
         if(!lbl){ toast('⚠ Enter a display label','#ef4444'); return; }
-        // S50 QA fix: was a manual text field the user had to fill in
-        // correctly (lowercase, no spaces) — the key is a backend/storage
-        // detail (Supabase, permissions lookups) that shouldn't be
-        // something a person has to think about. Auto-generated from the
-        // label instead: slugify, then append a number if that key is
-        // already taken by another role.
-        let baseKey=lbl.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
-        if(!baseKey || !/^[a-z]/.test(baseKey)) baseKey='role_'+baseKey;
-        let genKey=baseKey, n=2;
-        while(ROLE_PERMS[genKey] || CUSTOM_ROLES[genKey]){ genKey=baseKey+'_'+n; n++; }
-        const result=createCustomRole(genKey, lbl, colorIn.value, srcSel.value);
+        const result=createCustomRole(lbl, colorIn.value, srcSel.value);
         if(!result.ok){ toast('⚠ '+result.error,'#ef4444'); return; }
-        toast('✓ Role "'+lbl+'" created — cloned from '+(ROLES[srcSel.value]||srcSel.value),'#22c55e');
+        toast('✓ Role "'+lbl+'" created (key: '+result.key+') — cloned from '+(ROLES[srcSel.value]||srcSel.value),'#22c55e');
         document.body.removeChild(overlay);
         const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
       }},'Create'));
@@ -26913,6 +26969,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
     ['admin','procurement','manager','cro'].forEach(r=>_allUserRoles.add(r));
     Object.keys(CUSTOM_ROLES).forEach(r=>_allUserRoles.add(r));
     const ROLE_LIST=[..._allUserRoles].filter(r=>typeof r==='string'&&ROLE_PERMS[r]).sort();
+    _rdHdr.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--muted)',marginLeft:'6px',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)'}},ROLE_LIST.length+' role'+(ROLE_LIST.length===1?'':'s')));
     // Diagnostic: surface any user(s) with a corrupted/unrecognized role
     // value, which previously crashed this entire page's render silently.
     (function(){
@@ -26938,59 +26995,6 @@ window._buildConnectionsSection = _buildConnectionsSection;
       const _roleChev=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_rColl?'▶':'▼');
       roleSectionHdr.appendChild(_roleChev);
       roleSectionHdr.appendChild(el('span',{style:{textTransform:'capitalize',color:'var(--blue)'}},role));
-      // S50 v2: Edit/Delete now shown for ALL roles, built-in or custom, per
-      // David's explicit request — the earlier custom-roles-only
-      // restriction was the safer default while this was new, but a full
-      // Edit Role modal (label, key, color) with real migration underneath
-      // now makes this safe to open up universally. Delete keeps its one
-      // hard exception (admin can never be deleted) plus the existing
-      // block-if-users-assigned rule for everything else.
-      // S50 v3: built as standalone elements now instead of appending
-      // immediately, so they can be placed at the far right of the row
-      // (after the tabs/fields info) instead of right after the role name
-      // — role names vary in length, which made the buttons land in a
-      // different horizontal position for every role. Icon-only now too.
-      const _editRoleBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'10px',padding:'2px 6px'},title:'Edit role',onclick(e){
-        e.stopPropagation();
-        const overlay=el('div',{style:{position:'fixed',top:'0',left:'0',right:'0',bottom:'0',background:'rgba(0,0,0,.5)',zIndex:'9999',display:'flex',alignItems:'center',justifyContent:'center'},onclick(ev){if(ev.target===overlay)document.body.removeChild(overlay);}});
-        const modal=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'8px',padding:'20px',width:'360px'}});
-        modal.appendChild(el('h3',{style:{margin:'0 0 12px'}},'✎ Edit Role'));
-        modal.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'Display label:'));
-        const labelIn2=el('input',{class:'modal-input',style:{width:'100%',marginBottom:'8px'},value:ROLES[role]||role});
-        modal.appendChild(labelIn2);
-        modal.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'Internal key (advanced — changing this reassigns every user currently on this role automatically):'));
-        const keyIn2=el('input',{class:'modal-input',style:{width:'100%',marginBottom:'8px'},value:role});
-        modal.appendChild(keyIn2);
-        modal.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'Color:'));
-        const colorIn2=el('input',{type:'color',style:{width:'100%',marginBottom:'12px',height:'28px'},value:ROLE_COLORS[role]||'#94a3b8'});
-        modal.appendChild(colorIn2);
-        const btnRow2=el('div',{style:{display:'flex',gap:'8px',justifyContent:'flex-end'}});
-        btnRow2.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){document.body.removeChild(overlay);}},'Cancel'));
-        btnRow2.appendChild(el('button',{class:'btn-xs btn-green',onclick(){
-          const newLabel2=labelIn2.value.trim();
-          const newKey2=keyIn2.value.trim().toLowerCase();
-          if(!newLabel2){ toast('⚠ Enter a display label','#ef4444'); return; }
-          if(newKey2!==role && !confirm('Changing the key will reassign every user currently on "'+(ROLES[role]||role)+'" to the new key. Continue?')) return;
-          const result=renameRole(role, newLabel2, newKey2!==role?newKey2:undefined);
-          ROLE_COLORS[result.ok?result.finalKey:role]=colorIn2.value;
-          if(!result.ok){ toast('⚠ '+result.error,'#ef4444'); return; }
-          saveCustomRoles();
-          toast('✓ Role updated','#22c55e');
-          document.body.removeChild(overlay);
-          const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
-        }},'Save'));
-        modal.appendChild(btnRow2);
-        overlay.appendChild(modal);
-        document.body.appendChild(overlay);
-      }},'✎');
-      const _deleteRoleBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'10px',padding:'2px 6px',color:'var(--red)'},title:'Delete role',onclick(e){
-        e.stopPropagation();
-        if(!confirm('Delete the role "'+(ROLES[role]||role)+'"? This cannot be undone. Blocked if any user is still assigned to it (and admin can never be deleted).')) return;
-        const result=deleteRole(role);
-        if(!result.ok){ toast('⚠ '+result.error,'#ef4444'); return; }
-        toast('✓ Role deleted','#22c55e');
-        const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
-      }},'✕');
       // Show tab count enabled + hidden field count
       const _savedRT=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
       const _rtabs=_savedRT[role]||(ROLE_PERMS[role]||{}).tabs||[];
@@ -26999,8 +27003,61 @@ window._buildConnectionsSection = _buildConnectionsSection;
       _roleInfoWrap.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_rtabs.length+' tabs on'));
       if(_rhidden.length>0)_roleInfoWrap.appendChild(el('span',{style:{fontSize:'9px',color:'var(--amber)',background:'rgba(245,158,11,.08)',borderRadius:'9px',padding:'0 5px',border:'1px solid rgba(245,158,11,.2)'}},_rhidden.length+' fields hidden'));
       roleSectionHdr.appendChild(_roleInfoWrap);
-      roleSectionHdr.appendChild(_editRoleBtn);
-      roleSectionHdr.appendChild(_deleteRoleBtn);
+      // Rename works for ANY role. Delete works for any role except admin
+      // (hard-blocked, hidden entirely rather than shown-then-always-
+      // rejected). Both positioned after the tabs/fields info, at the far
+      // right of the row -- built as standalone elements so role-name
+      // length doesn't shift where they land horizontally. Icon-only,
+      // matching the spec exactly.
+      roleSectionHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'10px',padding:'2px 6px'},title:'Edit role',onclick(e){
+        e.stopPropagation();
+        const isCustom=!!CUSTOM_ROLES[role];
+        const overlay=el('div',{style:{position:'fixed',top:'0',left:'0',right:'0',bottom:'0',background:'rgba(0,0,0,.5)',zIndex:'9999',display:'flex',alignItems:'center',justifyContent:'center'},onclick(ev){if(ev.target===overlay)document.body.removeChild(overlay);}});
+        const modal=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'8px',padding:'20px',width:'360px'}});
+        modal.appendChild(el('h3',{style:{margin:'0 0 12px'}},'✎ Edit Role'));
+        modal.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'Display label:'));
+        const labelIn=el('input',{class:'modal-input',style:{width:'100%',marginBottom:'8px'},value:ROLES[role]||role});
+        modal.appendChild(labelIn);
+        let keyIn=null, colorIn=null;
+        if(isCustom){
+          modal.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'Internal key (optional — changes every assigned user and all role-level settings at once):'));
+          keyIn=el('input',{class:'modal-input',style:{width:'100%',marginBottom:'8px'},value:role});
+          modal.appendChild(keyIn);
+          modal.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)'}},'Color:'));
+          colorIn=el('input',{type:'color',style:{width:'100%',marginBottom:'12px',height:'28px'},value:ROLE_COLORS[role]||'#94a3b8'});
+          modal.appendChild(colorIn);
+        } else {
+          modal.appendChild(el('div',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'8px'}},'Built-in roles can only have their display label changed — the internal key "'+role+'" stays the same. Color isn\'t editable for built-in roles.'));
+        }
+        const btnRow=el('div',{style:{display:'flex',gap:'8px',justifyContent:'flex-end'}});
+        btnRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){document.body.removeChild(overlay);}},'Cancel'));
+        btnRow.appendChild(el('button',{class:'btn-xs btn-green',onclick(){
+          const newKeyVal=keyIn?keyIn.value.trim().toLowerCase():undefined;
+          const result=renameRole(role, labelIn.value.trim(), (newKeyVal&&newKeyVal!==role)?newKeyVal:undefined);
+          if(!result.ok){ toast('⚠ '+result.error,'#ef4444'); return; }
+          // Color lives in CUSTOM_ROLES itself (persisted by renameRole's
+          // own saveCustomRoles() call above) -- only custom roles offer
+          // this field, and only after a successful rename, using the
+          // final (possibly just-migrated) key.
+          if(colorIn && CUSTOM_ROLES[result.key]){ CUSTOM_ROLES[result.key].color=colorIn.value; ROLE_COLORS[result.key]=colorIn.value; saveCustomRoles(); }
+          toast('✓ Role updated','#22c55e');
+          document.body.removeChild(overlay);
+          const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+        }},'Save'));
+        modal.appendChild(btnRow);
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+      }},'✎'));
+      if(role!=='admin'){
+        roleSectionHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'10px',padding:'2px 6px',color:'var(--red)'},title:'Delete role',onclick(e){
+          e.stopPropagation();
+          if(!confirm('Delete the role "'+(ROLES[role]||role)+'"? This cannot be undone. Blocked if any user is still assigned to it.')) return;
+          const result=deleteRole(role);
+          if(!result.ok){ toast('⚠ '+result.error,'#ef4444'); return; }
+          toast('✓ Role deleted','#22c55e');
+          const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
+        }},'✕'));
+      }
       roleSection.appendChild(roleSectionHdr);
       const _roleBody=el('div',{style:{display:_rColl?'none':'',padding:'8px 10px'}});
 
@@ -27232,20 +27289,11 @@ window._buildConnectionsSection = _buildConnectionsSection;
       // per-user override.
       _roleBody.appendChild(_roleSub('📑 Tab Access Defaults (all '+role+' users)', false, function(b){
       function roleTabState(id, fallbackDefault){
-        const savedOverrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
-        // S50 QA fix: some roles (confirmed: sales_rep, procurement) had a
-        // legacy ARRAY value here (e.g. ["vendordb","settings"]) instead of
-        // the {tabId:{view,edit}} object every other role uses — leftover
-        // from an older format. `(arrayValue||{})[id]` silently returns
-        // undefined for any named lookup on an array, so this always fell
-        // through to the built-in default, completely ignoring any real
-        // saved state for these two roles.
-        const roleEntry = savedOverrides[role];
-        const roleOv=(roleEntry && typeof roleEntry==='object' && !Array.isArray(roleEntry) ? roleEntry : {})[id];
-        const builtInDefault=typeof fallbackDefault==='boolean'?fallbackDefault:new Set(Array.isArray(rolePerms.tabs)?rolePerms.tabs:[]).has(id);
-        if(roleOv===undefined) return {view:builtInDefault, edit:false};
-        if(typeof roleOv==='object') return {view:roleOv.view!==false, edit:roleOv.edit===true};
-        return {view:!!roleOv, edit:!!roleOv}; // legacy bare boolean per role
+        // Thin wrapper passing this closure's own `role` to the shared
+        // global resolver (also used by createCustomRole()'s clone step) —
+        // kept as one function so the legacy-array-value fix below only
+        // ever has to be made in one place.
+        return resolveRoleTabState(role, id, fallbackDefault);
       }
       function persistRoleTabState(id, view, edit, showEdit){
         const savedOverrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
@@ -27368,7 +27416,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
         toast('✓ All editable tabs made '+(editable?'editable':'non-editable')+' for all '+role+' users','#22c55e');
         const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
       }
-      const tabBulkRow=el('div',{style:{display:'flex',gap:'6px',marginBottom:'6px'}});
+      const tabBulkRow=el('div',{style:{display:'flex',gap:'6px',marginBottom:'6px',flexWrap:'wrap'}});
       tabBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllTabVisibility(false);}},'Restrict All'));
       tabBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllTabVisibility(true);}},'Make All Visible'));
       tabBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllTabEditable(true);}},'Make All Editable'));
@@ -27476,7 +27524,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
         toast('✓ All fields edit default '+(editable?'ON':'OFF')+' for all '+role+' users','#22c55e');
         const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
       }
-      const fvBulkRow=el('div',{style:{display:'flex',gap:'6px',marginBottom:'6px'}});
+      const fvBulkRow=el('div',{style:{display:'flex',gap:'6px',marginBottom:'6px',flexWrap:'wrap'}});
       fvBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllFieldVisibility(false);}},'Restrict All'));
       fvBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllFieldVisibility(true);}},'Make All Visible'));
       fvBulkRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick:function(){bulkSetAllFieldEditable(true);}},'Make All Editable'));
@@ -27563,13 +27611,6 @@ function buildUserSubSection(label,bodyBuilderFn){
     const _umChev=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_umCollapsed?'▶':'▼');
     _umHdr.appendChild(_umChev);
     _umHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'11px',fontWeight:'600',color:'var(--blue)'}},'👥 User Management'));
-    // S50 v3: user-count indicator, per David's request — total users and
-    // how many have actually logged in at least once, at a glance.
-    (function(){
-      const _allU=getApprovedUsers();
-      const _loggedIn=_allU.filter(function(u){return u.lastLogin;}).length;
-      _umHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'4px'}},_allU.length+' user'+(_allU.length!==1?'s':'')+' · '+_loggedIn+' logged in'));
-    })();
     // S50 QA fix: removed "(click to expand/collapse)" — same redundant-text
     // cleanup as makeCollapsibleSection, for consistency with Connections &
     // API Keys and Role & Feature Defaults, neither of which repeats this.
@@ -27581,6 +27622,8 @@ function buildUserSubSection(label,bodyBuilderFn){
 
     // User table
     const users=getApprovedUsers();
+    const _loggedInCount=users.filter(u=>!!u.lastLogin).length;
+    _umHdr.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--muted)',marginLeft:'6px',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)'}},users.length+' user'+(users.length===1?'':'s')+' · '+_loggedInCount+' logged in'));
 
     // S1: Bulk action bar — select all + action dropdown
     const bulkBar=el('div',{style:{display:'flex',gap:'8px',alignItems:'center',marginBottom:'8px',padding:'6px 8px',background:'var(--card)',borderRadius:'4px',border:'1px solid var(--border)',flexWrap:'wrap'}});
@@ -28365,7 +28408,7 @@ function buildUserSubSection(label,bodyBuilderFn){
     }
   };
   renderDayLists();
-  if(['admin','procurement','manager'].includes(USER.role))if(['admin','procurement','manager'].includes(USER.role)){const _cc=localStorage.getItem('vcs_s_cal')==='0';const _cch=el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'6px'}},_cc?'▼':'▶');const _coh=el('div',{style:{display:'flex',alignItems:'center',cursor:'pointer',userSelect:'none',padding:'4px 0'}});_coh.onclick=function(){const n=secCal.style.display==='none';secCal.style.display=n?'':'none';_cch.textContent=n?'▼':'▶';localStorage.setItem('vcs_s_cal',n?'0':'1');};_coh.appendChild(_cch);_coh.appendChild(el('h3',{style:{margin:'0',display:'inline',fontSize:'13px'}},'📅 Calendar Availability'));_coh.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',marginLeft:'6px'}},_cc?'click to collapse':'click to expand'));const _cow=el('div',{class:'settings-section'});_cow.appendChild(_coh);secCal.style.display=_cc?'':'none';_cow.appendChild(secCal);c.appendChild(_cow);}
+  if(['admin','procurement','manager'].includes(USER.role)){const _cc=localStorage.getItem('vcs_s_cal')==='0';const _cch=el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'6px'}},_cc?'▼':'▶');const _coh=el('div',{style:{display:'flex',alignItems:'center',cursor:'pointer',userSelect:'none',padding:'8px 12px'}});_coh.onclick=function(){const n=secCal.style.display==='none';secCal.style.display=n?'':'none';_cch.textContent=n?'▼':'▶';localStorage.setItem('vcs_s_cal',n?'0':'1');};_coh.appendChild(_cch);_coh.appendChild(el('h3',{style:{margin:'0',display:'inline'}},'📅 Calendar Availability'));const _cow=el('div',{class:'settings-section'});_cow.appendChild(_coh);secCal.style.display=_cc?'':'none';_cow.appendChild(secCal);c.appendChild(_cow);}
 
   // Default View on load
   const secDefaults=el('div',{class:'settings-section'});
@@ -28663,11 +28706,11 @@ function buildUserSubSection(label,bodyBuilderFn){
   // ── Field Registry ──────────────────────────────────────────────────────────
   if(USER.role==='admin'){
     const frSec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
-    const frHdrRow=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'10px 14px',cursor:'pointer',background:'rgba(79,124,255,.06)'},onclick(){frBody.style.display=frBody.style.display==='none'?'':'none';frChev.textContent=frBody.style.display===''?'▼':'▶';}});
-    const frChev=el('span',{style:{fontSize:'10px',color:'var(--muted)',marginRight:'2px'}},'▼');
+    const frHdrRow=el('div',{style:{display:'flex',alignItems:'center',gap:'8px',padding:'8px 12px',cursor:'pointer',background:'rgba(79,124,255,.06)'},onclick(){frBody.style.display=frBody.style.display==='none'?'':'none';frChev.textContent=frBody.style.display===''?'▼':'▶';}});
+    const frChev=el('span',{style:{fontSize:'9px',color:'var(--muted)',marginRight:'2px'}},'▼');
     frHdrRow.appendChild(frChev);
     frHdrRow.appendChild(el('span',{style:{fontSize:'14px'}},'🗂'));
-    frHdrRow.appendChild(el('span',{style:{fontWeight:'700',fontSize:'11px',flex:'1',color:'var(--blue)'}},'Field Registry'));
+    frHdrRow.appendChild(el('span',{style:{fontWeight:'600',fontSize:'11px',flex:'1',color:'var(--blue)'}},'Field Registry'));
     frHdrRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Custom vendor fields'));
     frSec.appendChild(frHdrRow);
     const frBody=el('div',{style:{padding:'10px',display:'flex',flexDirection:'column',gap:'8px'}});
