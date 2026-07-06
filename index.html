@@ -7548,7 +7548,17 @@ const PERSONAL_SETTING_KEYS = ['theme','fontSize','compactRows','defaultView','s
   // fought with the global-settings sync on every load -- whichever ran last won,
   // explaining why it worked inconsistently and got wiped specifically on hard refresh.
 // Global settings — org-wide, admin-controlled, apply to all sessions
-const GLOBAL_SETTING_KEYS = ['sfClientId','sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey','apiKey','grokKey','openaiKey','aiKeyShared','composioKey','roleDefaults','supabaseUrl','supabaseKey'];
+// S51 fix: roleTabOverrides/roleFieldVisibility/roleFieldEditDefaults/
+// customRoles/builtinRoleLabels/builtinRoleColors added — these mirror
+// localStorage-only role-config keys (see _mirrorRoleConfigToSettings())
+// so they ride this exact same already-working sync path roleDefaults
+// uses. Confirmed as the reason production showed a test user with full
+// access despite restrictions being set and verified working on sandbox —
+// sandbox and production are different origins, and browser localStorage
+// never crosses origins, so any role-permission data that only ever lived
+// in raw localStorage (not in this array) never left the origin it was
+// set on.
+const GLOBAL_SETTING_KEYS = ['sfClientId','sfRedirectUri','sfLoginUrl','driveFileId','driveFileName','driveAutoSync','googleClientId','msGraphClientId','msGraphTenantId','renzoConnectorUrl','renzoApiKey','apiKey','grokKey','openaiKey','aiKeyShared','composioKey','roleDefaults','supabaseUrl','supabaseKey','roleTabOverrides','roleFieldVisibility','roleFieldEditDefaults','customRoles','builtinRoleLabels','builtinRoleColors'];
 window.GLOBAL_SETTING_KEYS = GLOBAL_SETTING_KEYS;
 const PERSIST_KEYS = [...PERSONAL_SETTING_KEYS, ...GLOBAL_SETTING_KEYS];
 const ROLE_PERMISSION_DEFAULTS={
@@ -8041,6 +8051,10 @@ function loadSettings() {
 let _settingsSaveTimer = null;
 let _driveConfigSaveTimer = null;
 function debouncedSaveSettings() {
+  // S51 fix: carry the current role-config state along on every settings
+  // save — see _mirrorRoleConfigToSettings()'s own comment for the full
+  // cross-origin sync mechanism this is part of.
+  _mirrorRoleConfigToSettings();
   clearTimeout(_settingsSaveTimer);
   clearTimeout(_driveConfigSaveTimer);
   _settingsSaveTimer = setTimeout(saveSettings, 500);
@@ -8368,6 +8382,10 @@ async function loadGlobalSettingsViaProxy() {
       console.log('[VCS APIKEY DEBUG] 3b. After loadGlobalSettingsViaProxy, S.settings.apiKey is now:',S.settings.apiKey?S.settings.apiKey.slice(0,15)+'...':'(empty)');
       console.log('[VCS SFRENZO DEBUG] After sync loop -- S.settings.sfClientId:',JSON.stringify(S.settings.sfClientId||'(empty)'),'| S.settings.renzoConnectorUrl:',JSON.stringify(S.settings.renzoConnectorUrl||'(empty)'));
       if(!S.settings.fathomApiKey && gs.fathomApiKey){S.settings.fathomApiKey=gs.fathomApiKey;localStorage.setItem(getFathomKeyStorageKey(),gs.fathomApiKey);}
+      // S51 fix: cross-origin role-config hydration — see
+      // _hydrateRoleConfigFromSettings()'s own comment for the full
+      // mechanism and why it reads gs directly rather than S.settings[k].
+      if(typeof _hydrateRoleConfigFromSettings==='function') _hydrateRoleConfigFromSettings(gs);
     }
     // Merge approved users list (carries feature flags, roles, hiddenFields)
     if (cfg.users && Array.isArray(cfg.users)) {
@@ -8610,14 +8628,24 @@ function mergeCustomRoles(){
 mergeCustomRoles();
 function saveCustomRoles(){
   localStorage.setItem('vcs_custom_roles', JSON.stringify(CUSTOM_ROLES));
+  // S51 fix: these 3 functions call saveConfigToDrive() directly, bypassing
+  // debouncedSaveSettings() entirely — the mirror there would never have
+  // run before this specific save, leaving S.settings.customRoles stale or
+  // unset at the exact moment _saveUsersViaProxyImpl() builds its outgoing
+  // payload from S.settings. Calling it here too is cheap/idempotent and
+  // guarantees this save path carries fresh role config regardless of
+  // whether some OTHER action also happened to call debouncedSaveSettings().
+  if(typeof _mirrorRoleConfigToSettings==='function') _mirrorRoleConfigToSettings();
   if(typeof saveConfigToDrive==='function') saveConfigToDrive().catch(function(){});
 }
 function saveBuiltinRoleLabels(){
   localStorage.setItem('vcs_builtin_role_labels', JSON.stringify(BUILTIN_ROLE_LABEL_OVERRIDES));
+  if(typeof _mirrorRoleConfigToSettings==='function') _mirrorRoleConfigToSettings();
   if(typeof saveConfigToDrive==='function') saveConfigToDrive().catch(function(){});
 }
 function saveBuiltinRoleColors(){
   localStorage.setItem('vcs_builtin_role_colors', JSON.stringify(BUILTIN_ROLE_COLOR_OVERRIDES));
+  if(typeof _mirrorRoleConfigToSettings==='function') _mirrorRoleConfigToSettings();
   if(typeof saveConfigToDrive==='function') saveConfigToDrive().catch(function(){});
 }
 // Shared, global tab-state resolver for a (role, page/tab id) pair --
@@ -8853,7 +8881,16 @@ function deleteRole(key){
   } catch(e) { console.error('[VCS role-tab-overrides format normalize]', e); }
 })();
 
-(function _enforceParentChildTabConsistency(){
+// S51 fix: this was an IIFE `(function _enforceParentChildTabConsistency(){
+// ... })()` — the name was only ever visible inside its own closure, so
+// nothing else in the file could call it again later. Converted to a real
+// function declaration (still invoked once immediately below, preserving
+// the exact original at-load behavior) specifically so
+// _hydrateRoleConfigFromSettings() can re-run it after hydrating role
+// config from the server — freshly-hydrated vcs_role_tab_overrides data
+// needs this same parent/child consistency pass applied to it, same as
+// the locally-authored version already gets at load.
+function _enforceParentChildTabConsistency(){
   try {
     const roleOverrides = JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
     let roleChanged = false;
@@ -8918,7 +8955,135 @@ function deleteRole(key){
     });
     if (usersChanged) localStorage.setItem('vcs_approved_users', JSON.stringify(users));
   } catch(e) { console.error('[VCS parent/child consistency check]', e); }
-})();
+}
+_enforceParentChildTabConsistency();
+
+// S51 fix: cross-origin role-config sync. Sandbox (dgenuth.github.io) and
+// production (cms.primesourcex.com) are different origins — localStorage
+// never crosses origins — but vcs_role_tab_overrides, vcs_role_fields_<role>,
+// vcs_role_field_edit_<role>, vcs_custom_roles, vcs_builtin_role_labels, and
+// vcs_builtin_role_colors were all pure localStorage, read/written directly,
+// never routed through S.settings/GLOBAL_SETTING_KEYS the way roleDefaults
+// already is. Confirmed as the reason production showed a test user with
+// full access despite restrictions being set and verified working on
+// sandbox — the restriction only ever existed in sandbox's browser storage.
+//
+// _mirrorRoleConfigToSettings() copies the current state of all 6 keys
+// into S.settings under new key names (now in GLOBAL_SETTING_KEYS above),
+// so they ride the exact same already-working save path roleDefaults uses
+// (debouncedSaveSettings -> saveConfigToDrive -> saveUsersViaProxy, which
+// builds its outgoing payload by iterating GLOBAL_SETTING_KEYS against
+// S.settings). Called at the top of debouncedSaveSettings() so ANY settings
+// change (not just one specifically touching role config) carries the
+// CURRENT role-config state along, since role-config toggle handlers
+// already call debouncedSaveSettings() themselves (Tab Access, Field
+// Visibility, Permissions Defaults) or saveConfigToDrive() directly
+// (createCustomRole/renameRole/deleteRole via saveCustomRoles() etc.) —
+// see this function's own comment for why BOTH trigger points needed
+// covering, not just debouncedSaveSettings().
+function _mirrorRoleConfigToSettings(){
+  try{
+    const tabOv = localStorage.getItem('vcs_role_tab_overrides');
+    if(tabOv !== null){ try{ S.settings.roleTabOverrides = JSON.parse(tabOv); }catch(e){} }
+    const fieldVis = {};
+    const fieldEdit = {};
+    Object.keys(ROLE_PERMS).forEach(function(role){
+      const fv = localStorage.getItem('vcs_role_fields_'+role);
+      if(fv !== null){ try{ fieldVis[role] = JSON.parse(fv); }catch(e){} }
+      const fe = localStorage.getItem('vcs_role_field_edit_'+role);
+      if(fe !== null){ try{ fieldEdit[role] = JSON.parse(fe); }catch(e){} }
+    });
+    if(Object.keys(fieldVis).length) S.settings.roleFieldVisibility = fieldVis;
+    if(Object.keys(fieldEdit).length) S.settings.roleFieldEditDefaults = fieldEdit;
+    // CUSTOM_ROLES/BUILTIN_ROLE_LABEL_OVERRIDES/BUILTIN_ROLE_COLOR_OVERRIDES
+    // are the already-parsed in-memory copies (kept current by
+    // saveCustomRoles()/saveBuiltinRoleLabels()/saveBuiltinRoleColors()) --
+    // using them directly avoids a redundant re-parse of the same
+    // localStorage keys read above.
+    S.settings.customRoles = CUSTOM_ROLES;
+    S.settings.builtinRoleLabels = BUILTIN_ROLE_LABEL_OVERRIDES;
+    S.settings.builtinRoleColors = BUILTIN_ROLE_COLOR_OVERRIDES;
+  }catch(e){ console.warn('[VCS] _mirrorRoleConfigToSettings failed:', e.message); }
+}
+// _hydrateRoleConfigFromSettings(gs) — the reverse direction, called from
+// inside loadGlobalSettingsViaProxy() right after the SAFE_GLOBAL_KEYS loop.
+// Deliberately reads the RAW server response (gs = cfg.globalSettings)
+// directly, NOT S.settings[k] after the SAFE_GLOBAL_KEYS loop has run —
+// that loop's "only fill if S.settings[k] is currently empty" guard is
+// correct for simple string values, but would silently mask this data for
+// an origin that has ALREADY mirrored its OWN local role config into
+// S.settings (e.g. production creates its own custom role independently,
+// then this loop would never see sandbox's different custom role in gs,
+// since S.settings.customRoles would already be non-empty). Reading gs
+// directly sidesteps that and lets every key below be gap-filled correctly
+// regardless of what this origin has already mirrored locally.
+// Per-role-key granularity throughout (never whole-object "only if
+// completely empty") — an origin that already has SOME role-tab-override
+// or custom-role data of its own must still pick up ANY OTHER role's data
+// the server has that it doesn't, not just when its local copy is
+// entirely blank.
+function _hydrateRoleConfigFromSettings(gs){
+  if(!gs) return;
+  try{
+    let changed = false;
+    if(gs.roleTabOverrides && typeof gs.roleTabOverrides==='object'){
+      let local;
+      try{ local = JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}'); }catch(e){ local = {}; }
+      Object.keys(gs.roleTabOverrides).forEach(function(role){
+        if(local[role]===undefined){ local[role]=gs.roleTabOverrides[role]; changed=true; }
+      });
+      if(changed) localStorage.setItem('vcs_role_tab_overrides', JSON.stringify(local));
+    }
+    if(gs.roleFieldVisibility && typeof gs.roleFieldVisibility==='object'){
+      Object.keys(gs.roleFieldVisibility).forEach(function(role){
+        const k='vcs_role_fields_'+role;
+        if(localStorage.getItem(k)===null){
+          localStorage.setItem(k, JSON.stringify(gs.roleFieldVisibility[role]));
+          changed=true;
+        }
+      });
+    }
+    if(gs.roleFieldEditDefaults && typeof gs.roleFieldEditDefaults==='object'){
+      Object.keys(gs.roleFieldEditDefaults).forEach(function(role){
+        const k='vcs_role_field_edit_'+role;
+        if(localStorage.getItem(k)===null){
+          localStorage.setItem(k, JSON.stringify(gs.roleFieldEditDefaults[role]));
+          changed=true;
+        }
+      });
+    }
+    let rolesChanged = false;
+    if(gs.customRoles && typeof gs.customRoles==='object'){
+      Object.keys(gs.customRoles).forEach(function(key){
+        if(CUSTOM_ROLES[key]===undefined){ CUSTOM_ROLES[key]=gs.customRoles[key]; rolesChanged=true; }
+      });
+    }
+    if(gs.builtinRoleLabels && typeof gs.builtinRoleLabels==='object'){
+      Object.keys(gs.builtinRoleLabels).forEach(function(key){
+        if(BUILTIN_ROLE_LABEL_OVERRIDES[key]===undefined){ BUILTIN_ROLE_LABEL_OVERRIDES[key]=gs.builtinRoleLabels[key]; rolesChanged=true; }
+      });
+    }
+    if(gs.builtinRoleColors && typeof gs.builtinRoleColors==='object'){
+      Object.keys(gs.builtinRoleColors).forEach(function(key){
+        if(BUILTIN_ROLE_COLOR_OVERRIDES[key]===undefined){ BUILTIN_ROLE_COLOR_OVERRIDES[key]=gs.builtinRoleColors[key]; rolesChanged=true; }
+      });
+    }
+    if(rolesChanged){
+      localStorage.setItem('vcs_custom_roles', JSON.stringify(CUSTOM_ROLES));
+      localStorage.setItem('vcs_builtin_role_labels', JSON.stringify(BUILTIN_ROLE_LABEL_OVERRIDES));
+      localStorage.setItem('vcs_builtin_role_colors', JSON.stringify(BUILTIN_ROLE_COLOR_OVERRIDES));
+    }
+    if(changed || rolesChanged){
+      // Both of these read CUSTOM_ROLES/BUILTIN_ROLE_*_OVERRIDES/ROLE_PERMS/
+      // vcs_role_tab_overrides at the moment they're CALLED, not just once
+      // at script-parse time -- re-running them is what makes freshly
+      // hydrated data actually take effect this session instead of only
+      // after the next reload.
+      mergeCustomRoles();
+      _enforceParentChildTabConsistency();
+    }
+  }catch(e){ console.warn('[VCS] _hydrateRoleConfigFromSettings failed:', e.message); }
+}
 
 // Apply any saved role tab overrides from Settings → Role Tab Defaults
 (function(){
@@ -9222,6 +9387,19 @@ async function _saveUsersViaProxyImpl() {
     } catch(mergeErr) {
       console.warn('[VCS] pre-save sync failed, pushing local list as-is:', mergeErr.message);
     }
+    // S51 fix: this is the actual, guaranteed choke point every save path
+    // funnels through before the network push below — debouncedSaveSettings(),
+    // saveCustomRoles()/saveBuiltinRoleLabels()/saveBuiltinRoleColors(), and
+    // persistRoleTabState() (the role-level Tab Access toggle handler) all
+    // call saveConfigToDrive()/saveUsersViaProxy() through different paths,
+    // and confirmed LIVE that at least persistRoleTabState() calls
+    // saveConfigToDrive() directly, bypassing debouncedSaveSettings()
+    // entirely — the mirror added there alone would never have run before
+    // this specific save. Calling it here too (redundant with the other
+    // call sites, which is harmless/idempotent) guarantees S.settings has
+    // current role config regardless of which of the many scattered save
+    // triggers actually fired.
+    if(typeof _mirrorRoleConfigToSettings==='function') _mirrorRoleConfigToSettings();
     const globalSettings = {};
     GLOBAL_SETTING_KEYS.forEach(k => { if(S.settings[k]!==undefined) globalSettings[k]=S.settings[k]; });
     const existing = JSON.parse(localStorage.getItem('vcs_config')||'{}');

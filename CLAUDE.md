@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
-**Last updated:** Mon Jul 06, 2026 — 2:10 AM EDT
-**Current checkpoint:** MD5 `080b8213b3e58caabb0831ec915a8dd7`, 31,808 lines
+**Last updated:** Mon Jul 06, 2026 (this session, continued)
+**Current checkpoint:** MD5 `7bf0d7adf8eb976e3b28898ebca14488`, 31,986 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -78,6 +78,56 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **Any role-config or permission data that lives only in localStorage never
+  crosses origins — sandbox and production are separate origins and share
+  NOTHING except the Supabase DB via the GAS proxy's `getConfig`/`saveConfig`.**
+  This exact gap caused production to show a test user with full access
+  despite restrictions being set and verified working on sandbox:
+  `vcs_role_tab_overrides`, `vcs_role_fields_<role>`, `vcs_role_field_edit_<role>`,
+  `vcs_custom_roles`, `vcs_builtin_role_labels`, `vcs_builtin_role_colors` were
+  pure localStorage with no sync path at all. Fixed (2026-07-06) by adding all
+  6 keys to `GLOBAL_SETTING_KEYS` plus two new functions:
+  `_mirrorRoleConfigToSettings()` (outgoing, localStorage → `S.settings`) and
+  `_hydrateRoleConfigFromSettings(gs)` (incoming, server → localStorage +
+  in-memory globals, gap-fill only — never overwrites an existing local
+  value). **If a new role-level or permission-level localStorage key is ever
+  added, it needs to be added to both of these functions AND to
+  `GLOBAL_SETTING_KEYS` — it will NOT sync automatically just by existing.**
+  Deliberately NOT added to `SAFE_GLOBAL_KEYS` (a different, narrower list
+  used by a "fill `S.settings[k]` from server only if currently falsy" loop
+  elsewhere) — `_hydrateRoleConfigFromSettings()` reads the raw server
+  `globalSettings` payload directly instead, specifically to avoid a masking
+  bug: an origin that has already mirrored its OWN local role config into
+  `S.settings` would otherwise permanently block ever seeing a DIFFERENT
+  origin's data for that same key.
+  **The harder part of this bug: several real write paths bypass the save
+  pipeline entirely.** `debouncedSaveSettings()` was the obvious place to call
+  `_mirrorRoleConfigToSettings()`, and it does — but live testing (a real UI
+  toggle on Tab Access Defaults) showed `S.settings` never actually updated.
+  Root cause: `persistRoleTabState()` (the real toggle handler) and all 3
+  custom-role setters (`saveCustomRoles()`, `saveBuiltinRoleLabels()`,
+  `saveBuiltinRoleColors()`) all call `saveConfigToDrive()` **directly**,
+  never going through `debouncedSaveSettings()` at all. Rather than chase
+  every individual bypass, the mirror call was placed at the one true choke
+  point every save path funnels through before the network push:
+  `_saveUsersViaProxyImpl()`, immediately before it builds the outgoing
+  `globalSettings` object. **If a "this setting doesn't sync" bug shows up
+  again for anything role/permission-related, check whether its write path
+  actually reaches `_saveUsersViaProxyImpl()` before assuming the mirror
+  function itself is broken** — `debouncedSaveSettings()` alone is not a
+  reliable place to hook outgoing sync in this codebase; several write paths
+  skip it.
+  Also relevant: `_enforceParentChildTabConsistency` was a dead, unreachable
+  IIFE (`(function _enforceParentChildTabConsistency(){...})();` — no way to
+  call it again after initial load) and had to be converted to a real named
+  function declaration so hydration could re-run it after pulling in new
+  server data. If something with a similar "runs once at parse time, never
+  again" shape needs to become re-invokable, check for this IIFE pattern.
+  Fully verified live against the real shared backend (not just traced
+  through source) — see VCS_MASTER_TASKLIST.md's JUST FIXED entry for the
+  complete test sequence (outgoing sync, incoming hydration on a simulated
+  fresh origin, never-overwrite-local safety property, migration-scope
+  re-confirmation).
 - **`loadSettings()` vs `loadConfigFromDrive()` — same guard pattern, opposite
   correctness.** `loadConfigFromDrive()` correctly uses `!S.settings[k]` to
   avoid a stale remote value stomping a fresher local one. `loadSettings()`

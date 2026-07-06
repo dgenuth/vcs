@@ -1,6 +1,6 @@
 # VCS — Master Task List
-**Last updated:** Mon Jul 06, 2026, 2:10 AM EDT (this session, Claude Code)
-**Checkpoint at this update:** MD5 `080b8213b3e58caabb0831ec915a8dd7`, 31,808 lines
+**Last updated:** Mon Jul 06, 2026 (this session, continued — Claude Code)
+**Checkpoint at this update:** MD5 `7bf0d7adf8eb976e3b28898ebca14488`, 31,986 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,50 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Cross-origin role-config sync built (2026-07-06) — closes ROLLOUT-BLOCKING
+  #4 below.** David reported production showing a test user with full access
+  despite restrictions being set and verified working on sandbox — root cause
+  confirmed: sandbox (`dgenuth.github.io`) and production (`cms.primesourcex.com`)
+  are different origins, and `vcs_role_tab_overrides`, `vcs_role_fields_<role>`,
+  `vcs_role_field_edit_<role>`, `vcs_custom_roles`, `vcs_builtin_role_labels`,
+  `vcs_builtin_role_colors` were pure localStorage, never synced anywhere.
+  **This was described as a fix that "should already be in the live file" —
+  it was not; confirmed via direct grep before doing anything else, per
+  standing verify-don't-assume discipline.** Built from scratch: 6 new keys
+  added to `GLOBAL_SETTING_KEYS`; new `_mirrorRoleConfigToSettings()`
+  (localStorage → `S.settings`, outgoing) and `_hydrateRoleConfigFromSettings(gs)`
+  (server → localStorage + in-memory globals, incoming, gap-fill only —
+  deliberately reads the raw server payload rather than post-loop
+  `S.settings[k]`, to avoid a masking bug where an origin that already
+  mirrored its own local config would block ever seeing a different origin's
+  data); `_enforceParentChildTabConsistency` converted from an unreachable
+  IIFE to a real callable named function so hydration can re-run it.
+  **Found live, not from source alone: `persistRoleTabState()` (the actual
+  Tab Access Defaults toggle handler) and all 3 custom-role setter functions
+  call `saveConfigToDrive()` directly, bypassing `debouncedSaveSettings()`
+  entirely** — the same scattered-bypass pattern already known from earlier
+  this session. Rather than patch each call site, the mirror call was placed
+  at the one guaranteed choke point every save path funnels through:
+  `_saveUsersViaProxyImpl()`, right before it builds the outgoing
+  `globalSettings` payload. Verified end-to-end against the REAL shared
+  backend: (1) a real UI toggle → localStorage → `S.settings` → confirmed via
+  a direct `getConfig` fetch that the server's stored `roleTabOverrides`/
+  `roleFieldVisibility` now matched exactly; (2) simulated a fresh origin by
+  clearing all 6 local role-config keys, reloaded, logged in — confirmed
+  correct restoration from the server with zero manual steps, and confirmed
+  the restored data was immediately live this session via
+  `resolveRoleTabState()`; (3) confirmed the never-overwrite-local property
+  twice for `roleTabOverrides` (a local-only role survived; a role with
+  local data deliberately different from the server was not stomped) and
+  once for `customRoles` via a synthetic-payload unit test, then confirmed
+  via a fresh real `getConfig` fetch that this unit test never reached the
+  network before cleaning up its local-only test artifacts. Also
+  independently re-confirmed: `_migrateRolePermissionsAuthorityV1` /
+  `_migrateTabOverridesAuthorityV1` (pre-existing, not built this session)
+  are strictly scoped to `vcs_approved_users` only and gated by their own
+  per-origin version flags — they will fire once, for the first time, on
+  production's first load after this deploys (expected, not a new bug,
+  per David's own framing).
 - **Title bar heights, TRUE final pass (2026-07-06)** — David correctly
   spotted that 7 sections (Role & Feature Defaults, User Management,
   Click-to-Call, Calendar Availability, Startup & Navigation, Display
@@ -494,11 +538,6 @@ never silently drop something that isn't actually finished.
    role/user can see, separate from main-page Tab Access) — was blocked on
    role creation landing; role creation is done (see JUST FIXED above), so
    this is now unblocked whenever it's prioritized.
-4. **Custom roles are still localStorage-only, not synced via the GAS
-   proxy/Drive config path** — same known gap as the Field Visibility
-   Defaults customizations (see CLAUDE.md Known Traps). David has
-   pre-approved the GAS Apps Script schema addition needed for cross-device
-   sync when it's time to build it — not started.
 
 ## NOT STARTED — real features
 - Add Channel Partner Vendor flow (doesn't exist at all currently)
