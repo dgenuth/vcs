@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Mon Jul 06, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `1f10f5a8f9602e041500798d34fa31cf`, 32,158 lines
+**Checkpoint at this update:** MD5 `f41e6d1f29d997f10fdb38e660495c1b`, 32,193 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,29 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **EMERGENCY (2026-07-06): `supabaseUrl`/`supabaseKey` went empty on the
+  server AGAIN, after already being fixed once tonight — via a DIFFERENT
+  code path than the one already patched.** `_saveUsersViaProxyImpl()` was
+  the ONLY of SIX total `saveConfig` call sites that got the globalSettings
+  merge fix earlier — the other five (vendor alias link/unlink ×3, contract
+  record persistence ×2) each independently read the LOCAL
+  `localStorage.vcs_config` cache, changed one unrelated field
+  (vendorAliases/contractRecords), and pushed the WHOLE thing back
+  untouched — completely bypassing the fix. If any one of those five ran
+  from a browser whose local `vcs_config` cache never had a fully-synced
+  `globalSettings` (or it had gone stale), it would silently overwrite the
+  server's real, current values — confirmed live as the actual cause of
+  Supabase creds vanishing again. Fixed by adding a new shared
+  `_safeguardGlobalSettingsBeforePush(cfg)` helper (pulls the server's
+  current `globalSettings` and fills in anything empty/missing in the
+  outgoing `cfg`, same merge logic as the already-fixed path) and calling
+  it at all five remaining sites right before their existing push.
+  Verified live: the helper correctly pulls and fills real server values
+  into an empty test config. **This does NOT retroactively restore
+  `supabaseUrl`/`supabaseKey`, which are still empty right now** — David
+  needs to re-save those two specifically once this deploys; from then on
+  no further save from any of these six sites should be able to wipe them
+  again.
 - **EMERGENCY, ROLLOUT-BLOCKING (2026-07-06): a leftover legacy IIFE ran on
   EVERY page load and directly overwrote `ROLE_PERMS[role].tabs` (must be
   an array of tab-id strings) with `vcs_role_tab_overrides[role]` (an

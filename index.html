@@ -5297,7 +5297,9 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
               if(cfg.vendorAliases) delete cfg.vendorAliases[key];
               localStorage.setItem('vcs_config', JSON.stringify(cfg));
               setTimeout(async()=>{
-                try{ await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
+                try{
+                  await _safeguardGlobalSettingsBeforePush(cfg);
+                  await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
                   body:JSON.stringify({action:'saveConfig',config:JSON.stringify(cfg)})}); }catch(e){}
               },300);
             } catch(e){}
@@ -5631,7 +5633,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
             if (!confirm('Remove Drive folder alias "' + _ownAliasTarget + '" from "' + vendor.name + '"?')) return;
             if (S.vendorAliases) delete S.vendorAliases[_ownAliasKey];
             try { const ls=JSON.parse(localStorage.getItem('vcs_user_settings_v2')||'{}'); if(ls.vendorAliases) delete ls.vendorAliases[_ownAliasKey]; localStorage.setItem('vcs_user_settings_v2',JSON.stringify(ls)); } catch(e){}
-            try { const cfg=JSON.parse(localStorage.getItem('vcs_config')||'{}'); if(cfg.vendorAliases) delete cfg.vendorAliases[_ownAliasKey]; localStorage.setItem('vcs_config',JSON.stringify(cfg)); setTimeout(async()=>{ try{ await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'saveConfig',config:JSON.stringify(cfg)})}); }catch(e){} },300); } catch(e){}
+            try { const cfg=JSON.parse(localStorage.getItem('vcs_config')||'{}'); if(cfg.vendorAliases) delete cfg.vendorAliases[_ownAliasKey]; localStorage.setItem('vcs_config',JSON.stringify(cfg)); setTimeout(async()=>{ try{ await _safeguardGlobalSettingsBeforePush(cfg); await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'saveConfig',config:JSON.stringify(cfg)})}); }catch(e){} },300); } catch(e){}
             saveSessionState();
             toast('Drive folder alias removed');
             refreshDetailIfOpen(vendor);
@@ -5695,7 +5697,9 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
                 if(cfg.vendorAliases) delete cfg.vendorAliases[key];
                 localStorage.setItem('vcs_config', JSON.stringify(cfg));
                 setTimeout(async()=>{
-                  try{ await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
+                  try{
+                    await _safeguardGlobalSettingsBeforePush(cfg);
+                    await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
                     body:JSON.stringify({action:'saveConfig',config:JSON.stringify(cfg)})}); }catch(e){}
                 },300);
               } catch(e){}
@@ -9428,6 +9432,36 @@ async function saveUsersViaProxy() {
     if (_saveUsersInFlight === _thisSave) _saveUsersInFlight = null;
   }
 }
+// EMERGENCY FIX (2026-07-06): several ad-hoc saveConfig call sites (vendor
+// alias link/unlink, contract record persistence) each build their own cfg
+// by reading the LOCAL localStorage.vcs_config cache, changing one field
+// (vendorAliases/contractRecords), and pushing the WHOLE thing back --
+// bypassing the globalSettings merge fix in _saveUsersViaProxyImpl()
+// entirely. If THIS browser's local vcs_config cache never had a fully
+// synced globalSettings (or it's gone stale), any of these pushes silently
+// overwrites the server's real, current globalSettings (supabaseUrl,
+// supabaseKey, sfClientId, etc.) with the stale/empty local copy --
+// confirmed live as the cause of supabaseUrl/supabaseKey going empty on
+// the server again after already being fixed once tonight. Call this
+// immediately before any of those ad-hoc pushes to fill in anything
+// missing/empty in cfg.globalSettings from the server's actual current
+// values first, same merge logic as the already-fixed path.
+async function _safeguardGlobalSettingsBeforePush(cfg){
+  try{
+    const pre = await fetch(VCS_PROXY_URL, {method:'POST', headers:{'Content-Type':'text/plain'}, body: JSON.stringify({action:'getConfig'})});
+    const preData = await pre.json();
+    const serverGs = (preData && preData.config && preData.config.globalSettings && typeof preData.config.globalSettings==='object') ? preData.config.globalSettings : {};
+    cfg.globalSettings = cfg.globalSettings || {};
+    Object.keys(serverGs).forEach(function(k){
+      const v = cfg.globalSettings[k];
+      const isEmpty = v===undefined || v===null || v==='' || (v!==null && typeof v==='object' && !Array.isArray(v) && Object.keys(v).length===0);
+      if(isEmpty && serverGs[k]!==undefined && serverGs[k]!==null && serverGs[k]!==''){
+        cfg.globalSettings[k] = serverGs[k];
+      }
+    });
+  }catch(e){ console.warn('[VCS] _safeguardGlobalSettingsBeforePush failed:', e.message); }
+  return cfg;
+}
 async function _saveUsersViaProxyImpl() {
   try {
     let users = getApprovedUsers();
@@ -12372,6 +12406,7 @@ function openVendorAliasModal(vendor) {
         setTimeout(async ()=>{
           try{
             const cfg = JSON.parse(localStorage.getItem('vcs_config')||'{}');
+            await _safeguardGlobalSettingsBeforePush(cfg);
             await fetch(VCS_PROXY_URL, {method:'POST', headers:{'Content-Type':'text/plain'},
               body: JSON.stringify({action:'saveConfig', config: JSON.stringify(cfg)})});
           }catch(e){}
@@ -15093,10 +15128,10 @@ function saveContractRecord(vendorName, record) {
     // Save asynchronously - don't block UI
     setTimeout(async ()=>{
       try{
+        const cfg = Object.assign({}, JSON.parse(localStorage.getItem('vcs_config')||'{}'), {contractRecords: allContracts});
+        await _safeguardGlobalSettingsBeforePush(cfg);
         await fetch(VCS_PROXY_URL, {method:'POST', headers:{'Content-Type':'text/plain'},
-          body: JSON.stringify({action:'saveConfig', config: JSON.stringify(
-            Object.assign({}, JSON.parse(localStorage.getItem('vcs_config')||'{}'), {contractRecords: allContracts})
-          )})
+          body: JSON.stringify({action:'saveConfig', config: JSON.stringify(cfg)})
         });
       }catch(e){}
     }, 500);

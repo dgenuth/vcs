@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Mon Jul 06, 2026 (this session, continued)
-**Current checkpoint:** MD5 `1f10f5a8f9602e041500798d34fa31cf`, 32,158 lines
+**Current checkpoint:** MD5 `f41e6d1f29d997f10fdb38e660495c1b`, 32,193 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -78,6 +78,20 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **Every `action:'saveConfig'` call site must go through the globalSettings
+  safeguard — there are SIX of them, not one.** `_saveUsersViaProxyImpl()`
+  was the only one originally fixed against blindly overwriting the
+  server's real `globalSettings` with a stale/empty local `vcs_config`
+  cache. Five other ad-hoc sites (vendor alias link/unlink, contract record
+  persistence) independently read the local cache, changed one unrelated
+  field, and pushed the whole thing back — bypassing the fix entirely and
+  re-wiping `supabaseUrl`/`supabaseKey` hours after they'd already been
+  fixed once. All six now call the shared `_safeguardGlobalSettingsBeforePush(cfg)`
+  helper right before pushing. **If a NEW feature ever needs to push
+  `action:'saveConfig'` directly instead of going through
+  `saveUsersViaProxy()`, it MUST call this helper first** — grep for
+  `action:'saveConfig'` (or `action: 'saveConfig'`) to find every current
+  call site if a new one needs auditing.
 - **`ROLE_PERMS[role].tabs` MUST always be an array of tab-id strings —
   never assign an object to it.** A leftover legacy IIFE (near where
   `_hydrateRoleConfigFromSettings` is defined) used to run on every page
