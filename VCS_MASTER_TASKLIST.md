@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Mon Jul 06, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `e158fb87b17d385e8ae1ad291a8a0d30`, 32,550 lines
+**Checkpoint at this update:** MD5 `808347001fa146e7b5a9af87796d5ea7`, 32,593 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,46 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Two more real gaps, found from David's report that Permissions
+  Defaults' "Apply Changes to Existing Users" sometimes doesn't stick, and
+  that per-user permission changes never get the honest save-confirmation
+  toast role defaults already have (2026-07-06).**
+  1. **`_TOUCHED_USERS` was never cleared — once touched, a user's email
+     stayed "protected" for the rest of the browser tab's session,
+     forever.** Every save re-pushes THIS TAB'S CURRENT local copy of
+     every touched user, not just the one that triggered that particular
+     save. So a later, completely unrelated save (a different role's
+     toggle, another user's edit) would keep re-asserting an increasingly
+     stale snapshot of an earlier-touched user, silently overwriting any
+     newer change another admin/tab made to that same user in the
+     meantime. This is the most likely root cause of "the users within
+     that role sometimes still have different permission settings than
+     what's shown in the default after I click apply changes" — a LATER
+     save (triggered by something else entirely) reverting it back to a
+     stale snapshot. Fixed: `_saveUsersViaProxyImpl()` now snapshots
+     `_TOUCHED_USERS` at the start of each call and clears only that
+     snapshot's entries after a successful push — once the server has this
+     tab's current data for a user, there's no more need to protect them
+     from a "server wins" merge, since the server's version IS this tab's
+     own last push. Anyone touched again while a save is mid-flight stays
+     protected (not in that snapshot) until their own subsequent save
+     completes. Verified live: touched a test email, confirmed
+     `_TOUCHED_USERS` correctly drops it after a successful save.
+  2. **Per-user permission toggles never got the honest, delayed
+     "confirmed saved to server" / "FAILED to reach the server" toast —
+     only the immediate optimistic one, if any toast at all.** Added
+     `_toastSaveResult(saveUsersViaProxy(), label)` to all 10 per-user save
+     call sites: Field Visibility's per-field view/edit toggles + its
+     "Reset to role defaults" button, Tab Access's per-tab toggle + its
+     "Reset to role defaults" button, and the Permissions panel's Feature
+     Flags (export/addVendor/showFinancials/canAccessArchive)/Vendor DB
+     Browsing/AI Assistant/Renzo Access/Assistant Admin toggles.
+  3. **Bonus find while wiring #2: the Assistant Admin toggle never called
+     `touchUser()` at all** — the one thing every other per-user toggle in
+     this file does. Without it, `saveUsersViaProxy()`'s own merge treated
+     that user as "untouched" and could discard this exact edit, pushing
+     the server's stale pre-toggle copy instead, even on this toggle's OWN
+     save. Fixed by adding the missing `touchUser()` call.
 - **Two more real save-sync gaps, found live within minutes of pushing the
   `_toastSaveResult`/`_settingsDirty` batch above (2026-07-06, David tested
   immediately on the freshly-deployed sandbox and hit both).**

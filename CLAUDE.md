@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Mon Jul 06, 2026 (this session, continued)
-**Current checkpoint:** MD5 `e158fb87b17d385e8ae1ad291a8a0d30`, 32,550 lines
+**Current checkpoint:** MD5 `808347001fa146e7b5a9af87796d5ea7`, 32,593 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -78,6 +78,26 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **`_TOUCHED_USERS` (the set of user emails THIS tab has authority to
+  overwrite the server's copy of) must be cleared once a save actually
+  succeeds — never let it accumulate for the whole session.** It used to
+  only grow, never shrink, so any later, unrelated save would re-push
+  every previously-touched user's local snapshot, silently reverting
+  anything another admin/tab changed to those same users in the meantime.
+  `_saveUsersViaProxyImpl()` now snapshots it at the start of each call and
+  clears exactly that snapshot after a successful push — anyone touched
+  again mid-flight stays protected until THEIR save completes. If you add
+  a new code path that calls `touchUser()`, you don't need to do anything
+  extra — this cleanup is automatic on the next successful save — but
+  don't add a NEW "protect until X" mechanism without matching this
+  clear-on-success pattern, or the same staleness bug will recur.
+- **Every per-user toggle handler MUST call `touchUser(email)` before its
+  save fires — a toggle that skips it has its own edit silently discarded
+  by the very next save's merge** (untouched users get overwritten with
+  the server's fresh, pre-edit copy). The Assistant Admin toggle was
+  missing this for an unknown amount of time before being caught — if you
+  add or touch any per-user toggle, verify `touchUser()` is called, don't
+  assume it is just because a nearby similar toggle has it.
 - **Any function that hydrates role-level config (field visibility, tab
   overrides, custom roles/labels/colors, etc.) from the shared server MUST
   overwrite local storage whenever the server's value actually DIFFERS —

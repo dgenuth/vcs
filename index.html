@@ -9619,6 +9619,26 @@ async function _saveUsersViaProxyImpl() {
   try {
     let users = getApprovedUsers();
     let serverGlobalSettings = null;
+    // CRITICAL FIX (2026-07-06): _TOUCHED_USERS was NEVER cleared -- once
+    // touched, a user's email stayed in this set for the rest of the
+    // browser tab's session, forever. Since every save re-pushes THIS
+    // TAB'S CURRENT local copy of every touched user (not just the one
+    // that triggered this particular save), a later, completely unrelated
+    // save (e.g. a different role's toggle) would keep re-asserting an
+    // increasingly stale snapshot of an earlier-touched user, silently
+    // overwriting any newer change another admin/tab made to that same
+    // user in the meantime. Confirmed as the likely cause of David's
+    // report that Permissions Defaults' "Apply Changes to Existing Users"
+    // sometimes didn't stick -- a later save (triggered by an unrelated
+    // toggle) could revert it back to this tab's stale pre-apply copy.
+    // Snapshotting here and clearing only THESE entries after a successful
+    // push (below) is what actually fixes it: once the server has this
+    // tab's current data for a user, there's no more need to keep
+    // protecting that user from being overwritten by "the server's"
+    // version, since the server's version IS this tab's own last push.
+    // Any user touched again WHILE this save is in flight stays protected
+    // (it's not in this snapshot, so it isn't cleared below).
+    const _touchedSnapshotAtStart = new Set(_TOUCHED_USERS);
     // ── Sync-before-save merge ─────────────────────────────────────────
     // Pull the server's CURRENT list and merge: records this tab touched
     // win locally (including local deletion); untouched records take the
@@ -9743,6 +9763,12 @@ async function _saveUsersViaProxyImpl() {
     });
     if(!resp.ok) throw new Error('HTTP '+resp.status);
     console.log('[VCS] Users saved to Drive via proxy ✅ (touched:', [..._TOUCHED_USERS].join(',')||'none', ')');
+    // Server now has this tab's current data for everyone in this push --
+    // stop protecting them from future "server wins" merges. Only the
+    // start-of-call snapshot is cleared, so anyone touched WHILE this save
+    // was in flight (not yet included in `users` above) stays protected
+    // until their own subsequent save completes.
+    _touchedSnapshotAtStart.forEach(k => _TOUCHED_USERS.delete(k));
   } catch(e) {
     console.warn('[VCS] saveUsersViaProxy failed:', e.message);
     throw e;
@@ -26454,6 +26480,7 @@ function buildFieldAccess(container, userEmail) {
       touchUser(all[i].email);
       setApprovedUsers(all,true);
       scheduleUserSave(1500);
+      _toastSaveResult(saveUsersViaProxy(), userEmail+' fields reset');
       buildFieldAccess(container,userEmail);
       toast('Fields reset to role defaults','#10b981');
     }},'↺ Reset to role defaults'));
@@ -26512,6 +26539,7 @@ function buildFieldAccess(container, userEmail) {
             touchUser(all[i].email);
             setApprovedUsers(all,true);
             scheduleUserSave(1500);
+            _toastSaveResult(saveUsersViaProxy(), userEmail+': '+f.label);
             buildFieldAccess(container,userEmail);
           },
           onToggleEdit:function(checked){
@@ -26521,6 +26549,7 @@ function buildFieldAccess(container, userEmail) {
             touchUser(all[i].email);
             setApprovedUsers(all,true);
             scheduleUserSave(1500);
+            _toastSaveResult(saveUsersViaProxy(), userEmail+': '+f.label+' edit');
             buildFieldAccess(container,userEmail);
           }
         });
@@ -26556,6 +26585,7 @@ function buildTabAccessSection(container, userEmail) {
       touchUser(all[i].email);
       setApprovedUsers(all,true);
       scheduleUserSave(1500);
+      _toastSaveResult(saveUsersViaProxy(), userEmail+' tabs reset');
       buildTabAccessSection(container,userEmail);
       toast('Tabs reset to role defaults','#10b981');
     }},'↺ Reset to role defaults'));
@@ -26657,6 +26687,7 @@ function buildTabAccessSection(container, userEmail) {
       touchUser(all[i].email);
       setApprovedUsers(all,true);
       scheduleUserSave(1500);
+      _toastSaveResult(saveUsersViaProxy(), userEmail+' tab access: '+id);
     }
 
     PAGE_HIERARCHY.forEach(function(page){
@@ -29055,6 +29086,7 @@ function buildUserSubSection(label,bodyBuilderFn){
               if(u.email===USER.email){if(!USER.featureFlags)USER.featureFlags={};USER.featureFlags[ffKey]=newVal;}
               touchUser(u.email);
               scheduleUserSave(1500);
+              _toastSaveResult(saveUsersViaProxy(), u.email+': '+ffLabel);
               toast('✓ Feature flag updated','#10b981');
               _buildPermissionsPanel(b);
             }
@@ -29077,6 +29109,7 @@ function buildUserSubSection(label,bodyBuilderFn){
             if(u.email===USER.email) USER.requireSearchToList=!_rstOverride;
             touchUser(u.email);
             scheduleUserSave(1500);
+            _toastSaveResult(saveUsersViaProxy(), u.email+': vendor DB browsing');
             toast('✓ Updated','#10b981');
             _buildPermissionsPanel(b);
           }
@@ -29104,6 +29137,7 @@ function buildUserSubSection(label,bodyBuilderFn){
             touchUser(all[i].email);
             setApprovedUsers(all,true);
             scheduleUserSave(1500);
+            _toastSaveResult(saveUsersViaProxy(), u.email+': AI Assistant');
             _buildPermissionsPanel(b);
           }
         }));
@@ -29121,6 +29155,7 @@ function buildUserSubSection(label,bodyBuilderFn){
             touchUser(all[i].email);
             setApprovedUsers(all,true);
             scheduleUserSave(1500);
+            _toastSaveResult(saveUsersViaProxy(), u.email+': Renzo Access');
             _buildPermissionsPanel(b);
           }
         }));
@@ -29144,9 +29179,17 @@ function buildUserSubSection(label,bodyBuilderFn){
             onToggleView:function(){
               const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===u.email;});if(i<0)return;
               all[i].assistantAdmin=!_cuFresh.assistantAdmin;
+              // CRITICAL FIX (2026-07-06): this toggle never called touchUser()
+              // -- every OTHER per-user toggle in this file does, and without it
+              // saveUsersViaProxy()'s own pre-save merge treats this user as
+              // "untouched," discarding this exact edit and pushing the
+              // server's stale pre-toggle copy instead, even on this toggle's
+              // own save.
+              touchUser(all[i].email);
               setApprovedUsers(all,true);
               if(u.email===USER.email) USER.assistantAdmin=all[i].assistantAdmin;
               scheduleUserSave(1500);
+              _toastSaveResult(saveUsersViaProxy(), u.email+': Assistant Admin');
               toast(all[i].assistantAdmin?'Assistant Admin enabled':'Assistant Admin disabled','#10b981');
               _buildPermissionsPanel(b);
             }
