@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Mon Jul 06, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `c8159ac69482967b8dd66512f6b5400e`, 32,026 lines
+**Checkpoint at this update:** MD5 `28d36c2d9cd986890fd5af1321d7f0eb`, 32,085 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,71 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **CRITICAL DATA LOSS (2026-07-06): `_saveUsersViaProxyImpl()` was pushing
+  `globalSettings` as a blind, unmerged REPLACEMENT — any save from a browser
+  that hadn't yet loaded a given setting silently wiped it from the shared
+  server for everyone, permanently.** This is confirmed as the actual root
+  cause of David's report that MS365 (client ID/tenant ID), Salesforce
+  (client ID/redirect URL/login URL), and Google Drive settings "didn't
+  carry over" for a new login — they WERE carrying over via the existing,
+  correct `GLOBAL_SETTING_KEYS`/proxy mechanism, but were being WIPED again
+  shortly after by the very next save from any browser whose local
+  `S.settings` still had the default empty-string values for those specific
+  keys (`S.settings` initializes `sfClientId`/`msGraphClientId`/
+  `msGraphTenantId`/`driveFileId` etc. as literal `''`, never `undefined` —
+  so the old `!== undefined` guard was always true, always pushing the
+  empty default). **Confirmed via direct live read that this had already
+  happened to the real shared backend**: `sfClientId`, `msGraphClientId`,
+  `msGraphTenantId`, `driveFileId`, `renzoConnectorUrl`, and `renzoApiKey`
+  were all found empty on the server despite being genuinely configured
+  earlier the same day — this session's own fresh-browser testing (Item 2,
+  and the tab-access/access-denied investigations, which necessarily do
+  real `recordLogin()`→`saveUsersViaProxy()` writes as a side effect of
+  simulating a real login) is almost certainly what triggered the actual
+  wipe, by exercising exactly the "save before this browser's own sync
+  finished" race the bug required. **This is a real, general, always-present
+  risk, not something only testing could trigger — any real user's very
+  first login on a new device, if their own pre-auth sync is at all slow
+  (a proven, measured occurrence — see the fresh-OAuth-login timeout fix),
+  could wipe these same settings for the entire company.**
+  Fixed: `_saveUsersViaProxyImpl()` now reuses the SAME pre-save server
+  fetch it already does for the careful users-list merge to also read the
+  server's current `globalSettings`, and only lets a local value win if
+  it's actually meaningful (not `''`/`null`/`undefined`/an empty object —
+  booleans like `driveAutoSync:false` are always meaningful and always
+  win); otherwise the server's real current value is preserved instead of
+  being silently overwritten. Verified via isolated logic testing across 5
+  scenarios (local empty + server has value → server preserved; local has a
+  fresher value → local wins; both empty → stays empty; boolean `false` →
+  always wins; pre-fetch itself fails → old behavior preserved) — all
+  passed. **Did NOT risk an additional live write-test against the real
+  backend given the stakes** (a safety check correctly declined that
+  specific test) — David should manually confirm SF/MS365/Drive config
+  still holds after his next real save, as an extra check beyond the logic
+  verification. **David needs to re-enter `sfClientId`, `msGraphClientId`,
+  `msGraphTenantId`, `driveFileId`, `renzoConnectorUrl`, and `renzoApiKey`
+  in Settings once this fix is deployed — the original values are gone from
+  the server and cannot be recovered by this fix, only future wipes are
+  prevented.**
+- **Login denial ("Access Denied") for a genuinely approved user on a fresh
+  browser (2026-07-06).** Root cause: `loadGlobalSettingsViaProxy()` never
+  throws (catches its own errors, returns `false`), so
+  `handleOAuthLogin()`'s try/catch around its pre-auth sync never actually
+  saw a failure — a slow/cold GAS response on a genuinely fresh browser
+  (nothing cached locally yet) left `getApprovedUsers()` returning `[]`,
+  which in production mode was treated as "confirmed empty approved list"
+  and triggered a permanent, un-retryable "Access Denied — contact your
+  administrator" screen for a real, approved user. Fixed: one retry before
+  giving up, and — critically — a sync failure is no longer conflated with
+  a confirmed-empty list; if both attempts fail, the user now sees "Could
+  not verify your access — check your connection and try again" instead of
+  the permanent denial screen. Verified via isolated logic testing across
+  4 scenarios (both attempts fail → retry message, not denial; first fails
+  then retry succeeds → login proceeds; immediate success → login proceeds,
+  no wasted retry; sync succeeds but genuinely empty list → denial is still
+  correct) — all passed. Could not test the exact production-mode branch
+  live in the browser since `CMS_PRODUCTION_MODE` is a `const` (sandbox has
+  it `false`), hence the isolated logic-replica approach.
 - **CRITICAL SECURITY/ACCESS CONTROL (2026-07-06): per-user Tab Access
   restrictions have been silently non-functional for every user whose
   admin used the real Tab Access checkboxes, for BOTH main-nav visibility
@@ -594,15 +659,25 @@ never silently drop something that isn't actually finished.
   ROLLOUT-BLOCKING #1 below for the re-scoped remainder.
 
 ## ROLLOUT-BLOCKING
-0. **URGENT — production needs an immediate deploy of the
-   `isTabAllowedForUser()` fix above.** Confirmed live: production
-   (`primesource-cms`, deployed separately from sandbox) currently has the
-   SAME broken tab-restriction enforcement bug as sandbox did before this
-   session's fix — any per-user Tab Access restriction set via the real UI
-   is silently ignored for both nav visibility and actual page content
-   access, on production, right now. This is a real, currently-exploitable
-   access-control gap, not a cosmetic issue. Sandbox is fixed and verified;
-   production is not, pending David's go-ahead on the deploy mechanism.
+0. **URGENT — production needs an immediate deploy of THREE fixes from this
+   session, all confirmed live/logic-verified**: (a) `isTabAllowedForUser()`
+   silently ignoring per-user Tab Access restrictions (real access-control
+   gap, not cosmetic); (b) `_saveUsersViaProxyImpl()` silently wiping
+   sfClientId/msGraphClientId/msGraphTenantId/driveFileId/renzoConnectorUrl/
+   renzoApiKey on any save from an incompletely-synced browser (already
+   happened to the real server — those 6 values are currently empty and
+   need to be re-entered by David after this deploys); (c) genuinely
+   approved users getting a permanent "Access Denied" on a fresh browser
+   when the pre-auth sync is merely slow, not actually failed. Production
+   (`primesource-cms`, deployed separately from sandbox via its own
+   `workflow_dispatch` GitHub Action) does not have any of these three yet.
+   **Also flagging, separately**: `dgenuthps@gmail.com` (David's own admin
+   Gmail account) currently shows `role: "sales_rep"` on the server with a
+   heavily restricted profile nearly identical to a test profile, instead
+   of `admin` — very likely test-data pollution from earlier tonight's
+   sessions, not a fresh bug, but needs David's confirmation/correction
+   directly in User Management since it's real account data, not something
+   to silently overwrite unilaterally.
 1. **Excel column map audit & safe write path — re-scoped.** The Excel-side
    audit is already done (`PSD_FIELD_MAP`, `checkPsdSchemaDrift()`, admin
    System Health status card, all working). Not finished: the reverse map

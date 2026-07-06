@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Mon Jul 06, 2026 (this session, continued)
-**Current checkpoint:** MD5 `c8159ac69482967b8dd66512f6b5400e`, 32,026 lines
+**Current checkpoint:** MD5 `28d36c2d9cd986890fd5af1321d7f0eb`, 32,085 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -78,6 +78,48 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **Any function that pushes `S.settings` values to the shared backend must
+  merge against the server's current state first — never build the outgoing
+  payload purely from local state and push it as a replacement.**
+  `_saveUsersViaProxyImpl()` already did this carefully for the `users`
+  array (pull server's current list, only let a "touched" record's local
+  edit win, untouched records take the server's fresh copy) — but its
+  `globalSettings` construction had NO equivalent merge: it built
+  `globalSettings` fresh from `S.settings` using `S.settings[k] !==
+  undefined` as the only guard, then pushed it as a wholesale replacement.
+  Since `S.settings` initializes `sfClientId`/`msGraphClientId`/
+  `msGraphTenantId`/`driveFileId` etc. as literal `''` (never `undefined`),
+  that guard was always true — meaning ANY save from a browser that hadn't
+  yet synced a given key silently wiped it from the server for everyone,
+  permanently. Confirmed this had already happened to the real production
+  backend (2026-07-06) — likely triggered by this session's own
+  fresh-browser test cycles, which necessarily perform real
+  `recordLogin()`→`saveUsersViaProxy()` writes as a side effect of
+  simulating logins. Fixed by reusing the SAME pre-save server fetch
+  already happening for the users merge to also read the server's current
+  `globalSettings`, and only letting a local value win if it's genuinely
+  meaningful (not `''`/`null`/`undefined`/empty-object — booleans are
+  always meaningful). **If a "global setting doesn't stick" or "reverts
+  after someone else logs in" bug shows up again, check whether the
+  relevant save path merges against the server's current state or just
+  pushes local state as a wholesale replacement** — this exact class of bug
+  is easy to reintroduce on any NEW global setting added later if its
+  write path copies the old unmerged pattern instead of the fixed one.
+- **`loadGlobalSettingsViaProxy()` never throws — it catches its own errors
+  internally and returns `false`.** Any caller's `try/catch` around a call
+  to it is catching nothing; the ONLY way to detect failure is checking its
+  return value. `handleOAuthLogin()`'s pre-auth sync used to rely on the
+  (dead) catch block, meaning a slow/cold GAS response on a genuinely fresh
+  browser (nothing cached locally) fell through to `getApprovedUsers()`
+  returning `[]`, which production mode treated as "confirmed nobody is
+  approved" and permanently denied a real, approved user with no retry.
+  Fixed: check the actual boolean return value, retry once on failure, and
+  — the more important half of the fix — distinguish "we couldn't verify"
+  (sync failed) from "we verified you're not on the list" (sync succeeded,
+  genuinely not found); only the latter shows the permanent "Access Denied"
+  screen. **If a real, approved user reports being denied access, check
+  whether this was a genuine sync failure/timeout racing an empty local
+  cache before assuming their account itself is misconfigured.**
 - **`USER.tabOverrides[tabId]` has TWO valid shapes — a legacy bare boolean,
   and the current `{view, edit}` object the real Tab Access UI actually
   writes — and not every reader handled both.** `canView()`,

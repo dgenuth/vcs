@@ -1091,12 +1091,27 @@ async function handleOAuthLogin(email, name, provider) {
   // fails, same as before, rather than hard-locking out every login during
   // a transient outage) — so a deletion takes effect on the very next
   // login attempt, not "eventually."
-  try {
-    await loadGlobalSettingsViaProxy();
+  // CRITICAL FIX (2026-07-06): loadGlobalSettingsViaProxy() never throws (it
+  // catches its own errors and returns false), so this try/catch never
+  // actually saw a sync failure -- a slow/cold GAS backend (measured,
+  // reproducible -- see the fresh-OAuth-login timeout fix elsewhere in this
+  // file) simply left `users` as whatever getApprovedUsers() already had.
+  // On a genuinely fresh browser with NOTHING cached yet, that's `[]` --
+  // which fell straight into the "empty list" branch below and, in
+  // production, permanently denied a real, approved user with no retry,
+  // purely because the sync hadn't finished in time. One retry (GAS is
+  // often just slow on the first hit, not actually broken) before treating
+  // the list as genuinely empty; if it's STILL empty after that, this is an
+  // inconclusive "couldn't verify" state, not a confirmed "you're not
+  // approved" state, and must not show the same permanent denial screen.
+  let _syncOk = await loadGlobalSettingsViaProxy();
+  users = getApprovedUsers();
+  found = users.find(u => u.email.toLowerCase() === email);
+  if (!_syncOk && users.length === 0) {
+    console.warn('[VCS] Pre-auth server sync failed, retrying once before giving up...');
+    _syncOk = await loadGlobalSettingsViaProxy();
     users = getApprovedUsers();
     found = users.find(u => u.email.toLowerCase() === email);
-  } catch(e) {
-    console.warn('[VCS] Pre-auth server sync failed:', e.message);
   }
 
   if (users.length > 0 && !found) {
@@ -1116,6 +1131,14 @@ async function handleOAuthLogin(email, name, provider) {
   // (This now only fires if the server sync above ALSO came back empty --
   // i.e. the list is genuinely empty, not just locally unsynced.)
   if (users.length === 0 && CMS_PRODUCTION_MODE) {
+    if (!_syncOk) {
+      // Couldn't confirm either way (both sync attempts failed) -- this is
+      // NOT the same as a confirmed-empty approved list, so don't show the
+      // permanent "contact your administrator" denial screen for what's
+      // very likely just a slow/unreachable backend right now.
+      $('login-error').textContent = 'Could not verify your access — check your connection and try again in a moment.';
+      return false;
+    }
     showAccessDenied(email);
     return false;
   }
@@ -9370,6 +9393,7 @@ async function saveUsersViaProxy() {
 async function _saveUsersViaProxyImpl() {
   try {
     let users = getApprovedUsers();
+    let serverGlobalSettings = null;
     // ── Sync-before-save merge ─────────────────────────────────────────
     // Pull the server's CURRENT list and merge: records this tab touched
     // win locally (including local deletion); untouched records take the
@@ -9391,6 +9415,9 @@ async function _saveUsersViaProxyImpl() {
       }
       const preData = await pre.json();
       const serverUsers = (preData && preData.config && Array.isArray(preData.config.users)) ? preData.config.users : null;
+      if (preData && preData.config && preData.config.globalSettings && typeof preData.config.globalSettings === 'object') {
+        serverGlobalSettings = preData.config.globalSettings;
+      }
       if (serverUsers && serverUsers.length > 0) {
         const lk = u => (u && u.email ? String(u.email).toLowerCase() : '');
         const localMap = new Map(users.map(u => [lk(u), u]));
@@ -9441,7 +9468,39 @@ async function _saveUsersViaProxyImpl() {
     // triggers actually fired.
     if(typeof _mirrorRoleConfigToSettings==='function') _mirrorRoleConfigToSettings();
     const globalSettings = {};
-    GLOBAL_SETTING_KEYS.forEach(k => { if(S.settings[k]!==undefined) globalSettings[k]=S.settings[k]; });
+    // CRITICAL FIX (2026-07-06): this used to push S.settings[k] for every
+    // key whenever it was merely !== undefined -- but S.settings initializes
+    // sfClientId/msGraphClientId/msGraphTenantId/driveFileId/etc. as literal
+    // '' (empty string), never undefined, so THIS check was always true even
+    // on a genuinely fresh browser that never loaded the real values yet.
+    // Since this function (unlike the careful users-list merge just above)
+    // pushed globalSettings as a wholesale, unmerged REPLACEMENT of whatever
+    // the server had, any save firing before a browser's own sync had
+    // finished (a real, measured risk -- see the fresh-login timeout fix
+    // elsewhere in this file) silently WIPED a real, previously-configured
+    // value for every other user, permanently, the moment that one save
+    // landed. Confirmed live: sfClientId/msGraphClientId/msGraphTenantId/
+    // driveFileId/renzoConnectorUrl/renzoApiKey were all found empty on the
+    // real shared server despite being genuinely configured earlier the same
+    // day. Fixed: a local value only wins if it's actually meaningful (not
+    // '', null, undefined, or an empty object -- booleans like
+    // driveAutoSync:false are always meaningful and always win); otherwise
+    // the server's own current value (from the SAME pre-save fetch already
+    // done above for the users merge) is preserved instead of being
+    // silently overwritten with this browser's empty default.
+    GLOBAL_SETTING_KEYS.forEach(k => {
+      const localVal = S.settings[k];
+      const isEmptyStringOrNil = localVal===undefined || localVal===null || localVal==='';
+      const isEmptyObject = localVal!==null && typeof localVal==='object' && !Array.isArray(localVal) && Object.keys(localVal).length===0;
+      const localIsUnset = isEmptyStringOrNil || isEmptyObject;
+      if (!localIsUnset) {
+        globalSettings[k] = localVal;
+      } else if (serverGlobalSettings && serverGlobalSettings[k]!==undefined && serverGlobalSettings[k]!==null && serverGlobalSettings[k]!=='') {
+        globalSettings[k] = serverGlobalSettings[k];
+      } else if (localVal!==undefined) {
+        globalSettings[k] = localVal;
+      }
+    });
     const existing = JSON.parse(localStorage.getItem('vcs_config')||'{}');
     const cfg = Object.assign({}, existing, {
       users,
