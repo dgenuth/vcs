@@ -24881,7 +24881,13 @@ function makeCollapsibleSection(sec, title, storageKey, defaultCollapsed, badge)
   // and called out directly. Negative margin cancels the inherited
   // padding so the header sits flush with the card edge, same as
   // everywhere else; its own padding below recreates the visual inset.
-  const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px',margin:'-12px -12px 0'},onclick(){
+  // S51 fix: explicit height (not just padding) so this header matches the
+  // SAME 32px every other Settings header now uses, regardless of content
+  // (a badge with a border, embedded buttons, etc. would otherwise nudge a
+  // content-driven height a pixel or two off from the rest — see CLAUDE.md
+  // Known Traps for the full account of why content-driven sizing here is
+  // fragile).
+  const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px',margin:'-12px -12px 0',height:'32px',boxSizing:'border-box'},onclick(){
     const c=body.style.display==='none';
     body.style.display=c?'':'none';
     chev.textContent=c?'▼':'▶';
@@ -25164,7 +25170,9 @@ function settingsCard(c, title, icon, key, defaultOpen, buildFn, badge) {
   // Creates a collapsible settings card
   const card=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
   const isOpen=S._settingsExpandAll===true?true:S._settingsExpandAll===false?false:(S._settingsOpen?.[key] ?? defaultOpen);
-  const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',padding:'8px 12px',cursor:'pointer',userSelect:'none',background:isOpen?'var(--card)':'var(--sb)',transition:'background .15s'},
+  // S51 fix: explicit height so this matches the same 32px every other
+  // Settings header now uses, regardless of content.
+  const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',padding:'8px 12px',cursor:'pointer',userSelect:'none',background:isOpen?'var(--card)':'var(--sb)',transition:'background .15s',height:'32px',boxSizing:'border-box'},
     onclick(){
       if(!S._settingsOpen) S._settingsOpen={};
       S._settingsOpen[key]=!isOpen;
@@ -26164,7 +26172,11 @@ function _buildConnectionsSection(){
     const _connOpen=localStorage.getItem(_connKey)!=='1';
     const connWrap=el('div',{id:'vcs-connections-summary',style:{border:'1px solid var(--border)',borderRadius:'4px',marginBottom:'8px',overflow:'hidden'}});
     const connArrow=el('span',{style:{color:'var(--muted)',fontSize:'9px'}},_connOpen?'▼':'▶');
-    const connHdr=el('div',{style:{padding:'8px 12px',cursor:'pointer',display:'flex',gap:'6px',alignItems:'center',background:'var(--card)',userSelect:'none'},onclick:function(){
+    // S51 fix: explicit height so every header (including this one, which
+    // David asked to use as the reference) is exactly 32px regardless of
+    // content differences (e.g. this row's badge has a 1px status border
+    // others don't).
+    const connHdr=el('div',{style:{padding:'8px 12px',cursor:'pointer',display:'flex',gap:'6px',alignItems:'center',background:'var(--card)',userSelect:'none',height:'32px',boxSizing:'border-box'},onclick:function(){
       const now=connBody.style.display==='none';
       connBody.style.display=now?'':'none';
       connArrow.textContent=now?'▼':'▶';
@@ -27051,7 +27063,9 @@ window._buildConnectionsSection = _buildConnectionsSection;
     const allDone=doneCount===_setupItems.length;
     if(!allDone||!S._setupChecklistDismissed){
       const setupSec=el('div',{style:{marginBottom:'12px',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden'}});
-      const setupHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'8px 12px',background:'var(--card)',cursor:'pointer'},
+      // S51 fix: explicit height so this matches the same 32px every other
+      // Settings header now uses.
+      const setupHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'8px 12px',background:'var(--card)',cursor:'pointer',height:'32px',boxSizing:'border-box'},
         onclick(){S._setupChecklistOpen=!S._setupChecklistOpen;render();}});
       setupHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},(S._setupChecklistOpen?'▼':'▶')));
       // S51 fix: matched to the gap:'6px'/fontWeight:'600'/blue-title convention
@@ -27088,7 +27102,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
     const _rdCollapsed=localStorage.getItem('vcs_rd_collapsed')!=='0';
     // S51 fix: same parent .settings-section padding:12px cancellation as
     // makeCollapsibleSection — see its comment for the full mechanism.
-    const _rdHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px',margin:'-12px -12px 0'},
+    const _rdHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px',margin:'-12px -12px 0',height:'32px',boxSizing:'border-box'},
       onclick(){
         const _c=!(_rdBody.style.display==='none');
         _rdBody.style.display=_c?'none':'';
@@ -27876,7 +27890,7 @@ function buildUserSubSection(label,bodyBuilderFn){
     const _umCollapsed = localStorage.getItem('vcs_um_collapsed') !== '0';
     // S51 fix: same parent .settings-section padding:12px cancellation as
     // makeCollapsibleSection — see its comment for the full mechanism.
-    const _umHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px',margin:'-12px -12px 0'},onclick(){
+    const _umHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px',margin:'-12px -12px 0',height:'32px',boxSizing:'border-box'},onclick(){
       const _c=!(_umBody.style.display==='none');
       _umBody.style.display=_c?'none':'';
       _umChev.textContent=_c?'▶':'▼';
@@ -28716,7 +28730,7 @@ function buildUserSubSection(label,bodyBuilderFn){
     // S51 fix: same parent .settings-section padding:12px cancellation as
     // makeCollapsibleSection (_cow, this header's direct parent, carries
     // that class) — see its comment for the full mechanism.
-    const _coh=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px',margin:'-12px -12px 0'}});_coh.onclick=function(){const n=secCal.style.display==='none';secCal.style.display=n?'':'none';_cch.textContent=n?'▼':'▶';localStorage.setItem('vcs_s_cal',n?'0':'1');};_coh.appendChild(_cch);_coh.appendChild(el('h3',{style:{margin:'0',display:'inline',flex:'1'}},'📅 Calendar Availability'));const _blockedDays=(S.settings.closedDays||[]).length+(S.settings.oooDays||[]).length;_coh.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--muted)',marginLeft:'6px',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)'}},_blockedDays+' day'+(_blockedDays!==1?'s':'')+' blocked'));const _cow=el('div',{class:'settings-section'});_cow.appendChild(_coh);secCal.style.display=_cc?'':'none';_cow.appendChild(secCal);c.appendChild(_cow);}
+    const _coh=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px',margin:'-12px -12px 0',height:'32px',boxSizing:'border-box'}});_coh.onclick=function(){const n=secCal.style.display==='none';secCal.style.display=n?'':'none';_cch.textContent=n?'▼':'▶';localStorage.setItem('vcs_s_cal',n?'0':'1');};_coh.appendChild(_cch);_coh.appendChild(el('h3',{style:{margin:'0',display:'inline',flex:'1'}},'📅 Calendar Availability'));const _blockedDays=(S.settings.closedDays||[]).length+(S.settings.oooDays||[]).length;_coh.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--muted)',marginLeft:'6px',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)'}},_blockedDays+' day'+(_blockedDays!==1?'s':'')+' blocked'));const _cow=el('div',{class:'settings-section'});_cow.appendChild(_coh);secCal.style.display=_cc?'':'none';_cow.appendChild(secCal);c.appendChild(_cow);}
 
   // Default View on load
   const secDefaults=el('div',{class:'settings-section'});
@@ -28868,7 +28882,7 @@ function buildUserSubSection(label,bodyBuilderFn){
     // S51 fix: same parent .summary-section padding:12px cancellation as
     // makeCollapsibleSection (apiSec, this header's direct parent, carries
     // that class) — see its comment for the full mechanism.
-    const apiHdrRow=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',padding:'8px 12px',margin:'-12px -12px 4px'},onclick(){const _ac=$('content');const _asp=_ac?_ac.scrollTop:0;S._apiSecOpen=!S._apiSecOpen;render();if(_ac) requestAnimationFrame(()=>{_ac.scrollTop=_asp;});}});
+    const apiHdrRow=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',padding:'8px 12px',margin:'-12px -12px 4px',height:'32px',boxSizing:'border-box'},onclick(){const _ac=$('content');const _asp=_ac?_ac.scrollTop:0;S._apiSecOpen=!S._apiSecOpen;render();if(_ac) requestAnimationFrame(()=>{_ac.scrollTop=_asp;});}});
     apiHdrRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},S._apiSecOpen===true?'▼':'▶'));
     apiHdrRow.appendChild(el('h3',{style:{margin:'0',flex:'1'}},'📊 API Usage Monitor'));
     apiHdrRow.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--muted)',marginLeft:'6px',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)'}},(_apiTotalCents>100?'$'+(_apiTotalCents/100).toFixed(2):_apiTotalCents.toFixed(1)+'¢')+' est.'));
@@ -29024,7 +29038,7 @@ function buildUserSubSection(label,bodyBuilderFn){
   // ── Field Registry ──────────────────────────────────────────────────────────
   if(USER.role==='admin'){
     const frSec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
-    const frHdrRow=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',padding:'8px 12px',cursor:'pointer',background:'rgba(79,124,255,.06)'},onclick(){frBody.style.display=frBody.style.display==='none'?'':'none';frChev.textContent=frBody.style.display===''?'▼':'▶';}});
+    const frHdrRow=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',padding:'8px 12px',cursor:'pointer',background:'rgba(79,124,255,.06)',height:'32px',boxSizing:'border-box'},onclick(){frBody.style.display=frBody.style.display==='none'?'':'none';frChev.textContent=frBody.style.display===''?'▼':'▶';}});
     const frChev=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'▼');
     frHdrRow.appendChild(frChev);
     // S51 fix: the emoji was its own 14px span (vs. every other header's

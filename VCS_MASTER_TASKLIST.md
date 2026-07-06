@@ -1,6 +1,6 @@
 # VCS — Master Task List
-**Last updated:** Mon Jul 06, 2026, 12:50 AM EDT (this session, Claude Code)
-**Checkpoint at this update:** MD5 `84a09200d003aed71262f865e18decbc`, 31,656 lines
+**Last updated:** Mon Jul 06, 2026, 1:05 AM EDT (this session, Claude Code)
+**Checkpoint at this update:** MD5 `0dd3f7d636bec5731a2e8cf0964cee30`, 31,670 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,15 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Title bar heights, final pass (2026-07-06)** — David confirmed the
+  indent fix looked good and asked specifically for all header heights to
+  match, using Connections & API Keys (32px) as the reference. Switched
+  all 9 header element definitions from content-driven height (padding +
+  whatever the tallest child happens to need) to an explicit
+  `height:'32px', boxSizing:'border-box'` — immune to any future badge/
+  button/emoji difference silently reintroducing a 1-2px drift, which is
+  exactly the class of bug fixed twice already that night. Verified: all
+  13 top-level headers now measure exactly 32px.
 - **The actual title-bar bug, found after David pointed out the previous
   "measured pixel-perfect" claim was wrong** (2026-07-06). He was right —
   arrows/emojis/labels sat at genuinely different horizontal indents

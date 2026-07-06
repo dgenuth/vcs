@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
-**Last updated:** Mon Jul 06, 2026 — 12:50 AM EDT
-**Current checkpoint:** MD5 `84a09200d003aed71262f865e18decbc`, 31,656 lines
+**Last updated:** Mon Jul 06, 2026 — 1:05 AM EDT
+**Current checkpoint:** MD5 `0dd3f7d636bec5731a2e8cf0964cee30`, 31,670 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -575,6 +575,21 @@ similar symptom reappears; don't rediscover them from scratch)
   positions if their PARENT containers apply different padding/margin.
   This is exactly what let the bug hide through 3 previous "uniformity"
   passes.**
+- **Title bar heights, final pass: switched from content-driven sizing to
+  an explicit `height:'32px', boxSizing:'border-box'` on all 9 header
+  element definitions** (2026-07-06, David asked for uniform height
+  matching Connections & API Keys specifically). Content-driven sizing
+  (padding + whatever the tallest child naturally needs) is what caused
+  every height mismatch fixed earlier that same night — any future badge
+  with a border, embedded button, or oversized emoji span would silently
+  reintroduce a 1-2px drift the same way. An explicit height with
+  `boxSizing:'border-box'` makes every header immune to that regardless of
+  what's inside it. 32px was chosen to match Connections & API Keys (which
+  has a legitimate 1px status-color border on its badge, hence the extra
+  pixel over the other rows' natural ~31px) rather than shrinking it down.
+  **If a NEW header is ever added to Settings, give it the same
+  `height:'32px',boxSizing:'border-box'` from the start — don't rely on
+  padding+content sizing to happen to match.**
 
 ## CURRENT PRIORITY LIST
 
