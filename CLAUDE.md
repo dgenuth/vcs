@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Mon Jul 06, 2026 (this session, continued)
-**Current checkpoint:** MD5 `05f627f1058de90766a1df420de73258`, 32,008 lines
+**Current checkpoint:** MD5 `c8159ac69482967b8dd66512f6b5400e`, 32,026 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -78,6 +78,30 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **`USER.tabOverrides[tabId]` has TWO valid shapes — a legacy bare boolean,
+  and the current `{view, edit}` object the real Tab Access UI actually
+  writes — and not every reader handled both.** `canView()`,
+  `resolveRoleTabState()`, and `userCanEditTab()` all correctly check
+  `.view !== false` / `.edit === true` for the object shape. But
+  `isTabAllowedForUser(tabId)` — the ONE function both `updateSidebar()`'s
+  nav-button list and, critically, `render()`'s own content-access guard
+  (`!isTabAllowedForUser(S.view)`) depend on — used to do
+  `return !!_tabOverrides[tabId]`, which is ALWAYS `true` for any object
+  regardless of its actual `.view` value (any non-null object is truthy in
+  JS). This silently made every per-user tab restriction a no-op for BOTH
+  the sidebar AND actual page content — a real, currently-exploitable
+  access-control bug, confirmed live against a real user's (Monica DeLora)
+  actual restricted production record, and confirmed present in BOTH
+  sandbox and production (not a staleness issue — this has likely never
+  worked since the `{view,edit}` object format was introduced). Fixed
+  (2026-07-06) to match the same `.view !== false` convention already used
+  correctly everywhere else. **If a "restriction doesn't take effect" bug
+  shows up again for ANY per-user or per-role override field, check
+  whether the specific reader function actually inspects the object's
+  properties, or just does a bare truthiness check on the whole object** —
+  that's exactly the class of bug this was, and it's an easy one to
+  reintroduce by copy-pasting a boolean-style check onto a field that's
+  since grown into an object.
 - **`loadGlobalSettingsViaProxy()` has ~7 call sites across the file — calling
   it twice in quick succession is real, measured wasted time, not just
   theoretically wasteful.** On a genuinely fresh browser (no localStorage at

@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Mon Jul 06, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `05f627f1058de90766a1df420de73258`, 32,008 lines
+**Checkpoint at this update:** MD5 `c8159ac69482967b8dd66512f6b5400e`, 32,026 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,41 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **CRITICAL SECURITY/ACCESS CONTROL (2026-07-06): per-user Tab Access
+  restrictions have been silently non-functional for every user whose
+  admin used the real Tab Access checkboxes, for BOTH main-nav visibility
+  AND actual page content access — not a sync bug, an enforcement bug.**
+  David reported setting field/tab/permission restrictions for Monica
+  DeLora on production, clicking Apply, having Monica log in completely
+  fresh afterward, and her still seeing everything. Pulled her real live
+  record from the shared backend (read-only) and confirmed her
+  `tabOverrides` were correctly saved as `{view:false, edit:false}`-shaped
+  objects for nearly every tab — the SAVE/SYNC side was working correctly.
+  The bug was in `isTabAllowedForUser(tabId)` (the single function both
+  `updateSidebar()`'s nav-button list AND `render()`'s own content-access
+  guard — `!isTabAllowedForUser(S.view)` — both depend on): its check for
+  a per-user override was `return !!_tabOverrides[tabId]`, which is always
+  `true` for ANY object regardless of its actual `.view` value, since any
+  non-null object is truthy in JS. Every restriction stored in the
+  `{view,edit}` object shape (the ONLY shape the real per-user Tab Access
+  UI ever writes) was silently ignored by this one function — even though
+  the correctly-implemented sibling functions elsewhere (`canView()`,
+  `resolveRoleTabState()`, `userCanEditTab()`) already handle this exact
+  shape properly and were never the problem. Confirmed this is not
+  staleness — the identical bug exists in the CURRENT production
+  (`primesource-cms`) file too, not just sandbox, meaning this has likely
+  never worked correctly since the `{view,edit}` object format was
+  introduced. Fixed: `isTabAllowedForUser()` now checks `_ov.view !== false`
+  when the stored override is an object (matching the exact convention
+  `resolveRoleTabState()` already uses), falling back to the old
+  `!!_ov` behavior only for a genuine legacy bare-boolean entry. Verified
+  live: replayed Monica's exact real `tabOverrides` shape against the
+  fixed function — every tab she has explicitly restricted (`callsheet`,
+  `contracts`, `spend`, `analytics`, `today`) now correctly returns
+  `false`, while her explicitly-allowed tabs (`vendordb`, `checklist`)
+  still correctly return `true`. **This is present on production RIGHT
+  NOW and needs an urgent production deploy, not just a sandbox fix** —
+  see the top of ROLLOUT-BLOCKING below.
 - **Fresh-browser Supabase credential load — genuinely fresh users were
   wasting ~15+ seconds per login on a doomed, wholly redundant network call
   (2026-07-06).** David tested sandbox from a browser with zero prior
@@ -559,6 +594,15 @@ never silently drop something that isn't actually finished.
   ROLLOUT-BLOCKING #1 below for the re-scoped remainder.
 
 ## ROLLOUT-BLOCKING
+0. **URGENT — production needs an immediate deploy of the
+   `isTabAllowedForUser()` fix above.** Confirmed live: production
+   (`primesource-cms`, deployed separately from sandbox) currently has the
+   SAME broken tab-restriction enforcement bug as sandbox did before this
+   session's fix — any per-user Tab Access restriction set via the real UI
+   is silently ignored for both nav visibility and actual page content
+   access, on production, right now. This is a real, currently-exploitable
+   access-control gap, not a cosmetic issue. Sandbox is fixed and verified;
+   production is not, pending David's go-ahead on the deploy mechanism.
 1. **Excel column map audit & safe write path — re-scoped.** The Excel-side
    audit is already done (`PSD_FIELD_MAP`, `checkPsdSchemaDrift()`, admin
    System Health status card, all working). Not finished: the reverse map

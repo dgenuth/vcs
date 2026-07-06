@@ -4066,7 +4066,25 @@ function getNavTabGroups() {
 // header already set to the new page's title, since that happened first).
 function isTabAllowedForUser(tabId){
   const _tabOverrides = USER.tabOverrides || {};
-  if (tabId in _tabOverrides) return !!_tabOverrides[tabId];
+  if (tabId in _tabOverrides) {
+    const _ov = _tabOverrides[tabId];
+    // CRITICAL FIX (2026-07-06): per-user tabOverrides entries are
+    // {view,edit} objects (the ONLY shape the real per-user Tab Access UI
+    // ever writes -- same shape resolveRoleTabState()/canView() already
+    // handle correctly elsewhere) -- but `!!_ov` on an object is ALWAYS
+    // true regardless of its actual view:false, since any non-null object
+    // is truthy in JS. This silently ignored every per-user tab restriction
+    // that used this shape, for BOTH the sidebar nav list above AND
+    // render()'s own content-access guard below (S.view!=='settings' ...
+    // !isTabAllowedForUser(S.view)) -- meaning a restricted user could
+    // still open and view the full page content, not just see a nav
+    // button. Confirmed live against a real user's restricted production
+    // record (Monica DeLora) whose tabOverrides were correctly saved as
+    // {view:false,...} for nearly every tab, yet remained fully visible.
+    // Legacy bare-boolean entries (if any still exist) are still honored.
+    if (_ov && typeof _ov === 'object') return _ov.view !== false;
+    return !!_ov;
+  }
   // Feedback defaults to visible for everyone -- but this is a genuine
   // DEFAULT, not a hardcoded exception: the tabOverrides check above runs
   // FIRST, so an admin who explicitly toggles it off in Tab Access is
