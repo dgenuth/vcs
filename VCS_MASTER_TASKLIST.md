@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Mon Jul 06, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `cd44988d7dd3384703e2ab01bcbcc4d3`, 32,227 lines
+**Checkpoint at this update:** MD5 `96aa3b85a7202ff535e4e933e2496278`, 32,279 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,52 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Two note-related bugs, both found via David's report of adding a
+  Pipeline Note to an In The Works vendor (2026-07-06).**
+  1. **Note typing randomly jumped focus to the search box after ~20
+     characters.** Root cause: the global keyboard-shortcut handler's
+     "don't hijack when typing" guard only excluded `INPUT`/`TEXTAREA`/
+     `SELECT` tags — the rich-text note editor is a `contenteditable` DIV,
+     whose tagName is just `'DIV'`, so it was never excluded. Typing the
+     letter "f" ANYWHERE in a note (or any other contenteditable field)
+     triggered the "focus search" shortcut, discarding that keystroke and
+     yanking focus away — "f" appears roughly every 20-25 characters in
+     ordinary English prose ("of"/"for"/"if"/"from"), which is exactly the
+     interval David noticed; not random, just deterministic on that one
+     letter. Fixed by also checking `isContentEditable` (and the closest
+     `[contenteditable="true"]` ancestor) in the guard. Verified live: a
+     real contenteditable element focused, dispatched a "f" keydown —
+     confirmed focus stays put and the keystroke is no longer blocked;
+     confirmed the shortcut still correctly fires when focus is NOT in an
+     editable field (no regression).
+  2. **Saving a note under "Pipeline Notes" also duplicated it under
+     "Contract Notes."** Two compounding bugs in `addUnifiedNotesSection()`:
+     (a) entries read from `vendor._notesLog` were unconditionally
+     hardcoded to `_source`/`_tag:'Contract'`, completely discarding the
+     entry's own real tag (captured into a local variable and then thrown
+     away) — so a note tagged 'pipeline' always displayed under Contract
+     Notes regardless of what the user actually picked; (b) for a vendor
+     viewed directly from the ITW/Pipeline tab, the separate "_itwSrc"
+     block resolves to the EXACT SAME object as `vendor`, re-reading and
+     re-parsing the identical `.notes` string a second time with no dedup
+     check against entries already collected — so every pipeline vendor's
+     notes were always double-counted, once via each path. David's
+     observation that the pre-existing note was "probably also just a
+     duplicate of the exact same note" was correct — this has likely been
+     happening for a while, not a one-off. Fixed both: entries now map
+     `NOTE_TAGS` values (`pipeline`/`review`/`sf_log`/`Contract`) to their
+     real display category instead of hardcoding one, falling back to
+     'Contract' only for genuinely untagged/legacy entries; and the ITW
+     block now skips entirely when it's the same object as `vendor`
+     (already fully covered by the block above it) and dedups by
+     content+date in the genuine cross-reference case (a separate vendor
+     record with a separately-matching ITW record by name). Verified live
+     across 3 scenarios: a pipeline-tagged note on an ITW vendor now
+     appears exactly once, correctly under Pipeline Notes only; a
+     regular vendor's untagged legacy note still correctly shows under
+     Contract Notes (no regression); and a genuine cross-reference case
+     (two distinct objects sharing a vendor name) correctly shows both
+     notes once each, in their own correct sections.
 - **AI Assistant context leaked restricted vendor data regardless of the
   asking user's hiddenFields (2026-07-06, David's pre-rollout concern,
   confirmed valid).** Found three distinct leak points in

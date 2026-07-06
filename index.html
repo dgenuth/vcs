@@ -11145,13 +11145,31 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
   }
   // Always also show legacy notes from vendor.notes string and _notesLog
   {
+    // CRITICAL FIX (2026-07-06): every entry read here used to be hardcoded
+    // to _source/_tag:'Contract' regardless of e.tag (== the note's real
+    // `type`, set from whatever NOTE_TAGS button the user picked when
+    // saving via openStructuredNoteModal/prependStructuredNote) -- so a
+    // note tagged 'pipeline' (or 'review'/'sf_log'/anything else) always
+    // displayed under Contract Notes, no matter what the user actually
+    // selected. NOTE_TAGS values don't all match the subsection keys
+    // (Pipeline/Review/SF/Contract/DB/Excel/Log) by name or case --
+    // mapped explicitly below; Call/Email/Meeting/Internal/Follow-up/
+    // Other/general have no direct subsection and correctly fall through
+    // to "Other Notes" via the existing uncategorized bucket, same as
+    // before. Only a genuinely untagged (true legacy/Excel-imported, no
+    // type at all) entry still defaults to 'Contract', matching its real
+    // historical origin as the Excel "Contract Notes" column.
+    const _NOTE_TAG_TO_CATEGORY={pipeline:'Pipeline',review:'Review',sf_log:'SF',Contract:'Contract'};
     const _psdSrc = (vendor._notesLog && vendor._notesLog.length)
       ? vendor._notesLog.map(function(e){return {date:e.date,tag:e.type,author:e.user,content:e.text,legacy:false};})
       : parseNoteEntries(vendor.notes);
     _psdSrc.forEach(function(e){
       // Avoid duplicates with _sbNotes
       const alreadyIn = allEntries.some(x=>x.content===e.content&&x.date===e.date);
-      if(!alreadyIn) allEntries.push(Object.assign({},e,{_source:'Contract',_tag:'Contract',_vendor:vendor}));
+      if(!alreadyIn){
+        const realTag = _NOTE_TAG_TO_CATEGORY[e.tag] || e.tag || 'Contract';
+        allEntries.push(Object.assign({},e,{_source:realTag,_tag:realTag,_vendor:vendor}));
+      }
     });
   }
 
@@ -11174,12 +11192,27 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
   }
 
   // ITW notes — passed directly OR auto-matched from S.itwVendors
+  // CRITICAL FIX (2026-07-06): when the detail panel is opened FOR an ITW/
+  // pipeline vendor directly (vendor.source==='itw'), _itwSrc resolves to
+  // the EXACT SAME object as `vendor` (matched by its own name) -- meaning
+  // its .notes string is the SAME field already read by the _notesLog/
+  // vendor.notes block above, just re-parsed from the raw string a second
+  // time with no dedup check at all. Every note on a pipeline vendor was
+  // therefore always double-counted: once via the block above (now
+  // correctly tagged 'Pipeline' per the fix there, when the entry's own
+  // type is 'pipeline'), and again here (also tagged 'Pipeline') -- two
+  // separate entries with identical content, both landing in the same
+  // subsection. Skip entirely when _itwSrc is the same object as vendor
+  // (already fully covered above), and dedup against allEntries in the
+  // genuine cross-reference case (viewing a non-ITW vendor that has a
+  // separate, matching ITW record by name).
   const _itwSrc=itwVendor||(S.itw||S.itwVendors||S._itwData||[]).find(itw=>
     itw.name===vendor.name||(itw.vendorId&&itw.vendorId===vendor.id)
   );
-  if(_itwSrc && _itwSrc.notes){
+  if(_itwSrc && _itwSrc!==vendor && _itwSrc.notes){
     parseNoteEntries(_itwSrc.notes).forEach(e=>{
-      allEntries.push({...e, _source:'Pipeline', _tag:'Pipeline', _vendor:_itwSrc});
+      const alreadyIn = allEntries.some(x=>x.content===e.content&&x.date===e.date);
+      if(!alreadyIn) allEntries.push({...e, _source:'Pipeline', _tag:'Pipeline', _vendor:_itwSrc});
     });
   }
 
@@ -31697,14 +31730,33 @@ function hideKeywordSuggestions() {
   $('analytics-popup-bg').addEventListener('click',closeAnalyticsPopup);
   document.querySelector('.analytics-popup').addEventListener('click',e=>e.stopPropagation());
   document.addEventListener('keydown',e=>{
+  // CRITICAL FIX (2026-07-06): this guard only excluded INPUT/TEXTAREA/
+  // SELECT tags -- the rich-text note editor (openStructuredNoteModal) is a
+  // contenteditable DIV, whose tagName is just 'DIV', so it was never
+  // excluded. Typing the letter "f" anywhere in a note (or any other
+  // contenteditable field) triggered the global "focus search" shortcut
+  // below, silently discarding that keystroke and yanking focus to the
+  // search box mid-sentence -- "f" appears roughly every 20-25 characters
+  // in ordinary English prose ("of"/"for"/"if"/"from"), matching exactly
+  // what David reported as a seemingly-random focus jump. Now also checks
+  // isContentEditable on the active element (and its closest contenteditable
+  // ancestor, since the event target inside a rich editor can itself be a
+  // child node), not just the tag name.
+  function _kbTypingTarget(){
+    const el=document.activeElement;
+    if(!el) return false;
+    if(['INPUT','TEXTAREA','SELECT'].includes(el.tagName)) return true;
+    if(el.isContentEditable) return true;
+    if(typeof el.closest==='function' && el.closest('[contenteditable="true"]')) return true;
+    return false;
+  }
   // Press / to focus search (not when in an input/textarea)
-  if(e.key==='/'&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)){
+  if(e.key==='/'&&!_kbTypingTarget()){
     e.preventDefault();const s=$('search');if(s){s.focus();s.select();}
   }
     if(e.key==='Escape'){closeModal();closeDetail();closeAnalyticsPopup();return;}
     // Don't hijack when typing in an input
-    const tag=document.activeElement?.tagName;
-    if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return;
+    if(_kbTypingTarget()) return;
     // Focus search on / or f
     if(e.key==='/'||e.key==='f'){e.preventDefault();$('search')?.focus();return;}
     // ? = show shortcuts

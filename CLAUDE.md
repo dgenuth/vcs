@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Mon Jul 06, 2026 (this session, continued)
-**Current checkpoint:** MD5 `cd44988d7dd3384703e2ab01bcbcc4d3`, 32,227 lines
+**Current checkpoint:** MD5 `96aa3b85a7202ff535e4e933e2496278`, 32,279 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -78,6 +78,40 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **The global keyboard-shortcut handler's "don't hijack while typing"
+  guard only ever checked `tagName` against INPUT/TEXTAREA/SELECT — any
+  `contenteditable` element (the rich-text note editor, and any future
+  one) was never excluded, so typing common letters like "f" inside it
+  triggered global shortcuts (focus search) instead of typing them. Fixed
+  by also checking `.isContentEditable` and the closest
+  `[contenteditable="true"]` ancestor. **If a future report says typing
+  in some field "randomly" jumps focus or drops keystrokes, check this
+  exact handler first** — the same gap will reappear for any new
+  contenteditable surface unless it goes through the shared `_kbTypingTarget()`
+  check.
+- **Notes have TWO separate storage/categorization concerns that are easy to
+  conflate: the note's real TYPE (`NOTE_TAGS` — Call/Email/Meeting/Contract/
+  Internal/Follow-up/Other/general/sf_log/pipeline/review, what the user
+  picks when saving) vs. the DISPLAY SUBSECTION category (Pipeline/Review/
+  SF/Contract/DB/Excel/Log, used to group notes in the vendor panel).** These
+  don't match 1:1 by name or case (`pipeline`→`Pipeline`, `sf_log`→`SF`,
+  etc.) — `addUnifiedNotesSection()` used to hardcode every `_notesLog`
+  entry's category to `'Contract'` regardless of its real tag, silently
+  discarding the user's actual choice. If you add a new NOTE_TAGS value
+  that should map to a specific display subsection, add it to the
+  `_NOTE_TAG_TO_CATEGORY` mapping there — anything not in that mapping
+  correctly falls through to "Other Notes," which is fine for tags that
+  aren't meant to have a dedicated subsection.
+- **When a vendor object can be found via more than one lookup path (e.g. a
+  vendor viewed directly from ITW/Pipeline vs. cross-referenced from the
+  main vendor list by name), always check whether the "other" lookup can
+  resolve to the SAME object you already have, not just a different one
+  with the same name.** `addUnifiedNotesSection()`'s `_itwSrc` lookup used
+  to re-read and re-parse the exact same `.notes` string a second time
+  whenever `vendor` itself was the ITW record, with no dedup against
+  already-collected entries — silently doubling every note on any
+  pipeline vendor. Fixed with an explicit `_itwSrc!==vendor` guard plus a
+  content+date dedup check for the genuine cross-reference case.
 - **Any NEW surface that reads vendor data (AI context, exports, reports,
   etc.) must redact via `canViewField(fieldKey)` for EVERY field it emits —
   never hand-roll a `hidden.includes(fieldKey)` check against a hardcoded
