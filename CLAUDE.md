@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Mon Jul 06, 2026 (this session, continued)
-**Current checkpoint:** MD5 `eca920391bedf7bd6a3757a886e36da3`, 32,120 lines
+**Current checkpoint:** MD5 `a276760aa55aee6575c8e5d9bda3fb3b`, 32,143 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -78,6 +78,30 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **`canView(key)` has a THIRD data source for tab visibility, separate from
+  both `USER.tabOverrides` and `vcs_role_tab_overrides` — a hardcoded static
+  object called `TAB_PAGE_DEFAULTS`, and it predates the Tab Access Defaults
+  UI entirely.** Only `contracts`/`spend`/`network`/`economics`/`forecast`/
+  `reports`/`tiers` route through this specific branch (see
+  `_PERM_KEY_TO_LEGACY_TAB`), but for exactly those 7 ids, an admin's
+  role-level Tab Access toggle used to have ZERO effect — `canView()` read
+  `TAB_PAGE_DEFAULTS[role][tabId]` instead of the real, current
+  `vcs_role_tab_overrides` data. Two distinct failure directions from the
+  same cause: a tab missing from `TAB_PAGE_DEFAULTS[role]` entirely falls
+  through to a hardcoded `return true` (over-permissive, ignores an admin
+  marking it restricted); a tab hardcoded to `false` there can never be
+  turned ON via the UI (stuck restricted regardless of admin config).
+  Fixed (2026-07-06) by having `canView()` call `resolveRoleTabState()` —
+  the same function the Tab Access Defaults panel itself uses to decide
+  what checkbox to show — so displayed settings and actual enforcement
+  cannot diverge for these 7 ids anymore. **If a permission setting
+  "doesn't take effect" for one of these 7 specific tabs (or a NEW tab id
+  ever gets added to `_PERM_KEY_TO_LEGACY_TAB`), check whether its
+  enforcement path actually reads current role/user override data or a
+  stale hardcoded snapshot before assuming the UI itself is broken** — this
+  is the third time this exact class of bug has been found in a different
+  spot this session (`isTabAllowedForUser()`'s object-truthy bug, Today's
+  sub-tabs never being gated at all, and now this).
 - **A page having sub-tabs in `PAGE_HIERARCHY`/the Tab Access UI does NOT
   mean those sub-tabs are actually enforced anywhere — each page's own
   render function has to explicitly gate on them, and it's easy for a page

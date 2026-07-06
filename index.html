@@ -7934,6 +7934,29 @@ function canView(key){
     // the new Tab Access checkboxes) as well as the older bare boolean.
     if(legacyOverride&&typeof legacyOverride==='object') return legacyOverride.view!==false;
     if(typeof legacyOverride==='boolean') return legacyOverride;
+    // CRITICAL FIX (2026-07-06): this used to fall straight to the static
+    // TAB_PAGE_DEFAULTS snapshot below, which predates the Role & Feature
+    // Defaults "Tab Access Defaults" UI (vcs_role_tab_overrides,
+    // resolveRoleTabState()) and was never wired to it. contracts/spend/
+    // network/economics/forecast/reports/tiers are the ONLY ids that ever
+    // reach this branch (see _PERM_KEY_TO_LEGACY_TAB above) -- for every
+    // one of them, an admin's role-level Tab Access toggle had ZERO effect
+    // on actual access. Confirmed live: SSA's "tiers" has no entry in
+    // TAB_PAGE_DEFAULTS.ssa at all, so it fell through to the hardcoded
+    // `return true` below regardless of being marked restricted in
+    // Settings; roles where TAB_PAGE_DEFAULTS hardcodes a tab to `false`
+    // (e.g. ssa's contracts/spend/network/economics/forecast/reports) could
+    // never be un-restricted via the UI either, no matter what an admin
+    // configured. Now consults the same resolveRoleTabState() the Tab
+    // Access Defaults panel itself uses to decide what checkbox to show --
+    // guaranteeing actual access always matches the displayed setting. The
+    // old TAB_PAGE_DEFAULTS value is passed through as the fallback default
+    // ONLY for a role/tab combination that has never been explicitly
+    // configured via the new UI, preserving prior behavior exactly until an
+    // admin actually touches it.
+    if(typeof resolveRoleTabState==='function'){
+      return resolveRoleTabState(role, legacyTabId, legacyDefaults[legacyTabId]).view;
+    }
     if(legacyDefaults[legacyTabId]!==undefined) return legacyDefaults[legacyTabId]!==false;
   }
   return true;

@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Mon Jul 06, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `eca920391bedf7bd6a3757a886e36da3`, 32,120 lines
+**Checkpoint at this update:** MD5 `a276760aa55aee6575c8e5d9bda3fb3b`, 32,143 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,36 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **CRITICAL ACCESS CONTROL (2026-07-06): `contracts`/`spend`/`network`/
+  `economics`/`forecast`/`reports`/`tiers` completely ignored the Role &
+  Feature Defaults "Tab Access Defaults" setting, for every role.**
+  David's exact repro: set his own role to SSA, restricted Tier Tracker at
+  the role-default level, refreshed logged in as that role — Tier Tracker
+  was still fully visible. Root cause: `canView()` (which these 7 specific
+  tab ids route through via `userCanSeeTab()`/`isTabAllowedForUser()`)
+  checked a hardcoded, static legacy object (`TAB_PAGE_DEFAULTS`) that
+  predates the "Tab Access Defaults" UI (`vcs_role_tab_overrides`,
+  `resolveRoleTabState()`) and was never wired to it — an admin's toggle in
+  that panel had ZERO effect on these 7 tabs' actual enforcement, in
+  EITHER direction. Confirmed two distinct symptoms from the same root
+  cause: (1) `TAB_PAGE_DEFAULTS.ssa` has no `tiers` entry at all, so it
+  fell through to a hardcoded `return true` regardless of being marked
+  restricted (over-permissive leak — exactly David's repro); (2) roles
+  where `TAB_PAGE_DEFAULTS` hardcodes a tab to `false` (e.g. SSA's
+  contracts/spend/network/economics/forecast/reports) could never be
+  un-restricted via the UI no matter what an admin configured — very
+  likely why a newly-added SSA user was "fully restricted from everything"
+  despite intended permissions. Fixed: `canView()` now consults
+  `resolveRoleTabState()` — the SAME function the Tab Access Defaults panel
+  itself uses to decide what checkbox to display — guaranteeing displayed
+  settings and actual enforcement can never diverge again for these 7 ids.
+  The old `TAB_PAGE_DEFAULTS` value is preserved as the fallback default
+  only for a role/tab combination an admin has never explicitly touched,
+  so nothing changes for untouched roles. Verified live across 4 scenarios:
+  restricting a previously-open tab now correctly restricts it; un-
+  restricting a previously-hardcoded-closed tab now correctly opens it;
+  and two untouched-role/tab checks still match the exact old hardcoded
+  behavior (no regression).
 - **CRITICAL ACCESS CONTROL (2026-07-06): sub-tabs within a page (Today's 10
   sub-sections specifically) ignored their own restrictions completely —
   once a top-level tab was visible, EVERY sub-section rendered regardless of
