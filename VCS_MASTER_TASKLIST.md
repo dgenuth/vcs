@@ -1,6 +1,6 @@
 # VCS — Master Task List
-**Last updated:** Mon Jul 06, 2026, 1:25 AM EDT (this session, Claude Code)
-**Checkpoint at this update:** MD5 `a1131232a9b700e1b2803a90ba770393`, 31,717 lines
+**Last updated:** Mon Jul 06, 2026, 1:50 AM EDT (this session, Claude Code)
+**Checkpoint at this update:** MD5 `6a23e3277dda9ee6b6ab9543d251376d`, 31,761 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,24 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **CRITICAL SECURITY (2026-07-06): a deleted user could still log in
+  indefinitely from any browser that had them cached before the
+  deletion** — David deleted a user and could still log in as them from
+  another browser. Three stacked gaps: (1) the user-list merge used during
+  login only ever added/updated from the server, never removed a locally-
+  cached user the server no longer lists; (2) both login entry points
+  (Microsoft/Google OAuth and the sandbox email/password form) validated
+  against whatever was cached locally with no freshness check in the
+  common case; (3) the existing post-sync check that detects "this user
+  is no longer approved" had no actual consequence — no forced logout for
+  an already-open session. Fixed all three. Verified live (without
+  touching real backend data, via a locally-simulated "phantom deleted
+  user"): confirmed the merge now prunes a stale cached user, confirmed
+  both login gates now correctly deny a since-deleted user even when
+  they're still in the local cache, and confirmed an already-active
+  session for a deleted user is now force-logged-out immediately. See
+  CLAUDE.md Known Traps for full mechanism detail — this is the kind of
+  bug that's easy to reintroduce by fixing only one of the three layers.
 - **"View As" ignored most of a target user's real permission overrides**
   (2026-07-06, David's report — set a user's Permissions to "Full list
   browsable" and View As still acted like search was required). Two

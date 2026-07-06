@@ -1078,23 +1078,25 @@ async function handleOAuthLogin(email, name, provider) {
   let users = getApprovedUsers();
   let found = users.find(u => u.email.toLowerCase() === email);
 
-  // CRITICAL FIX: localStorage is scoped per-origin. A brand-new domain
-  // (e.g. cms.primesourcex.com, which never shares storage with the
-  // sandbox at dgenuth.github.io) starts with a genuinely EMPTY approved-
-  // users list on every new browser -- indistinguishable, from this code's
-  // point of view, from "the server's real list is actually empty". Since
-  // production intentionally refuses to bootstrap-admin an empty list (see
-  // below), this was locking out EVERYONE on a fresh origin, including the
-  // real admin. Give the server one chance to sync the real list in before
-  // concluding it's actually empty.
-  if (users.length === 0 && CMS_PRODUCTION_MODE) {
-    try {
-      await loadGlobalSettingsViaProxy();
-      users = getApprovedUsers();
-      found = users.find(u => u.email.toLowerCase() === email);
-    } catch(e) {
-      console.warn('[VCS] Pre-auth server sync failed:', e.message);
-    }
+  // SECURITY FIX (2026-07-06): this used to only sync with the server when
+  // the LOCAL list was empty AND in production mode -- meaning the common
+  // case (a non-empty local cache, or sandbox mode) validated the login
+  // gate against whatever was cached locally, with no attempt to check
+  // whether it was still current. Combined with the loadGlobalSettingsViaProxy()
+  // merge bug fixed the same day (it used to never remove a locally-cached
+  // user the server no longer lists), a user deleted from User Management
+  // stayed able to log in indefinitely from any browser that had cached
+  // them before the deletion. Now always attempts a fresh sync first —
+  // best-effort (falls back to whatever's cached if the network call
+  // fails, same as before, rather than hard-locking out every login during
+  // a transient outage) — so a deletion takes effect on the very next
+  // login attempt, not "eventually."
+  try {
+    await loadGlobalSettingsViaProxy();
+    users = getApprovedUsers();
+    found = users.find(u => u.email.toLowerCase() === email);
+  } catch(e) {
+    console.warn('[VCS] Pre-auth server sync failed:', e.message);
   }
 
   if (users.length > 0 && !found) {
@@ -1344,6 +1346,22 @@ async function completeLogin() {
         // wouldn't retroactively hide content that's already on screen.
         if (typeof render === 'function') render();
       }
+    } else if (_freshUsers.length > 0) {
+      // SECURITY FIX (2026-07-06): this branch never existed — the check
+      // above correctly detected "this user is no longer in the
+      // authoritative list" (i.e. deleted from User Management) but then
+      // did nothing about it, leaving an already-open session logged in
+      // indefinitely with its old permissions until the tab was closed.
+      // Combined with the getApprovedUsers()/loadGlobalSettingsViaProxy()
+      // fixes the same day (which stop a deleted user's local cache entry
+      // from being resurrected), this closes the loop: a revoked user is
+      // now force-logged-out the moment this runs, which happens on every
+      // completeLogin() (every page load / session restore), not just new
+      // login attempts.
+      console.warn('[VCS ROLE DEBUG] completeLogin() post-sync -- USER no longer in approved list, forcing logout:', USER.email);
+      toast('Your access has been removed. Please contact your administrator.', '#ef4444', 8000);
+      await logout();
+      return;
     }
   } catch(e) { console.warn('[VCS] Post-sync role refresh failed:', e.message); }
   // ── SUPABASE FIRST LOAD ──────────────────────────────────────────────────
@@ -8354,23 +8372,40 @@ async function loadGlobalSettingsViaProxy() {
     // Merge approved users list (carries feature flags, roles, hiddenFields)
     if (cfg.users && Array.isArray(cfg.users)) {
       const existing = getApprovedUsers();
-      const merged = [...existing];
-      cfg.users.forEach(du => {
-        const idx = merged.findIndex(u => (u.email||'').toLowerCase() === (du.email||'').toLowerCase());
-        if (idx < 0) merged.push(du);
-        else {
-          // SERVER WINS for existing users. The old logic only applied the
-          // server's role when the local record had NO role (never true in
-          // practice) and never merged tabOverrides/permissions/perms/
-          // fieldEditPerms/assistantAdmin at all -- so any change an admin
-          // made to an EXISTING user never reached any other browser, ever,
-          // while NEW users worked fine because they were pushed in fresh.
-          // ("Whoever you put in the user the first time, that's the way
-          // the user stays" -- exactly this bug.) The spread keeps any
-          // local-only fields the server record doesn't have, but every
-          // field the server DOES have overwrites the local copy.
-          merged[idx] = Object.assign({}, merged[idx], du);
-        }
+      // SECURITY FIX (2026-07-06): this used to start from the LOCAL cache
+      // (`[...existing]`) and only ever ADD or UPDATE from the server list —
+      // never REMOVE. A user deleted from User Management (no longer in
+      // cfg.users) stayed in every browser's local cache indefinitely,
+      // meaning the login gate (which checks getApprovedUsers() after this
+      // runs) kept authorizing a revoked user forever on any device that
+      // had them cached before the deletion. Confirmed live: David deleted
+      // a user and could still log in as them from another browser.
+      // Now starts from the SERVER's list (authoritative for who's actually
+      // approved) and only preserves a local-only record (one the server
+      // doesn't have) if THIS tab is the one that just created it and
+      // hasn't synced yet — same _TOUCHED_USERS distinction
+      // saveUsersViaProxy() already uses, so a legitimately new,
+      // not-yet-saved user isn't wiped out mid-creation. _TOUCHED_USERS is
+      // empty on every fresh page load, so at login/session-restore time
+      // (when it matters most) a deleted user is never resurrected.
+      const serverEmails = new Set(cfg.users.map(du => (du.email||'').toLowerCase()));
+      const merged = cfg.users.map(du => {
+        const localMatch = existing.find(u => (u.email||'').toLowerCase() === (du.email||'').toLowerCase());
+        // SERVER WINS for existing users. The old logic only applied the
+        // server's role when the local record had NO role (never true in
+        // practice) and never merged tabOverrides/permissions/perms/
+        // fieldEditPerms/assistantAdmin at all -- so any change an admin
+        // made to an EXISTING user never reached any other browser, ever,
+        // while NEW users worked fine because they were pushed in fresh.
+        // ("Whoever you put in the user the first time, that's the way
+        // the user stays" -- exactly this bug.) The spread keeps any
+        // local-only fields the server record doesn't have, but every
+        // field the server DOES have overwrites the local copy.
+        return localMatch ? Object.assign({}, localMatch, du) : du;
+      });
+      existing.forEach(u => {
+        const email = (u.email||'').toLowerCase();
+        if (!serverEmails.has(email) && _TOUCHED_USERS.has(email)) merged.push(u);
       });
       setApprovedUsers(merged);
     }
@@ -9281,7 +9316,7 @@ function logLoginAttempt(email,success,reason){
   }
 }
 
-function attemptLogin(email, password){
+async function attemptLogin(email, password){
   email=String(email||'').trim().toLowerCase();
   if(!email||!email.includes('@')){return{ok:false,msg:'Enter a valid email address'};}
   // Production mode requires Microsoft sign-in — the email/password fallback
@@ -9290,6 +9325,15 @@ function attemptLogin(email, password){
     logLoginAttempt(email,false,'email/password login disabled in production');
     return{ok:false,msg:'Password sign-in is disabled. Please sign in with your Prime Source Microsoft account.'};
   }
+  // SECURITY FIX (2026-07-06): this used to check straight against
+  // getApprovedUsers()'s LOCAL cache with no attempt to refresh it first —
+  // the same gap fixed in handleOAuthLogin() the same day. A user deleted
+  // from User Management on another device stayed able to log in via this
+  // email/password path indefinitely from any browser that had them cached
+  // from before the deletion. Best-effort sync first; falls back to
+  // whatever's cached if the network call fails rather than hard-locking
+  // out every login during a transient outage.
+  try { await loadGlobalSettingsViaProxy(); } catch(e) { console.warn('[VCS] Pre-auth server sync failed:', e.message); }
   const users=getApprovedUsers();
   // Bootstrap: first ever login becomes admin with no password required
   if(!users.length){
@@ -30825,7 +30869,7 @@ async function init() {
   $('login-btn').addEventListener('click', async ()=>{
     const email=$('login-email').value;
     const pass=$('login-pass').value;
-    const result=attemptLogin(email, pass);
+    const result=await attemptLogin(email, pass);
     if(result && result.ok){
       await completeLogin();
     } else {

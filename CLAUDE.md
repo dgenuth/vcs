@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
-**Last updated:** Mon Jul 06, 2026 — 1:25 AM EDT
-**Current checkpoint:** MD5 `a1131232a9b700e1b2803a90ba770393`, 31,717 lines
+**Last updated:** Mon Jul 06, 2026 — 1:50 AM EDT
+**Current checkpoint:** MD5 `6a23e3277dda9ee6b6ab9543d251376d`, 31,761 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -632,6 +632,47 @@ similar symptom reappears; don't rediscover them from scratch)
   `loginAs()` actually sets the field in question — the pattern of "some
   other code path happens to correct it after a full reload" makes gaps
   like this easy to miss for a long time.**
+- **CRITICAL SECURITY: a deleted user could still log in indefinitely from
+  any browser that had them cached before the deletion** (found and fixed
+  2026-07-06, David's report — he deleted a user and could still log in as
+  them from another browser). Three stacked gaps, all in the same area of
+  the auth code:
+  1. `loadGlobalSettingsViaProxy()`'s user-list merge (used during login)
+     started from the LOCAL cache and only ever added/updated from the
+     server's list — never removed. A user deleted from User Management
+     (no longer in the server's list) stayed in any browser's local cache
+     forever, since this function only ever unioned, never pruned.
+     `saveUsersViaProxy()` already got this right (an untouched local-only
+     record is treated as "deleted elsewhere, don't resurrect it") — this
+     function just never got the same treatment. Fixed the same way, using
+     the same `_TOUCHED_USERS` distinction: a local-only record survives
+     the merge only if THIS tab just created it and hasn't synced yet.
+  2. `handleOAuthLogin()` only ever synced with the server when the local
+     cache was EMPTY and in production mode — the common case (non-empty
+     cache, or sandbox) validated the login gate against whatever was
+     cached locally with no freshness check at all. `attemptLogin()` (the
+     sandbox email/password path) never synced at all, ever. Both now
+     always attempt a fresh sync before checking membership (best-effort —
+     falls back to the cached list if the network call fails, so a
+     transient outage doesn't hard-lock out every login).
+  3. `completeLogin()`'s existing post-sync check already correctly
+     detected "this user is no longer in the authoritative list" but did
+     nothing about it — no `else` branch, so an ALREADY-OPEN session for a
+     since-deleted user stayed fully logged in with its old permissions
+     until the tab was closed. Added the missing branch: force an
+     immediate `logout()` when a fresh, non-empty server list doesn't
+     contain the current user.
+  **Verified all three live** without touching real backend data: seeded a
+  local-only "phantom" user (simulating a stale cache from before a real
+  deletion), confirmed `loadGlobalSettingsViaProxy()` correctly pruned them;
+  confirmed both `attemptLogin()` and `handleOAuthLogin()` correctly denied
+  a login attempt for that phantom user even though they were present in
+  the local cache moments before the call; confirmed `completeLogin()`
+  force-logged-out an already-active phantom session (`USER.loggedIn`
+  false, login screen shown) the moment it ran. **If a "revoked user still
+  has access" report ever comes back, check whether ALL THREE of these
+  layers are still intact — a fix to just one (e.g. only the merge, or
+  only the login gate) leaves the other two as a residual gap.**
 
 ## CURRENT PRIORITY LIST
 
