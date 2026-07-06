@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Mon Jul 06, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `f41e6d1f29d997f10fdb38e660495c1b`, 32,193 lines
+**Checkpoint at this update:** MD5 `cd44988d7dd3384703e2ab01bcbcc4d3`, 32,227 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,52 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **AI Assistant context leaked restricted vendor data regardless of the
+  asking user's hiddenFields (2026-07-06, David's pre-rollout concern,
+  confirmed valid).** Found three distinct leak points in
+  `buildAIContext()`/`buildVendorLookup()`: (1) the portfolio-wide "Admin
+  Fee Benchmarks by Category" summary was built from raw `adminFee` across
+  all vendors with zero check against the user's restrictions; (2) the
+  "Top Urgent Vendors" and "Expiring Soon" summaries directly embedded
+  `adminFee`/`procContact`/`email` per vendor, also unchecked; (3) the
+  per-vendor lookup (`buildVendorLookup`) only redacted a hardcoded 6-field
+  list (adminFee/tiers/procContact/email/notes/adminFeeNotes) against a
+  hand-rolled `hidden.includes()` check — every OTHER hideable field
+  (contractName, termEffective, autoRenewal, autoRenewalType, contractTerm,
+  perpetuity, tail, minYears, lastComm, followUp, status, score — roughly
+  60 fields are hideable total) was always emitted in full regardless of
+  the user's actual restrictions. Structurally, the whole approach relied
+  on a prompt instruction ("if a field is hidden, say it's restricted")
+  rather than actually removing the data from context — the sensitive
+  values were present either way, with only a soft behavioral request that
+  the model not repeat them; not a real access-control boundary.
+  Fixed: every field now routes through `canViewField()` — the same
+  canonical function the rest of the app already uses for field
+  visibility — so restricted values are replaced with a redaction marker
+  BEFORE they ever reach the model, and this can never drift out of sync
+  with whatever fields are actually configured as hideable. Also rewrote
+  the "CRITICAL INSTRUCTIONS" prompt section to accurately state that
+  restricted data has already been removed (previously said the model "has
+  direct access to ALL vendor data," which was the exact opposite of the
+  intended security model). Verified live: set a sales_rep test session
+  with a mix of previously-protected and previously-*unprotected* fields
+  hidden (adminFee, contractName, autoRenewal, procContact, email) —
+  confirmed the portfolio benchmark section is now fully redacted, the
+  per-vendor "Top Urgent"/"Expiring Soon" summaries show the redaction
+  marker with no raw values (checked via precise section extraction, not
+  a naive substring search, after an initial false-positive), and the
+  per-vendor lookup correctly redacts all 5 restricted fields including
+  the two that were never protected before this fix.
+  **Not yet started**: David's second concern — every Salesforce SOQL
+  query in the app reads the raw `Sales__c`/`Spend__c` fields directly;
+  none use the `_P`-suffixed variant fields that Salesforce's own
+  sharing rules are actually built on, meaning a sales rep's own SF
+  profile restrictions (limited to their own accounts) may not apply to
+  data this app pulls via API even though it correctly uses that rep's own
+  token. Confirmed via grep: every SOQL call site uses the same
+  unrestricted field names. Needs the exact `_P` field API names from
+  David before this can be safely fixed — guessing at Salesforce schema
+  risks breaking the integration outright.
 - **EMERGENCY (2026-07-06): `supabaseUrl`/`supabaseKey` went empty on the
   server AGAIN, after already being fixed once tonight — via a DIFFERENT
   code path than the one already patched.** `_saveUsersViaProxyImpl()` was

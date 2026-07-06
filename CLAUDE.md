@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Mon Jul 06, 2026 (this session, continued)
-**Current checkpoint:** MD5 `f41e6d1f29d997f10fdb38e660495c1b`, 32,193 lines
+**Current checkpoint:** MD5 `cd44988d7dd3384703e2ab01bcbcc4d3`, 32,227 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -78,6 +78,23 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **Any NEW surface that reads vendor data (AI context, exports, reports,
+  etc.) must redact via `canViewField(fieldKey)` for EVERY field it emits —
+  never hand-roll a `hidden.includes(fieldKey)` check against a hardcoded
+  subset of fields.** `buildAIContext()`/`buildVendorLookup()` only
+  redacted 6 of the ~60 hideable fields (adminFee/tiers/procContact/
+  email/notes/adminFeeNotes), silently exposing everything else
+  (contractName, autoRenewal, termEffective, perpetuity, tail, minYears,
+  status, score, etc.) to the AI assistant regardless of the asking user's
+  actual restrictions — on top of two OTHER sections (portfolio-wide fee
+  benchmarks, top-urgent/expiring vendor summaries) that had NO redaction
+  check at all. Fixed by routing every emitted field through
+  `canViewField()` directly. **Also**: don't rely on a prompt instruction
+  telling the model "don't reveal restricted fields" as the actual security
+  boundary — if the real value is present in the context at all, the model
+  can still leak it. Redact AT THE DATA LAYER (replace the value before it
+  ever reaches the model), and only use the prompt to explain that
+  redaction already happened, not to ask the model to self-censor.
 - **Every `action:'saveConfig'` call site must go through the globalSettings
   safeguard — there are SIX of them, not one.** `_saveUsersViaProxyImpl()`
   was the only one originally fixed against blindly overwriting the

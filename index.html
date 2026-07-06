@@ -30190,20 +30190,44 @@ function buildAIContext(userMsg) {
   const noContact = vs.filter(v=>!v.procContact||!v.email);
   const pipeline = S.itw.filter(v=>!v.isInactive);
 
-  // Category fee summary
-  const catFeeMap={};
-  (S.allVendors||S.vendors).forEach(v=>{
-    const m=String(v.adminFee||'').match(/(\d+)/);
-    if(!m||!v.category) return;
-    if(!catFeeMap[v.category]) catFeeMap[v.category]=[];
-    catFeeMap[v.category].push(parseInt(m[1]));
-  });
-  const catFeeStr=Object.entries(catFeeMap).slice(0,10).map(([cat,fees])=>`${cat}: avg ${(fees.reduce((a,b)=>a+b)/fees.length).toFixed(1)}% (${Math.min(...fees)}–${Math.max(...fees)}%)`).join('; ');
+  // CRITICAL FIX (2026-07-06): every field emitted below used to be pulled
+  // straight from vendor records with NO check against the asking user's
+  // hiddenFields -- a user with adminFee restricted still got portfolio-wide
+  // fee benchmarks and per-vendor fee/contact data sitting directly in the
+  // AI's context, with only a soft prompt instruction (further down) asking
+  // the model not to repeat it. That's not a real access-control boundary --
+  // the data was already there for the model to see and potentially leak.
+  // Fixed by redacting AT THE DATA LAYER, using canViewField() (the same
+  // canonical function every other part of the app already uses for field
+  // visibility), so restricted values are replaced before they ever reach
+  // the model, not just labeled after the fact.
+  const _aiCanSeeFee = canViewField('adminFee');
+  const _aiCanSeeContact = canViewField('procContact');
+  const _aiCanSeeEmail = canViewField('email');
+  const _aiRedacted = '[restricted for your access level]';
+
+  // Category fee summary — omitted entirely if adminFee is hidden for this user
+  let catFeeStr;
+  if(!_aiCanSeeFee){
+    catFeeStr = _aiRedacted;
+  } else {
+    const catFeeMap={};
+    (S.allVendors||S.vendors).forEach(v=>{
+      const m=String(v.adminFee||'').match(/(\d+)/);
+      if(!m||!v.category) return;
+      if(!catFeeMap[v.category]) catFeeMap[v.category]=[];
+      catFeeMap[v.category].push(parseInt(m[1]));
+    });
+    catFeeStr=Object.entries(catFeeMap).slice(0,10).map(([cat,fees])=>`${cat}: avg ${(fees.reduce((a,b)=>a+b)/fees.length).toFixed(1)}% (${Math.min(...fees)}–${Math.max(...fees)}%)`).join('; ');
+  }
 
   // Vendor details for current view context
   const vendorDetails = urgent.slice(0,5).map(v=>{
     const exp=getCurrentExpiry(v);
-    return `  • ${v.name}: ${v.category||'?'}, fee ${v.adminFee||'?'}, expires ${exp?fmtDate(exp):'?'}, contact: ${v.procContact||'none'} <${v.email||'no email'}>, why: ${getWhy(v).split('\n')[0]}`;
+    const feeStr = _aiCanSeeFee ? (v.adminFee||'?') : _aiRedacted;
+    const contactStr = _aiCanSeeContact ? (v.procContact||'none') : _aiRedacted;
+    const emailStr = _aiCanSeeEmail ? (v.email||'no email') : _aiRedacted;
+    return `  • ${v.name}: ${v.category||'?'}, fee ${feeStr}, expires ${exp?fmtDate(exp):'?'}, contact: ${contactStr} <${emailStr}>, why: ${getWhy(v).split('\n')[0]}`;
   }).join('\n');
 
   return `PRIME SOURCE VENDOR CONTRACT SCHEDULER — AI Context
@@ -30224,7 +30248,7 @@ OVERDUE FOLLOW-UPS:
 ${overdueFU.slice(0,5).map(v=>`  • ${v.name}: ${dayDiff(today,parseDate(v.followUp))}d overdue`).join('\n')||'  None'}
 
 EXPIRING SOON (≤30 DAYS):
-${expiring30.slice(0,5).map(v=>`  • ${v.name}: expires ${fmtDate(getCurrentExpiry(v))}, AR: ${isAutoRenew(v)?'Yes':'No'}, fee: ${v.adminFee||'?'}`).join('\n')||'  None'}
+${expiring30.slice(0,5).map(v=>`  • ${v.name}: expires ${fmtDate(getCurrentExpiry(v))}, AR: ${isAutoRenew(v)?'Yes':'No'}, fee: ${_aiCanSeeFee?(v.adminFee||'?'):_aiRedacted}`).join('\n')||'  None'}
 
 ADMIN FEE BENCHMARKS BY CATEGORY (all GPOs):
 ${catFeeStr||'  No fee data'}
@@ -30238,13 +30262,13 @@ ${S.history.slice(-8).map(h=>`  ${h.date} — ${h.vendor}: ${h.action}`).join('\
 CURRENT VIEW: ${S.view} ${S.filterLabel?'(filtered: '+S.filterLabel+')':''}
 
 HIDDEN FIELDS FOR THIS USER (role: ${USER.role||'unknown'}):
-${(USER.hiddenFields&&USER.hiddenFields.length)?'Fields you MUST NOT reveal: '+USER.hiddenFields.join(', '):'No restricted fields — full data access.'}
+${(USER.hiddenFields&&USER.hiddenFields.length)?'Restricted fields: '+USER.hiddenFields.join(', ')+' — these have already been removed from the data below, replaced with "'+_aiRedacted+'".':'No restricted fields — full data access.'}
 
 CRITICAL INSTRUCTIONS:
-- You have direct access to ALL vendor contract data in this system.
-- When the user asks about a specific vendor (e.g. "what is Medline's admin fee"), look up that vendor's data below and answer DIRECTLY. Never tell the user to navigate somewhere to find it themselves.
-- If a field is in the user's hidden fields list above, say "That information is restricted for your access level."
-- Always cite the specific value from the data (e.g. "Medline's admin fee is 5%").
+- Restricted fields have ALREADY been removed from the data below before it reached you — you were never given the real values, so there is nothing to withhold or accidentally reveal.
+- When the user asks about a specific vendor (e.g. "what is Medline's admin fee"), look up that vendor's data below and answer DIRECTLY using only what's actually present. Never tell the user to navigate somewhere to find it themselves.
+- If a value shows as "${_aiRedacted}", tell the user that field is restricted for their access level — do NOT guess, estimate, or infer what the real value might be from other context.
+- Always cite the specific value from the data when it's present (e.g. "Medline's admin fee is 5%").
 
 SPECIFIC VENDOR DATA (matched from your query):
 ${buildVendorLookup(userMsg)}`;
@@ -30262,20 +30286,30 @@ function buildVendorLookup(userMsg) {
     if(nameWords[0].length>4 && msgLow.includes(nameWords[0])) { if(!matches.find(m=>m.name===v.name)) matches.push(v); }
   });
   if(!matches.length) return '(No specific vendor matched in this query)';
-  const hidden=USER.hiddenFields||[];
+  // CRITICAL FIX (2026-07-06): H() used to check a hardcoded 6-field list
+  // (adminFee/tiers/procContact/email/notes/adminFeeNotes) against
+  // USER.hiddenFields directly -- every OTHER hideable field (contractName,
+  // termEffective, autoRenewal, autoRenewalType, contractTerm, perpetuity,
+  // tail, minYears, lastComm, followUp, status, score -- roughly 60 fields
+  // total are hideable) was emitted completely unredacted regardless of the
+  // user's actual restrictions. Now routes every field through
+  // canViewField() -- the SAME canonical function the rest of the app
+  // already uses for field visibility -- so this can never drift out of
+  // sync with whatever fields are actually configured as hideable, and
+  // covers every field emitted below, not just a hardcoded subset.
+  const H=(f,val)=>canViewField(f)?(val||'—'):'[RESTRICTED for '+USER.role+']';
   return matches.slice(0,3).map(v=>{
     const exp=getCurrentExpiry(v);
-    const H=(f,val)=>hidden.includes(f)?'[RESTRICTED for '+USER.role+']':(val||'—');
     return [
       'VENDOR: '+v.name,
-      '  Category: '+(v.category||'—')+' | Status: '+(v.status||'—')+' | Score: '+(v.score||'—')+' | Tier: '+(v.tier||'—'),
+      '  Category: '+(v.category||'—')+' | Status: '+H('status',v.status)+' | Score: '+H('score',v.score)+' | Tier: '+(v.tier||'—'),
       '  Admin Fee: '+H('adminFee',v.adminFee),
       '  Pricing/Tiers: '+H('tiers',v.tiers),
-      '  Contract Name: '+(v.contractName||'—')+' | Effective: '+(v.termEffective||'—')+' | Expires: '+(exp?fmtDate(exp):'—'),
-      '  Auto-Renewal: '+(v.autoRenewal||'—')+' | AR Type: '+(v.autoRenewalType||'—')+' | Term: '+(v.contractTerm||'—')+'yrs',
-      '  Perpetuity: '+(v.perpetuity||'—')+' | Tail: '+(v.tail||'—')+' | Min Years: '+(v.minYears||'—'),
+      '  Contract Name: '+H('contractName',v.contractName)+' | Effective: '+H('termEffective',v.termEffective)+' | Expires: '+(canViewField('contractExpiry')?(exp?fmtDate(exp):'—'):'[RESTRICTED for '+USER.role+']'),
+      '  Auto-Renewal: '+H('autoRenewal',v.autoRenewal)+' | AR Type: '+H('autoRenewalType',v.autoRenewalType)+' | Term: '+H('contractTerm',v.contractTerm),
+      '  Perpetuity: '+H('perpetuity',v.perpetuity)+' | Tail: '+H('tail',v.tail)+' | Min Years: '+H('minYears',v.minYears),
       '  Contact: '+H('procContact',v.procContact)+' <'+H('email',v.email)+'>',
-      '  Last Comm: '+(v.lastComm||'—')+' | Follow-Up: '+(v.followUp||'—'),
+      '  Last Comm: '+H('lastComm',v.lastComm)+' | Follow-Up: '+H('followUp',v.followUp),
       '  Notes: '+H('notes',String(v.notes||'').slice(0,400)),
       '  Admin Fee Notes: '+H('adminFeeNotes',v.adminFeeNotes),
     ].join('\n');
