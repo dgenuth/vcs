@@ -9223,6 +9223,36 @@ function getDefaultFeatureFlags(role) {
   if(typeof renzoOverride==='boolean') result.renzoEnabled=renzoOverride;
   return result;
 }
+// S51 fix: getDefaultFeatureFlags() above only ever reflected role-level
+// AI/Renzo customizations — export/addVendor/canAccessArchive/
+// requireSearchToList are stored via setRolePermissionDefault/
+// getRolePermissionDefault (a separate key from setRoleFeatureDefault),
+// which this never checked. The Permissions Defaults page's own tiles and
+// its "Apply Changes to Existing Users" sync (_syncPermissionsToUsers)
+// both independently duplicated the correct resolution logic for these —
+// but Add User never did, so a brand-new user always got the hardcoded
+// role map for these 4 values regardless of any admin customization
+// (confirmed live 2026-07-05: David customized Permissions Defaults for
+// sales_rep, then created a new sales_rep user, and it did not pick up
+// the customization — Field Visibility and Tab Access, which use their
+// own real accessors, adapted correctly). This is the single shared
+// resolver every one of those three places should use instead of each
+// re-deriving the same fallback chain.
+function getResolvedRolePermissionDefaults(role){
+  const staticFallbackExport=!!(ROLE_PERMS[role]||{}).canCopy;
+  const staticFallbackAddVendor=!!(ROLE_PERMS[role]||{}).addVendor;
+  const staticFallbackArchive=['procurement','manager'].includes(role);
+  const staticFallbackRst=['restricted','sales_rep'].includes(role);
+  const flags=getDefaultFeatureFlags(role);
+  return {
+    export: typeof getRolePermissionDefault(role,'export')==='boolean'?getRolePermissionDefault(role,'export'):staticFallbackExport,
+    addVendor: typeof getRolePermissionDefault(role,'addVendor')==='boolean'?getRolePermissionDefault(role,'addVendor'):staticFallbackAddVendor,
+    canAccessArchive: typeof getRolePermissionDefault(role,'canAccessArchive')==='boolean'?getRolePermissionDefault(role,'canAccessArchive'):staticFallbackArchive,
+    requireSearchToList: typeof getRolePermissionDefault(role,'requireSearchToList')==='boolean'?getRolePermissionDefault(role,'requireSearchToList'):staticFallbackRst,
+    aiEnabled: flags.aiEnabled,
+    renzoEnabled: flags.renzoEnabled
+  };
+}
 // Login attempt log — stored in localStorage, admin-viewable
 function getLoginLog(){try{return JSON.parse(localStorage.getItem(LOGIN_LOG_KEY)||'[]');}catch(e){return[];}}
 function logLoginAttempt(email,success,reason){
@@ -25669,6 +25699,21 @@ function syncFieldVisibilityDefaultsToUsers(role, targetUsers){
       touchUser(u.email);
     });
     localStorage.setItem(AUTH_KEY,JSON.stringify(allU));
+    // S51 fix: the write above was always correct (confirmed via direct
+    // getApprovedUsers() inspection) — the actual report was that it
+    // "doesn't apply" while Tab Access's equivalent sync does. Tab Access
+    // has its own refreshOpenUserTabSections() that rebuilds any already-
+    // open per-user Tab Access panel after a role-level sync; this
+    // function had no equivalent, so any User Management Field Visibility
+    // panel rendered before the sync stayed showing stale data until a
+    // full page re-render — indistinguishable from "not applying" unless
+    // you knew to check localStorage directly, which is exactly what
+    // David's "Reset to Role Defaults works" observation was really
+    // showing (that button explicitly rebuilds its own panel afterward).
+    document.querySelectorAll('[data-bfa-email]').forEach(function(el2){
+      const em=el2.dataset.bfaEmail;
+      if(targetUsers.some(function(su){return su.email===em;})){ buildFieldAccess(el2, em); }
+    });
   }catch(e3){}
 }
 
@@ -25859,7 +25904,18 @@ function buildTabAccessSection(container, userEmail) {
         const parentId=_findParentPageId(id);
         if(parentId){
           const parentOv=all[i].tabOverrides[parentId];
-          const parentAlreadyVisible = parentOv!==undefined ? (typeof parentOv==='object'?parentOv.view!==false:!!parentOv) : true;
+          // S51 fix: this used to assume "no explicit override" meant
+          // "already visible," unconditionally — true often enough for a
+          // user with SOME prior tabOverrides history, but wrong for a
+          // brand-new user (zero tabOverrides for every page), where it
+          // silently skipped the cascade even when the parent's real role
+          // default was hidden, since it never actually checked the role
+          // default. Now resolves the same way tabState() does: fall back
+          // to the persisted role-level override, then the static
+          // ROLE_PERMS set, instead of blindly assuming visible.
+          const _rOvParent=_roleTabOv[parentId];
+          const parentRoleDefault = _rOvParent!==undefined ? (typeof _rOvParent==='object'?_rOvParent.view!==false:!!_rOvParent) : roleDefaultTabs.has(parentId);
+          const parentAlreadyVisible = parentOv!==undefined ? (typeof parentOv==='object'?parentOv.view!==false:!!parentOv) : parentRoleDefault;
           if(!parentAlreadyVisible){
             all[i].tabOverrides[parentId]=typeof parentOv==='object'?Object.assign({},parentOv,{view:true}):{view:true};
             toast('✓ Also enabled '+parentId+' — required for its sub-tabs to be reachable','#4f7cff');
@@ -26105,7 +26161,12 @@ function _buildConnectionsSection(){
       localStorage.setItem(_connKey,now?'0':'1');
     }});
     connHdr.appendChild(connArrow);
-    connHdr.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'600',color:'var(--blue)'}},'🔌 Connections & API Keys'));
+    // S51 fix: missing flex:'1' meant the "N/6 connected" badge sat right
+    // after the title instead of reaching the far-right column every
+    // makeCollapsibleSection()-based header's title already achieves via
+    // this same property (its badge is pushed right by the title's own
+    // growth, not by margin on the badge itself).
+    connHdr.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'600',color:'var(--blue)',flex:'1'}},'🔌 Connections & API Keys'));
     // Counts the same 6 real data connections each have their own
     // isConnectedFn for below (Salesforce/MS365/Fathom/Renzo/Supabase/Drive)
     // -- deliberately excludes Claude AI (a feature toggle, not a data
@@ -27024,10 +27085,18 @@ window._buildConnectionsSection = _buildConnectionsSection;
       }});
     const _rdChev=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_rdCollapsed?'▶':'▼');
     _rdHdr.appendChild(_rdChev);
-    _rdHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'11px',fontWeight:'600',color:'var(--blue)'}},'🎭 Role & Feature Defaults'));
+    // S51 fix: same missing flex:'1' as Connections & API Keys — the
+    // "N roles" badge (and the All/All/Create New Role buttons before it)
+    // sat right after the title instead of reaching the far-right column.
+    _rdHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'11px',fontWeight:'600',color:'var(--blue)',flex:'1'}},'🎭 Role & Feature Defaults'));
     // Expand/Collapse all role rows
-    const rdBtnRow=el('div',{style:{display:'flex',gap:'4px',marginLeft:'auto'},onclick(e){e.stopPropagation();}});
-    rdBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){
+    // S51 fix: these buttons' default .btn-xs padding rendered ~18px tall
+    // vs. ~14-15px for every other header's plain-text badge, making this
+    // ONE header row 34px against 31px everywhere else. Tightened padding/
+    // line-height here only (not the shared .btn-xs class, to avoid any
+    // effect on other buttons elsewhere) so this row matches.
+    const rdBtnRow=el('div',{style:{display:'flex',gap:'4px',marginLeft:'auto',alignItems:'center'},onclick(e){e.stopPropagation();}});
+    rdBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',padding:'1px 4px',lineHeight:'1'},onclick(e){
       e.stopPropagation();
       const _allRoles2=new Set(getApprovedUsers().map(u=>u.role||'admin'));
       if(typeof EMPLOYEE_DIRECTORY!=='undefined') EMPLOYEE_DIRECTORY.forEach(e=>_allRoles2.add(e.role||'admin'));
@@ -27036,7 +27105,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
       ROLE_LIST2.forEach(r=>localStorage.setItem('vcs_rtd_'+r,'0'));
       const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
     }},'▼ All'));
-    rdBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){
+    rdBtnRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',padding:'1px 4px',lineHeight:'1'},onclick(e){
       e.stopPropagation();
       const _allRoles3=new Set(getApprovedUsers().map(u=>u.role||'admin'));
       if(typeof EMPLOYEE_DIRECTORY!=='undefined') EMPLOYEE_DIRECTORY.forEach(e=>_allRoles3.add(e.role||'admin'));
@@ -27050,7 +27119,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
     // point, per the approved design. Deep-clones ROLE_PERMS, hidden-field
     // defaults, and feature-flag defaults from the source role so a new
     // role starts as an exact copy rather than a blank slate.
-    const _crBtn=el('button',{class:'btn-xs btn-green',style:{marginLeft:'6px'},onclick(e){
+    const _crBtn=el('button',{class:'btn-xs btn-green',style:{marginLeft:'6px',fontSize:'9px',padding:'1px 4px',lineHeight:'1'},onclick(e){
       e.stopPropagation();
       const overlay=el('div',{style:{position:'fixed',top:'0',left:'0',right:'0',bottom:'0',background:'rgba(0,0,0,.5)',zIndex:'9999',display:'flex',alignItems:'center',justifyContent:'center'},onclick(ev){if(ev.target===overlay)document.body.removeChild(overlay);}});
       const modal=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'8px',padding:'20px',width:'360px'}});
@@ -27305,18 +27374,10 @@ window._buildConnectionsSection = _buildConnectionsSection;
         // (since "See Financials" writes to that exact same
         // vcs_role_fields_<role> key Field Visibility Defaults owns).
         async function _syncPermissionsToUsers(selectedUsers){
-          const staticFallbackExport=!!(ROLE_PERMS[role]||{}).canCopy;
-          const staticFallbackAddVendor=!!(ROLE_PERMS[role]||{}).addVendor;
-          const staticFallbackArchive=['procurement','manager'].includes(role);
-          const curExport=typeof getRolePermissionDefault(role,'export')==='boolean'?getRolePermissionDefault(role,'export'):staticFallbackExport;
-          const curAddVendor=typeof getRolePermissionDefault(role,'addVendor')==='boolean'?getRolePermissionDefault(role,'addVendor'):staticFallbackAddVendor;
-          const curArchive=typeof getRolePermissionDefault(role,'canAccessArchive')==='boolean'?getRolePermissionDefault(role,'canAccessArchive'):staticFallbackArchive;
-          const curRst=typeof getRolePermissionDefault(role,'requireSearchToList')==='boolean'?getRolePermissionDefault(role,'requireSearchToList'):['restricted','sales_rep'].includes(role);
-          const curAi=getDefaultFeatureFlags(role).aiEnabled;
-          const curRenzo=getDefaultFeatureFlags(role).renzoEnabled;
+          const _resolved=getResolvedRolePermissionDefaults(role);
           _applyPermissionsToUsers([
-            {permKey:'export',value:curExport},{permKey:'addVendor',value:curAddVendor},{permKey:'canAccessArchive',value:curArchive},
-            {permKey:'requireSearchToList',value:curRst},{permKey:'ai',value:curAi},{permKey:'renzo',value:curRenzo},
+            {permKey:'export',value:_resolved.export},{permKey:'addVendor',value:_resolved.addVendor},{permKey:'canAccessArchive',value:_resolved.canAccessArchive},
+            {permKey:'requireSearchToList',value:_resolved.requireSearchToList},{permKey:'ai',value:_resolved.aiEnabled},{permKey:'renzo',value:_resolved.renzoEnabled},
           ], selectedUsers);
           syncFieldVisibilityDefaultsToUsers(role, selectedUsers);
           saveSettings();
@@ -27809,7 +27870,11 @@ function buildUserSubSection(label,bodyBuilderFn){
     }});
     const _umChev=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_umCollapsed?'▶':'▼');
     _umHdr.appendChild(_umChev);
-    _umHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'11px',fontWeight:'600',color:'var(--blue)'}},'👥 User Management'));
+    // S51 fix: same missing flex:'1' as Connections & API Keys / Role &
+    // Feature Defaults — the "N users - M logged in" badge sat right after
+    // the title instead of reaching the far-right column every other
+    // section's indicator uses.
+    _umHdr.appendChild(el('h3',{style:{margin:'0',fontSize:'11px',fontWeight:'600',color:'var(--blue)',flex:'1'}},'👥 User Management'));
     // S50 QA fix: removed "(click to expand/collapse)" — same redundant-text
     // cleanup as makeCollapsibleSection, for consistency with Connections &
     // API Keys and Role & Feature Defaults, neither of which repeats this.
@@ -28344,7 +28409,17 @@ function buildUserSubSection(label,bodyBuilderFn){
       if(!isValidRole(roleIn.value)){toast('Invalid role selected','#f59e0b');return;}
       const all=getApprovedUsers();
       if(all.find(x=>x.email===e)){toast('User already exists','#f59e0b');return;}
-      all.push({email:e,name:e.split('@')[0],role:roleIn.value,password:pwNewIn.value.trim(),hiddenFields:getDefaultHiddenFields(roleIn.value),featureFlags:getDefaultFeatureFlags(roleIn.value),added:isoDate(new Date()),addedBy:USER.email});
+      // S51 fix: was seeding featureFlags from getDefaultFeatureFlags() alone,
+      // which never reflected role-level export/addVendor/canAccessArchive
+      // Permissions Defaults customizations, and never set
+      // requireSearchToList at all — see getResolvedRolePermissionDefaults()
+      // for the full account. Now seeds a new user from the same resolved
+      // defaults the Permissions Defaults page itself shows as current.
+      const _newUserPerms=getResolvedRolePermissionDefaults(roleIn.value);
+      all.push({email:e,name:e.split('@')[0],role:roleIn.value,password:pwNewIn.value.trim(),hiddenFields:getDefaultHiddenFields(roleIn.value),
+        featureFlags:{export:_newUserPerms.export,addVendor:_newUserPerms.addVendor,canAccessArchive:_newUserPerms.canAccessArchive,aiEnabled:_newUserPerms.aiEnabled,renzoEnabled:_newUserPerms.renzoEnabled},
+        requireSearchToList:_newUserPerms.requireSearchToList,
+        added:isoDate(new Date()),addedBy:USER.email});
       touchUser(e);
       setApprovedUsers(all);
       emailIn.value='';pwNewIn.value='';
@@ -28931,8 +29006,11 @@ function buildUserSubSection(label,bodyBuilderFn){
     const frHdrRow=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',padding:'8px 12px',cursor:'pointer',background:'rgba(79,124,255,.06)'},onclick(){frBody.style.display=frBody.style.display==='none'?'':'none';frChev.textContent=frBody.style.display===''?'▼':'▶';}});
     const frChev=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'▼');
     frHdrRow.appendChild(frChev);
-    frHdrRow.appendChild(el('span',{style:{fontSize:'14px'}},'🗂'));
-    frHdrRow.appendChild(el('span',{style:{fontWeight:'600',fontSize:'11px',flex:'1',color:'var(--blue)'}},'Field Registry'));
+    // S51 fix: the emoji was its own 14px span (vs. every other header's
+    // emoji sitting inline in the 11px title text) — the taller glyph made
+    // this row's natural height 35px against everyone else's 31px, the
+    // exact "bar heights aren't symmetrical" symptom.
+    frHdrRow.appendChild(el('span',{style:{fontWeight:'600',fontSize:'11px',flex:'1',color:'var(--blue)'}},'🗂 Field Registry'));
     frHdrRow.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--muted)',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)'}},Array.isArray(S._customFields)?S._customFields.length+' custom field'+(S._customFields.length!==1?'s':''):'Custom vendor fields'));
     frSec.appendChild(frHdrRow);
     const frBody=el('div',{style:{padding:'10px',display:'flex',flexDirection:'column',gap:'8px'}});

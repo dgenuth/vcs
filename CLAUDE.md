@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
-**Last updated:** Sun Jul 05, 2026 — 11:15 PM EDT
-**Current checkpoint:** MD5 `36d5721eea230af4b7aa11b097941f50`, 31,557 lines
+**Last updated:** Mon Jul 06, 2026 — 12:30 AM EDT
+**Current checkpoint:** MD5 `f0a75823de16cecfa72eb96c3aae934c`, 31,635 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -448,6 +448,99 @@ similar symptom reappears; don't rediscover them from scratch)
   usage. The real remaining gap is a Supabase-side equivalent: auditing
   `vendorToRow()`'s field→column mapping against the actual Supabase
   schema, not further Excel work.
+- **Role-level Field Visibility Defaults' "Apply Changes to Existing
+  Users" wrote correct data but visibly appeared to do nothing** (found
+  2026-07-06, David's report). `syncFieldVisibilityDefaultsToUsers()`'s
+  write was always correct (confirmed via direct `getApprovedUsers()`
+  inspection) — the actual gap was that any already-open per-user Field
+  Visibility panel in User Management stayed rendered with pre-sync data,
+  since nothing rebuilt it afterward. Tab Access has its own
+  `refreshOpenUserTabSections()` for exactly this; Field Visibility had no
+  equivalent. David's own diagnostic (a per-user "Reset to Role Defaults"
+  button DOES visibly update) was really just proof that THAT button
+  explicitly rebuilds its own panel afterward, not that the sync's write
+  was wrong. Fixed by adding the same pattern: `[data-bfa-email]` elements
+  belonging to a just-synced user are rebuilt via `buildFieldAccess()`
+  right after the write. **The per-user Permissions panel
+  (`_buildPermissionsPanel`) has this same latent risk and was NOT fixed
+  here — it's an inline function, not a reusable global like
+  `buildFieldAccess`/`buildTabAccessSection`, so refreshing it needs a
+  small refactor first. Not reported broken yet, but check here first if
+  it is.**
+- **`getDefaultFeatureFlags(role)` was never the full picture for what a
+  new user should inherit — it only reflects role-level AI/Renzo
+  customizations, not export/addVendor/canAccessArchive (a separate
+  storage key via `setRolePermissionDefault`) or `requireSearchToList`
+  (never set at all).** Add User used this function alone to seed a new
+  user's `featureFlags`, so any admin customization to those 4 values via
+  Permissions Defaults was silently ignored for brand-new users of that
+  role (confirmed live 2026-07-06: customized sales_rep Permissions
+  Defaults, created a new sales_rep user, got the hardcoded map instead).
+  Field Visibility and Tab Access didn't have this gap since they already
+  use their own correct accessors. Fixed by extracting the ALREADY-correct
+  fallback-resolution logic (previously duplicated inline inside
+  `_syncPermissionsToUsers`) into one shared `getResolvedRolePermissionDefaults(role)`,
+  used by both Add User and `_syncPermissionsToUsers` now. **If a "new
+  user doesn't match the role" report comes in for anything else, check
+  whether Add User's seeding call actually uses the same resolved-default
+  accessor the relevant Defaults page uses — `getDefaultHiddenFields`/
+  `getDefaultFeatureFlags`/this new function are the three that matter.**
+- **Per-user Tab Access "enabling a child auto-enables its parent"
+  silently failed for a user with NO prior `tabOverrides` at all (i.e. any
+  brand-new user) — the reverse cascade (restricting a parent restricts
+  its children) was unaffected.** `persistTabState()`'s parent-cascade
+  check assumed "no explicit override on the parent" meant "parent is
+  already visible," unconditionally — never actually consulting the
+  parent's real role-default visibility. For a user with SOME override
+  history this rarely showed since the parent usually had its own real
+  override by then; for a fresh user (every tab unset) it was wrong every
+  time the parent's role default was actually hidden, since the check
+  never even looked. Fixed to resolve the parent's visibility the same way
+  `tabState()` does (persisted role-level override, then the static
+  `ROLE_PERMS` set) instead of defaulting blindly to visible. Verified live
+  on a freshly-created user: child toggle now correctly auto-enables a
+  hidden parent, and the parent-restricts-children direction still works
+  as before.
+- **Settings header height/alignment: two more concrete, measurable causes
+  found 2026-07-06 via pixel-level `getBoundingClientRect()` comparison
+  across every top-level section (not computed-style-only, and not a
+  screenshot) — David's report that "heights aren't symmetrical" and
+  "emojis/arrows aren't aligned" was correct and had two distinct,
+  independent causes:**
+  1. **Field Registry's emoji was its own separate `14px` span** (every
+     other header embeds its emoji in the SAME string as the title, at the
+     title's own 11px) — the taller glyph made that one row 35px against
+     31px everywhere else. Fixed by merging it into the title string like
+     every other header.
+  2. **Role & Feature Defaults embeds 3 real `<button>` elements
+     (▼ All / ▶ All / ➕ Create New Role) directly in its title row** — the
+     shared `.btn-xs` class's default padding renders at ~18px tall, vs.
+     ~14-15px for a plain text badge, making that row 34px. Fixed by
+     tightening padding/line-height on just these 3 buttons via inline
+     style (NOT the shared `.btn-xs` class, to avoid touching every other
+     button in the app). This is the only header with real interactive
+     controls embedded in the row itself — worth remembering if a NEW
+     section ever adds buttons to its title bar.
+  **After both fixes, every one of the 13 top-level section headers
+  measured pixel-identical: 31px tall, arrow and title both perfectly
+  centered (0px offset from row-center) in every row.** One negligible 1px
+  difference remains on Connections & API Keys specifically, caused by its
+  intentional color-coded status border (amber/green/red) on the "N/6
+  connected" badge — not worth removing a meaningful visual signal to
+  chase 1px.
+- **Separately, three bespoke headers (Connections & API Keys, Role &
+  Feature Defaults, User Management) were missing `flex:'1'` on their
+  title element** — `makeCollapsibleSection()`'s title already has this,
+  which is WHY its badges reach the far-right column; without it, a badge
+  just sits with a small fixed gap after the title, wherever that happens
+  to land. This is what made User Management's "N users - M logged in"
+  text sit right next to the title while File Info's "N vendors" badge
+  reached the far right, despite both badges having identical inline
+  styles otherwise. Fixed all three to match. **If a badge/indicator on
+  any NEW section header doesn't reach the far right, check whether the
+  TITLE element has `flex:'1'` before touching the badge's own margin —
+  the badge's margin was never the actual mechanism, the title's flex-grow
+  is.**
 
 ## CURRENT PRIORITY LIST
 

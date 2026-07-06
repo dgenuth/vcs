@@ -1,6 +1,6 @@
 # VCS — Master Task List
-**Last updated:** Sun Jul 05, 2026, 11:15 PM EDT (this session, Claude Code)
-**Checkpoint at this update:** MD5 `36d5721eea230af4b7aa11b097941f50`, 31,557 lines
+**Last updated:** Mon Jul 06, 2026, 12:30 AM EDT (this session, Claude Code)
+**Checkpoint at this update:** MD5 `f0a75823de16cecfa72eb96c3aae934c`, 31,635 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,44 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Five more real bugs from David's next round of testing (2026-07-06),
+  all found and fixed live, not just traced through source:**
+  1. Field Visibility Defaults' "Apply Changes to Existing Users" was
+     writing correct data all along — the actual bug was that an already-
+     open per-user Field Visibility panel in User Management never
+     refreshed afterward (Tab Access already had this refresh, Field
+     Visibility didn't). Fixed.
+  2. New users never inherited role-level Permissions Defaults
+     customizations (export/addVendor/canAccessArchive/requireSearchToList)
+     — only Field Visibility and Tab Access adapted correctly. Root cause:
+     Add User seeded from `getDefaultFeatureFlags()`, which only ever
+     reflected AI/Renzo customizations. Fixed via a new shared
+     `getResolvedRolePermissionDefaults(role)` used by both Add User and
+     the existing sync function.
+  3. For a brand-new user specifically, checking a child tab did not
+     auto-enable its parent (the reverse — restricting a parent restricts
+     its children — worked fine). The parent-cascade check assumed "no
+     override on the parent" meant "already visible" without ever
+     checking the parent's real role default. Fixed.
+  4. Three bespoke section headers (Connections & API Keys, Role & Feature
+     Defaults, User Management) were missing `flex:'1'` on their title,
+     so their badges/indicators sat right after the title instead of
+     reaching the far-right column every other section's indicator uses.
+     Fixed — all 13 top-level section badges now sit exactly 12px from
+     the row's right edge.
+  5. Two independent causes of uneven header-row heights, found via
+     pixel-level `getBoundingClientRect()` measurement across all 13
+     top-level sections: Field Registry's emoji was its own oversized
+     14px span (vs. 11px everywhere else), and Role & Feature Defaults'
+     3 embedded buttons rendered taller than a plain text badge via the
+     shared `.btn-xs` class's default padding. Both fixed (the buttons via
+     inline style only, not the shared class). Every top-level header row
+     now measures 31px tall with the arrow and title perfectly centered.
+  See CLAUDE.md Known Traps for full mechanism detail on all five.
+  **Not yet done: the per-user Permissions panel has the same latent
+  refresh gap as (1) above but wasn't fixed — it needs a small refactor
+  first since it isn't a reusable global function like the other two
+  panels. Not reported broken yet.**
 - **Title bars, third report same day — one real remaining miss found and
   fixed: "☁ Config Sync"** (the sticky status banner at the top of
   Settings) was still 10px/default-color instead of the 11px/blue every
