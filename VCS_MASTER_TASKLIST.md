@@ -1,6 +1,6 @@
 # VCS — Master Task List
-**Last updated:** Mon Jul 06, 2026, 12:30 AM EDT (this session, Claude Code)
-**Checkpoint at this update:** MD5 `f0a75823de16cecfa72eb96c3aae934c`, 31,635 lines
+**Last updated:** Mon Jul 06, 2026, 12:50 AM EDT (this session, Claude Code)
+**Checkpoint at this update:** MD5 `84a09200d003aed71262f865e18decbc`, 31,656 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,24 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **The actual title-bar bug, found after David pointed out the previous
+  "measured pixel-perfect" claim was wrong** (2026-07-06). He was right —
+  arrows/emojis/labels sat at genuinely different horizontal indents
+  across sections, and badges landed at different positions on the right
+  too. The prior passes measured font-size/weight/color/vertical-centering
+  but never actual absolute left/right pixel position across all headers
+  at once — that's what hid this. Root cause: 5 headers (Role & Feature
+  Defaults, User Management, Calendar Availability, API Usage Monitor,
+  and everything using the shared `makeCollapsibleSection()`) sit inside a
+  container carrying a `.settings-section`/`.summary-section` CSS class
+  that applies `padding:12px` — pushing those headers 12px further in than
+  every other header, whose containers don't have that class. Fixed with
+  a negative margin on each of the 5 headers to cancel the inherited
+  padding. **Verified properly this time**: measured absolute
+  `getBoundingClientRect()` position on all 13 top-level headers — every
+  one now has identical left edge, right edge, and height, not just
+  matching style strings. See CLAUDE.md Known Traps for the full mechanism
+  and why 3 prior passes missed it.
 - **Five more real bugs from David's next round of testing (2026-07-06),
   all found and fixed live, not just traced through source:**
   1. Field Visibility Defaults' "Apply Changes to Existing Users" was

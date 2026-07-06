@@ -24871,7 +24871,17 @@ function makeCollapsibleSection(sec, title, storageKey, defaultCollapsed, badge)
   const isCollapsed = localStorage.getItem(storageKey) !== null
     ? localStorage.getItem(storageKey) === '1'
     : (defaultCollapsed === true);
-  const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px'},onclick(){
+  // S51 fix: `sec` (the container passed in) always carries a
+  // `.settings-section`/`.summary-section` class, both of which apply
+  // padding:12px on every side via CSS. Since hdr is a direct child, that
+  // parent padding pushed the whole header 12px further right/down than
+  // every OTHER section's header (settingsCard()'s own card div and every
+  // bespoke header have no such surrounding class, so nothing to cancel)
+  // — the exact "arrows/emojis/labels at different indents" David measured
+  // and called out directly. Negative margin cancels the inherited
+  // padding so the header sits flush with the card edge, same as
+  // everywhere else; its own padding below recreates the visual inset.
+  const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px',margin:'-12px -12px 0'},onclick(){
     const c=body.style.display==='none';
     body.style.display=c?'':'none';
     chev.textContent=c?'▼':'▶';
@@ -27076,7 +27086,9 @@ window._buildConnectionsSection = _buildConnectionsSection;
   if (hasPermission('manageUsers') || isAssistantAdmin()) {
     const secRoles=el('div',{class:'settings-section'});
     const _rdCollapsed=localStorage.getItem('vcs_rd_collapsed')!=='0';
-    const _rdHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px'},
+    // S51 fix: same parent .settings-section padding:12px cancellation as
+    // makeCollapsibleSection — see its comment for the full mechanism.
+    const _rdHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px',margin:'-12px -12px 0'},
       onclick(){
         const _c=!(_rdBody.style.display==='none');
         _rdBody.style.display=_c?'none':'';
@@ -27862,7 +27874,9 @@ function buildUserSubSection(label,bodyBuilderFn){
     const secUsers=el('div',{class:'settings-section'});
     // Collapsible header
     const _umCollapsed = localStorage.getItem('vcs_um_collapsed') !== '0';
-    const _umHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px'},onclick(){
+    // S51 fix: same parent .settings-section padding:12px cancellation as
+    // makeCollapsibleSection — see its comment for the full mechanism.
+    const _umHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px',margin:'-12px -12px 0'},onclick(){
       const _c=!(_umBody.style.display==='none');
       _umBody.style.display=_c?'none':'';
       _umChev.textContent=_c?'▶':'▼';
@@ -28698,7 +28712,11 @@ function buildUserSubSection(label,bodyBuilderFn){
     }
   };
   renderDayLists();
-  if(['admin','procurement','manager'].includes(USER.role)){const _cc=localStorage.getItem('vcs_s_cal')==='0';const _cch=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_cc?'▼':'▶');const _coh=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px'}});_coh.onclick=function(){const n=secCal.style.display==='none';secCal.style.display=n?'':'none';_cch.textContent=n?'▼':'▶';localStorage.setItem('vcs_s_cal',n?'0':'1');};_coh.appendChild(_cch);_coh.appendChild(el('h3',{style:{margin:'0',display:'inline',flex:'1'}},'📅 Calendar Availability'));const _blockedDays=(S.settings.closedDays||[]).length+(S.settings.oooDays||[]).length;_coh.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--muted)',marginLeft:'6px',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)'}},_blockedDays+' day'+(_blockedDays!==1?'s':'')+' blocked'));const _cow=el('div',{class:'settings-section'});_cow.appendChild(_coh);secCal.style.display=_cc?'':'none';_cow.appendChild(secCal);c.appendChild(_cow);}
+  if(['admin','procurement','manager'].includes(USER.role)){const _cc=localStorage.getItem('vcs_s_cal')==='0';const _cch=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_cc?'▼':'▶');
+    // S51 fix: same parent .settings-section padding:12px cancellation as
+    // makeCollapsibleSection (_cow, this header's direct parent, carries
+    // that class) — see its comment for the full mechanism.
+    const _coh=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px',margin:'-12px -12px 0'}});_coh.onclick=function(){const n=secCal.style.display==='none';secCal.style.display=n?'':'none';_cch.textContent=n?'▼':'▶';localStorage.setItem('vcs_s_cal',n?'0':'1');};_coh.appendChild(_cch);_coh.appendChild(el('h3',{style:{margin:'0',display:'inline',flex:'1'}},'📅 Calendar Availability'));const _blockedDays=(S.settings.closedDays||[]).length+(S.settings.oooDays||[]).length;_coh.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--muted)',marginLeft:'6px',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)'}},_blockedDays+' day'+(_blockedDays!==1?'s':'')+' blocked'));const _cow=el('div',{class:'settings-section'});_cow.appendChild(_coh);secCal.style.display=_cc?'':'none';_cow.appendChild(secCal);c.appendChild(_cow);}
 
   // Default View on load
   const secDefaults=el('div',{class:'settings-section'});
@@ -28847,7 +28865,10 @@ function buildUserSubSection(label,bodyBuilderFn){
     const _apiUsageKeys=Object.keys(localStorage).filter(k=>k.startsWith('vcs_ai_usage_'));
     let _apiTotalCents=0;
     _apiUsageKeys.forEach(k=>{try{const d=JSON.parse(localStorage.getItem(k)||'{}');_apiTotalCents+=(d.estimatedCostCents||0);}catch(e){}});
-    const apiHdrRow=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',marginBottom:'4px',padding:'8px 12px'},onclick(){const _ac=$('content');const _asp=_ac?_ac.scrollTop:0;S._apiSecOpen=!S._apiSecOpen;render();if(_ac) requestAnimationFrame(()=>{_ac.scrollTop=_asp;});}});
+    // S51 fix: same parent .summary-section padding:12px cancellation as
+    // makeCollapsibleSection (apiSec, this header's direct parent, carries
+    // that class) — see its comment for the full mechanism.
+    const apiHdrRow=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',padding:'8px 12px',margin:'-12px -12px 4px'},onclick(){const _ac=$('content');const _asp=_ac?_ac.scrollTop:0;S._apiSecOpen=!S._apiSecOpen;render();if(_ac) requestAnimationFrame(()=>{_ac.scrollTop=_asp;});}});
     apiHdrRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},S._apiSecOpen===true?'▼':'▶'));
     apiHdrRow.appendChild(el('h3',{style:{margin:'0',flex:'1'}},'📊 API Usage Monitor'));
     apiHdrRow.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--muted)',marginLeft:'6px',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)'}},(_apiTotalCents>100?'$'+(_apiTotalCents/100).toFixed(2):_apiTotalCents.toFixed(1)+'¢')+' est.'));

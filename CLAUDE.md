@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
-**Last updated:** Mon Jul 06, 2026 — 12:30 AM EDT
-**Current checkpoint:** MD5 `f0a75823de16cecfa72eb96c3aae934c`, 31,635 lines
+**Last updated:** Mon Jul 06, 2026 — 12:50 AM EDT
+**Current checkpoint:** MD5 `84a09200d003aed71262f865e18decbc`, 31,656 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -541,6 +541,40 @@ similar symptom reappears; don't rediscover them from scratch)
   TITLE element has `flex:'1'` before touching the badge's own margin —
   the badge's margin was never the actual mechanism, the title's flex-grow
   is.**
+- **The REAL title-bar bug (finally) — a horizontal indent mismatch,
+  found only by measuring absolute pixel positions across all 13 headers,
+  not computed-style string comparison or a screenshot glance.** David
+  pointed out directly that arrows/emojis/labels sat at different indents,
+  and the same on the right side — correct, and something 3 prior passes
+  (all of which checked font-size/weight/color/gap/vertical-centering)
+  never actually measured. Root cause: `sec`, the container passed into
+  `makeCollapsibleSection()` (and the equivalent bespoke containers for
+  Role & Feature Defaults, User Management, Calendar Availability, and API
+  Usage Monitor), always carries a `.settings-section` or `.summary-section`
+  CSS class — both apply `padding:12px` on every side (`grep` for these
+  class names to see all ~50 other uses across the file; this padding is
+  real and needed for those containers' BODY content, not a mistake).
+  Since each header is a direct child of that padded container, headers
+  belonging to these specific containers rendered 12px further right/
+  narrower than every OTHER header, whose containers (`settingsCard()`'s
+  own `card` div, and the fully bespoke Connections/Quick Setup/Field
+  Registry headers) have no such surrounding class and thus nothing extra
+  to indent them. Fixed by adding `margin:'-12px -12px 0'` (or `...4px`
+  where an existing bottom margin needed preserving) to each of the 5
+  affected headers, canceling the inherited padding so they sit flush with
+  the card edge — same effective position as every other header, achieved
+  via the header's own `padding:'8px 12px'` doing the visual inset instead
+  of the parent's class padding doing it. **Verified via
+  `getBoundingClientRect()` on all 13 top-level headers: every single one
+  now has identical `left` (191px), `right` (1973px), and `height` (31px)
+  — not just matching computed style strings, actual absolute pixel
+  position.** **If ANY future header still looks misaligned, measure
+  absolute `left`/`right` position across ALL headers being compared, not
+  just each one's own inline style values in isolation — two headers can
+  have byte-identical inline styles and still render at different absolute
+  positions if their PARENT containers apply different padding/margin.
+  This is exactly what let the bug hide through 3 previous "uniformity"
+  passes.**
 
 ## CURRENT PRIORITY LIST
 
