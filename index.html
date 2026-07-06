@@ -28094,6 +28094,12 @@ window._buildConnectionsSection = _buildConnectionsSection;
             const rh=new Set(_rfKey2RawNow!==null ? JSON.parse(_rfKey2RawNow) : getDefaultHiddenFields(role));
             finKeys2.forEach(function(k){ if(makeHidden){rh.add(k);}else{rh.delete(k);} });
             localStorage.setItem(_rfKey2,JSON.stringify([...rh]));
+            // CRITICAL FIX (2026-07-06): this toggle writes to the same
+            // vcs_role_fields_<role> key as Field Visibility Defaults, and
+            // had the exact same gap -- no save/sync call at all, unlike
+            // its sibling toggles in this same section (export/addVendor/
+            // canAccessArchive/requireSearchToList all correctly call this).
+            debouncedSaveSettings();
             toast('✓ Financials '+(makeHidden?'hidden':'visible')+' — default updated','#22c55e');
             const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
           }
@@ -28410,12 +28416,22 @@ window._buildConnectionsSection = _buildConnectionsSection;
       function bulkSetAllFieldVisibility(makeVisible){
         const allKeys=ALL_RESTRICTABLE_FIELDS.map(function(f){return f.key;});
         try{localStorage.setItem(_rfKey,JSON.stringify(makeVisible?[]:allKeys));}catch(e2){}
+        // CRITICAL FIX (2026-07-06): this only ever wrote to localStorage
+        // and re-rendered -- no save/sync call at all, so the role-level
+        // default never reached the shared server unless an admin happened
+        // to separately click "Apply Changes to Existing Users" afterward
+        // (a different action, for a different purpose). debouncedSaveSettings()
+        // mirrors this key into S.settings and pushes it through the
+        // already-fixed proxy save path, same as every OTHER working
+        // toggle in Permissions Defaults already does.
+        debouncedSaveSettings();
         toast('✓ All fields '+(makeVisible?'made visible':'restricted')+' — default updated','#22c55e');
         const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
       }
       function bulkSetAllFieldEditable(editable){
         const allKeys=ALL_RESTRICTABLE_FIELDS.map(function(f){return f.key;});
         try{localStorage.setItem(_refKey,JSON.stringify(editable?allKeys:[]));}catch(e2){}
+        debouncedSaveSettings();
         toast('✓ All fields edit default '+(editable?'ON':'OFF')+' — default updated','#22c55e');
         const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
       }
@@ -28445,11 +28461,21 @@ window._buildConnectionsSection = _buildConnectionsSection;
             onToggleView:function(){
               const newH=!isHidden;
               _applyFieldVisibility(f.key, newH);
+              // CRITICAL FIX (2026-07-06): every Field Visibility Defaults
+              // toggle used to only write to localStorage and re-render --
+              // no save/sync call at all, so the change never reached the
+              // shared server. Confirmed live as the root cause of David's
+              // report that role/feature default changes "aren't officially
+              // saving to the database." debouncedSaveSettings() mirrors this
+              // key into S.settings and pushes through the already-fixed
+              // proxy save path.
+              debouncedSaveSettings();
               toast('✓ '+f.label+' '+(newH?'hidden':'visible')+' — default updated','#22c55e');
               const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
             },
             onToggleEdit:function(checked){
               _applyFieldEdit(f.key, checked);
+              debouncedSaveSettings();
               toast('✓ '+f.label+' edit default '+(checked?'ON':'OFF')+' — default updated','#22c55e');
               const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
             }

@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Mon Jul 06, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `f8bf6a71afa7059edf1e03113c7af260`, 32,401 lines
+**Checkpoint at this update:** MD5 `f45abac45471f5373ab70256a1029eaf`, 32,427 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,32 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **CRITICAL: Field Visibility Defaults role-level toggles never reached the
+  shared server at all (2026-07-06, David's report — "when I make a change
+  to Role & Feature Defaults, it's not officially saving to the
+  database").** Found the exact gap by systematically checking all three
+  Role & Feature Defaults panels' save paths (only Tab Access Defaults had
+  been heavily tested earlier this session): Field Visibility Defaults'
+  individual field toggles (`onToggleView`/`onToggleEdit`) and its two bulk
+  actions ("Restrict All"/"Make All Visible"/"Make All Editable"/"Make All
+  Non-Editable") all wrote to `localStorage` and re-rendered the UI, but
+  called NO save/sync function whatsoever — the change would silently stay
+  local-only forever unless an admin separately clicked "Apply Changes to
+  Existing Users" (a different action, for a different purpose). Also
+  found the exact same gap on the Permissions Defaults panel's "See
+  Financials" toggle specifically — it writes to the same underlying
+  `vcs_role_fields_<role>` key Field Visibility Defaults uses, and had the
+  identical missing-save bug, even though its sibling toggles in the same
+  section (export/addVendor/canAccessArchive/requireSearchToList, and the
+  bulk Restrict All/Enable All) were all already correctly wired. Fixed by
+  adding `debouncedSaveSettings()` — the same call every OTHER working
+  toggle in this file already uses — to all 5 broken spots. Verified live
+  against the real shared server (not just logic-checked): set an
+  unambiguous, real test value on `ops_qc`'s field visibility default via
+  the fixed code path, waited out the debounce timers, and confirmed via a
+  direct server fetch that the field count and the specific test marker
+  both landed correctly on the shared backend — then cleaned up the test
+  value the same way, re-confirmed clean.
 - **Added real, recoverable note deletion (2026-07-06, David's request)** —
   there was no way to delete a note at all in practice: the existing
   "🙈 Hide" button for non-database notes wrote to `S._hiddenNotes`, a flag

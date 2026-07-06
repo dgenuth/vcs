@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Mon Jul 06, 2026 (this session, continued)
-**Current checkpoint:** MD5 `f8bf6a71afa7059edf1e03113c7af260`, 32,401 lines
+**Current checkpoint:** MD5 `f45abac45471f5373ab70256a1029eaf`, 32,427 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -78,6 +78,24 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **Every single toggle handler that writes a role-level default to
+  localStorage MUST also call `debouncedSaveSettings()` (or an equivalent
+  save/sync call) — writing to localStorage and re-rendering is NOT
+  enough, and this exact gap has now been found independently in TWO
+  different Role & Feature Defaults panels.** Field Visibility Defaults'
+  individual toggles and both its bulk actions had zero save call at all;
+  Permissions Defaults' "See Financials" toggle had the same gap despite
+  its sibling toggles in the identical section being correctly wired. If
+  you add or touch ANY role-default toggle handler in this file, verify it
+  actually calls `debouncedSaveSettings()` (or, for Tab Access Defaults
+  specifically, `persistRoleTabState()`'s own direct `saveConfigToDrive()`
+  call) — don't assume it does just because a nearby, similar-looking
+  toggle does. The fastest way to verify this class of bug for real: set a
+  unique, unambiguous test value via the live UI (or by directly
+  replicating what the handler does), wait out the debounce timers
+  (500ms + 3000ms), then fetch the real server config directly and check
+  whether the value actually landed — reading the source code alone is not
+  sufficient, since the missing call is easy to miss by eye.
 - **Notes now have a real archive/restore cycle, matching vendors'
   archiveVendor()/restoreVendor() pattern — never build a "delete" action
   for anything in this app without checking whether it should route
