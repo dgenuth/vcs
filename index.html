@@ -24944,9 +24944,21 @@ function makeCollapsibleSection(sec, title, storageKey, defaultCollapsed, badge)
   // content-driven height a pixel or two off from the rest — see CLAUDE.md
   // Known Traps for the full account of why content-driven sizing here is
   // fragile).
+  // S51 fix: `sec`'s own bottom padding (from the .settings-section/
+  // .summary-section class, 12px) persisted even while collapsed — the
+  // header's negative top/left/right margin cancels those three sides,
+  // but nothing previously cancelled bottom, so a collapsed card here was
+  // ~12px taller than a card without that class (Connections & API Keys,
+  // Quick Setup, File Info, etc.), even though the header ROW itself
+  // already matched at 32px. Toggling sec's own paddingBottom alongside
+  // body's display keeps the expanded look byte-for-byte identical
+  // (padding reverts to the class's normal 12px) while making a collapsed
+  // card here exactly as tight as every other collapsed card.
+  sec.style.paddingBottom = isCollapsed ? '0' : '';
   const hdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px',margin:'-12px -12px 0',height:'32px',boxSizing:'border-box'},onclick(){
     const c=body.style.display==='none';
     body.style.display=c?'':'none';
+    sec.style.paddingBottom = c ? '' : '0';
     chev.textContent=c?'▼':'▶';
     localStorage.setItem(storageKey,c?'0':'1');
   }});
@@ -26121,6 +26133,7 @@ function renderSettings(c) {
     localStorage.setItem('vcs_rd_collapsed','0');
     localStorage.setItem('vcs_um_collapsed','0');
     localStorage.setItem('vcs_s_cal','0');
+    localStorage.setItem('vcs_s_fieldreg','0');
     S._apiSecOpen=true;
     S._setupChecklistOpen=true;
     render();
@@ -26133,6 +26146,7 @@ function renderSettings(c) {
     localStorage.setItem('vcs_rd_collapsed','1');
     localStorage.setItem('vcs_um_collapsed','1');
     localStorage.setItem('vcs_s_cal','1');
+    localStorage.setItem('vcs_s_fieldreg','1');
     S._apiSecOpen=false;
     S._setupChecklistOpen=false;
     // Also collapse all integration sub-sections inside Connections & API Keys
@@ -26146,8 +26160,8 @@ function renderSettings(c) {
   }},'▶ Collapse All'));
   // A3: Keyboard shortcuts for expand/collapse all settings sections
   const _settingsKbHandler=(e)=>{
-    if((e.ctrlKey||e.metaKey)&&e.key==='e'&&!e.shiftKey){e.preventDefault();S._settingsExpandAll=true;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=true);_allRawKeys.forEach(k=>localStorage.setItem(k,'0'));localStorage.setItem('vcs_rd_collapsed','0');localStorage.setItem('vcs_um_collapsed','0');localStorage.setItem('vcs_s_cal','0');S._apiSecOpen=true;S._setupChecklistOpen=true;render();}
-    if((e.ctrlKey||e.metaKey)&&e.key==='k'){e.preventDefault();S._settingsExpandAll=false;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=false);_allRawKeys.forEach(k=>localStorage.setItem(k,'1'));localStorage.setItem('vcs_rd_collapsed','1');localStorage.setItem('vcs_um_collapsed','1');localStorage.setItem('vcs_s_cal','1');S._apiSecOpen=false;S._setupChecklistOpen=false;render();}
+    if((e.ctrlKey||e.metaKey)&&e.key==='e'&&!e.shiftKey){e.preventDefault();S._settingsExpandAll=true;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=true);_allRawKeys.forEach(k=>localStorage.setItem(k,'0'));localStorage.setItem('vcs_rd_collapsed','0');localStorage.setItem('vcs_um_collapsed','0');localStorage.setItem('vcs_s_cal','0');localStorage.setItem('vcs_s_fieldreg','0');S._apiSecOpen=true;S._setupChecklistOpen=true;render();}
+    if((e.ctrlKey||e.metaKey)&&e.key==='k'){e.preventDefault();S._settingsExpandAll=false;if(!S._settingsOpen)S._settingsOpen={};_allSettingsKeys.forEach(k=>S._settingsOpen[k]=false);_allRawKeys.forEach(k=>localStorage.setItem(k,'1'));localStorage.setItem('vcs_rd_collapsed','1');localStorage.setItem('vcs_um_collapsed','1');localStorage.setItem('vcs_s_cal','1');localStorage.setItem('vcs_s_fieldreg','1');S._apiSecOpen=false;S._setupChecklistOpen=false;render();}
   };
   document.addEventListener('keydown',_settingsKbHandler);
   c.addEventListener('DOMNodeRemovedFromDocument',()=>document.removeEventListener('keydown',_settingsKbHandler),{once:true});
@@ -27159,10 +27173,15 @@ window._buildConnectionsSection = _buildConnectionsSection;
     const _rdCollapsed=localStorage.getItem('vcs_rd_collapsed')!=='0';
     // S51 fix: same parent .settings-section padding:12px cancellation as
     // makeCollapsibleSection — see its comment for the full mechanism.
+    // Also toggles secRoles' own bottom padding alongside collapse state
+    // (see makeCollapsibleSection's matching comment) so a collapsed card
+    // here is exactly as tight as one without this class.
+    secRoles.style.paddingBottom = _rdCollapsed ? '0' : '';
     const _rdHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px',margin:'-12px -12px 0',height:'32px',boxSizing:'border-box'},
       onclick(){
         const _c=!(_rdBody.style.display==='none');
         _rdBody.style.display=_c?'none':'';
+        secRoles.style.paddingBottom = _c ? '' : '0';
         _rdChev.textContent=_c?'▶':'▼';
         localStorage.setItem('vcs_rd_collapsed',_c?'1':'0');
       }});
@@ -27947,9 +27966,14 @@ function buildUserSubSection(label,bodyBuilderFn){
     const _umCollapsed = localStorage.getItem('vcs_um_collapsed') !== '0';
     // S51 fix: same parent .settings-section padding:12px cancellation as
     // makeCollapsibleSection — see its comment for the full mechanism.
+    // Also toggles secUsers' own bottom padding alongside collapse state
+    // (see makeCollapsibleSection's matching comment) so a collapsed card
+    // here is exactly as tight as one without this class.
+    secUsers.style.paddingBottom = _umCollapsed ? '0' : '';
     const _umHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px',margin:'-12px -12px 0',height:'32px',boxSizing:'border-box'},onclick(){
       const _c=!(_umBody.style.display==='none');
       _umBody.style.display=_c?'none':'';
+      secUsers.style.paddingBottom = _c ? '' : '0';
       _umChev.textContent=_c?'▶':'▼';
       localStorage.setItem('vcs_um_collapsed',_c?'1':'0');
     }});
@@ -28814,7 +28838,7 @@ function buildUserSubSection(label,bodyBuilderFn){
     // S51 fix: same parent .settings-section padding:12px cancellation as
     // makeCollapsibleSection (_cow, this header's direct parent, carries
     // that class) — see its comment for the full mechanism.
-    const _coh=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px',margin:'-12px -12px 0',height:'32px',boxSizing:'border-box'}});_coh.onclick=function(){const n=secCal.style.display==='none';secCal.style.display=n?'':'none';_cch.textContent=n?'▼':'▶';localStorage.setItem('vcs_s_cal',n?'0':'1');};_coh.appendChild(_cch);_coh.appendChild(el('h3',{style:{margin:'0',display:'inline',flex:'1'}},'📅 Calendar Availability'));const _blockedDays=(S.settings.closedDays||[]).length+(S.settings.oooDays||[]).length;_coh.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--muted)',marginLeft:'6px',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)'}},_blockedDays+' day'+(_blockedDays!==1?'s':'')+' blocked'));const _cow=el('div',{class:'settings-section'});_cow.appendChild(_coh);secCal.style.display=_cc?'':'none';_cow.appendChild(secCal);c.appendChild(_cow);}
+    const _coh=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',userSelect:'none',padding:'8px 12px',margin:'-12px -12px 0',height:'32px',boxSizing:'border-box'}});_coh.onclick=function(){const n=secCal.style.display==='none';secCal.style.display=n?'':'none';_cow.style.paddingBottom=n?'':'0';_cch.textContent=n?'▼':'▶';localStorage.setItem('vcs_s_cal',n?'0':'1');};_coh.appendChild(_cch);_coh.appendChild(el('h3',{style:{margin:'0',display:'inline',flex:'1'}},'📅 Calendar Availability'));const _blockedDays=(S.settings.closedDays||[]).length+(S.settings.oooDays||[]).length;_coh.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--muted)',marginLeft:'6px',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)'}},_blockedDays+' day'+(_blockedDays!==1?'s':'')+' blocked'));const _cow=el('div',{class:'settings-section',style:{paddingBottom:_cc?'':'0'}});_cow.appendChild(_coh);secCal.style.display=_cc?'':'none';_cow.appendChild(secCal);c.appendChild(_cow);}
 
   // Default View on load
   const secDefaults=el('div',{class:'settings-section'});
@@ -28955,7 +28979,13 @@ function buildUserSubSection(label,bodyBuilderFn){
 
   // ── API Usage Monitoring (Admin/Procurement, or Assistant Admin — S48 Part D) ──
   if(['admin','procurement'].includes(USER.role) || isAssistantAdmin()){
-    const apiSec=el('div',{class:'summary-section'});
+    // S51 fix: same parent .summary-section padding:12px persisting while
+    // collapsed as makeCollapsibleSection — see its comment for the full
+    // mechanism. This section's toggle already does a full render() (not
+    // a direct display swap), so setting this once at construction time
+    // from the current S._apiSecOpen is sufficient — no separate toggle
+    // needed, every render naturally picks up the current value.
+    const apiSec=el('div',{class:'summary-section',style:{paddingBottom:S._apiSecOpen?'':'0'}});
     // Computed unconditionally (not gated behind S._apiSecOpen) so the
     // header's cost indicator is visible at a glance while collapsed --
     // cheap (just sums already-loaded localStorage keys), unlike the full
@@ -28966,7 +28996,13 @@ function buildUserSubSection(label,bodyBuilderFn){
     // S51 fix: same parent .summary-section padding:12px cancellation as
     // makeCollapsibleSection (apiSec, this header's direct parent, carries
     // that class) — see its comment for the full mechanism.
-    const apiHdrRow=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',padding:'8px 12px',margin:'-12px -12px 4px',height:'32px',boxSizing:'border-box'},onclick(){const _ac=$('content');const _asp=_ac?_ac.scrollTop:0;S._apiSecOpen=!S._apiSecOpen;render();if(_ac) requestAnimationFrame(()=>{_ac.scrollTop=_asp;});}});
+    // S51 fix: the 4px bottom margin below (originally a plain marginBottom
+    // for spacing before the expanded body) still applied while collapsed,
+    // where it serves no purpose since the body is hidden and the
+    // container's own bottom padding is already 0 — the last ~4px of the
+    // "Connections & API Keys height" mismatch. Made conditional on
+    // S._apiSecOpen, same as apiSec's paddingBottom above.
+    const apiHdrRow=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',cursor:'pointer',padding:'8px 12px',margin:'-12px -12px '+(S._apiSecOpen?'4px':'0'),height:'32px',boxSizing:'border-box'},onclick(){const _ac=$('content');const _asp=_ac?_ac.scrollTop:0;S._apiSecOpen=!S._apiSecOpen;render();if(_ac) requestAnimationFrame(()=>{_ac.scrollTop=_asp;});}});
     apiHdrRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},S._apiSecOpen===true?'▼':'▶'));
     apiHdrRow.appendChild(el('h3',{style:{margin:'0',flex:'1'}},'📊 API Usage Monitor'));
     apiHdrRow.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--muted)',marginLeft:'6px',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)'}},(_apiTotalCents>100?'$'+(_apiTotalCents/100).toFixed(2):_apiTotalCents.toFixed(1)+'¢')+' est.'));
@@ -29121,9 +29157,20 @@ function buildUserSubSection(label,bodyBuilderFn){
 
   // ── Field Registry ──────────────────────────────────────────────────────────
   if(USER.role==='admin'){
+    // S51 fix: this section never had a persisted collapse state at all —
+    // always started expanded, and had no localStorage key, so the
+    // Expand All/Collapse All buttons (and Ctrl+E/Ctrl+K) had nothing to
+    // reset here even though every other section responds to them.
+    // Default collapsed, matching every other Settings section.
+    const _frCollapsed=localStorage.getItem('vcs_s_fieldreg')!=='0';
     const frSec=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'6px',overflow:'hidden',marginBottom:'8px'}});
-    const frHdrRow=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',padding:'8px 12px',cursor:'pointer',background:'rgba(79,124,255,.06)',height:'32px',boxSizing:'border-box'},onclick(){frBody.style.display=frBody.style.display==='none'?'':'none';frChev.textContent=frBody.style.display===''?'▼':'▶';}});
-    const frChev=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'▼');
+    const frHdrRow=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',padding:'8px 12px',cursor:'pointer',background:'rgba(79,124,255,.06)',height:'32px',boxSizing:'border-box'},onclick(){
+      const _c=!(frBody.style.display==='none');
+      frBody.style.display=_c?'none':'';
+      frChev.textContent=_c?'▶':'▼';
+      localStorage.setItem('vcs_s_fieldreg',_c?'1':'0');
+    }});
+    const frChev=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_frCollapsed?'▶':'▼');
     frHdrRow.appendChild(frChev);
     // S51 fix: the emoji was its own 14px span (vs. every other header's
     // emoji sitting inline in the 11px title text) — the taller glyph made
@@ -29132,7 +29179,7 @@ function buildUserSubSection(label,bodyBuilderFn){
     frHdrRow.appendChild(el('span',{style:{fontWeight:'600',fontSize:'11px',flex:'1',color:'var(--blue)'}},'🗂 Field Registry'));
     frHdrRow.appendChild(el('span',{style:{fontSize:'9px',fontWeight:'600',color:'var(--muted)',padding:'1px 6px',borderRadius:'8px',background:'rgba(255,255,255,.05)'}},Array.isArray(S._customFields)?S._customFields.length+' custom field'+(S._customFields.length!==1?'s':''):'Custom vendor fields'));
     frSec.appendChild(frHdrRow);
-    const frBody=el('div',{style:{padding:'10px',display:'flex',flexDirection:'column',gap:'8px'}});
+    const frBody=el('div',{style:{padding:'10px',display:_frCollapsed?'none':'flex',flexDirection:'column',gap:'8px'}});
     const hdr=el('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'4px'}});
     hdr.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',margin:0}},'Custom fields are stored in Supabase and appear in all vendor panels.'));
     const btnRow2=el('div',{style:{display:'flex',gap:'4px'}});

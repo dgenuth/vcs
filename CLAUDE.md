@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
-**Last updated:** Mon Jul 06, 2026 — 1:50 AM EDT
-**Current checkpoint:** MD5 `6a23e3277dda9ee6b6ab9543d251376d`, 31,761 lines
+**Last updated:** Mon Jul 06, 2026 — 2:10 AM EDT
+**Current checkpoint:** MD5 `080b8213b3e58caabb0831ec915a8dd7`, 31,808 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -673,6 +673,41 @@ similar symptom reappears; don't rediscover them from scratch)
   has access" report ever comes back, check whether ALL THREE of these
   layers are still intact — a fix to just one (e.g. only the merge, or
   only the login gate) leaves the other two as a residual gap.**
+- **Title bar heights, TRUE final pass — the 32px `height` fix from earlier
+  that evening wasn't actually the whole story.** David correctly spotted
+  that Role & Feature Defaults, User Management, Click-to-Call, Calendar
+  Availability, Startup & Navigation, Display Preferences, and API Usage
+  Monitor were still visibly taller than Connections & API Keys/Quick
+  Setup/File Info/Data Actions/Field Registry when COLLAPSED, despite
+  every header ROW measuring an identical 32px. Root cause: the 7 taller
+  sections' outer wrapper carries `.settings-section` or `.summary-section`
+  — both apply `padding:12px` via CSS on EVERY side, and that padding
+  persists on the container regardless of whether the body inside is
+  `display:none` (padding is a property of the container, not
+  conditionally removed based on a child's visibility). The header's
+  existing negative-margin trick (see the indent-fix entry above) only
+  ever cancelled top/left/right — nothing cancelled the bottom padding,
+  which just sat there as ~12-16px of dead space below a collapsed header.
+  Fixed by toggling each container's own `paddingBottom` between `'0'`
+  (collapsed) and `''` (expanded, letting the class's normal 12px apply)
+  in the exact same places the body's `display` is already toggled — so
+  the expanded look is completely unchanged (verified: `paddingBottom`
+  computes back to `12px` the moment a section is expanded, real body
+  content renders at full size) while collapsed height now drops to
+  exactly 34px, matching the un-classed sections precisely.
+  **Separately, in the same pass: Field Registry never had a persisted
+  collapse state at all** (always hardcoded to start expanded, no
+  localStorage key) — which is *why* "Collapse All" visibly skipped it
+  (there was no key for that button to reset). Gave it a real key
+  (`vcs_s_fieldreg`, defaulting collapsed like every other section) and
+  added it everywhere the other sections' keys already get reset:
+  the Expand All/Collapse All buttons AND the Ctrl+E/Ctrl+K shortcuts.
+  **Verified via `getBoundingClientRect()` on all 13 top-level sections
+  after clicking the real "Collapse All" button (not just checking
+  computed styles): every single one now measures exactly 34px.** If a
+  height mismatch like this recurs, check for a `.settings-section`/
+  `.summary-section` class on the container FIRST — its padding is the
+  recurring culprit, not the header's own styling.
 
 ## CURRENT PRIORITY LIST
 

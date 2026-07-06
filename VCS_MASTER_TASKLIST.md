@@ -1,6 +1,6 @@
 # VCS — Master Task List
-**Last updated:** Mon Jul 06, 2026, 1:50 AM EDT (this session, Claude Code)
-**Checkpoint at this update:** MD5 `6a23e3277dda9ee6b6ab9543d251376d`, 31,761 lines
+**Last updated:** Mon Jul 06, 2026, 2:10 AM EDT (this session, Claude Code)
+**Checkpoint at this update:** MD5 `080b8213b3e58caabb0831ec915a8dd7`, 31,808 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,21 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Title bar heights, TRUE final pass (2026-07-06)** — David correctly
+  spotted that 7 sections (Role & Feature Defaults, User Management,
+  Click-to-Call, Calendar Availability, Startup & Navigation, Display
+  Preferences, API Usage Monitor) were still visibly taller than the other
+  6 when collapsed, despite the earlier 32px header-height fix. Root
+  cause: those 7 sit inside a `.settings-section`/`.summary-section`
+  container whose CSS padding (12px on every side) persists even when the
+  body is hidden — dead space nothing had cancelled. Fixed by toggling
+  each container's own bottom padding alongside its body's collapse state
+  (expanded look is completely unchanged — verified). Also found and fixed
+  in the same pass: Field Registry never had a persisted collapse state at
+  all, which is why "Collapse All" visibly skipped it — gave it a real
+  key and wired it into both the buttons and keyboard shortcuts. Verified:
+  clicked the actual "Collapse All" button and measured all 13 top-level
+  sections at exactly 34px, no exceptions.
 - **CRITICAL SECURITY (2026-07-06): a deleted user could still log in
   indefinitely from any browser that had them cached before the
   deletion** — David deleted a user and could still log in as them from
