@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Mon Jul 06, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `96aa3b85a7202ff535e4e933e2496278`, 32,279 lines
+**Checkpoint at this update:** MD5 `f8bf6a71afa7059edf1e03113c7af260`, 32,401 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,37 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Added real, recoverable note deletion (2026-07-06, David's request)** —
+  there was no way to delete a note at all in practice: the existing
+  "🙈 Hide" button for non-database notes wrote to `S._hiddenNotes`, a flag
+  that NOTHING in the file ever reads back, so it was a complete no-op —
+  it showed a "Note removed" success toast while the note stayed fully
+  visible. The "🗑 Delete" button for database-backed notes DID correctly
+  soft-delete on the server, but removed the note from local memory
+  immediately with no way to see or undo it again that session. Neither
+  path matched David's stated preference that all deletions go through a
+  recoverable archive, not silent/permanent removal.
+  Built a proper archive/restore cycle for notes, matching the exact same
+  soft-delete philosophy `archiveVendor()`/`restoreVendor()` already use
+  for vendors: new `archiveNoteLogEntry()`/`restoreNoteLogEntry()` move an
+  entry between `vendor._notesLog` (live) and a new
+  `vendor._archivedNotesLog` (recoverable), correctly rebuilding the
+  Excel-compatible `vendor.notes` string from whichever entries remain
+  live (`_rebuildNotesFromLog()`, using each entry's own original
+  timestamp, not "now"). Database notes keep their existing `deleted_at`
+  soft-delete but now stay in `vendor._sbNotes` locally (marked
+  `_deleted`) instead of disappearing outright. Both note types now
+  surface in a new "🗄 Archived Notes" subsection (in every vendor's Notes
+  panel) with a "↩ Restore" action per entry. Buttons renamed from
+  Hide/Delete to a consistent "🗄 Archive" for both note types, with
+  matching confirm-dialog wording ("...you can restore it later").
+  Verified live end-to-end for both note types: archiving a note correctly
+  removes it from its live subsection and adds it to Archived Notes with
+  the content still fully intact (never actually lost); restoring moves
+  it back to its original subsection and clears the Archived Notes
+  section; the underlying `vendor.notes` string correctly excludes an
+  archived entry from the middle of a multi-note history while preserving
+  the other entries' original timestamps.
 - **Two note-related bugs, both found via David's report of adding a
   Pipeline Note to an In The Works vendor (2026-07-06).**
   1. **Note typing randomly jumped focus to the search box after ~20

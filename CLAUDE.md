@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Mon Jul 06, 2026 (this session, continued)
-**Current checkpoint:** MD5 `96aa3b85a7202ff535e4e933e2496278`, 32,279 lines
+**Current checkpoint:** MD5 `f8bf6a71afa7059edf1e03113c7af260`, 32,401 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -78,6 +78,23 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **Notes now have a real archive/restore cycle, matching vendors'
+  archiveVendor()/restoreVendor() pattern — never build a "delete" action
+  for anything in this app without checking whether it should route
+  through a recoverable archive instead of an outright removal.** David's
+  explicit standing preference: all deletions should be soft, recoverable
+  from a mistake. The prior note "Hide" button wrote to `S._hiddenNotes`,
+  which nothing ever read back — a complete no-op masquerading as a
+  working delete (it showed a success toast while doing nothing). Use
+  `archiveNoteLogEntry(vendor, logEntry)`/`restoreNoteLogEntry(vendor,
+  archivedEntry)` for non-DB notes (operates on `vendor._notesLog` /
+  `vendor._archivedNotesLog`, and rebuilds `vendor.notes` via
+  `_rebuildNotesFromLog()` — do NOT rebuild that string manually, it must
+  preserve each entry's own original timestamp, not "now"). DB
+  (Supabase-backed) notes keep the existing `deleted_at` soft-delete but
+  must stay in `vendor._sbNotes` (marked `_deleted`) rather than being
+  filtered out of the array, or there's no way to restore them within the
+  session.
 - **The global keyboard-shortcut handler's "don't hijack while typing"
   guard only ever checked `tagName` against INPUT/TEXTAREA/SELECT — any
   `contenteditable` element (the rich-text note editor, and any future

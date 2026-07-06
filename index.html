@@ -3841,9 +3841,11 @@ function formatNewNoteEntry(content, tag, author) {
   return `${date} ${time}${tagStr}${authorStr} ${content}`;
 }
 
-function prependStructuredNote(vendor, content, tag) {
-  const author = USER.name || USER.email || '';
-  // Seed _notesLog from existing notes on first structured add
+// Seed vendor._notesLog from the legacy vendor.notes string, if it hasn't
+// been seeded yet -- shared by prependStructuredNote() and the note
+// archive/restore functions below, since archiving a legacy (pre-_notesLog)
+// note needs the same structured array to remove an entry from.
+function _ensureNotesLogSeeded(vendor) {
   if (!vendor._notesLog) {
     vendor._notesLog = (vendor.notes && vendor.notes.trim())
       ? parseNoteEntries(vendor.notes).map(function(e){
@@ -3851,6 +3853,61 @@ function prependStructuredNote(vendor, content, tag) {
         })
       : [];
   }
+}
+
+// Re-serialize vendor.notes (the Excel-column-compatible plain-text history)
+// from the current vendor._notesLog array, preserving each entry's OWN
+// original date/time rather than stamping everything with "now" --
+// formatNewNoteEntry() always uses the current time, which is correct when
+// APPENDING a new note but wrong when rebuilding the full history after
+// removing one entry (e.g. archiving a note out of the middle of the log).
+function _formatLogEntryForNotesString(e) {
+  const time = e.ts ? new Date(e.ts).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) : '';
+  const tagStr = (e.type && e.type!=='general') ? ` [${e.type}]` : '';
+  const authorStr = e.user ? ` ${e.user}:` : ':';
+  return (`${e.date||''} ${time}`.trim())+`${tagStr}${authorStr} ${e.text||''}`;
+}
+function _rebuildNotesFromLog(vendor) {
+  vendor.notes = (vendor._notesLog||[]).map(_formatLogEntryForNotesString).join('\n---\n');
+}
+
+// Archive/restore a single _notesLog entry -- the "delete" action for
+// non-database notes. Matches the same soft-delete philosophy as
+// archiveVendor()/restoreVendor(): never silently gone, always recoverable
+// from an explicit Archived view, with a real permanent-delete only
+// reachable from there if ever needed.
+function archiveNoteLogEntry(vendor, logEntry) {
+  _ensureNotesLogSeeded(vendor);
+  const idx = (vendor._notesLog||[]).indexOf(logEntry);
+  if (idx === -1) return false;
+  vendor._notesLog.splice(idx, 1);
+  _rebuildNotesFromLog(vendor);
+  if (!vendor._archivedNotesLog) vendor._archivedNotesLog = [];
+  vendor._archivedNotesLog.unshift(Object.assign({}, logEntry, {
+    archivedAt: new Date().toISOString(),
+    archivedBy: (USER&&USER.email)||''
+  }));
+  if (vendor.source==='itw') { vendor._dirty=true; if(!S.dirtyITW)S.dirtyITW=new Set(); S.dirtyITW.add(vendor._row); }
+  else { markDirty(vendor); }
+  saveSessionState();
+  return true;
+}
+function restoreNoteLogEntry(vendor, archivedEntry) {
+  const idx = (vendor._archivedNotesLog||[]).indexOf(archivedEntry);
+  if (idx === -1) return false;
+  vendor._archivedNotesLog.splice(idx, 1);
+  _ensureNotesLogSeeded(vendor);
+  vendor._notesLog.unshift({ts:archivedEntry.ts, date:archivedEntry.date, user:archivedEntry.user, type:archivedEntry.type, text:archivedEntry.text});
+  _rebuildNotesFromLog(vendor);
+  if (vendor.source==='itw') { vendor._dirty=true; if(!S.dirtyITW)S.dirtyITW=new Set(); S.dirtyITW.add(vendor._row); }
+  else { markDirty(vendor); }
+  saveSessionState();
+  return true;
+}
+
+function prependStructuredNote(vendor, content, tag) {
+  const author = USER.name || USER.email || '';
+  _ensureNotesLogSeeded(vendor);
   // Prepend new entry to structured log
   vendor._notesLog.unshift({
     ts: new Date().toISOString(),
@@ -11040,7 +11097,7 @@ function addReviewNotesSection(body, reviewRecord, vendor) {
   body.appendChild(sec);
 }
 
-function buildNoteSubsection(label, entries, vendor) {
+function buildNoteSubsection(label, entries, vendor, isArchivedView) {
   const wrap = el('div',{style:{marginBottom:'6px',border:'1px solid var(--border)',borderRadius:'3px',overflow:'hidden'}});
   let subOpen = false;
   const hdr = el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'4px 8px',background:'var(--bg)',cursor:'pointer',fontSize:'10px',fontWeight:'600',userSelect:'none'},
@@ -11051,11 +11108,12 @@ function buildNoteSubsection(label, entries, vendor) {
   wrap.appendChild(hdr);
   const bdy=el('div',{style:{display:'none',padding:'6px'}});
   entries.forEach(function(e){
-    const card=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'3px',padding:'6px 8px',marginBottom:'4px',fontSize:'10px'}});
+    const card=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'3px',padding:'6px 8px',marginBottom:'4px',fontSize:'10px',opacity:isArchivedView?'.7':'1'}});
     const meta=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:'3px',fontSize:'8px',color:'var(--muted)'}});
     if(e.date) meta.appendChild(el('span',{},String(e.date).split('T')[0]));
     if(e.tag) meta.appendChild(el('span',{style:{background:'var(--bg)',padding:'1px 4px',borderRadius:'2px',border:'1px solid var(--border)'}},e.tag));
     if(e.author) meta.appendChild(el('span',{},e.author));
+    if(isArchivedView && e.archivedAt) meta.appendChild(el('span',{style:{color:'var(--red)'}},'archived '+String(e.archivedAt).split('T')[0]));
     card.appendChild(meta);
     const content=el('div',{style:{lineHeight:'1.5',color:'var(--text)'}});
     if(e._bodyHtml) content.innerHTML=e._bodyHtml;
@@ -11063,41 +11121,77 @@ function buildNoteSubsection(label, entries, vendor) {
     else content.textContent=e.content||'';
     card.appendChild(content);
     const actions=el('div',{style:{display:'flex',gap:'4px',marginTop:'4px'}});
-    actions.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},
-      onclick:function(ev){
-        ev.stopPropagation();
-        const current=e._bodyHtml?(e._bodyHtml.replace(/<[^>]+>/g,'')):(e.content||'');
-        if(typeof openEditNoteModal==='function'){
-          openEditNoteModal(vendor,e,current,function(newText){
-            e.content=newText; e._bodyHtml='<p>'+newText+'</p>';
-            if(e._sbNote&&e._sbId&&SB&&SB.ready())
-              SB.upsert('vendor_notes',[{id:e._sbId,body_plain:newText,
-                body_html:'<p>'+newText+'</p>',updated_at:new Date().toISOString()}]).catch(function(){});
-            if(typeof refreshDetailIfOpen==='function') refreshDetailIfOpen(vendor);
-          });
-        }
-      }
-    },'✏ Edit'));
     const isDbNote=e._sbNote||e._source==='DB'||e._source==='Log';
-    actions.appendChild(el('button',{class:'btn-xs btn-ghost',
-      style:{fontSize:'8px',color:'var(--red)'},
-      onclick:function(ev){
-        ev.stopPropagation();
-        const lbl=isDbNote?'Delete this note?':'Hide this note? (Excel notes cannot be permanently deleted)';
-        if(!confirm(lbl)) return;
-        if(isDbNote&&e._sbId&&SB&&SB.ready()){
-          SB.upsert('vendor_notes',[{id:e._sbId,deleted_at:new Date().toISOString()}]).catch(function(){});
-          if(vendor._sbNotes) vendor._sbNotes=vendor._sbNotes.filter(function(n){return n.id!==e._sbId;});
-        } else {
-          if(!S._hiddenNotes) S._hiddenNotes={};
-          const hkey=vendor.name+'|'+(e.content||'').slice(0,50);
-          S._hiddenNotes[hkey]=true;
-          if(typeof saveSessionState==='function') saveSessionState();
+    if(isArchivedView){
+      // CRITICAL FIX (2026-07-06): archived notes get a single Restore
+      // action instead of Edit/Archive -- this is the actual recovery path
+      // for a note deleted by mistake, which the old "Hide" button never
+      // provided (it just set a flag nothing ever read, so a "hidden" note
+      // never disappeared OR came back -- see the Known Traps note).
+      actions.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px',color:'var(--green)'},
+        onclick:function(ev){
+          ev.stopPropagation();
+          if(isDbNote && e._sbId){
+            const rec=(vendor._sbNotes||[]).find(function(n){return n.id===e._sbId;});
+            if(rec){
+              rec._deleted=false; rec._deletedAt='';
+              if(SB && SB.ready()) SB.upsert('vendor_notes',[{id:e._sbId,deleted_at:null}]).catch(function(){});
+            }
+          } else if(e._origLogEntry){
+            restoreNoteLogEntry(vendor, e._origLogEntry);
+          }
+          if(typeof refreshDetailIfOpen==='function') refreshDetailIfOpen(vendor);
+          toast('↩ Note restored','#10b981');
         }
-        if(typeof refreshDetailIfOpen==='function') refreshDetailIfOpen(vendor);
-        toast('Note removed','#10b981');
-      }
-    },isDbNote?'🗑 Delete':'🙈 Hide'));
+      },'↩ Restore'));
+    } else {
+      actions.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},
+        onclick:function(ev){
+          ev.stopPropagation();
+          const current=e._bodyHtml?(e._bodyHtml.replace(/<[^>]+>/g,'')):(e.content||'');
+          if(typeof openEditNoteModal==='function'){
+            openEditNoteModal(vendor,e,current,function(newText){
+              e.content=newText; e._bodyHtml='<p>'+newText+'</p>';
+              if(e._sbNote&&e._sbId&&SB&&SB.ready())
+                SB.upsert('vendor_notes',[{id:e._sbId,body_plain:newText,
+                  body_html:'<p>'+newText+'</p>',updated_at:new Date().toISOString()}]).catch(function(){});
+              if(typeof refreshDetailIfOpen==='function') refreshDetailIfOpen(vendor);
+            });
+          }
+        }
+      },'✏ Edit'));
+      // CRITICAL FIX (2026-07-06): renamed from Delete/Hide to Archive for
+      // both note types, matching David's preference that deletions be
+      // recoverable, not silently gone. The old non-DB "Hide" path wrote to
+      // S._hiddenNotes, which nothing in this file ever reads back -- it
+      // was a complete no-op that still showed a "Note removed" success
+      // toast. Now does a real, recoverable archive: DB notes get their
+      // existing deleted_at soft-delete (unchanged) but stay in
+      // vendor._sbNotes locally (marked _deleted) so they can be restored
+      // this session; non-DB notes move into vendor._archivedNotesLog via
+      // archiveNoteLogEntry(), removed from the live vendor.notes/_notesLog
+      // and re-addable via the Archived Notes subsection's Restore button.
+      actions.appendChild(el('button',{class:'btn-xs btn-ghost',
+        style:{fontSize:'8px',color:'var(--red)'},
+        onclick:function(ev){
+          ev.stopPropagation();
+          if(!confirm('Archive this note? You can restore it later from Archived Notes.')) return;
+          if(isDbNote&&e._sbId){
+            if(SB&&SB.ready()) SB.upsert('vendor_notes',[{id:e._sbId,deleted_at:new Date().toISOString()}]).catch(function(){});
+            const rec=(vendor._sbNotes||[]).find(function(n){return n.id===e._sbId;});
+            if(rec){ rec._deleted=true; rec._deletedAt=new Date().toISOString(); }
+          } else {
+            _ensureNotesLogSeeded(vendor);
+            const target = e._origLogEntry || (vendor._notesLog||[]).find(function(le){
+              return (le.text||'')===(e.content||'') && (le.date||'')===(e.date||'');
+            });
+            if(target) archiveNoteLogEntry(vendor, target);
+          }
+          if(typeof refreshDetailIfOpen==='function') refreshDetailIfOpen(vendor);
+          toast('🗄 Note archived — restore anytime from Archived Notes','#10b981');
+        }
+      },'🗄 Archive'));
+    }
     card.appendChild(actions);
     bdy.appendChild(card);
   });
@@ -11131,16 +11225,26 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
   };
 
   // Supabase notes (_sbNotes) — rich text from vendor_notes table
+  const archivedEntries = [];
   if(vendor._sbNotes && vendor._sbNotes.length){
     vendor._sbNotes.forEach(function(n){
       const content = n.bodyPlain || (n.bodyHtml ? n.bodyHtml.replace(/<[^>]+>/g,'') : '');
       if(!content && !n.bodyHtml) return; // skip truly empty notes
-      allEntries.push({
+      const entry = {
         date:n.noteDate||n.createdAt||'',tag:n.tag||n.noteType||'',
         author:n.authorName||n.authorEmail||'',
         content:content,_bodyHtml:n.bodyHtml||'',
         _source:'DB',_tag:'DB',_vendor:vendor,_sbNote:true,_sbId:n.id
-      });
+      };
+      // CRITICAL FIX (2026-07-06): deleting a DB note used to filter it out
+      // of vendor._sbNotes entirely the moment "Delete" was clicked -- the
+      // server-side soft-delete (deleted_at) was correct, but locally there
+      // was no way to see or undo it again this session. Kept in the array
+      // now (marked n._deleted) and routed to the Archived Notes subsection
+      // instead of vanishing outright, matching the same recoverable
+      // soft-delete pattern as archiveVendor()/restoreVendor().
+      if(n._deleted) archivedEntries.push(Object.assign({},entry,{archivedAt:n._deletedAt||''}));
+      else allEntries.push(entry);
     });
   }
   // Always also show legacy notes from vendor.notes string and _notesLog
@@ -11160,8 +11264,13 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
     // type at all) entry still defaults to 'Contract', matching its real
     // historical origin as the Excel "Contract Notes" column.
     const _NOTE_TAG_TO_CATEGORY={pipeline:'Pipeline',review:'Review',sf_log:'SF',Contract:'Contract'};
+    // _origLogEntry keeps a reference to the RAW vendor._notesLog object (not
+    // just its content/date) so the Archive button can splice out exactly
+    // this entry, unambiguously, rather than re-matching by content+date --
+    // needed because archiveNoteLogEntry()/restoreNoteLogEntry() operate on
+    // the actual array entries, not copies of them.
     const _psdSrc = (vendor._notesLog && vendor._notesLog.length)
-      ? vendor._notesLog.map(function(e){return {date:e.date,tag:e.type,author:e.user,content:e.text,legacy:false};})
+      ? vendor._notesLog.map(function(e){return {date:e.date,tag:e.type,author:e.user,content:e.text,legacy:false,_origLogEntry:e};})
       : parseNoteEntries(vendor.notes);
     _psdSrc.forEach(function(e){
       // Avoid duplicates with _sbNotes
@@ -11172,6 +11281,14 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
       }
     });
   }
+
+  // Archived (soft-deleted) notes -- vendor._archivedNotesLog entries from
+  // archiveNoteLogEntry(), plus the DB-note archivedEntries collected above.
+  // Shown in their own "Archived Notes" subsection with a Restore action,
+  // never counted in allEntries/the live subsections above.
+  (vendor._archivedNotesLog||[]).forEach(function(e){
+    archivedEntries.push({date:e.date,tag:e.type,author:e.user,content:e.text,archivedAt:e.archivedAt||'',_origLogEntry:e});
+  });
 
   // vendor.comments (spreadsheet Comments column — shown here not as standalone section)
   if(vendor.comments && String(vendor.comments).trim()){
@@ -11236,7 +11353,7 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
     }
   } catch(_){}
 
-  if(!allEntries.length){
+  if(!allEntries.length && !archivedEntries.length){
     sec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',padding:'6px 0',fontStyle:'italic'}},'No notes yet.'));
     return;
   }
@@ -11287,6 +11404,11 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
   const categorized=new Set(['Pipeline','Review','SF','Contract','DB','Excel','Log']);
   const uncategorized=allEntries.filter(function(e){return !categorized.has(e._tag)&&!categorized.has(e._source);});
   if(uncategorized.length) notesBodyEl.appendChild(buildNoteSubsection('📌 Other Notes',uncategorized,vendor));
+  // Archived (soft-deleted) notes — always last, never counted in the live
+  // Notes total above; each entry gets a "↩ Restore" action instead of
+  // Edit/Archive. This is the recovery path for David's "delete by
+  // mistake" concern — nothing here is ever permanently gone.
+  if(archivedEntries.length) notesBodyEl.appendChild(buildNoteSubsection('🗄 Archived Notes',archivedEntries,vendor,true));
   notesSec.appendChild(notesBodyEl);
   sec.appendChild(notesSec);
 }
