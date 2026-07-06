@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Mon Jul 06, 2026 (this session, continued)
-**Current checkpoint:** MD5 `a276760aa55aee6575c8e5d9bda3fb3b`, 32,143 lines
+**Current checkpoint:** MD5 `1f10f5a8f9602e041500798d34fa31cf`, 32,158 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -78,6 +78,26 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **`ROLE_PERMS[role].tabs` MUST always be an array of tab-id strings —
+  never assign an object to it.** A leftover legacy IIFE (near where
+  `_hydrateRoleConfigFromSettings` is defined) used to run on every page
+  load and directly overwrite it with `vcs_role_tab_overrides[role]` (the
+  CURRENT storage format: an object of `{tabId:{view,edit}}` mappings),
+  corrupting it for any role with a saved tab override. Since
+  `.includes(tabId)` is called against this value in multiple places
+  (`isTabAllowedForUser()`'s final fallback, `resolveRoleTabState()`'s
+  `builtInDefault`), and plain objects have no `.includes()`, this threw —
+  and depending on where the exception surfaced, could cascade into large
+  parts of the UI rendering as fully restricted. Confirmed this reproduced
+  on a genuinely fresh page load, not just accumulated test-session
+  state — deleted the IIFE outright (2026-07-06). **If a role's
+  permissions look inexplicably "all-or-nothing" broken again, check
+  `Array.isArray(ROLE_PERMS[role].tabs)` first** — this is now the third
+  time in one session that `ROLE_PERMS[role].tabs`/`vcs_role_tab_overrides`
+  confusion has caused a real bug (see the `canView()`/`TAB_PAGE_DEFAULTS`
+  entry below too), and it's an easy trap to reintroduce: anything that
+  touches `ROLE_PERMS[role].tabs` must treat it as an array, full stop —
+  never assign the tabOverrides object shape to it directly.
 - **`canView(key)` has a THIRD data source for tab visibility, separate from
   both `USER.tabOverrides` and `vcs_role_tab_overrides` — a hardcoded static
   object called `TAB_PAGE_DEFAULTS`, and it predates the Tab Access Defaults

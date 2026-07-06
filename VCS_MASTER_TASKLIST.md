@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Mon Jul 06, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `a276760aa55aee6575c8e5d9bda3fb3b`, 32,143 lines
+**Checkpoint at this update:** MD5 `1f10f5a8f9602e041500798d34fa31cf`, 32,158 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,32 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **EMERGENCY, ROLLOUT-BLOCKING (2026-07-06): a leftover legacy IIFE ran on
+  EVERY page load and directly overwrote `ROLE_PERMS[role].tabs` (must be
+  an array of tab-id strings) with `vcs_role_tab_overrides[role]` (an
+  object of `{tabId:{view,edit}}` mappings) for any role with a saved tab
+  override — which by tonight is nearly all of them.** David's repro:
+  switched his own profile to sales_rep, which has real permissions
+  configured — got "no viewability at all." Confirmed this reproduces on
+  a genuinely fresh reload, not just accumulated test-session state — a
+  real bug hitting every real user, right now, including production.
+  Root cause: `.includes(tabId)` calls elsewhere against the corrupted
+  object (plain objects have no `.includes()`) throw, and depending on
+  where that surfaced, cascaded into large parts of the UI rendering as
+  fully restricted. Fixed by deleting the IIFE outright — its entire
+  original purpose is now handled correctly, at the point of use, by
+  `resolveRoleTabState()`/`canView()`/`isTabAllowedForUser()`, which read
+  `vcs_role_tab_overrides` directly; pre-baking it into `ROLE_PERMS[role]
+  .tabs` in the wrong shape was actively harmful, not just redundant.
+  Verified live: `ROLE_PERMS.sales_rep.tabs`/`.procurement.tabs` are
+  correctly arrays again on a fresh reload; per-tab enforcement now
+  consistently reflects configured state instead of crashing/defaulting.
+  **Important caveat for David**: `vcs_role_tab_overrides` for several
+  roles almost certainly holds heavily-toggled test state from tonight's
+  extensive testing (mine and his) — after this fix deploys, any role that
+  still looks wrong is very likely reflecting real accumulated test data,
+  not a further code bug. Recommend a clean "Reset to role defaults" +
+  deliberate reconfiguration pass per role before relying on it live.
 - **CRITICAL ACCESS CONTROL (2026-07-06): `contracts`/`spend`/`network`/
   `economics`/`forecast`/`reports`/`tiers` completely ignored the Role &
   Feature Defaults "Tab Access Defaults" setting, for every role.**

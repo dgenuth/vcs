@@ -9171,15 +9171,30 @@ function _hydrateRoleConfigFromSettings(gs){
   }catch(e){ console.warn('[VCS] _hydrateRoleConfigFromSettings failed:', e.message); }
 }
 
-// Apply any saved role tab overrides from Settings → Role Tab Defaults
-(function(){
-  try{
-    const overrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
-    Object.entries(overrides).forEach(([role,tabs])=>{
-      if(ROLE_PERMS[role]) ROLE_PERMS[role].tabs=tabs;
-    });
-  }catch(e){}
-})();
+// CRITICAL FIX (2026-07-06): this IIFE used to run unconditionally on
+// EVERY page load and directly overwrite ROLE_PERMS[role].tabs (which
+// MUST be an array of tab-id strings -- every .includes(tabId) check
+// against it elsewhere depends on that) with whatever's stored in
+// vcs_role_tab_overrides[role] -- an OBJECT of {tabId:{view,edit}}
+// mappings, the current storage format. This corrupted ROLE_PERMS[role]
+// .tabs into the wrong shape for every role with ANY saved tab override
+// (which by now is nearly all of them), on every single load -- not just
+// after ad-hoc testing. Any .includes() call against the corrupted
+// object elsewhere (isTabAllowedForUser()'s final fallback,
+// resolveRoleTabState()'s builtInDefault) would throw, and depending on
+// where that exception surfaced, could cascade into large parts of the
+// UI rendering as fully restricted/blank -- confirmed live: reproduced on
+// a genuinely fresh reload, not just accumulated test-session state.
+// This IIFE's entire original purpose (make role-level Tab Access
+// Defaults take effect) is now handled correctly and directly by
+// resolveRoleTabState()/canView()/isTabAllowedForUser(), which all read
+// vcs_role_tab_overrides themselves at the point of use -- nothing needs
+// this pre-baked copy anymore, and pre-baking it in the wrong shape is
+// actively harmful. Deleted outright rather than "fixed" to write the
+// correct shape, since ROLE_PERMS[role].tabs is supposed to be the STATIC
+// hardcoded baseline that resolveRoleTabState() falls back to when no
+// explicit override exists -- overwriting it with the override data
+// itself defeats that fallback's entire purpose.
 // Fields that restricted/viewer roles may have explicitly hidden by admin
 // hiddenFields is stored per-user in the approved users list
 // All 69 vendor fields — complete list from SearchTable in Vendor_Catalogue.xlsm
