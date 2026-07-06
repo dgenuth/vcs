@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Mon Jul 06, 2026 (this session, continued)
-**Current checkpoint:** MD5 `040d2ada91d6aa1289946a5c27565f06`, 32,503 lines
+**Current checkpoint:** MD5 `e158fb87b17d385e8ae1ad291a8a0d30`, 32,550 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -78,6 +78,28 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **Any function that hydrates role-level config (field visibility, tab
+  overrides, custom roles/labels/colors, etc.) from the shared server MUST
+  overwrite local storage whenever the server's value actually DIFFERS —
+  never gate on "only if local is completely empty."** `_hydrateRoleConfigFromSettings()`
+  used the "only if empty" pattern for years; once any browser cached ANY
+  value for a role/key, it silently ignored every later server update for
+  that same role/key forever. This is the actual root cause behind
+  multiple "role default change didn't apply" reports. The per-user list
+  merge in `loadGlobalSettingsViaProxy()` already used the correct "server
+  wins when different" policy — match that, not the old per-role pattern,
+  for anything new. Guard any such overwrite with `_settingsDirty` (or the
+  equivalent dirty flag for whatever you're hydrating) so a periodic/
+  incidental reload can't stomp a local edit that hasn't been pushed yet.
+- **There are now THREE separate "is there an unsaved change" flags, and a
+  new save path must set the RIGHT one or `saveFile()`'s dirty-check will
+  miss it and falsely claim "No unsaved changes":** `S.dirty`/`v._dirty`
+  for vendor records, `_settingsDirty` for role-level defaults (set inside
+  `debouncedSaveSettings()`), and `_userSaveDirty` for per-user overrides
+  (set inside `scheduleUserSave()`). If you add a fourth kind of save path
+  that doesn't funnel through one of these three, either route it through
+  the closest existing one or give it its own flag and wire it into
+  `saveFile()` — don't leave it invisible to the Save button.
 - **The top-bar "💾 Save" button (`saveFile()`) used to ONLY check
   vendor-record dirty state (`S.dirty`/`v._dirty`) — it had zero awareness
   of pending settings/role-default saves, so it would report "No unsaved

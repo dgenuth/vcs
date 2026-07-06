@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Mon Jul 06, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `040d2ada91d6aa1289946a5c27565f06`, 32,503 lines
+**Checkpoint at this update:** MD5 `e158fb87b17d385e8ae1ad291a8a0d30`, 32,550 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,46 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Two more real save-sync gaps, found live within minutes of pushing the
+  `_toastSaveResult`/`_settingsDirty` batch above (2026-07-06, David tested
+  immediately on the freshly-deployed sandbox and hit both).**
+  1. **Role-default changes (Field Visibility Defaults, Permissions
+     Defaults, Tab Access Defaults, custom roles/labels/colors) never
+     propagated to a browser/session that already had ANY locally cached
+     value for that role.** `_hydrateRoleConfigFromSettings()` — the
+     function that pulls role config down from the shared server on every
+     login/reload — only ever filled in a value when the local copy was
+     COMPLETELY MISSING (`===null`/`undefined`), never when it merely
+     differed from a fresher server value. So the very first time any
+     browser cached a role's field-visibility/tab-override/custom-role
+     data, that browser would ignore every subsequent server update for
+     that same role/key, forever — exactly matching David's report that
+     "Apply Changes to Existing Users" and a role-level toggle "didn't
+     actually apply" when checked elsewhere. Fixed to the same "server
+     wins when different" policy `loadGlobalSettingsViaProxy()`'s user-list
+     merge already uses, guarded by `_settingsDirty` so a periodic/
+     incidental reload can't stomp a change THIS browser has pending but
+     hasn't pushed yet. Verified live: seeded a stale local value for
+     `ops_qc`'s field visibility, confirmed the hydrate function correctly
+     overwrote it with a differing "server" value; separately confirmed
+     the `_settingsDirty` guard correctly blocks the overwrite while a
+     local edit is in flight. Cleaned up the test value afterward, restored
+     from the real server state.
+  2. **The Save button was blind to pending PER-USER toggle changes** (an
+     individual user's own Field Visibility/Tab Access override in User
+     Management — e.g., manually toggling one user's "See Financials" off)
+     — those save via `scheduleUserSave()`/`_pendingUserSaveTimer`, a
+     completely separate debounce from `debouncedSaveSettings()`/
+     `_settingsDirty` (which only covers ROLE-level defaults). `saveFile()`
+     had no visibility into this second pathway, so it could report "No
+     unsaved changes" while a per-user save was genuinely still pending —
+     exactly David's second live report. Added a matching `_userSaveDirty`
+     flag + `_flushUserSaveNow()`; `saveFile()` now checks and flushes both
+     `_settingsDirty` and `_userSaveDirty` (plus vendor-dirty state) and
+     reports on all three honestly in one combined toast. Verified live:
+     simulated a pending per-user save, confirmed Save force-flushed it
+     and reported "✅ User permissions synced to database" instead of the
+     false "No unsaved changes."
 - **Honest, real-time save-confirmation feedback (2026-07-06, David asked
   "so how do i now know if its saving a permission for example to the
   database?" — then, mid-verification, hit a live real-world instance of

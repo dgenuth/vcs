@@ -2775,10 +2775,12 @@ async function saveFile() {
   // S.originalBuffer was always null here, making this button a no-op.)
   const dirtyVendors = canEdit('vendor.name') ? (S.vendors||[]).filter(v => S.dirty.has(v.name) || v._dirty) : [];
   const settingsPending = _settingsDirty;
-  if (!dirtyVendors.length && !settingsPending) { toast('No unsaved changes — everything is already synced','#22c55e'); return; }
+  const userPending = _userSaveDirty;
+  if (!dirtyVendors.length && !settingsPending && !userPending) { toast('No unsaved changes — everything is already synced','#22c55e'); return; }
   const parts=[];
   if (dirtyVendors.length) parts.push(dirtyVendors.length+' vendor'+(dirtyVendors.length!==1?'s':''));
   if (settingsPending) parts.push('settings');
+  if (userPending) parts.push('user permissions');
   toast('⏳ Syncing '+parts.join(' + ')+'...','#4F7CFF');
   let ok=0, failed=0;
   for (const v of dirtyVendors) {
@@ -2788,10 +2790,14 @@ async function saveFile() {
   }
   let settingsOk = true;
   if (settingsPending) settingsOk = await _flushSettingsSaveNow();
+  let userOk = true;
+  if (userPending) userOk = await _flushUserSaveNow();
   const msgs=[];
   if (dirtyVendors.length) msgs.push((failed?'⚠ ':'✅ ')+'Synced '+ok+' vendor'+(ok!==1?'s':'')+(failed?', '+failed+' failed':''));
   if (settingsPending) msgs.push(settingsOk ? '✅ Settings synced to database' : '⚠ Settings FAILED to reach the database — try again');
-  toast(msgs.join(' · '), (failed||!settingsOk) ? '#f59e0b' : '#22c55e', (failed||!settingsOk) ? 6000 : undefined);
+  if (userPending) msgs.push(userOk ? '✅ User permissions synced to database' : '⚠ User permissions FAILED to reach the database — try again');
+  const anyFail = failed || !settingsOk || !userOk;
+  toast(msgs.join(' · '), anyFail ? '#f59e0b' : '#22c55e', anyFail ? 6000 : undefined);
   updateSidebar();
 }
 
@@ -9220,21 +9226,41 @@ function _mirrorRoleConfigToSettings(){
 // entirely blank.
 function _hydrateRoleConfigFromSettings(gs){
   if(!gs) return;
+  // CRITICAL FIX (2026-07-06): every block below used to only fill in a
+  // role-config value when the local copy was COMPLETELY MISSING/undefined
+  // -- so once ANY browser had cached ANY value for a role (even a stale
+  // one from before someone else's later change), it would NEVER pick up a
+  // newer value from the server, forever, for that specific role/key. This
+  // is the actual reason David's report that a role-default change (Field
+  // Visibility Defaults, Permissions Defaults) "didn't apply" when checked
+  // from a different session/browser -- that other browser's local cache
+  // just silently ignored every subsequent server update for that key. The
+  // per-user list merge just above this function's caller already
+  // corrected this exact class of bug for user records ("SERVER WINS for
+  // existing users") -- this now matches that same policy for role-level
+  // config: server value wins whenever it actually differs from local.
+  // Guarded by _settingsDirty (skip entirely while THIS browser has its
+  // own unpushed role-config edit in flight) so a periodic/incidental
+  // reload can't stomp a change the user just made before its own save
+  // lands.
+  if (typeof _settingsDirty !== 'undefined' && _settingsDirty) return;
   try{
     let changed = false;
     if(gs.roleTabOverrides && typeof gs.roleTabOverrides==='object'){
       let local;
       try{ local = JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}'); }catch(e){ local = {}; }
       Object.keys(gs.roleTabOverrides).forEach(function(role){
-        if(local[role]===undefined){ local[role]=gs.roleTabOverrides[role]; changed=true; }
+        const serverVal = JSON.stringify(gs.roleTabOverrides[role]);
+        if(JSON.stringify(local[role]) !== serverVal){ local[role]=gs.roleTabOverrides[role]; changed=true; }
       });
       if(changed) localStorage.setItem('vcs_role_tab_overrides', JSON.stringify(local));
     }
     if(gs.roleFieldVisibility && typeof gs.roleFieldVisibility==='object'){
       Object.keys(gs.roleFieldVisibility).forEach(function(role){
         const k='vcs_role_fields_'+role;
-        if(localStorage.getItem(k)===null){
-          localStorage.setItem(k, JSON.stringify(gs.roleFieldVisibility[role]));
+        const serverVal = JSON.stringify(gs.roleFieldVisibility[role]);
+        if(localStorage.getItem(k) !== serverVal){
+          localStorage.setItem(k, serverVal);
           changed=true;
         }
       });
@@ -9242,8 +9268,9 @@ function _hydrateRoleConfigFromSettings(gs){
     if(gs.roleFieldEditDefaults && typeof gs.roleFieldEditDefaults==='object'){
       Object.keys(gs.roleFieldEditDefaults).forEach(function(role){
         const k='vcs_role_field_edit_'+role;
-        if(localStorage.getItem(k)===null){
-          localStorage.setItem(k, JSON.stringify(gs.roleFieldEditDefaults[role]));
+        const serverVal = JSON.stringify(gs.roleFieldEditDefaults[role]);
+        if(localStorage.getItem(k) !== serverVal){
+          localStorage.setItem(k, serverVal);
           changed=true;
         }
       });
@@ -9251,17 +9278,17 @@ function _hydrateRoleConfigFromSettings(gs){
     let rolesChanged = false;
     if(gs.customRoles && typeof gs.customRoles==='object'){
       Object.keys(gs.customRoles).forEach(function(key){
-        if(CUSTOM_ROLES[key]===undefined){ CUSTOM_ROLES[key]=gs.customRoles[key]; rolesChanged=true; }
+        if(JSON.stringify(CUSTOM_ROLES[key]) !== JSON.stringify(gs.customRoles[key])){ CUSTOM_ROLES[key]=gs.customRoles[key]; rolesChanged=true; }
       });
     }
     if(gs.builtinRoleLabels && typeof gs.builtinRoleLabels==='object'){
       Object.keys(gs.builtinRoleLabels).forEach(function(key){
-        if(BUILTIN_ROLE_LABEL_OVERRIDES[key]===undefined){ BUILTIN_ROLE_LABEL_OVERRIDES[key]=gs.builtinRoleLabels[key]; rolesChanged=true; }
+        if(BUILTIN_ROLE_LABEL_OVERRIDES[key] !== gs.builtinRoleLabels[key]){ BUILTIN_ROLE_LABEL_OVERRIDES[key]=gs.builtinRoleLabels[key]; rolesChanged=true; }
       });
     }
     if(gs.builtinRoleColors && typeof gs.builtinRoleColors==='object'){
       Object.keys(gs.builtinRoleColors).forEach(function(key){
-        if(BUILTIN_ROLE_COLOR_OVERRIDES[key]===undefined){ BUILTIN_ROLE_COLOR_OVERRIDES[key]=gs.builtinRoleColors[key]; rolesChanged=true; }
+        if(BUILTIN_ROLE_COLOR_OVERRIDES[key] !== gs.builtinRoleColors[key]){ BUILTIN_ROLE_COLOR_OVERRIDES[key]=gs.builtinRoleColors[key]; rolesChanged=true; }
       });
     }
     if(rolesChanged){
@@ -9499,12 +9526,32 @@ function getApprovedUsers(){
 // firing a second one, so rapid toggles always collapse into a single
 // save carrying the truly final state.
 let _pendingUserSaveTimer = null;
+// CRITICAL FIX (2026-07-06): per-user toggles (Field Visibility/Tab Access
+// overrides in User Management) save through THIS debounce, entirely
+// separate from debouncedSaveSettings()/_settingsDirty (role-level
+// defaults) -- so saveFile()'s dirty-check had no way to see a pending
+// per-user save at all. Confirmed live as the cause of a second false
+// "No unsaved changes" report: manually toggling one user's "See
+// Financials" override, then immediately hitting Save, reported nothing
+// pending even though the 1.5s debounce below hadn't fired yet.
+let _userSaveDirty = false;
 function scheduleUserSave(delayMs){
+  _userSaveDirty = true;
   if (_pendingUserSaveTimer) clearTimeout(_pendingUserSaveTimer);
   _pendingUserSaveTimer = setTimeout(function(){
     _pendingUserSaveTimer = null;
-    saveUsersViaProxy().catch(function(e){ console.warn('[VCS] Debounced user save failed:', e.message); });
+    saveUsersViaProxy().then(function(){ _userSaveDirty = false; })
+      .catch(function(e){ console.warn('[VCS] Debounced user save failed:', e.message); });
   }, delayMs || 1500);
+}
+// Force-flush a pending per-user save right now instead of waiting on the
+// debounce timer above -- mirrors _flushSettingsSaveNow()'s honest
+// true/false report.
+async function _flushUserSaveNow(){
+  if (!_userSaveDirty) return true;
+  if (_pendingUserSaveTimer) { clearTimeout(_pendingUserSaveTimer); _pendingUserSaveTimer = null; }
+  try { await saveUsersViaProxy(); _userSaveDirty = false; return true; }
+  catch(e){ console.warn('Force-flush user save failed:', e.message); return false; }
 }
 function setApprovedUsers(u, skipDriveSync){
   localStorage.setItem(AUTH_KEY,JSON.stringify(u));
