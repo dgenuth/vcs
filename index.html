@@ -2773,18 +2773,25 @@ async function saveFile() {
   // (The old XLSM/Drive save path required a manually-uploaded Excel file
   // via loadFile(), which never happens in the Supabase-first flow --
   // S.originalBuffer was always null here, making this button a no-op.)
-  if (!canEdit('vendor.name')) { toast('You do not have permission to edit vendor records','#ef4444'); return; }
-  const dirtyVendors = (S.vendors||[]).filter(v => S.dirty.has(v.name) || v._dirty);
-  if (!dirtyVendors.length) { toast('No unsaved changes — everything is already synced','#22c55e'); return; }
-  toast('⏳ Syncing '+dirtyVendors.length+' vendor'+(dirtyVendors.length!==1?'s':'')+'...','#4F7CFF');
+  const dirtyVendors = canEdit('vendor.name') ? (S.vendors||[]).filter(v => S.dirty.has(v.name) || v._dirty) : [];
+  const settingsPending = _settingsDirty;
+  if (!dirtyVendors.length && !settingsPending) { toast('No unsaved changes — everything is already synced','#22c55e'); return; }
+  const parts=[];
+  if (dirtyVendors.length) parts.push(dirtyVendors.length+' vendor'+(dirtyVendors.length!==1?'s':''));
+  if (settingsPending) parts.push('settings');
+  toast('⏳ Syncing '+parts.join(' + ')+'...','#4F7CFF');
   let ok=0, failed=0;
   for (const v of dirtyVendors) {
     clearTimeout(v._sbSaveTimer);
     try { await saveToSupabase(v); S.dirty.delete(v.name); ok++; }
     catch(e) { failed++; console.warn('[VCS] Force sync failed for', v.name, e); }
   }
-  if (failed) toast('⚠ Synced '+ok+', '+failed+' failed — check console','#f59e0b');
-  else toast('✅ Synced '+ok+' vendor'+(ok!==1?'s':'')+' to database','#22c55e');
+  let settingsOk = true;
+  if (settingsPending) settingsOk = await _flushSettingsSaveNow();
+  const msgs=[];
+  if (dirtyVendors.length) msgs.push((failed?'⚠ ':'✅ ')+'Synced '+ok+' vendor'+(ok!==1?'s':'')+(failed?', '+failed+' failed':''));
+  if (settingsPending) msgs.push(settingsOk ? '✅ Settings synced to database' : '⚠ Settings FAILED to reach the database — try again');
+  toast(msgs.join(' · '), (failed||!settingsOk) ? '#f59e0b' : '#22c55e', (failed||!settingsOk) ? 6000 : undefined);
   updateSidebar();
 }
 
@@ -8172,21 +8179,63 @@ function loadSettings() {
   } catch(e) { console.warn('Could not load settings:', e); }
 }
 
+// David's follow-up (2026-07-06): every role/feature default toggle showed
+// an immediate "✓ ... updated" toast regardless of whether the change
+// actually reached the shared server -- that toast only ever reflected the
+// LOCAL write succeeding, not the real network round-trip (debouncedSaveSettings()
+// is intentionally fire-and-forget for its many other callers across
+// Settings, and persistRoleTabState()'s own save used a silent
+// `.catch(function(){})` that swallowed failures with no feedback at all).
+// This is the shared, honest confirmation helper: call it with the actual
+// save promise for a role-default change, and it reports what really
+// happened once the real network call resolves, a few seconds after the
+// optimistic "updated" toast — not a substitute for that toast, a genuine
+// second signal.
+function _toastSaveResult(savePromise, label){
+  Promise.resolve(savePromise).then(function(ok){
+    if(ok===false){ toast('⚠ '+label+' saved locally but FAILED to reach the server — try again or check your connection','#ef4444',6000); return; }
+    toast('✓ '+label+' — confirmed saved to server','#10b981');
+  }).catch(function(e){
+    toast('⚠ '+label+' saved locally but FAILED to reach the server: '+((e&&e.message)||'unknown error'),'#ef4444',6000);
+  });
+}
+
 // Auto-save settings when they change — debounced
 let _settingsSaveTimer = null;
 let _driveConfigSaveTimer = null;
+// CRITICAL FIX (2026-07-06): the top-bar "Save" button (saveFile()) only
+// ever checked vendor-record dirty state (S.dirty), so a pending settings/
+// role-default change queued here (waiting on the 3s debounce below) was
+// invisible to it -- it would report "No unsaved changes -- everything is
+// already synced" even while a real settings write was still in flight or,
+// worse, had silently failed. This flag lets saveFile() see and force-flush
+// that pending state instead of giving false reassurance.
+let _settingsDirty = false;
 function debouncedSaveSettings() {
   // S51 fix: carry the current role-config state along on every settings
   // save — see _mirrorRoleConfigToSettings()'s own comment for the full
   // cross-origin sync mechanism this is part of.
   _mirrorRoleConfigToSettings();
+  _settingsDirty = true;
   clearTimeout(_settingsSaveTimer);
   clearTimeout(_driveConfigSaveTimer);
   _settingsSaveTimer = setTimeout(saveSettings, 500);
   // Also push to Drive after a short delay (non-blocking)
   _driveConfigSaveTimer = setTimeout(() => {
-    saveConfigToDrive().catch(e => console.warn('Drive config save:', e.message));
+    saveConfigToDrive().then(() => { _settingsDirty = false; })
+      .catch(e => console.warn('Drive config save:', e.message));
   }, 3000); // 3 second delay to batch rapid changes
+}
+// Force-flush any pending settings/role-default save right now instead of
+// waiting on the debounce timer above. Returns true/false so callers (like
+// saveFile()) can give an honest, immediate report instead of assuming success.
+async function _flushSettingsSaveNow(){
+  if (!_settingsDirty) return true; // nothing pending
+  clearTimeout(_settingsSaveTimer);
+  clearTimeout(_driveConfigSaveTimer);
+  saveSettings();
+  try { await saveConfigToDrive(); _settingsDirty = false; return true; }
+  catch(e){ console.warn('Force-flush settings save failed:', e.message); return false; }
 }
 
 // ─── Drive-backed Settings + User List ───────────────────────────────────────
@@ -28032,6 +28081,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
           finKeysBulk.forEach(function(k){ if(enable){rhBulk.delete(k);}else{rhBulk.add(k);} });
           localStorage.setItem(_rfKeyBulk,JSON.stringify([...rhBulk]));
           debouncedSaveSettings();
+          _toastSaveResult(saveConfigToDrive(), 'All permissions '+(enable?'enabled':'restricted'));
           toast('✓ All permissions '+(enable?'enabled':'restricted')+' — default updated','#22c55e');
           const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
         }
@@ -28058,6 +28108,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
             onToggleView:function(){
               setRolePermissionDefault(role,permKey,!isOn);
               debouncedSaveSettings();
+              _toastSaveResult(saveConfigToDrive(), permLabel+' default');
               toast('✓ '+permLabel+' default '+(!isOn?'ON':'OFF'),'#22c55e');
               const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
             }
@@ -28100,6 +28151,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
             // its sibling toggles in this same section (export/addVendor/
             // canAccessArchive/requireSearchToList all correctly call this).
             debouncedSaveSettings();
+            _toastSaveResult(saveConfigToDrive(), 'Financials '+(makeHidden?'hidden':'visible'));
             toast('✓ Financials '+(makeHidden?'hidden':'visible')+' — default updated','#22c55e');
             const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
           }
@@ -28120,6 +28172,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
           onToggleView:function(){
             setRolePermissionDefault(role,'requireSearchToList',!rstOn);
             debouncedSaveSettings();
+            _toastSaveResult(saveConfigToDrive(), 'Vendor DB browsing default');
             toast('✓ Vendor DB browsing default updated','#22c55e');
             const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
           }
@@ -28149,6 +28202,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
           onToggleView:function(){
             setRoleFeatureDefault(role,'ai',!aiIsOn);
             debouncedSaveSettings();
+            _toastSaveResult(saveConfigToDrive(), 'AI Assistant default');
             toast('✓ AI Assistant default '+(!aiIsOn?'ON':'OFF'),'#22c55e');
             const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
           }
@@ -28162,6 +28216,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
           onToggleView:function(){
             setRoleFeatureDefault(role,'renzo',!renzoIsOn);
             debouncedSaveSettings();
+            _toastSaveResult(saveConfigToDrive(), 'Renzo Access default');
             toast('✓ Renzo Access default '+(!renzoIsOn?'ON':'OFF'),'#22c55e');
             const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
           }
@@ -28189,7 +28244,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
         // ever has to be made in one place.
         return resolveRoleTabState(role, id, fallbackDefault);
       }
-      function persistRoleTabState(id, view, edit, showEdit){
+      async function persistRoleTabState(id, view, edit, showEdit){
         const savedOverrides=JSON.parse(localStorage.getItem('vcs_role_tab_overrides')||'{}');
         // S50 QA fix: same legacy-array issue as roleTabState() above — a
         // truthy-but-wrong-shape value (an array) passed the old `if(!x)`
@@ -28241,9 +28296,17 @@ window._buildConnectionsSection = _buildConnectionsSection;
         else { ROLE_PERMS[role].tabs=ROLE_PERMS[role].tabs.filter(function(x){return x!==id;}); }
         if(_forcedParent && !ROLE_PERMS[role].tabs.includes(_forcedParent)) ROLE_PERMS[role].tabs.push(_forcedParent);
         if(_restrictedChildren.length) ROLE_PERMS[role].tabs=ROLE_PERMS[role].tabs.filter(function(x){return !_restrictedChildren.includes(x);});
-        saveConfigToDrive().catch(function(){});
+        // CRITICAL FIX (2026-07-06): this used to be a fire-and-forget
+        // `saveConfigToDrive().catch(function(){})` -- a network failure was
+        // silently swallowed with no feedback to the admin at all, not even
+        // a console log. Now actually awaited and returns true/false so
+        // callers can show an honest confirmation via _toastSaveResult()
+        // instead of an always-optimistic "updated" toast.
+        let _saveOk=true;
+        try{ await saveConfigToDrive(); }catch(e){ _saveOk=false; }
         if(_forcedParent) toast('✓ Also enabled '+_forcedParent+' as the role default — required for its sub-tabs to be reachable','#4f7cff');
         if(_restrictedChildren.length) toast('✓ Also restricted '+_restrictedChildren.join(', ')+' as the role default — unreachable with the parent restricted','#f59e0b');
+        return _saveOk;
       }
       function _applyTabStateToUsers(changes, targetUsers){
         try{
@@ -28289,20 +28352,27 @@ window._buildConnectionsSection = _buildConnectionsSection;
       // syncing to existing users is the "Apply Changes to Existing Users"
       // button's job now, not a per-bulk-click interruption.
       function bulkSetAllTabVisibility(makeVisible){
+        const _saves=[];
         PAGE_HIERARCHY.forEach(function(page){
           const cur=roleTabState(page.id);
           if(cur.view!==makeVisible){
-            persistRoleTabState(page.id, makeVisible, makeVisible?cur.edit:false, !!page.editable);
+            _saves.push(persistRoleTabState(page.id, makeVisible, makeVisible?cur.edit:false, !!page.editable));
           }
           if(page.children&&page.children.length){
             page.children.forEach(function(child){
               const ccur=roleTabState(child.id, true);
               if(ccur.view!==makeVisible){
-                persistRoleTabState(child.id, makeVisible, false, false);
+                _saves.push(persistRoleTabState(child.id, makeVisible, false, false));
               }
             });
           }
         });
+        // CRITICAL FIX (2026-07-06): bulk actions fire persistRoleTabState()
+        // many times in a loop -- confirm ALL of them actually reached the
+        // server, not just that the loop finished, so one aggregate honest
+        // toast reflects the true outcome instead of the always-optimistic
+        // "updated" toast below.
+        _toastSaveResult(Promise.all(_saves).then(function(results){ return results.every(Boolean); }), 'All tabs '+(makeVisible?'made visible':'restricted'));
         toast('✓ All tabs '+(makeVisible?'made visible':'restricted')+' — default updated','#22c55e');
         const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
       }
@@ -28314,13 +28384,15 @@ window._buildConnectionsSection = _buildConnectionsSection;
       // of always forcing true, so "Make All Non-Editable" can reuse the
       // exact same function rather than a parallel path.
       function bulkSetAllTabEditable(editable){
+        const _saves=[];
         PAGE_HIERARCHY.forEach(function(page){
           if(!page.editable) return;
           const cur=roleTabState(page.id);
           if(cur.view && cur.edit!==editable){
-            persistRoleTabState(page.id, true, editable, true);
+            _saves.push(persistRoleTabState(page.id, true, editable, true));
           }
         });
+        _toastSaveResult(Promise.all(_saves).then(function(results){ return results.every(Boolean); }), 'All editable tabs made '+(editable?'editable':'non-editable'));
         toast('✓ All editable tabs made '+(editable?'editable':'non-editable')+' — default updated','#22c55e');
         const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
       }
@@ -28340,13 +28412,13 @@ window._buildConnectionsSection = _buildConnectionsSection;
           showEditCheckbox:!!page.editable, isEditChecked:st.edit,
           onToggleView:function(){
             const cur=roleTabState(page.id);
-            persistRoleTabState(page.id, !cur.view, cur.view?false:cur.edit, !!page.editable);
+            _toastSaveResult(persistRoleTabState(page.id, !cur.view, cur.view?false:cur.edit, !!page.editable), 'Updated '+role+' default: '+page.label);
             toast('✓ Updated '+role+' default: '+page.label,'#10b981');
             const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
           },
           onToggleEdit:function(checked){
             const cur=roleTabState(page.id);
-            persistRoleTabState(page.id, checked?true:cur.view, checked, true);
+            _toastSaveResult(persistRoleTabState(page.id, checked?true:cur.view, checked, true), 'Updated '+role+' default: '+page.label);
             toast('✓ Updated '+role+' default: '+page.label,'#10b981');
             const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
           }
@@ -28360,7 +28432,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
               label:child.label, isViewable:cst.view, isOverridden:false, showEditCheckbox:false,
               onToggleView:function(){
                 const cur=roleTabState(child.id, true);
-                persistRoleTabState(child.id, !cur.view, false, false);
+                _toastSaveResult(persistRoleTabState(child.id, !cur.view, false, false), 'Updated '+role+' default: '+child.label);
                 toast('✓ Updated '+role+' default: '+child.label,'#10b981');
                 const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
               }
@@ -28425,6 +28497,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
         // already-fixed proxy save path, same as every OTHER working
         // toggle in Permissions Defaults already does.
         debouncedSaveSettings();
+        _toastSaveResult(saveConfigToDrive(), 'All fields '+(makeVisible?'made visible':'restricted'));
         toast('✓ All fields '+(makeVisible?'made visible':'restricted')+' — default updated','#22c55e');
         const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
       }
@@ -28432,6 +28505,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
         const allKeys=ALL_RESTRICTABLE_FIELDS.map(function(f){return f.key;});
         try{localStorage.setItem(_refKey,JSON.stringify(editable?allKeys:[]));}catch(e2){}
         debouncedSaveSettings();
+        _toastSaveResult(saveConfigToDrive(), 'All fields edit default '+(editable?'ON':'OFF'));
         toast('✓ All fields edit default '+(editable?'ON':'OFF')+' — default updated','#22c55e');
         const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
       }
@@ -28470,12 +28544,14 @@ window._buildConnectionsSection = _buildConnectionsSection;
               // key into S.settings and pushes through the already-fixed
               // proxy save path.
               debouncedSaveSettings();
+              _toastSaveResult(saveConfigToDrive(), f.label+' '+(newH?'hidden':'visible'));
               toast('✓ '+f.label+' '+(newH?'hidden':'visible')+' — default updated','#22c55e');
               const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
             },
             onToggleEdit:function(checked){
               _applyFieldEdit(f.key, checked);
               debouncedSaveSettings();
+              _toastSaveResult(saveConfigToDrive(), f.label+' edit default '+(checked?'ON':'OFF'));
               toast('✓ '+f.label+' edit default '+(checked?'ON':'OFF')+' — default updated','#22c55e');
               const c2=$('content');if(c2){c2.innerHTML='';renderSettings(c2);}
             }

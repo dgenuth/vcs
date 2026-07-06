@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Mon Jul 06, 2026 (this session, continued)
-**Current checkpoint:** MD5 `f45abac45471f5373ab70256a1029eaf`, 32,427 lines
+**Current checkpoint:** MD5 `040d2ada91d6aa1289946a5c27565f06`, 32,503 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -78,6 +78,33 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **The top-bar "💾 Save" button (`saveFile()`) used to ONLY check
+  vendor-record dirty state (`S.dirty`/`v._dirty`) — it had zero awareness
+  of pending settings/role-default saves, so it would report "No unsaved
+  changes — everything is already synced" even while a settings change was
+  still sitting on `debouncedSaveSettings()`'s 3-second debounce timer, or
+  had silently failed to reach the server.** David hit this live: changed a
+  role's Field Visibility default, got a toast, clicked Save, got the false
+  "already synced" message, and a different user's refresh confirmed the
+  change never reached Supabase. Fixed via a `_settingsDirty` flag (set
+  `true` inside `debouncedSaveSettings()`, cleared only on a CONFIRMED
+  successful `saveConfigToDrive()`) and `_flushSettingsSaveNow()` (forces an
+  immediate save and returns true/false). `saveFile()` now checks and
+  flushes BOTH vendor and settings dirty state and reports on both
+  honestly. If you add any new debounced-settings-writing path in this
+  file, make sure it still ultimately funnels through `debouncedSaveSettings()`
+  so `_settingsDirty` stays accurate — a save path that bypasses it will be
+  invisible to the Save button's dirty-check again.
+- **Every role-default toggle now ALSO fires `_toastSaveResult(savePromise,
+  label)` for honest, delayed save confirmation — layered on top of the
+  existing immediate optimistic toast, not a replacement for it.** The
+  immediate "✓ ... updated" toast only ever reflects the local change; only
+  the delayed "✓ ... confirmed saved to server" / "⚠ ... FAILED to reach
+  the server" toast reflects the real network outcome. Any NEW role-default
+  toggle handler should wrap its save call the same way — see Tab Access
+  Defaults' `persistRoleTabState()` (returns true/false, async) and Field
+  Visibility/Permissions Defaults' `_toastSaveResult(saveConfigToDrive(), ...)`
+  call sites for the two patterns in use.
 - **Every single toggle handler that writes a role-level default to
   localStorage MUST also call `debouncedSaveSettings()` (or an equivalent
   save/sync call) — writing to localStorage and re-rendering is NOT

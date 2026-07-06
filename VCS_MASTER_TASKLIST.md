@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Mon Jul 06, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `f45abac45471f5373ab70256a1029eaf`, 32,427 lines
+**Checkpoint at this update:** MD5 `040d2ada91d6aa1289946a5c27565f06`, 32,503 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,61 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Honest, real-time save-confirmation feedback (2026-07-06, David asked
+  "so how do i now know if its saving a permission for example to the
+  database?" — then, mid-verification, hit a live real-world instance of
+  exactly the failure mode this was meant to expose).** Every role-default
+  toggle (Tab Access Defaults, Field Visibility Defaults, Permissions
+  Defaults) only ever showed an immediate, optimistic "✓ ... updated" toast
+  the instant you clicked — that toast fires from the local state change
+  alone and says nothing about whether the write actually reached the
+  shared server. Added `_toastSaveResult(savePromise, label)`, a shared
+  helper that resolves against the REAL save promise and reports the
+  genuine outcome a few seconds later: "✓ ... confirmed saved to server"
+  (green) on real success, or "⚠ ... FAILED to reach the server" (red,
+  longer-lived) on failure — a second, honest signal layered on top of the
+  existing optimistic one, not a replacement for it. Wired into all 6 Tab
+  Access Defaults call sites (converted `persistRoleTabState()` to `async`,
+  properly awaiting and returning true/false instead of a silently
+  swallowed `.catch(function(){})`) and all 10 Field Visibility
+  Defaults/Permissions Defaults call sites (bulk + individual field/
+  permission/feature toggles).
+  **While live-verifying this, David independently hit a related, previously
+  unknown bug on the currently-deployed site**: he changed a Procurement
+  role's Field Visibility default, got a toast, then clicked the top-bar
+  "💾 Save" button (labeled as a force-sync for "any pending edits") — it
+  replied "No unsaved changes — everything is already synced," yet another
+  user's refresh confirmed the change never reached Supabase. Root cause:
+  `saveFile()` (the Save button's handler) only ever checked vendor-record
+  dirty state (`S.dirty`) — it had zero awareness of pending settings/role-
+  default writes, so it gave false reassurance whenever a settings change
+  was still sitting on `debouncedSaveSettings()`'s 3-second debounce timer
+  (or had silently failed) while zero vendor edits were pending. Fixed by
+  adding a `_settingsDirty` flag (set `true` whenever `debouncedSaveSettings()`
+  runs, cleared on confirmed successful save) and `_flushSettingsSaveNow()`
+  (force-flushes immediately and returns true/false); `saveFile()` now
+  checks BOTH vendor and settings dirty state, force-flushes whichever is
+  pending, and reports on both honestly in one combined toast. Also
+  loosened `saveFile()`'s early permission gate — it used to hard-return
+  "You do not have permission to edit vendor records" for anyone lacking
+  vendor-edit rights, which would have blocked a settings-only save for a
+  user who has settings-edit rights but not vendor-edit rights (the exact
+  split David described: "if someone has a right to edit user access
+  settings, then it should save that information as well... if someone
+  doesn't have the right to edit that but has a right to edit a vendor,
+  then it'll save the vendor information").
+  Verified live end-to-end against the real shared server: (1) the
+  `_toastSaveResult` helper itself, both success and simulated-failure
+  cases; (2) a real Field Visibility Defaults click through the actual UI;
+  (3) `saveFile()` in a clean state correctly still says "No unsaved
+  changes"; (4) `saveFile()` with a pending settings change correctly
+  force-flushes and reports "✅ Settings synced to database", confirmed via
+  the real proxy network call in server logs, not just local state.
+  **NOTE: this fix is LOCAL ONLY, not yet pushed** (David's own
+  "sandbox first" instruction from earlier this session) — the bug he just
+  hit live is expected on the currently-deployed site until this is pushed,
+  since the underlying Field Visibility Defaults save gap (`21eaa4b`) that
+  it depends on is also still unpushed.
 - **CRITICAL: Field Visibility Defaults role-level toggles never reached the
   shared server at all (2026-07-06, David's report — "when I make a change
   to Role & Feature Defaults, it's not officially saving to the
