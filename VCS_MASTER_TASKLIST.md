@@ -1,6 +1,6 @@
 # VCS — Master Task List
-**Last updated:** Mon Jul 06, 2026, 1:05 AM EDT (this session, Claude Code)
-**Checkpoint at this update:** MD5 `0dd3f7d636bec5731a2e8cf0964cee30`, 31,670 lines
+**Last updated:** Mon Jul 06, 2026, 1:25 AM EDT (this session, Claude Code)
+**Checkpoint at this update:** MD5 `a1131232a9b700e1b2803a90ba770393`, 31,717 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,20 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **"View As" ignored most of a target user's real permission overrides**
+  (2026-07-06, David's report — set a user's Permissions to "Full list
+  browsable" and View As still acted like search was required). Two
+  stacked bugs: (1) the impersonation payload only ever carried
+  email/name/role/hiddenFields, dropping featureFlags/requireSearchToList/
+  tabOverrides/fieldEditPerms/permissions/perms/assistantAdmin entirely —
+  the same-tab "View As" button path never self-corrected this since it
+  doesn't call completeLogin() afterward (only loadFromSupabase() for
+  vendor data); (2) `loginAs()` itself never set `USER.featureFlags` at
+  all, regardless of what was passed to it — every sibling field was
+  handled except this one. Fixed both. Verified live: View As now shows
+  `USER.featureFlags`/`USER.requireSearchToList` matching the target
+  user's actual stored record exactly. See CLAUDE.md Known Traps for full
+  mechanism detail.
 - **Title bar heights, final pass (2026-07-06)** — David confirmed the
   indent fix looked good and asked specifically for all header heights to
   match, using Connections & API Keys (32px) as the reference. Switched

@@ -1197,6 +1197,19 @@ function loginAs(userObj) {
   USER.perms = userObj.perms || {};
   USER.fieldGroupPerms = userObj.fieldGroupPerms || {}; // S46, retired by S47's per-field model — left harmless
   USER.fieldEditPerms = userObj.fieldEditPerms || {};
+  // S51 fix: every sibling permission field above was copied from userObj
+  // onto the live USER object — featureFlags (export/addVendor/
+  // canAccessArchive/aiEnabled/renzoEnabled/showFinancials) was the one
+  // left out, so it was never actually set BY this function at all,
+  // regardless of what a caller passed in. USER.featureFlags simply kept
+  // whatever the PREVIOUS session had (e.g. an admin's own permissive
+  // flags), which is what made View As show the wrong export/addVendor/
+  // archive/AI/Renzo behavior for the impersonated user. completeLogin()'s
+  // post-sync and restoreSession() both independently re-set this
+  // correctly elsewhere, which is why a full page reload papered over the
+  // gap — but loginAs() itself needs it too, for the same-tab View As path
+  // that never goes through either of those.
+  USER.featureFlags = userObj.featureFlags || {};
   USER.requireSearchToList = typeof userObj.requireSearchToList==='boolean' ? userObj.requireSearchToList : undefined;
   USER.assistantAdmin = !!userObj.assistantAdmin;
   USER._impersonating = userObj._impersonating || false;
@@ -28087,7 +28100,14 @@ function buildUserSubSection(label,bodyBuilderFn){
         mainLine.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--amber)',fontSize:'9px'},onclick(){
           const t=getApprovedUsers().find(x=>x.email===u.email);if(!t)return;
           const k='vcs_impersonate_'+Date.now();
-          localStorage.setItem(k,JSON.stringify({email:t.email,name:t.name,role:t.role,hiddenFields:t.hiddenFields||[],expires:Date.now()+300000,settings:{driveFileId:S.settings.driveFileId,driveFileName:S.settings.driveFileName,driveAutoSync:true,googleClientId:S.settings.googleClientId}}));
+          // S51 fix: same missing-fields gap as the loginAs() call below —
+          // include the full permission surface so the hash-routing
+          // impersonation path (used when this key is consumed from a
+          // fresh page load) reflects the target user's real overrides too.
+          localStorage.setItem(k,JSON.stringify({email:t.email,name:t.name,role:t.role,hiddenFields:t.hiddenFields||[],
+            tabOverrides:t.tabOverrides||{},featureFlags:t.featureFlags||{},fieldEditPerms:t.fieldEditPerms||{},
+            requireSearchToList:t.requireSearchToList,permissions:t.permissions||{},perms:t.perms||{},assistantAdmin:t.assistantAdmin,
+            expires:Date.now()+300000,settings:{driveFileId:S.settings.driveFileId,driveFileName:S.settings.driveFileName,driveAutoSync:true,googleClientId:S.settings.googleClientId}}));
           (() => {
             // Save current admin session so we can restore it on exit
             localStorage.setItem('vcs_admin_restore', JSON.stringify({
@@ -28097,7 +28117,27 @@ function buildUserSubSection(label,bodyBuilderFn){
             }));
             // Switch to target user in this same tab — no new tab, no caching issues
             localStorage.removeItem(k); // no longer needed for hash routing
-            loginAs({email:t.email, name:t.name, role:t.role, hiddenFields:t.hiddenFields||[]});
+            // S51 fix: only email/name/role/hiddenFields were passed here —
+            // loginAs() correctly applies tabOverrides/featureFlags/
+            // fieldEditPerms/requireSearchToList/permissions/perms/
+            // assistantAdmin when given them (with sane fallbacks when
+            // not), but this call never passed them, so View As silently
+            // showed the ADMIN's own leftover featureFlags/requireSearchToList
+            // (or defaults) instead of the target user's actual saved
+            // overrides. Confirmed live: David set a specific user's
+            // Permissions to "Full list browsable" (requireSearchToList:
+            // false) and View As still behaved as if search were required.
+            // The hash-routing impersonation path (below) happens to
+            // self-correct via completeLogin()'s post-sync re-fetch, but
+            // this same-tab path — the one the button actually uses — never
+            // calls completeLogin() at all, only loadFromSupabase() for
+            // vendor data, so nothing here ever corrected it. Passing the
+            // full target record directly is the actual fix, not relying on
+            // a re-fetch that may or may not run.
+            loginAs({email:t.email, name:t.name, role:t.role, hiddenFields:t.hiddenFields||[],
+              tabOverrides:t.tabOverrides||{}, featureFlags:t.featureFlags||{}, fieldEditPerms:t.fieldEditPerms||{},
+              requireSearchToList:t.requireSearchToList, permissions:t.permissions||{}, perms:t.perms||{},
+              assistantAdmin:t.assistantAdmin});
             // Show preview banner with exit button
             const _oldBanner = document.getElementById('impersonate-banner');
             if (_oldBanner) _oldBanner.remove();
@@ -30736,7 +30776,14 @@ async function init() {
         history.replaceState(null,'',window.location.pathname+window.location.search);
         // Apply passed settings so Drive load works
         if (imp.settings) Object.assign(S.settings, imp.settings);
-        loginAs({email:imp.email,name:imp.name,role:imp.role,hiddenFields:imp.hiddenFields||[]});
+        // S51 fix: pass the full permission surface stored in imp (see the
+        // View As button handler) rather than just hiddenFields — this path
+        // happened to get self-corrected by completeLogin()'s post-sync
+        // re-fetch below anyway, but there's no reason to rely on that when
+        // the real data is already sitting right here.
+        loginAs({email:imp.email,name:imp.name,role:imp.role,hiddenFields:imp.hiddenFields||[],
+          tabOverrides:imp.tabOverrides||{},featureFlags:imp.featureFlags||{},fieldEditPerms:imp.fieldEditPerms||{},
+          requireSearchToList:imp.requireSearchToList,permissions:imp.permissions||{},perms:imp.perms||{},assistantAdmin:imp.assistantAdmin});
         // Show impersonation banner
         document.body.insertAdjacentHTML('afterbegin',
           `<div id="impersonate-banner" style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#f59e0b;color:#000;font-size:11px;font-weight:700;padding:5px 12px;display:flex;align-items:center;justify-content:space-between;">

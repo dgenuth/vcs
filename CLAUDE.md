@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
-**Last updated:** Mon Jul 06, 2026 — 1:05 AM EDT
-**Current checkpoint:** MD5 `0dd3f7d636bec5731a2e8cf0964cee30`, 31,670 lines
+**Last updated:** Mon Jul 06, 2026 — 1:25 AM EDT
+**Current checkpoint:** MD5 `a1131232a9b700e1b2803a90ba770393`, 31,717 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -590,6 +590,48 @@ similar symptom reappears; don't rediscover them from scratch)
   **If a NEW header is ever added to Settings, give it the same
   `height:'32px',boxSizing:'border-box'` from the start — don't rely on
   padding+content sizing to happen to match.**
+- **"View As" (admin preview-as-user) silently ignored most of the target
+  user's actual permission overrides — found 2026-07-06 via David's report
+  that setting a specific user's Permissions to "Full list browsable"
+  (`requireSearchToList:false`) and then using View As still behaved as if
+  search were required.** Two separate, stacked bugs:
+  1. Both places that build the impersonation payload (the same-tab
+     "View As" button handler, and the `vcs_impersonate_*` localStorage
+     payload for the hash-routing path used on a fresh page load) called
+     `loginAs({email, name, role, hiddenFields})` — only 4 fields, dropping
+     `tabOverrides`, `featureFlags`, `fieldEditPerms`, `requireSearchToList`,
+     `permissions`, `perms`, and `assistantAdmin` entirely. The hash-routing
+     path happened to get away with it because it calls `completeLogin()`
+     afterward, which independently re-fetches the real user record and
+     re-applies all of these — but the same-tab path (the one the button
+     actually uses) only calls `loadFromSupabase()` for vendor data
+     afterward, never `completeLogin()`, so nothing ever corrected it.
+  2. Separately, and more fundamentally: **`loginAs()` itself never sets
+     `USER.featureFlags` at all**, regardless of what's passed in — every
+     sibling field (`tabOverrides`, `permissions`, `perms`,
+     `fieldEditPerms`, `requireSearchToList`, `assistantAdmin`) is copied
+     from `userObj` onto `USER`, but `featureFlags` was simply left out.
+     `USER.featureFlags` therefore always retained whatever the PREVIOUS
+     session had (e.g. the admin's own permissive flags) until something
+     else happened to reset it. `completeLogin()`'s post-sync and
+     `restoreSession()` both independently re-set `USER.featureFlags`
+     correctly elsewhere (from the approved-users record, not from
+     `loginAs`'s argument) — which is exactly why a full page reload always
+     "fixed" it and made this hard to notice: the gap is specific to
+     `loginAs()` itself, not the surrounding login flow.
+  Fixed: (1) both impersonation payload sites now pass the full permission
+  surface from the target user record; (2) `loginAs()` now sets
+  `USER.featureFlags = userObj.featureFlags || {}`, matching its siblings.
+  Verified live: set a per-user `requireSearchToList` override and a
+  distinct `featureFlags` combination on a test user, clicked View As, and
+  confirmed `USER.featureFlags`/`USER.requireSearchToList` matched the
+  stored record exactly (previously `featureFlags` showed the admin's own
+  permissive defaults regardless of what the target user actually had).
+  **If ANY future "shows the wrong permission" report involves View As or
+  impersonation specifically (not a normal login), check whether
+  `loginAs()` actually sets the field in question — the pattern of "some
+  other code path happens to correct it after a full reload" makes gaps
+  like this easy to miss for a long time.**
 
 ## CURRENT PRIORITY LIST
 
