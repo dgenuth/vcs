@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Mon Jul 06, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `28d36c2d9cd986890fd5af1321d7f0eb`, 32,085 lines
+**Checkpoint at this update:** MD5 `eca920391bedf7bd6a3757a886e36da3`, 32,120 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,50 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **CRITICAL ACCESS CONTROL (2026-07-06): sub-tabs within a page (Today's 10
+  sub-sections specifically) ignored their own restrictions completely —
+  once a top-level tab was visible, EVERY sub-section rendered regardless of
+  individual sub-tab overrides.** Root cause, found by contrast with
+  Analytics (whose sub-tabs correctly restrict): `renderToday()` had NO
+  permission gating at all for `today_urgent`/`call`/`email`/`review`/
+  `pipeline`/`stats`/`rated`/`followups`/`outreach`/`sfboard` — it rendered
+  every section unconditionally, gated only by its own collapse/expand UI
+  state, which is not a permission check. First fix attempt (delegating to
+  `userCanSeeTab()`, the same function Analytics/SF Board use) turned out to
+  be a dead end specifically for these ids: `canView()`'s only path back to
+  `USER.tabOverrides` goes through `_PERM_KEY_TO_LEGACY_TAB`, which has ZERO
+  entries for any `today_*` id (only `sfboard_*`/`analytics_*` are mapped),
+  so it always fell through to a bare `return true`, silently ignoring the
+  override regardless of value — caught this via a live test before
+  shipping it. Fixed by checking `USER.tabOverrides` directly (same
+  object-shape handling as the `isTabAllowedForUser()` fix). Verified live
+  with a real restricted profile (only 2 of 10 sub-sections allowed) — only
+  those 2 rendered, all 8 restricted ones correctly absent from the DOM.
+  SF Board's sub-tabs were independently confirmed already correct (S42
+  fix, same gateKey pattern, actually wired to `USER.tabOverrides`
+  correctly there).
+- **Role-change paths (both the individual per-user role dropdown and the
+  bulk "set role" action) never reset `requireSearchToList` to the new
+  role's default (2026-07-06)** — every sibling field
+  (hiddenFields/fieldEditPerms/featureFlags/tabOverrides) correctly resets
+  on a role change, but this one field was left over from Add User's S51
+  fix without the equivalent fix ever being applied to either role-CHANGE
+  path. Fixed both to reuse the same `getResolvedRolePermissionDefaults()`
+  helper Add User already uses, so a role change and a brand-new user in
+  that role now get identical starting permissions ("apples to apples").
+- **Confirmed, not a new bug**: `sfClientId`, `sfRedirectUri`,
+  `msGraphClientId`, `msGraphTenantId`, `driveFileId`, `renzoConnectorUrl`,
+  `renzoApiKey` are still empty on the real server — this is the expected,
+  direct consequence of the data-loss bug fixed earlier this session (see
+  entry below), not a separate new issue. David needs to re-enter these in
+  Settings; the fix only prevents FUTURE wipes.
+- **Confirmed correct, not a bug**: Salesforce API calls already use each
+  logged-in user's OWN personal SF OAuth token (`USER.sfToken`, restored
+  per-session from a per-user-keyed localStorage entry), never a
+  shared/admin token — so a user only ever sees what their own Salesforce
+  license actually grants them. `sfTokenKey()`'s own code comment shows a
+  past shared-token leak risk was already found and fixed with a key-prefix
+  bump; the current architecture is sound.
 - **CRITICAL DATA LOSS (2026-07-06): `_saveUsersViaProxyImpl()` was pushing
   `globalSettings` as a blind, unmerged REPLACEMENT — any save from a browser
   that hadn't yet loaded a given setting silently wiped it from the shared

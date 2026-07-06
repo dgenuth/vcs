@@ -20352,6 +20352,30 @@ function openPromoteToVendorDBModal(itwVendor) {
 
 function renderToday(c) {
   if(!S._todayOpen) S._todayOpen={};
+  // CRITICAL FIX (2026-07-06): renderToday() had NO permission gating at all
+  // for its own sub-sections (today_urgent/call/email/review/pipeline/stats/
+  // rated/followups/outreach/sfboard) -- all of them are real, toggleable
+  // entries in the Tab Access UI and get correctly saved to
+  // USER.tabOverrides, but this function rendered every single one
+  // unconditionally, gated only by its own collapse/expand UI state
+  // (S._todayOpen / S._todaySecOpen), which is NOT a permission check.
+  // renderAnalytics() already does this correctly via a gateKey filter, but
+  // that filter delegates to userCanSeeTab()/canView() -- which turned out
+  // to be a dead end for these specific ids: canView()'s only path back to
+  // USER.tabOverrides goes through _PERM_KEY_TO_LEGACY_TAB, which has zero
+  // entries for ANY today_* id (only sfboard_*/analytics_* are mapped), so
+  // canView() always fell through to its final `return true`, silently
+  // ignoring every today_* override regardless of value. Checking
+  // USER.tabOverrides directly here instead (same object-shape handling as
+  // the isTabAllowedForUser() fix above, defaulting to visible when no
+  // override is set, matching how canView() treats an unmapped key).
+  function _todayCanSee(gateKey){
+    if(USER.role==='admin'||USER.role==='manager') return true;
+    const _ov=(USER.tabOverrides||{})[gateKey];
+    if(_ov&&typeof _ov==='object') return _ov.view!==false;
+    if(typeof _ov==='boolean') return _ov;
+    return true;
+  }
   // Universal Today section header style — all sections use this
   const _SEC_HDR_STYLE='display:flex;gap:6px;align-items:center;padding:5px 10px;background:var(--card);cursor:pointer;user-select:none;border-radius:4px;margin-bottom:4px;border:1px solid var(--border);font-size:11px;font-weight:700;';
   const _SEC_CHEVRON_STYLE='font-size:9px;color:var(--muted);flex-shrink:0;';
@@ -20767,7 +20791,7 @@ function renderToday(c) {
           );
         }},
       {key:'stats',icon:'📊',label:'Quick Stats',color:'var(--text)',fn:()=>[],isStats:true},
-    ];
+    ].filter(sec=>_todayCanSee('today_'+sec.key));
     const secWrap=el('div',{style:{marginBottom:'8px'}});
     try { _todaySections.forEach(sec=>{
       const items=sec.isStats?[]:sec.fn();
@@ -20855,7 +20879,7 @@ function renderToday(c) {
   stickyHdr.appendChild(tableBar);
 
   // ── Vendor List — collapsible, labeled ──────────────────────────────────────
-  {
+  if(_todayCanSee('today_rated')){
     if (S._todayVendorListOpen === undefined) S._todayVendorListOpen = false;
     const vlistHdr = el('div',{style:{display:'flex',gap:'8px',alignItems:'center',padding:'5px 8px',background:'var(--card)',borderRadius:'4px',cursor:'pointer',userSelect:'none',marginBottom: S._todayVendorListOpen?'0':'6px',borderBottom: S._todayVendorListOpen?'1px solid var(--border)':'none'},
       onclick(){ S._todayVendorListOpen = !S._todayVendorListOpen; const c2=$('content');if(c2){c2.innerHTML='';renderToday(c2);} }});
@@ -20914,7 +20938,7 @@ function renderToday(c) {
     const daysSinceComm=lc?dayDiff(today,lc):999;
     return fuOverdue||(daysSinceComm>30&&(v.tier==='CALL'||v.tier==='EMAIL'));
   }).sort((a,b)=>_fuScore(b)-_fuScore(a)).slice(0,10);
-  if(_fuVendors.length){
+  if(_fuVendors.length&&_todayCanSee('today_followups')){
     const _fuOpen=S._todayOpen.fu===true;
     const fuSec=el('div',{style:{marginBottom:'4px'}});
     const fuHdr=el('div',{style:_SEC_HDR_STYLE,onclick(){S._todayOpen.fu=!_fuOpen;const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}});
@@ -20964,7 +20988,7 @@ function renderToday(c) {
     if(da!==db) return db-da;
     return (b.currentSpend||b.lastYearSpend||0)-(a.currentSpend||a.lastYearSpend||0);
   }).slice(0,8);
-  if(_revDue.length){
+  if(_revDue.length&&_todayCanSee('today_review')){
     const _revOpen=S._todayOpen.rev===true;
     const revSec=el('div',{style:{marginBottom:'4px'}});
     const revHdr=el('div',{style:_SEC_HDR_STYLE,onclick(){S._todayOpen.rev=!_revOpen;const _c2=$('content');if(_c2){_c2.innerHTML='';renderToday(_c2);}}});
@@ -21071,11 +21095,11 @@ function renderToday(c) {
       outreachSec.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',textAlign:'center',marginTop:'4px'}},outreachItems.length-8+' more vendors need attention'));
     }
   }
-  c.appendChild(outreachSec);
+  if(_todayCanSee('today_outreach')) c.appendChild(outreachSec);
 
   // ── SF Board Data (cases, opps, tasks due today) ─────────────────────────
   const sb=S._sfBoardData;
-  if(sb&&sb.opps){
+  if(sb&&sb.opps&&_todayCanSee('today_sfboard')){
     const _sfbOpen=S._todayOpen.sfboard===true;
     const sfSec=el('div',{class:'summary-section'});
     const sfSecHdr=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:_sfbOpen?'8px':'0',cursor:'pointer',userSelect:'none'},onclick(){S._todayOpen.sfboard=!S._todayOpen.sfboard;render();}});
@@ -28332,7 +28356,7 @@ function buildUserSubSection(label,bodyBuilderFn){
       if(action==='set_role'){
         const newRole=prompt('Enter role for '+checked.length+' user(s): admin, procurement, manager, viewer, sales, restricted');
         if(!isValidRole(newRole)){toast('Invalid role — must be one of: '+Object.keys(ROLE_PERMS).join(', '),'var(--amber)');return;}
-        all.forEach(u=>{if(checked.includes(u.email)){u.role=newRole;u.featureFlags=getDefaultFeatureFlags(newRole);if(!u._customHiddenFields){u.hiddenFields=getDefaultHiddenFields(newRole);u.fieldEditPerms={};}u.tabOverrides={};}});
+        all.forEach(u=>{if(checked.includes(u.email)){u.role=newRole;u.featureFlags=getDefaultFeatureFlags(newRole);u.requireSearchToList=getResolvedRolePermissionDefaults(newRole).requireSearchToList;if(!u._customHiddenFields){u.hiddenFields=getDefaultHiddenFields(newRole);u.fieldEditPerms={};}u.tabOverrides={};}});
         checked.forEach(touchUser);
         setApprovedUsers(all);
         try{await saveUsersViaProxy();toast('✓ Role set to '+newRole+' for '+checked.length+' user(s) and saved');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
@@ -28413,6 +28437,17 @@ function buildUserSubSection(label,bodyBuilderFn){
               all[i].fieldEditPerms = {};
             }
             all[i].featureFlags = getDefaultFeatureFlags(sel.value);
+            // CRITICAL FIX (2026-07-06): requireSearchToList was the one
+            // permission field this handler never touched at all -- every
+            // sibling (hiddenFields/fieldEditPerms/featureFlags/tabOverrides)
+            // correctly resets to the new role's default, but a user's
+            // "requires search" restriction from their OLD role stuck around
+            // unchanged after a role change, the exact same class of bug as
+            // the fieldEditPerms gap fixed above (S50). Reuses the same
+            // resolved-defaults helper Add User already uses, so a role
+            // change and a brand-new user in that role end up with
+            // identical starting permissions.
+            all[i].requireSearchToList = getResolvedRolePermissionDefaults(sel.value).requireSearchToList;
             // Reset per-user tab overrides -- switching profile means adopting
             // the NEW role's tab visibility. Without this, grants/blocks made
             // under the old role linger and fight the new role's defaults.

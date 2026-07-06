@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Mon Jul 06, 2026 (this session, continued)
-**Current checkpoint:** MD5 `28d36c2d9cd986890fd5af1321d7f0eb`, 32,085 lines
+**Current checkpoint:** MD5 `eca920391bedf7bd6a3757a886e36da3`, 32,120 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -78,6 +78,32 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **A page having sub-tabs in `PAGE_HIERARCHY`/the Tab Access UI does NOT
+  mean those sub-tabs are actually enforced anywhere — each page's own
+  render function has to explicitly gate on them, and it's easy for a page
+  to be missing that gate entirely.** `renderToday()` had zero permission
+  checks for any of its 10 sub-sections; only its own collapse/expand UI
+  state gated visibility. Found by contrast: Analytics' and SF Board's
+  sub-tabs already correctly restrict (both use a `gateKey` filter pattern
+  delegating to `userCanSeeTab()`). **If you copy that same
+  `userCanSeeTab(gateKey)` pattern to a new page, verify it actually works
+  for your specific ids first** — `canView()` (which `userCanSeeTab()`
+  delegates to) only reaches `USER.tabOverrides` for a legacy tab id via the
+  `_PERM_KEY_TO_LEGACY_TAB` map, and any id missing from that map silently
+  falls through to `canView()`'s default `return true`, regardless of the
+  real override value. This is exactly what made the first fix attempt for
+  Today look plausible but do nothing — caught only by an actual live test
+  with real restricted data before it shipped. When in doubt, check
+  `USER.tabOverrides[id]` directly (same object-shape handling as
+  `isTabAllowedForUser()`) rather than assuming `userCanSeeTab()` covers an
+  id just because it covers others.
+- **When a user's role changes, EVERY per-user permission field that has a
+  role-level default needs to be explicitly reset to it — it's easy to add
+  a new one (like `requireSearchToList`) to Add User's seeding logic and
+  forget the two separate role-CHANGE code paths (individual dropdown +
+  bulk action) that need the identical treatment.** `getResolvedRolePermissionDefaults(role)`
+  is the single shared helper for this — use it in all three places, not
+  just Add User.
 - **Any function that pushes `S.settings` values to the shared backend must
   merge against the server's current state first — never build the outgoing
   payload purely from local state and push it as a replacement.**
