@@ -8339,9 +8339,30 @@ async function loadConfigFromDrive() {
 // Called in completeLogin when GDriveToken is unavailable
 // GAS proxy reads vcs_config.json globalSettings and returns them
 // This ensures API key, Renzo key, etc. work for ALL users regardless of login method
+// Note: despite the comment above (and below), a fresh Google login with no
+// connected personal Drive token (i.e. any brand-new user, since Drive access
+// is a separate opt-in, not part of login) hits this exact same path -- it's
+// not actually MS-login-specific.
+//
+// S52 fix: on a genuinely fresh browser, this gets called TWICE in a row for
+// the exact same data -- once as handleOAuthLogin()'s pre-auth security sync,
+// then again moments later from completeLogin() (which has no way to know
+// the first call already populated S.settings). Live-tested and confirmed:
+// call #1 succeeds in ~4-5s and already fills in supabaseUrl/supabaseKey;
+// call #2, hitting the same GAS web app again immediately afterward,
+// reliably burns the full 15s timeout before failing (result:false) -- GAS
+// web apps are slow to re-enter this soon after a prior invocation. Since
+// completeLogin() awaits this directly before it can reach loadFromSupabase(),
+// every fresh OAuth login was wasting ~15+ seconds doing a doomed, wholly
+// unnecessary second fetch of data it already had. The 10s success-cache
+// below skips the network call entirely when a very recent call already
+// succeeded, closing that gap without needing to touch every one of this
+// function's ~7 call sites individually.
+let _lastProxySyncSuccessAt = 0;
 async function loadGlobalSettingsViaProxy() {
   // Uses the existing 'getConfig' GAS action which returns {status:'ok', config:{...}}
   // The config object contains globalSettings, users, vendorAliases etc.
+  if (Date.now() - _lastProxySyncSuccessAt < 10000) return true;
   try {
     // 15s timeout -- without this, a slow/overloaded GAS backend hangs this
     // fetch indefinitely, and since completeLogin() awaits this directly,
@@ -8432,6 +8453,7 @@ async function loadGlobalSettingsViaProxy() {
       S.vendorAliases = Object.assign({}, cfg.vendorAliases, S.vendorAliases || {});
     }
     console.log('[VCS] Global settings loaded via GAS proxy getConfig for non-Google user');
+    _lastProxySyncSuccessAt = Date.now();
     return true;
   } catch(e) {
     console.warn('[VCS] Could not load global settings via proxy:', e.message);

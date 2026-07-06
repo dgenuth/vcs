@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Mon Jul 06, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `7bf0d7adf8eb976e3b28898ebca14488`, 31,986 lines
+**Checkpoint at this update:** MD5 `05f627f1058de90766a1df420de73258`, 32,008 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,42 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Fresh-browser Supabase credential load — genuinely fresh users were
+  wasting ~15+ seconds per login on a doomed, wholly redundant network call
+  (2026-07-06).** David tested sandbox from a browser with zero prior
+  localStorage and found Supabase credentials didn't load automatically, so
+  vendor data never loaded. Static reading of `completeLogin()`,
+  `loadConfigFromDrive()`, `loadGlobalSettingsViaProxy()`, and `SB.ready()`
+  all looked correct on paper (matching David's own read) — the actual gap
+  only showed up under live, precisely-timed testing. Confirmed live,
+  reproducibly, for BOTH Google and Microsoft login (both hit the identical
+  code path on a fresh profile, since neither sets `GDriveToken` — that's a
+  separate, explicit "Connect Drive" action, not part of login):
+  `handleOAuthLogin()`'s own pre-auth security-sync call to
+  `loadGlobalSettingsViaProxy()` succeeds in ~2-5s and already populates
+  `S.settings.supabaseUrl`/`supabaseKey` — but `completeLogin()`, run right
+  after, has no way to know that just happened, so it unconditionally calls
+  the exact same function again for the exact same data. That second call
+  reliably burned the full 15-second client timeout before failing (GAS web
+  apps are measurably slow to re-enter this soon after a prior invocation to
+  the same deployment) — and since `completeLogin()`'s code structure
+  requires that second call to finish before it can reach
+  `loadFromSupabase()`, every single fresh OAuth login was paying a real,
+  reproducible ~15-20 second tax before vendor data ever started loading,
+  easily read as "broken" by anyone not waiting the full time out. (An
+  earlier test in this same investigation that looked like a harder, total
+  failure turned out to be a test-methodology artifact — checking state
+  before `completeLogin()`'s fire-and-forgotten promise chain had actually
+  finished, not a real code bug; re-run properly awaited, it always
+  eventually succeeded, just slowly.) Fixed with a 10-second success-cache
+  inside `loadGlobalSettingsViaProxy()` itself: if it already succeeded
+  within the last 10 seconds, later calls return `true` immediately with no
+  network round-trip — closes the gap for all ~7 call sites at once, not
+  just the two involved in login. Failures are never cached, so a genuine
+  retry after a real failure is unaffected. Verified live end-to-end for
+  both login methods post-fix: the redundant second call now resolves in
+  0ms instead of 15,000+ms, and the full sequence correctly loads all 189
+  real vendors from the shared Supabase database in both cases.
 - **Cross-origin role-config sync built (2026-07-06) — closes ROLLOUT-BLOCKING
   #4 below.** David reported production showing a test user with full access
   despite restrictions being set and verified working on sandbox — root cause

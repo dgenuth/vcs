@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Mon Jul 06, 2026 (this session, continued)
-**Current checkpoint:** MD5 `7bf0d7adf8eb976e3b28898ebca14488`, 31,986 lines
+**Current checkpoint:** MD5 `05f627f1058de90766a1df420de73258`, 32,008 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -78,6 +78,42 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **`loadGlobalSettingsViaProxy()` has ~7 call sites across the file — calling
+  it twice in quick succession is real, measured wasted time, not just
+  theoretically wasteful.** On a genuinely fresh browser (no localStorage at
+  all), `handleOAuthLogin()`'s own pre-auth security-sync call to this
+  function succeeds in a few seconds and already populates
+  `S.settings.supabaseUrl`/`supabaseKey` (and everything else in
+  `SAFE_GLOBAL_KEYS`) — but `completeLogin()`, which runs immediately after,
+  has no way to know that just happened and unconditionally calls the exact
+  same function again for the exact same data. Live-tested and confirmed:
+  that second call reliably burns the FULL 15-second client-side timeout
+  before failing — GAS web apps are measurably slow to re-enter the same
+  deployed script again this soon after a prior call finished. Since
+  `completeLogin()`'s structure requires that second call to resolve before
+  it can reach `loadFromSupabase()`, this was costing every fresh OAuth
+  login (Google AND Microsoft — both hit this identical path on a fresh
+  profile, since `GDriveToken` is set by a separate, explicit "Connect
+  Drive" action, never by login itself, despite what this function's own
+  header comment implies about being "for non-Google-auth users") a real
+  ~15-20 second tax before any vendor data started loading. Fixed
+  (2026-07-06) with a 10-second success-cache: `_lastProxySyncSuccessAt`
+  timestamp set only on real success, checked at the top of the function —
+  a call within 10s of a prior success returns `true` immediately, no
+  network round-trip. Failures are never cached, so a genuine retry is
+  unaffected. **If a "settings/credentials don't load" bug shows up again
+  for a specific call site, check whether ANOTHER call site already fired
+  moments earlier in the same sequence before assuming the fetch itself is
+  broken** — this function's own logic was correct in isolation; the bug was
+  purely from calling it redundantly. Also worth knowing: an earlier pass at
+  reproducing this bug (checking `SB.ready()`/vendor count immediately after
+  an `await handleOAuthLogin(...)` call) produced a false "total failure"
+  reading — `handleOAuthLogin()` fires `completeLogin()` without awaiting
+  it, so checking state too early catches it mid-flight, not actually
+  broken. Always explicitly `await completeLogin()` directly (bypassing the
+  fire-and-forget call site) when live-testing anything downstream of
+  login — otherwise you're measuring an arbitrary snapshot mid-sequence, not
+  the real outcome.
 - **Any role-config or permission data that lives only in localStorage never
   crosses origins — sandbox and production are separate origins and share
   NOTHING except the Supabase DB via the GAS proxy's `getConfig`/`saveConfig`.**
