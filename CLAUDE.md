@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Tue Jul 07, 2026 (this session, continued)
-**Current checkpoint:** MD5 `041640c891580ceaadcbf8e6d0966d3e`, 31,666 lines
+**Current checkpoint:** MD5 `cfd9aed0eaec758770244e58bbabcdc4`, 31,690 lines
 **Prior checkpoint (pre-cleanup, easy revert point):** commit `2f87c8d` /
 MD5 `3836efef35df40f7cd667179712249d2`, 32,599 lines. Also saved as a
 standalone file at
@@ -84,6 +84,27 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **GAS proxy round-trip timeouts bumped from 15s to 30s on BOTH the
+  pre-save read AND the save write (2026-07-07) — the write previously
+  had NO timeout at all.** Directly measured GAS response times climbing
+  over the course of this session (2.4s → 5.5s → 6.2s → consistently
+  exceeding 15s), confirmed as the direct cause of David's "keeps failing
+  no matter how many times I try" report: the abort-on-failure fix above
+  (correctly) refuses to save on ANY pre-check failure, so a too-tight
+  timeout meant literally every attempt failed, regardless of retries.
+  Separately, the actual `action:'saveConfig'` write fetch had never had
+  a timeout at all -- on a slow backend it could hang indefinitely with
+  zero feedback, worse than a clean failure. Both now use a 30s budget.
+  **This is a mitigation, not a root-cause fix for backend slowness
+  itself** -- if GAS keeps getting slower, 30s will eventually be
+  insufficient too. A live write attempt through the app's own real save
+  path was also observed returning a genuine HTTP 404 after ~30s (not a
+  timeout/abort) -- this is NOT explained by slowness alone and may
+  indicate a separate, specific problem with the save/write action on the
+  GAS side (quota exhaustion returning an unusual status, a redeploy in
+  progress, etc.) that only David can diagnose via the Apps Script
+  Executions log (script.google.com → this project → Executions),
+  filtering for POST/saveConfig calls specifically.
 - **THE REAL root cause of "role-level Tab Access Defaults changes don't
   apply" — `isTabAllowedForUser()`'s generic fallback (used for EVERY
   ordinary tab, not just the 7 special canView()-routed ones) read the

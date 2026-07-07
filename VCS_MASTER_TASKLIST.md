@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Tue Jul 07, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `041640c891580ceaadcbf8e6d0966d3e`, 31,666 lines
+**Checkpoint at this update:** MD5 `cfd9aed0eaec758770244e58bbabcdc4`, 31,690 lines
 **Easy revert point (pre-cleanup):** commit `2f87c8d` / MD5
 `3836efef35df40f7cd667179712249d2`, 32,599 lines — `git checkout 2f87c8d -- index.html`
 
@@ -11,6 +11,22 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Save timeouts bumped 15s → 30s, both read and write (2026-07-07,
+  David: "keeps failing to apply changes, tried many times").** Directly
+  measured GAS response times climbing all session (2.4s → 5.5s → 6.2s →
+  consistently over 15s) — confirmed as the exact cause: the earlier
+  data-loss fix correctly refuses to save on ANY pre-check failure, so
+  once the backend consistently exceeded 15s, literally every save
+  attempt failed no matter how many times it was retried. Also gave the
+  actual write request its own timeout — it had none before and could
+  hang indefinitely with zero feedback on a slow backend.
+  **This helps but may not be the whole story** — a real save attempt
+  through the app's own code also returned a genuine HTTP 404 after ~30s
+  (not a timeout), which points to a possible separate issue specifically
+  with the save/write action on the GAS side. David needs to check the
+  Apps Script Executions log himself (script.google.com → this project →
+  Executions) to see what's actually happening server-side for saveConfig
+  calls — this is outside what's fixable from the index.html side.
 - **THE REAL root cause of "changes are applied but still seeing
   restricted tabs" (2026-07-07) — every save-path fix earlier tonight was
   genuinely correct, but there was a SEPARATE bug on the READ side that
