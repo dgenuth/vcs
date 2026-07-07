@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Tue Jul 07, 2026 (this session, continued)
-**Current checkpoint:** MD5 `82d517c4e0fff37181198667b16c756c`, 31,749 lines
+**Current checkpoint:** MD5 `a081a3f98cabe1629616bf1d9ecdbcb5`, 31,861 lines
 **Prior checkpoint (pre-cleanup, easy revert point):** commit `2f87c8d` /
 MD5 `3836efef35df40f7cd667179712249d2`, 32,599 lines. Also saved as a
 standalone file at
@@ -84,6 +84,57 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **STRUCTURAL FIX (2026-07-07): per-user field visibility now tracks only
+  explicit per-field overrides (`hiddenFieldOverrides`), matching how
+  `tabOverrides` already worked — the old flat `hiddenFields` array +
+  blanket `_customHiddenFields` boolean is retired as the source of
+  truth (still exists on old records, only read once, lazily, for
+  migration).** Root cause of "restricted viewer showed some restricted
+  fields": the OLD model froze a user's ENTIRE hiddenFields array the
+  moment ANY one field was toggled for them — every other field on that
+  user, never individually touched, silently stopped tracking the role's
+  default too. When a role's Field Visibility Defaults later tightened,
+  already-customized users' untouched fields stayed on the OLD default
+  forever, with no automatic correction, requiring a manual "Apply
+  Changes to Existing Users" every single time the role config changed.
+  David's explicit requirement: "a user's visibility should always match
+  what's set for them and their role as well should update and match
+  accordingly."
+  New model: `_computeEffectiveHiddenFields(role, overrides)` is the
+  single source of truth for what a user's hiddenFields SHOULD be —
+  role's current default, with the user's own sparse override map applied
+  on top. `_getHiddenFieldOverrides(user)` lazily migrates old records on
+  first access (derives real per-field overrides by diffing their CURRENT
+  hiddenFields against role default, but ONLY if `_customHiddenFields` was
+  ever true — a never-customized user gets an empty override map
+  regardless of whatever stale snapshot they have, since treating
+  coincidental differences as "overrides" would incorrectly freeze fields
+  that were never actually customized).
+  Every write site updated: per-field toggle (`buildFieldAccess`'s
+  `onToggleView`/`onToggleEdit` — now sets/clears ONE override entry,
+  removing it entirely if the new value matches the role default again,
+  so a field that's toggled back keeps tracking future role changes too),
+  "See Financials" bulk toggle, single-user AND bulk role-change handlers
+  (overrides persist across a role change, everything else recomputes
+  from the new role), "Reset to role defaults" (clears all overrides),
+  `syncFieldVisibilityDefaultsToUsers`/"Apply Changes to Existing Users"
+  (clears overrides — this now means those users ALSO auto-track future
+  role changes, not just today's snapshot), `loginAs()` (always
+  recomputes fresh from role + overrides rather than trusting a stored
+  snapshot — this is what makes automatic role-default propagation work
+  for non-customized users with zero admin action).
+  **`jgeorge@primesourcex.com`'s existing 10-field discrepancy was
+  deliberately NOT auto-corrected** — since they were flagged
+  `_customHiddenFields:true`, the migration preserves their current state
+  as a genuine override rather than guessing it was accidental. Still
+  needs David's confirmation (intentional? or reset to role default?) —
+  see [[vcs_priority_list]]-equivalent follow-up, not yet resolved.
+  Verified live and extensively: (1) migration correctly derives jgeorge's
+  real overrides without altering them; (2) a genuine per-field override
+  persists across a role change while every other field correctly updates
+  to the new role; (3) a non-customized user automatically picks up a
+  brand-new role-level restriction on next login with zero per-user
+  action; (4) no console errors, Settings/User Management render cleanly.
 - **"View As shows correct permissions but a real login in a separate
   browser doesn't" (2026-07-07) — View As isn't wrong, it's just not
   proof the change ever reached the server.** `saveUsersViaProxy()` now

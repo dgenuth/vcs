@@ -1243,7 +1243,19 @@ function loginAs(userObj) {
   // any of ~17 hardcoded legacy names (or anyone whose name fuzzy-matched
   // one) the moment they next logged in. Role/saved-customization is now
   // authoritative, matching the rest of the permission system.
-  USER.hiddenFields = userObj.hiddenFields || getDefaultHiddenFields(userObj.role);
+  // STRUCTURAL FIX (2026-07-07): this used to trust userObj.hiddenFields as
+  // a stored snapshot -- correct at the moment it was last saved, but with
+  // no way to tell "genuinely customized, should stick" apart from "just
+  // happened to match the role default back then, should now track the
+  // CURRENT default." Always recomputing from the role's current default +
+  // this user's own per-field overrides (see _computeEffectiveHiddenFields)
+  // means a non-customized user automatically picks up role-level Field
+  // Visibility Defaults changes on every login, with zero staleness and no
+  // action needed -- while a genuinely customized field still sticks,
+  // exactly matching "a user's visibility should always match what's set
+  // for them, and their role should update and match accordingly."
+  USER.hiddenFieldOverrides = _getHiddenFieldOverrides(userObj);
+  USER.hiddenFields = _computeEffectiveHiddenFields(userObj.role, USER.hiddenFieldOverrides);
   USER.tabOverrides = userObj.tabOverrides || {};
   // S44 fix: these per-user override objects were never copied onto the live
   // USER object, so userCan()'s USER.permissions check (and the new
@@ -8562,7 +8574,7 @@ function showAffectedUsersModal(roleKey, changeLabel, onConfirm){
     const row=el('label',{style:{display:'flex',alignItems:'center',gap:'6px',fontSize:'10px',padding:'3px 0',cursor:'pointer'}});
     const cb=el('input',{type:'checkbox'}); cb.checked=true; checkboxes.push({cb:cb,user:u});
     row.appendChild(cb);
-    row.appendChild(document.createTextNode((u.name||u.email)+(u._customHiddenFields?' (has other customizations)':'')));
+    row.appendChild(document.createTextNode((u.name||u.email)+(Object.keys(_getHiddenFieldOverrides(u)).length?' (has other customizations)':'')));
     listWrap.appendChild(row);
   });
   selRow.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){checkboxes.forEach(function(x){x.cb.checked=true;});}},'Select All'));
@@ -9258,6 +9270,73 @@ function getDefaultHiddenFields(role, emailOrUsername) {
     restricted: ["about","addedValue","adminFee","adminFeeNotes","agreementType","aka","assignment","assignmentConditions","attachment","autoRenewal","autoRenewalType","bizPhone","changeOfControl","classOfTrade","comments","contactType","contactType2","contractEffective","contractExpiry","contractName","contractNo","contractTerm","coverSheet","currentTerm","dataSheet","email","email2","engagementReminder","exclusivity","followUp","havePricing","inContractSince","justification","lastComm","minYears","mobile","mobile2","notes","perpetuity","pricingCommitment","pricingDate","pricingFrequency","pricingLocation","procContact","reportFrequency","score","sharedContact","signatory","status","tail","termEffective","terminationNotice","terminationReceived","terminationWoCause","tiers","title","title2"],
   };
   return (ROLE_HIDDEN[role] !== undefined) ? ROLE_HIDDEN[role] : ROLE_HIDDEN.restricted;
+}
+// STRUCTURAL FIX (2026-07-07): per-user field visibility used to be tracked
+// as a single flat `hiddenFields` array plus a blanket `_customHiddenFields`
+// boolean -- the moment an admin toggled ONE field for a user, the ENTIRE
+// array got frozen as a snapshot, and every OTHER field on that user (never
+// individually touched) silently stopped tracking the role's default too.
+// When a role's Field Visibility Defaults later got tightened, an already-
+// customized user's untouched fields stayed on whatever the role default
+// used to be -- exactly what David hit: a "restricted" user showing fields
+// that were supposed to be hidden, because their one legitimate customization
+// years ago froze their entire field list. Tabs already avoid this class of
+// bug entirely by tracking overrides per-tab (tabOverrides[tabId]); fields
+// now work the same way via `hiddenFieldOverrides` -- a sparse per-field map
+// that ONLY contains fields explicitly toggled for that specific user,
+// diverging from whatever the role default is. Any field NOT in this map
+// always tracks the role's CURRENT default, automatically, forever, with
+// zero staleness and no explicit "Apply Changes to Existing Users" needed.
+//
+// Computes the actual effective hidden-fields array for a role + override
+// map -- this is what canViewField()/USER.hiddenFields should always
+// contain. Recomputed fresh at login and on every relevant write, never
+// trusted as a stored snapshot.
+function _computeEffectiveHiddenFields(role, overrides){
+  const roleDefault = new Set(getDefaultHiddenFields(role) || []);
+  const ov = overrides || {};
+  Object.keys(ov).forEach(function(key){
+    if (ov[key] === true) roleDefault.add(key);
+    else if (ov[key] === false) roleDefault.delete(key);
+  });
+  return [...roleDefault];
+}
+// One-time-per-user derivation for pre-existing records that don't have
+// hiddenFieldOverrides yet -- converts the OLD flat-array model into the
+// new override-map model without losing genuine customizations or
+// resurrecting stale ones. The distinction that makes this safe: a user
+// who was NEVER customized (_customHiddenFields falsy) gets an EMPTY
+// override map regardless of whatever their stored hiddenFields snapshot
+// currently says (that snapshot could be stale relative to the CURRENT
+// role default, and treating its differences as "overrides" would
+// incorrectly freeze fields that were never actually customized). Only a
+// user who WAS genuinely customized gets their current hiddenFields
+// compared field-by-field against the role's current default, keeping
+// only the fields that actually differ.
+function _deriveHiddenFieldOverrides(user){
+  if (!user || !user._customHiddenFields) return {};
+  const roleDefault = new Set(getDefaultHiddenFields(user.role) || []);
+  const currentHidden = new Set(user.hiddenFields || []);
+  const overrides = {};
+  (typeof ALL_RESTRICTABLE_FIELDS !== 'undefined' ? ALL_RESTRICTABLE_FIELDS : []).forEach(function(f){
+    const isHiddenNow = currentHidden.has(f.key);
+    const isHiddenByRoleDefault = roleDefault.has(f.key);
+    if (isHiddenNow !== isHiddenByRoleDefault) overrides[f.key] = isHiddenNow;
+  });
+  return overrides;
+}
+// Read a user's field-visibility override map, lazily migrating from the
+// old model on first access if hiddenFieldOverrides isn't present yet.
+// Deliberately does NOT persist the migration itself -- callers that mean
+// to write should store the result back onto the user object as part of
+// their own write, so the migration naturally lands the first time any
+// admin actually touches that user's fields (or immediately for read-only
+// consumers like login, which just need the correct effective state).
+function _getHiddenFieldOverrides(user){
+  if (user && user.hiddenFieldOverrides && typeof user.hiddenFieldOverrides === 'object' && !Array.isArray(user.hiddenFieldOverrides)) {
+    return user.hiddenFieldOverrides;
+  }
+  return _deriveHiddenFieldOverrides(user);
 }
 const USER = {email:null,name:null,role:null,loggedIn:false,loginTime:null,sfToken:null,sfInstance:null,hiddenFields:[]};
 const AUTH_KEY = 'vcs_approved_users';
@@ -25672,19 +25751,20 @@ function buildApplyToExistingUsersButton(role, sectionLabel, doSync){
 // rather than merging deltas, since this button means "make these
 // existing users match the default," not "apply just what changed."
 function syncFieldVisibilityDefaultsToUsers(role, targetUsers){
-  const allKeys=ALL_RESTRICTABLE_FIELDS.map(function(f){return f.key;});
   const curHidden=getDefaultHiddenFields(role);
-  const _refKey='vcs_role_field_edit_'+role;
-  const _refRaw=localStorage.getItem(_refKey);
-  const curEditable=_refRaw!==null?JSON.parse(_refRaw):allKeys.filter(function(k){return getRoleFieldEditDefault(role,k);});
   try{
     const allU=getApprovedUsers();
     targetUsers.forEach(function(su){
       const u=allU.find(function(x){return x.email===su.email;});
       if(!u) return;
+      // STRUCTURAL FIX (2026-07-07): this button means "fully match the
+      // role default now" -- clearing overrides entirely (rather than
+      // populating every key explicitly, which just re-froze them) means
+      // these users ALSO automatically keep tracking any FUTURE role
+      // default changes too, with no need to click this again next time.
+      u.hiddenFieldOverrides={};
       u.hiddenFields=[...curHidden];
-      if(!u.fieldEditPerms) u.fieldEditPerms={};
-      allKeys.forEach(function(k){ u.fieldEditPerms[k]=curEditable.includes(k); });
+      u.fieldEditPerms={};
       touchUser(u.email);
     });
     localStorage.setItem(AUTH_KEY,JSON.stringify(allU));
@@ -25725,8 +25805,8 @@ function buildFieldAccess(container, userEmail) {
     fvHdr.appendChild(el('div',{style:{fontSize:'9px',fontWeight:'600'}},'🔒 Field Visibility'));
     fvHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick:function(){
       const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});if(i<0)return;
+      all[i].hiddenFieldOverrides={}; // explicitly clear every override -- this button means "fully match the role default again"
       all[i].hiddenFields=getDefaultHiddenFields(all[i].role);
-      all[i]._customHiddenFields=false;
       delete all[i].fieldEditPerms;
       touchUser(all[i].email);
       setApprovedUsers(all,true);
@@ -25737,7 +25817,13 @@ function buildFieldAccess(container, userEmail) {
     }},'↺ Reset to role defaults'));
     container.appendChild(fvHdr);
 
-    const hf=cu.hiddenFields||[];
+    // STRUCTURAL FIX (2026-07-07): compute the EFFECTIVE hidden-fields list
+    // fresh from role default + this user's own per-field overrides,
+    // rather than trusting cu.hiddenFields as a stored snapshot -- a user
+    // who hasn't been touched by any of the updated write-paths yet could
+    // still have a stale array here otherwise.
+    const _cuOverrides=_getHiddenFieldOverrides(cu);
+    const hf=_computeEffectiveHiddenFields(cu.role, _cuOverrides);
     // S50: was a single blanket flag applied to every field uniformly; now
     // computed per-field just below via getRoleFieldEditDefault(), so a
     // role can have different edit defaults for different fields.
@@ -25780,13 +25866,20 @@ function buildFieldAccess(container, userEmail) {
           showEditCheckbox:true, isEditChecked:isEditChecked,
           onToggleView:function(){
             const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});if(i<0)return;
-            const _before=[...(all[i].hiddenFields||[])];
-            let newHf=[...(all[i].hiddenFields||[])];
-            if(isHidden) newHf=newHf.filter(function(k){return k!==f.key;});
-            else if(!newHf.includes(f.key)) newHf.push(f.key);
-            all[i].hiddenFields=newHf;
-            all[i]._customHiddenFields=true;
-            console.log('[VCS FIELD DEBUG] Toggled field:',f.key,'| isHidden was:',isHidden,'| hiddenFields BEFORE:',JSON.stringify(_before),'| hiddenFields AFTER:',JSON.stringify(newHf),'| diff:',JSON.stringify(_before.filter(function(k){return !newHf.includes(k);})),'removed,',JSON.stringify(newHf.filter(function(k){return !_before.includes(k);})),'added');
+            const newHiddenState=!isHidden;
+            const ov=_getHiddenFieldOverrides(all[i]);
+            // STRUCTURAL FIX (2026-07-07): only store an override entry for
+            // THIS field -- every other field on this user keeps tracking
+            // the role's current default, automatically, forever. If the
+            // new state happens to match the role default again, remove
+            // the entry entirely rather than storing a redundant explicit
+            // override -- this field will then correctly resume tracking
+            // future role-default changes too, instead of staying frozen.
+            if(newHiddenState===roleDefaultHidden){ delete ov[f.key]; }
+            else{ ov[f.key]=newHiddenState; }
+            all[i].hiddenFieldOverrides=ov;
+            all[i].hiddenFields=_computeEffectiveHiddenFields(all[i].role, ov);
+            console.log('[VCS FIELD DEBUG] Toggled field:',f.key,'| isHidden was:',isHidden,'| newState:',newHiddenState,'| roleDefault:',roleDefaultHidden,'| overrideStored:',ov[f.key]!==undefined,'| effective hiddenFields count:',all[i].hiddenFields.length);
             touchUser(all[i].email);
             setApprovedUsers(all,true);
             scheduleUserSave(1500);
@@ -25796,7 +25889,12 @@ function buildFieldAccess(container, userEmail) {
           onToggleEdit:function(checked){
             const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===userEmail;});if(i<0)return;
             if(!all[i].fieldEditPerms) all[i].fieldEditPerms={};
-            all[i].fieldEditPerms[f.key]=checked;
+            // Same symmetry as the view toggle above -- if this now matches
+            // the role's current edit default, remove the explicit entry so
+            // this field keeps tracking future role-default changes instead
+            // of staying pinned to today's value.
+            if(checked===roleFieldEditDefault){ delete all[i].fieldEditPerms[f.key]; }
+            else{ all[i].fieldEditPerms[f.key]=checked; }
             touchUser(all[i].email);
             setApprovedUsers(all,true);
             scheduleUserSave(1500);
@@ -28002,7 +28100,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
       if(action==='set_role'){
         const newRole=prompt('Enter role for '+checked.length+' user(s): admin, procurement, manager, viewer, sales, restricted');
         if(!isValidRole(newRole)){toast('Invalid role — must be one of: '+Object.keys(ROLE_PERMS).join(', '),'var(--amber)');return;}
-        all.forEach(u=>{if(checked.includes(u.email)){u.role=newRole;u.featureFlags=getDefaultFeatureFlags(newRole);u.requireSearchToList=getResolvedRolePermissionDefaults(newRole).requireSearchToList;if(!u._customHiddenFields){u.hiddenFields=getDefaultHiddenFields(newRole);u.fieldEditPerms={};}u.tabOverrides={};}});
+        all.forEach(u=>{if(checked.includes(u.email)){u.role=newRole;u.featureFlags=getDefaultFeatureFlags(newRole);u.requireSearchToList=getResolvedRolePermissionDefaults(newRole).requireSearchToList;u.hiddenFieldOverrides=_getHiddenFieldOverrides(u);u.hiddenFields=_computeEffectiveHiddenFields(newRole,u.hiddenFieldOverrides);u.tabOverrides={};}});
         checked.forEach(touchUser);
         setApprovedUsers(all);
         try{await saveUsersViaProxy();toast('✓ Role set to '+newRole+' for '+checked.length+' user(s) and saved');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
@@ -28069,19 +28167,23 @@ window._buildConnectionsSection = _buildConnectionsSection;
           const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);
           if(i>=0 && isValidRole(sel.value)){
             all[i].role=sel.value;
-            // Auto-apply default hidden fields and feature flags for new role (only if not manually customized)
-            if(!all[i]._customHiddenFields){
-              all[i].hiddenFields = getDefaultHiddenFields(sel.value);
-              // S50 QA fix: this was the one piece of per-user state that
-              // never got reset on role change — hiddenFields and
-              // tabOverrides both correctly reset below/above, but a field
-              // explicitly marked editable under the OLD role stuck around
-              // and kept showing as editable under the NEW role too, which
-              // is exactly the "doesn't fully adapt to the new role"
-              // symptom. Same fix condition as hiddenFields, since both are
-              // set together via the same Field Visibility panel.
-              all[i].fieldEditPerms = {};
-            }
+            // STRUCTURAL FIX (2026-07-07): used to gate on the blanket
+            // _customHiddenFields flag -- if a user had EVER had one field
+            // manually toggled, their WHOLE hiddenFields array (every other
+            // field too) got frozen and stopped tracking role changes,
+            // forever, until someone manually re-applied role defaults.
+            // hiddenFieldOverrides now tracks ONLY the specific fields
+            // genuinely overridden for this user -- everything else always
+            // recomputes from the NEW role's current default, automatically,
+            // while genuine per-field overrides correctly persist across the
+            // role change (matching how tabOverrides already behaves).
+            all[i].hiddenFields = _computeEffectiveHiddenFields(sel.value, _getHiddenFieldOverrides(all[i]));
+            all[i].hiddenFieldOverrides = _getHiddenFieldOverrides(all[i]); // persist the (possibly lazily-migrated) override map
+            // fieldEditPerms is already correctly sparse (per-field, not a
+            // blanket flag) -- no longer wiped wholesale on role change.
+            // Entries the admin genuinely set persist; anything not
+            // explicitly set already falls back to the new role's edit
+            // default via getRoleFieldEditDefault(), same as fields do.
             all[i].featureFlags = getDefaultFeatureFlags(sel.value);
             // CRITICAL FIX (2026-07-06): requireSearchToList was the one
             // permission field this handler never touched at all -- every
@@ -28312,13 +28414,23 @@ window._buildConnectionsSection = _buildConnectionsSection;
               // so this checkbox has real effect instead of being purely cosmetic.
               if(ffKey==='showFinancials'){
                 const finKeys=FIELD_GROUPS['Financials']||[];
-                let newHf=[...(all[i].hiddenFields||[])];
-                const _beforeHf=[...newHf];
-                if(newVal){ newHf=newHf.filter(function(k){return !finKeys.includes(k);}); }
-                else { finKeys.forEach(function(k){ if(!newHf.includes(k)) newHf.push(k); }); }
-                console.log('[VCS PERM DEBUG] showFinancials toggled to:',newVal,'| this INTENTIONALLY bulk-toggles the entire Financials field group:',JSON.stringify(finKeys),'| hiddenFields BEFORE:',JSON.stringify(_beforeHf),'| hiddenFields AFTER:',JSON.stringify(newHf));
-                all[i].hiddenFields=newHf;
-                all[i]._customHiddenFields=true;
+                const roleDefaultHf=getDefaultHiddenFields(all[i].role)||[];
+                const ov=_getHiddenFieldOverrides(all[i]);
+                const _beforeHf=_computeEffectiveHiddenFields(all[i].role, ov);
+                const makeHidden=!newVal; // newVal=true means "show", so hidden=false
+                // STRUCTURAL FIX (2026-07-07): set/clear a per-field override
+                // for each Financials field individually (same symmetry as
+                // the Field Visibility panel's own toggles) instead of
+                // freezing the user's whole hiddenFields array via the old
+                // blanket _customHiddenFields flag.
+                finKeys.forEach(function(k){
+                  const roleDefaultHiddenForKey=roleDefaultHf.includes(k);
+                  if(makeHidden===roleDefaultHiddenForKey){ delete ov[k]; }
+                  else{ ov[k]=makeHidden; }
+                });
+                all[i].hiddenFieldOverrides=ov;
+                all[i].hiddenFields=_computeEffectiveHiddenFields(all[i].role, ov);
+                console.log('[VCS PERM DEBUG] showFinancials toggled to:',newVal,'| this INTENTIONALLY bulk-toggles the entire Financials field group:',JSON.stringify(finKeys),'| hiddenFields BEFORE:',JSON.stringify(_beforeHf),'| hiddenFields AFTER:',JSON.stringify(all[i].hiddenFields));
               }
               setApprovedUsers(all,true);
               if(u.email===USER.email){if(!USER.featureFlags)USER.featureFlags={};USER.featureFlags[ffKey]=newVal;}
@@ -28522,7 +28634,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
       // for the full account. Now seeds a new user from the same resolved
       // defaults the Permissions Defaults page itself shows as current.
       const _newUserPerms=getResolvedRolePermissionDefaults(roleIn.value);
-      all.push({email:e,name:e.split('@')[0],role:roleIn.value,password:pwNewIn.value.trim(),hiddenFields:getDefaultHiddenFields(roleIn.value),
+      all.push({email:e,name:e.split('@')[0],role:roleIn.value,password:pwNewIn.value.trim(),hiddenFields:getDefaultHiddenFields(roleIn.value),hiddenFieldOverrides:{},
         featureFlags:{export:_newUserPerms.export,addVendor:_newUserPerms.addVendor,canAccessArchive:_newUserPerms.canAccessArchive,aiEnabled:_newUserPerms.aiEnabled,renzoEnabled:_newUserPerms.renzoEnabled},
         requireSearchToList:_newUserPerms.requireSearchToList,
         added:isoDate(new Date()),addedBy:USER.email});

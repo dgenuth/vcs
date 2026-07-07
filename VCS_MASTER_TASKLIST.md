@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Tue Jul 07, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `82d517c4e0fff37181198667b16c756c`, 31,749 lines
+**Checkpoint at this update:** MD5 `a081a3f98cabe1629616bf1d9ecdbcb5`, 31,861 lines
 **Easy revert point (pre-cleanup):** commit `2f87c8d` / MD5
 `3836efef35df40f7cd667179712249d2`, 32,599 lines — `git checkout 2f87c8d -- index.html`
 
@@ -11,6 +11,32 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **STRUCTURAL FIX: per-user field visibility rebuilt to track only
+  explicit per-field overrides, per David's explicit requirement (2026-07-07):
+  "a user's visibility should always match what's set for them and their
+  role as well should update and match accordingly."** Root cause of
+  "restricted viewer showed some restricted fields": the old model froze a
+  user's ENTIRE field list the moment any ONE field was manually toggled
+  for them — every other, never-touched field silently stopped tracking
+  the role's default too, forever, until someone manually re-applied role
+  defaults. Rebuilt to match how Tab Access already correctly works:
+  `hiddenFieldOverrides` is a sparse per-field map containing ONLY fields
+  genuinely overridden for that specific user; anything not in it always
+  tracks the role's CURRENT default automatically. Updated every write
+  site (per-field toggles, See Financials, role change — both single and
+  bulk, Reset to role defaults, Apply Changes to Existing Users, login).
+  A field toggled back to match the role default is now removed from the
+  override map entirely, so it resumes auto-tracking future role changes
+  too, instead of staying permanently pinned.
+  `jgeorge@primesourcex.com`'s existing 10-field gap was deliberately left
+  alone (not auto-corrected) since they're flagged as genuinely
+  customized — still need David to confirm whether that's intentional or
+  should be reset to the role default.
+  Verified extensively and live: migration correctly derives real
+  overrides without altering them; a genuine override survives a role
+  change while every untouched field updates to the new role; a
+  never-customized user automatically picks up a brand-new role
+  restriction on next login with zero admin action; no console errors.
 - **Explained + mitigated: "View As shows correct permissions but a real
   login in a separate browser doesn't" (2026-07-07).** David: changed a
   user's role, got the success toast, but a real login from a separate
