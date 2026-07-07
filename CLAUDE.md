@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Tue Jul 07, 2026 (this session, continued)
-**Current checkpoint:** MD5 `588e496b9576a4d5776e1880431c8386`, 31,614 lines
+**Current checkpoint:** MD5 `c1c3512c76a5b063932506faf1e17267`, 31,631 lines
 **Prior checkpoint (pre-cleanup, easy revert point):** commit `2f87c8d` /
 MD5 `3836efef35df40f7cd667179712249d2`, 32,599 lines. Also saved as a
 standalone file at
@@ -84,6 +84,35 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **`loginAs()` is now the ONE place that refreshes the sidebar after any
+  login/impersonation — don't add a new sidebar-dependent side effect to
+  a caller without checking whether `loginAs()` already covers it
+  first.** Root cause of yet another "View As doesn't reflect real
+  restrictions" report (2026-07-07, after this exact bug class had
+  already been patched multiple times this session for other specific
+  fields — tabOverrides passing, featureFlags passing, requireSearchToList
+  passing): `loginAs()` correctly set every permission field on `USER`,
+  but never refreshed the sidebar nav that's actually BUILT from that
+  state. Callers that go through `completeLogin()` afterward (normal
+  OAuth login, hash-based impersonation) got a correct sidebar by
+  accident, because `completeLogin()` calls `updateSidebar()` itself —
+  but the same-tab "View As" button deliberately skips `completeLogin()`
+  (only calls `loadFromSupabase()` + `render()` for vendor data) and
+  never called `updateSidebar()` on its own. Confirmed live: a user with
+  7 explicitly restricted tabs (verified correct in both
+  `USER.tabOverrides` and `isTabAllowedForUser()`'s return value) still
+  showed all 7 in the sidebar after View As — neither the subsequent
+  `render()` nor `loadFromSupabase()` ever touched the sidebar DOM.
+  Fixed at the ROOT rather than patching this one caller: `loginAs()`
+  itself now calls `updateSidebar()` unconditionally at the end, so EVERY
+  current and future caller gets a correct sidebar automatically, instead
+  of each one having to separately remember to do it (which is exactly
+  how this class of bug kept recurring one field at a time). If you ever
+  see "the setting is correct on the server / in `USER` but not
+  reflected in the UI" again, check whether the specific UI element in
+  question is rebuilt by `updateSidebar()`/`render()` at all — the fix
+  pattern here (call the refresh function from inside the state-setter,
+  not from every caller) generalizes to any future instance of this.
 - **CRITICAL SECURITY (2026-07-07): sandbox mode's login-bootstrap path
   could silently hand ANY user full admin rights on a mere sync hiccup —
   PRE-EXISTING bug, not caused by the cleanup below, just exposed by

@@ -1282,6 +1282,23 @@ function loginAs(userObj) {
     loginTime: USER.loginTime.toISOString(), hiddenFields: USER.hiddenFields,
     tabOverrides: USER.tabOverrides||{}
   }));
+  // CRITICAL FIX (2026-07-07): loginAs() sets every permission field on
+  // USER correctly, but never refreshed the sidebar nav that's actually
+  // BUILT from that state -- callers that go through completeLogin()
+  // afterward happen to get a correct sidebar because completeLogin()
+  // calls updateSidebar() itself, but the same-tab "View As" button
+  // deliberately skips completeLogin() (it only calls loadFromSupabase()+
+  // render() for vendor data) and never called updateSidebar() on its
+  // own. Confirmed live: after "View As"-ing a user with 7 explicitly
+  // restricted tabs (all confirmed correct in USER.tabOverrides and in
+  // isTabAllowedForUser()'s return value), every one of those tabs
+  // remained visible in the sidebar -- neither the subsequent render()
+  // call nor loadFromSupabase() ever touched the sidebar DOM. Calling it
+  // HERE, unconditionally, closes this for every current and future
+  // loginAs() caller at once, rather than requiring each one to
+  // separately remember to do it (the Exit Preview button already did,
+  // the View As entry button never did -- that asymmetry was the bug).
+  if (typeof updateSidebar === 'function') updateSidebar();
   return {ok:true};
 }
 

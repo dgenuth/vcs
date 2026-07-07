@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Tue Jul 07, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `588e496b9576a4d5776e1880431c8386`, 31,614 lines
+**Checkpoint at this update:** MD5 `c1c3512c76a5b063932506faf1e17267`, 31,631 lines
 **Easy revert point (pre-cleanup):** commit `2f87c8d` / MD5
 `3836efef35df40f7cd667179712249d2`, 32,599 lines — `git checkout 2f87c8d -- index.html`
 
@@ -11,6 +11,33 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **"View As" showed all tabs regardless of real restrictions, AGAIN
+  (2026-07-07) — this time fixed at the root instead of one more
+  field-by-field patch.** David re-tested the director_ops user from the
+  security fix above: role now showed correctly, but 7 explicitly
+  restricted tabs (Today, Call Sheet, Expiring, Calendar, In The Works,
+  Reviews, History — restricted both at the role default AND the
+  per-user level) were all still visible after View As. Traced precisely:
+  `USER.tabOverrides` and `isTabAllowedForUser()` were BOTH already
+  correct at the moment of impersonation — the actual bug was that
+  nothing ever re-ran `updateSidebar()` afterward. The same-tab "View As"
+  button deliberately skips `completeLogin()` (which normally does this)
+  and only calls `loadFromSupabase()`+`render()`, neither of which
+  touches the sidebar. This is the same underlying bug class as the
+  already-fixed "View As shows wrong permissions" reports from earlier
+  this session (tabOverrides not passed, featureFlags not passed,
+  requireSearchToList not passed) — each fixed one field at a time as it
+  was individually discovered. Per David's explicit ask not to keep
+  whack-a-moling this, fixed it structurally instead: `loginAs()` now
+  calls `updateSidebar()` itself, unconditionally, so every current AND
+  future caller (normal login, hash impersonation, View As enter/exit)
+  gets a correct sidebar automatically — no caller has to remember to do
+  it separately anymore.
+  Verified live: replicated the exact View As button code (including
+  deliberately NOT calling render()/updateSidebar() manually afterward)
+  — sidebar now correctly shows only the 6 allowed tabs immediately after
+  `loginAs()` returns. Confirmed normal admin login still works
+  correctly (26 unrestricted tabs, no regression).
 - **CRITICAL SECURITY: sandbox login could silently grant full admin to
   any user on a mere sync hiccup (2026-07-07, found by David live-testing
   right after the cleanup adoption).** He logged in as a director_ops
