@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Tue Jul 07, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `98768f3f6fc5b0258b24e6898be43ad8`, 31,720 lines
+**Checkpoint at this update:** MD5 `82d517c4e0fff37181198667b16c756c`, 31,749 lines
 **Easy revert point (pre-cleanup):** commit `2f87c8d` / MD5
 `3836efef35df40f7cd667179712249d2`, 32,599 lines — `git checkout 2f87c8d -- index.html`
 
@@ -11,6 +11,22 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Explained + mitigated: "View As shows correct permissions but a real
+  login in a separate browser doesn't" (2026-07-07).** David: changed a
+  user's role, got the success toast, but a real login from a separate
+  browser didn't reflect it — while View As for that same user looked
+  completely correct. Root cause: View As reads THIS browser's local
+  state directly, so if the underlying save silently or honestly failed
+  (he was also hitting "Role changed locally but failed to save to
+  server" for the same user), View As shows the correct-looking LOCAL
+  change while a real login from elsewhere only ever sees the server's
+  real, never-updated state. Not a View As bug — View As has no way to
+  know the save underneath it failed. Added automatic retry (one retry,
+  4s backoff) to `saveUsersViaProxy()` so a transient GAS hiccup gets a
+  real second chance before ever surfacing as a failure, reducing how
+  often this divergence happens at all. Verified via console logs: the
+  retry correctly fires ~4s after a failure and reports honestly if the
+  retry also fails.
 - **Root cause confirmed via David's own Claude-in-Chrome investigation of
   the Apps Script Executions log: the "keeps failing"/HTTP 404 saves were
   the free-tier GAS account's concurrent-execution ceiling (~30 at once)

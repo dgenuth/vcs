@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Tue Jul 07, 2026 (this session, continued)
-**Current checkpoint:** MD5 `98768f3f6fc5b0258b24e6898be43ad8`, 31,720 lines
+**Current checkpoint:** MD5 `82d517c4e0fff37181198667b16c756c`, 31,749 lines
 **Prior checkpoint (pre-cleanup, easy revert point):** commit `2f87c8d` /
 MD5 `3836efef35df40f7cd667179712249d2`, 32,599 lines. Also saved as a
 standalone file at
@@ -84,6 +84,26 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **"View As shows correct permissions but a real login in a separate
+  browser doesn't" (2026-07-07) — View As isn't wrong, it's just not
+  proof the change ever reached the server.** `saveUsersViaProxy()` now
+  automatically retries once (`_saveUsersViaProxyImplWithRetry`, 4s
+  backoff) before surfacing a failure, specifically because View As reads
+  THIS browser's local state directly — if a role/permission change's
+  save silently failed (pre-fix) or honestly failed (post-fix, e.g. "Role
+  changed locally but failed to save to server"), View As would still
+  show the locally-applied change looking completely correct, while any
+  OTHER real session only ever sees the server's actual (never-updated)
+  state. This is not a View As bug per se — it's that View As has no way
+  to know a save silently/honestly failed underneath it. The retry
+  reduces how often a transient GAS hiccup causes this divergence at all.
+  **If this resurfaces**: check whether the specific change actually
+  landed on the server (`getConfig` and inspect that user's record
+  directly) before assuming View As itself is broken — it's very likely
+  reading correct local state that just never made it to the server.
+  Consider a View As banner that warns when previewing a user with a
+  pending/unconfirmed save as a further improvement if this keeps
+  confusing testing.
 - **ROOT CAUSE, confirmed via a Claude-in-Chrome investigation of the
   Apps Script Executions log (2026-07-07): the "keeps failing"/HTTP 404
   saves were the free-tier GAS account's ~30-simultaneous-execution

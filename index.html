@@ -9346,12 +9346,41 @@ async function saveUsersViaProxy() {
   if (_saveUsersInFlight) {
     await _saveUsersInFlight.catch(function(){});
   }
-  const _thisSave = _saveUsersViaProxyImpl();
+  const _thisSave = _saveUsersViaProxyImplWithRetry();
   _saveUsersInFlight = _thisSave;
   try {
     return await _thisSave;
   } finally {
     if (_saveUsersInFlight === _thisSave) _saveUsersInFlight = null;
+  }
+}
+// CRITICAL FIX (2026-07-07): a single transient GAS backend hiccup (the
+// confirmed-real, intermittent free-tier concurrency ceiling -- see the
+// _gasFetch limiter above) used to mean an immediate, permanent-looking
+// failure for whatever the user just did -- most visibly for role
+// changes, since a security-relevant change ("Role changed locally but
+// failed to save to server") then only exists in this browser's local
+// memory. That's exactly what made View As misleading: it reads local
+// state, which looked "correct" while a real login from a separate
+// browser only ever saw the server's real (never-updated) state, since
+// the save silently never landed. Retrying automatically with backoff
+// -- instead of requiring the admin to notice the failure toast and
+// manually retry -- gives a transient failure a real chance to resolve
+// on its own before ever surfacing as a failure. Two attempts total (one
+// retry), with a pause between so a burst that just tripped the
+// concurrency ceiling has time to clear before trying again.
+async function _saveUsersViaProxyImplWithRetry(){
+  try {
+    return await _saveUsersViaProxyImpl();
+  } catch(firstErr) {
+    console.warn('[VCS] Save attempt 1 failed, retrying once in 4s:', firstErr.message);
+    await new Promise(function(r){ setTimeout(r, 4000); });
+    try {
+      return await _saveUsersViaProxyImpl();
+    } catch(secondErr) {
+      console.warn('[VCS] Save retry also failed:', secondErr.message);
+      throw secondErr;
+    }
   }
 }
 // EMERGENCY FIX (2026-07-06): several ad-hoc saveConfig call sites (vendor
