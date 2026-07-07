@@ -9449,7 +9449,25 @@ async function _saveUsersViaProxyImpl() {
         // what gets pushed to the server, never to overwrite local state.
       }
     } catch(mergeErr) {
-      console.warn('[VCS] pre-save sync failed, pushing local list as-is:', mergeErr.message);
+      // CRITICAL DATA-LOSS FIX (2026-07-07): this used to log a warning and
+      // fall through, leaving `users` as whatever getApprovedUsers() (THIS
+      // browser's local cache) happened to have -- completely unmerged with
+      // the server's real list. If that local cache didn't have every user
+      // the server has (a real risk: any user added/synced by a DIFFERENT
+      // browser/admin session since this one last fully synced), pushing it
+      // "as-is" silently DELETED every user missing from the local copy,
+      // permanently, the moment this save landed. Confirmed live: a real
+      // user (a director_ops account with real configured restrictions)
+      // vanished from the shared server between two checks this session,
+      // during a period of measured GAS slowness/timeouts -- exactly this
+      // failure mode. A slow/flaky backend is now the WORST time for this
+      // fallback to silently overwrite shared data, not a safe time to
+      // proceed anyway. Now aborts the save entirely instead of risking a
+      // silent wipe -- callers (_toastSaveResult, saveFile()) already
+      // surface a save failure honestly; that's the correct outcome here,
+      // not a guessed partial push.
+      console.warn('[VCS] pre-save sync failed -- aborting save rather than risking an unmerged overwrite:', mergeErr.message);
+      throw new Error('Could not confirm the current server state before saving -- refusing to push a possibly-incomplete local user list. Try again in a moment.');
     }
     // S51 fix: this is the actual, guaranteed choke point every save path
     // funnels through before the network push below — debouncedSaveSettings(),

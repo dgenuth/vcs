@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Tue Jul 07, 2026 (this session, continued)
-**Current checkpoint:** MD5 `c1c3512c76a5b063932506faf1e17267`, 31,631 lines
+**Current checkpoint:** MD5 `4470d2823738a12d8e4e8f63f9d6c729`, 31,649 lines
 **Prior checkpoint (pre-cleanup, easy revert point):** commit `2f87c8d` /
 MD5 `3836efef35df40f7cd667179712249d2`, 32,599 lines. Also saved as a
 standalone file at
@@ -84,6 +84,41 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **CRITICAL DATA LOSS (2026-07-07): `_saveUsersViaProxyImpl()`'s pre-save
+  merge-fetch failure path used to silently push an unmerged, possibly-
+  incomplete local user list to the server, permanently deleting any user
+  missing from that one browser's local cache.** The merge logic (fetch
+  server's current list, keep touched-in-this-tab users' local edits,
+  take the server's fresh copy for everything else) is correct and safe
+  — but it only ran on the HAPPY path. If that fetch itself failed
+  (timeout/network error/abort), the code caught the error, logged a
+  warning, and fell through with `users` still equal to whatever
+  `getApprovedUsers()` (this ONE browser's local snapshot) had — never
+  merged with the server's real list at all. If that local snapshot was
+  missing any user the server has (a real risk any time another admin/
+  browser added or synced a user since this one last fully synced), the
+  subsequent `action:'saveConfig'` push would silently and permanently
+  delete them. CONFIRMED LIVE: a real user (a director_ops account with
+  real configured restrictions, `janepsx2026@gmail.com`) vanished from
+  the shared server during a stretch of measured GAS backend slowness
+  (5.5+ second response times observed directly, some requests timing out
+  entirely) — exactly this failure mode — then reappeared after a later,
+  successful save with a complete local cache overwrote the bad state.
+  **The backend being slow/flaky is now the WORST time for this fallback
+  to proceed with a guessed partial push, not a safe time to plow ahead.**
+  Fixed: the catch block now aborts the entire save (throws) instead of
+  falling through — surfaces as an honest failure via `_toastSaveResult`/
+  `saveFile()` (which is the CORRECT outcome: "I couldn't confirm the
+  server's state, so I'm not going to guess and possibly delete data" is
+  far better than a silent, permanent, undetectable user loss). Verified
+  live: simulated a total fetch failure, confirmed `saveUsersViaProxy()`
+  now rejects instead of resolving, confirmed the real server's 32-user
+  list was completely unaffected by the failed attempt.
+  **If you see "fail to reach server" toasts more often after this fix**,
+  that's expected and correct when the GAS backend is genuinely slow —
+  it means saves are now refusing to risk data loss rather than silently
+  succeeding-but-wrong. It is not a new bug to chase; it's the honest
+  signal this whole confirmation system was built to surface.
 - **`loginAs()` is now the ONE place that refreshes the sidebar after any
   login/impersonation — don't add a new sidebar-dependent side effect to
   a caller without checking whether `loginAs()` already covers it

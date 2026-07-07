@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Tue Jul 07, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `c1c3512c76a5b063932506faf1e17267`, 31,631 lines
+**Checkpoint at this update:** MD5 `4470d2823738a12d8e4e8f63f9d6c729`, 31,649 lines
 **Easy revert point (pre-cleanup):** commit `2f87c8d` / MD5
 `3836efef35df40f7cd667179712249d2`, 32,599 lines — `git checkout 2f87c8d -- index.html`
 
@@ -11,6 +11,31 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **CRITICAL DATA LOSS: a failed save could silently delete real users
+  from the shared server (2026-07-07, David reported "I just seem to have
+  lost one user" while re-testing).** Confirmed: `janepsx2026@gmail.com`
+  (director_ops, real configured restrictions) was genuinely missing from
+  the server's user list at one check, then present again at a later
+  check. Root cause: `_saveUsersViaProxyImpl()`'s pre-save merge fetch
+  (reads the server's current list so touched-here users' edits merge in
+  rather than blindly overwrite) had no safe fallback for its OWN
+  failure — if that fetch itself timed out or errored, the code logged a
+  warning and proceeded to push THIS browser's raw local user list,
+  completely unmerged, which silently deletes any user missing from that
+  one browser's local cache. This is exactly the failure mode observed:
+  it happened during a stretch of measured GAS backend slowness (5.5+
+  second responses, some outright timeouts, confirmed via direct testing)
+  — the worst possible time for this fallback to guess rather than abort.
+  Fixed: the save now aborts entirely on a merge-fetch failure instead of
+  proceeding, surfacing as an honest failure toast instead of a silent,
+  undetectable deletion. Verified live: simulated a total fetch failure,
+  confirmed the save now rejects and the real 32-user server list was
+  completely unaffected.
+  **This also explains the "fail to reach server"/"fail to update" toasts
+  David saw while testing** — the GAS backend is genuinely slow right
+  now; these are the honest-confirmation system (built earlier tonight)
+  correctly surfacing real failures that used to be silently swallowed.
+  Not a new bug — the intended behavior finally being visible.
 - **"View As" showed all tabs regardless of real restrictions, AGAIN
   (2026-07-07) — this time fixed at the root instead of one more
   field-by-field patch.** David re-tested the director_ops user from the
