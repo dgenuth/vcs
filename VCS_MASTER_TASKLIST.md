@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Tue Jul 07, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `cfd9aed0eaec758770244e58bbabcdc4`, 31,690 lines
+**Checkpoint at this update:** MD5 `98768f3f6fc5b0258b24e6898be43ad8`, 31,720 lines
 **Easy revert point (pre-cleanup):** commit `2f87c8d` / MD5
 `3836efef35df40f7cd667179712249d2`, 32,599 lines — `git checkout 2f87c8d -- index.html`
 
@@ -11,6 +11,25 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Root cause confirmed via David's own Claude-in-Chrome investigation of
+  the Apps Script Executions log: the "keeps failing"/HTTP 404 saves were
+  the free-tier GAS account's concurrent-execution ceiling (~30 at once)
+  being exceeded, not slowness or a bug.** Failed executions showed
+  0-second duration (rejected before even running) in synchronized bursts
+  of dozens — a concurrency-limit signature. Added a client-side request
+  queue/limiter (`_gasFetch`, cap of 4 concurrent) wired into the
+  highest-traffic save path. This helps THIS tab avoid contributing to
+  bursts but can't coordinate across separate browser tabs/sessions, and
+  doesn't cover every lower-traffic call site in the file.
+  Also confirmed my own extensive live testing against the real backend
+  this session was very likely a real contributor to the load — will
+  prefer mocked testing over hitting the live shared backend going
+  forward. For full server-side visibility (real error text, quota
+  usage), David needs to link the Apps Script project to a standard
+  Google Cloud project himself — that's outside what's fixable from
+  index.html.
+  Verified: mocked a delayed fetch, fired 10 concurrent calls through the
+  limiter, confirmed peak concurrency stayed under the cap.
 - **Save timeouts bumped 15s → 30s, both read and write (2026-07-07,
   David: "keeps failing to apply changes, tried many times").** Directly
   measured GAS response times climbing all session (2.4s → 5.5s → 6.2s →

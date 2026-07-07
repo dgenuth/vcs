@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Tue Jul 07, 2026 (this session, continued)
-**Current checkpoint:** MD5 `cfd9aed0eaec758770244e58bbabcdc4`, 31,690 lines
+**Current checkpoint:** MD5 `98768f3f6fc5b0258b24e6898be43ad8`, 31,720 lines
 **Prior checkpoint (pre-cleanup, easy revert point):** commit `2f87c8d` /
 MD5 `3836efef35df40f7cd667179712249d2`, 32,599 lines. Also saved as a
 standalone file at
@@ -84,6 +84,41 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **ROOT CAUSE, confirmed via a Claude-in-Chrome investigation of the
+  Apps Script Executions log (2026-07-07): the "keeps failing"/HTTP 404
+  saves were the free-tier GAS account's ~30-simultaneous-execution
+  ceiling being exceeded, not generic slowness or a code bug.** Failed
+  executions consistently showed 0-second duration (rejected before
+  `doPost` even ran) arriving in synchronized bursts of dozens within a
+  1-2 second window — a textbook concurrency-limit signature, not a
+  timeout or a script error. The account is a personal Gmail (not
+  Workspace), which has materially lower Apps Script quotas, and the
+  project was never linked to a standard Google Cloud project, so there's
+  no Cloud Logging/quota visibility through the console either — David
+  would need to do that himself (Project Settings → Change project) for
+  real server-side observability going forward.
+  Added `_gasFetch(url, opts)` — a small client-side concurrency limiter
+  (`_GAS_MAX_CONCURRENT = 4`) that queues requests to `VCS_PROXY_URL`
+  instead of firing them all at once — wired into `_saveUsersViaProxyImpl()`'s
+  two calls (the highest-traffic path — nearly every settings/permission
+  save funnels through this one function) and `_safeguardGlobalSettingsBeforePush()`.
+  **This is a mitigation for THIS TAB's own contribution, not a complete
+  fix** — it can't coordinate across separate browser tabs/sessions (each
+  has independent JS state), and doesn't cover the ~30 other, lower-
+  traffic `fetch(VCS_PROXY_URL...)` call sites in the file (pings, file
+  listings, watcher status, etc.) which weren't touched. If bursting
+  recurs, check whether it's cross-tab (multiple sessions hitting the
+  proxy simultaneously) rather than assuming this limiter should have
+  caught it — it only governs one tab's traffic.
+  Verified: mocked `fetch()` with an artificial delay, fired 10 concurrent
+  calls through `_gasFetch`, confirmed peak concurrency stayed under the
+  cap instead of all 10 firing at once.
+  **Also confirmed this session's OWN extensive direct testing against
+  the live GAS endpoint (dozens of fetch calls over several hours,
+  running in parallel with David's real usage in his own browser) was
+  very likely a meaningful contributor to the load that triggered this —
+  going forward, prefer testing against mocked/local state over hitting
+  the live shared backend repeatedly within a single session.**
 - **GAS proxy round-trip timeouts bumped from 15s to 30s on BOTH the
   pre-save read AND the save write (2026-07-07) — the write previously
   had NO timeout at all.** Directly measured GAS response times climbing

@@ -9368,9 +9368,39 @@ async function saveUsersViaProxy() {
 // immediately before any of those ad-hoc pushes to fill in anything
 // missing/empty in cfg.globalSettings from the server's actual current
 // values first, same merge logic as the already-fixed path.
+// CRITICAL FIX (2026-07-07): Google Apps Script consumer accounts have a
+// hard ~30-simultaneous-execution ceiling per caller -- exceeding it gets
+// requests instantly rejected (0-duration failures, confirmed via the
+// Executions log, arriving in synchronized bursts of dozens). Every save
+// path here funnels through a handful of choke points, but each ran its
+// own fetch independently with no coordination between them -- a bulk
+// action (e.g. "Apply Changes to Existing Users" looping over many
+// selected users) or several rapid toggles in a row could genuinely fire
+// a burst of near-simultaneous requests at this one proxy. This caps how
+// many of THIS TAB's requests to the proxy are ever in flight at once,
+// queueing the rest instead of firing them all together. It can't
+// coordinate across separate browser tabs/sessions (each has its own
+// JS state), so it's a mitigation for this tab's own contribution, not a
+// complete fix for the underlying account-level quota.
+const _GAS_MAX_CONCURRENT = 4;
+let _gasInFlightCount = 0;
+const _gasQueue = [];
+function _gasFetch(url, opts){
+  return new Promise(function(resolve, reject){
+    function run(){
+      _gasInFlightCount++;
+      fetch(url, opts).then(resolve, reject).finally(function(){
+        _gasInFlightCount--;
+        if (_gasQueue.length) _gasQueue.shift()();
+      });
+    }
+    if (_gasInFlightCount < _GAS_MAX_CONCURRENT) run();
+    else _gasQueue.push(run);
+  });
+}
 async function _safeguardGlobalSettingsBeforePush(cfg){
   try{
-    const pre = await fetch(VCS_PROXY_URL, {method:'POST', headers:{'Content-Type':'text/plain'}, body: JSON.stringify({action:'getConfig'})});
+    const pre = await _gasFetch(VCS_PROXY_URL, {method:'POST', headers:{'Content-Type':'text/plain'}, body: JSON.stringify({action:'getConfig'})});
     const preData = await pre.json();
     const serverGs = (preData && preData.config && preData.config.globalSettings && typeof preData.config.globalSettings==='object') ? preData.config.globalSettings : {};
     cfg.globalSettings = cfg.globalSettings || {};
@@ -9429,7 +9459,7 @@ async function _saveUsersViaProxyImpl() {
       const _timer2 = setTimeout(() => _ctrl2.abort(), 30000);
       let pre;
       try {
-        pre = await fetch(VCS_PROXY_URL, {
+        pre = await _gasFetch(VCS_PROXY_URL, {
           method:'POST', headers:{'Content-Type':'text/plain'},
           body: JSON.stringify({action:'getConfig'}),
           signal: _ctrl2.signal
@@ -9563,7 +9593,7 @@ async function _saveUsersViaProxyImpl() {
     const _timer3 = setTimeout(() => _ctrl3.abort(), 30000);
     let resp;
     try {
-      resp = await fetch(VCS_PROXY_URL, {
+      resp = await _gasFetch(VCS_PROXY_URL, {
         method:'POST',
         headers:{'Content-Type':'text/plain'},
         body: JSON.stringify({action:'saveConfig', config: JSON.stringify(cfg)}),
