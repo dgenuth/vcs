@@ -4176,8 +4176,25 @@ function isTabAllowedForUser(tabId){
   if(tabId==='feedback') return true;
   if (USER.role === 'admin' || USER.role === 'manager') return true;
   if(typeof userCanSeeTab==='function'&&(tabId==='contracts'||tabId==='spend'||tabId==='network'||tabId==='economics'||tabId==='forecast'||tabId==='reports'||tabId==='tiers')){return userCanSeeTab(tabId);}
+  // CRITICAL FIX (2026-07-07): this used to read ROLE_PERMS[role].tabs
+  // directly -- a STATIC, hardcoded baseline that never reflects any
+  // role-level Tab Access Defaults customization an admin has actually
+  // configured (that lives in vcs_role_tab_overrides, resolved via
+  // resolveRoleTabState(), the exact same function canView()'s 7 special
+  // tabs and the per-user Tab Access UI already correctly use). The 7
+  // special canView()-routed tabs above were fixed for this months ago
+  // (a99030d) but this generic fallback -- used for EVERY OTHER ordinary
+  // tab (today/callsheet/expiring/calendar/itw/reviews/history/etc) --
+  // never was. For any user with no PER-USER override on a given tab
+  // (the common case), this silently ignored the role-level default
+  // entirely and fell back to the static baseline instead. Confirmed
+  // live: director_ops's static ROLE_PERMS baseline explicitly lists
+  // today/callsheet/expiring/calendar/itw/reviews/history as included,
+  // directly contradicting the role default an admin had configured to
+  // restrict all 7 -- any director_ops user without their own per-user
+  // override on these tabs saw them regardless of the role setting.
   const _roleBaseTabs = (ROLE_PERMS[USER.role||'viewer']||ROLE_PERMS.viewer).tabs || NAV_DEFS.map(n=>n[0]).filter(id=>!id.startsWith('_'));
-  return _roleBaseTabs.includes(tabId);
+  return resolveRoleTabState(USER.role||'viewer', tabId, _roleBaseTabs.includes(tabId)).view;
 }
 function updateSidebar() {
   // Hide save/reload for non-edit roles

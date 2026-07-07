@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Tue Jul 07, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `4470d2823738a12d8e4e8f63f9d6c729`, 31,649 lines
+**Checkpoint at this update:** MD5 `041640c891580ceaadcbf8e6d0966d3e`, 31,666 lines
 **Easy revert point (pre-cleanup):** commit `2f87c8d` / MD5
 `3836efef35df40f7cd667179712249d2`, 32,599 lines — `git checkout 2f87c8d -- index.html`
 
@@ -11,6 +11,32 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **THE REAL root cause of "changes are applied but still seeing
+  restricted tabs" (2026-07-07) — every save-path fix earlier tonight was
+  genuinely correct, but there was a SEPARATE bug on the READ side that
+  none of them touched.** `isTabAllowedForUser()`'s fallback for any
+  ordinary tab (today/callsheet/expiring/calendar/itw/reviews/history and
+  most others — everything except the 7 special canView()-routed tabs
+  fixed months ago) read the STATIC, hardcoded `ROLE_PERMS[role].tabs`
+  baseline directly, completely bypassing the dynamic role-level Tab
+  Access Defaults config an admin actually sets. `ROLE_PERMS.director_ops.tabs`
+  explicitly lists all 7 of the tabs David restricted as "included" —
+  directly contradicting the role default configured in Settings. Any
+  user of that role with no PER-USER override on those specific tabs
+  (which is what exposed this: `janepsx2026@gmail.com`'s per-user
+  tabOverrides had gone empty from the earlier data-loss incident) fell
+  straight into this broken fallback and saw them regardless of the role
+  setting — no matter how many times the role default was re-saved,
+  because the save was never the problem this time.
+  Fixed: the fallback now calls `resolveRoleTabState()` — the same
+  canonical, already-correct function the Tab Access Defaults UI and the
+  per-user Tab Access UI both already use — instead of reading the static
+  array directly. The static array is now only consulted as the
+  last-resort default when no dynamic role override has ever been set
+  for that specific tab at all.
+  Verified live against the exact case that exposed it: a director_ops
+  user with a completely empty per-user tabOverrides object now correctly
+  inherits the restrictive role-level default for all 7 tabs.
 - **CRITICAL DATA LOSS: a failed save could silently delete real users
   from the shared server (2026-07-07, David reported "I just seem to have
   lost one user" while re-testing).** Confirmed: `janepsx2026@gmail.com`

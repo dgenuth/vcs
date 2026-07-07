@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Tue Jul 07, 2026 (this session, continued)
-**Current checkpoint:** MD5 `4470d2823738a12d8e4e8f63f9d6c729`, 31,649 lines
+**Current checkpoint:** MD5 `041640c891580ceaadcbf8e6d0966d3e`, 31,666 lines
 **Prior checkpoint (pre-cleanup, easy revert point):** commit `2f87c8d` /
 MD5 `3836efef35df40f7cd667179712249d2`, 32,599 lines. Also saved as a
 standalone file at
@@ -84,6 +84,44 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **THE REAL root cause of "role-level Tab Access Defaults changes don't
+  apply" — `isTabAllowedForUser()`'s generic fallback (used for EVERY
+  ordinary tab, not just the 7 special canView()-routed ones) read the
+  STATIC `ROLE_PERMS[role].tabs` baseline directly instead of the dynamic
+  `vcs_role_tab_overrides` config an admin actually sets via Tab Access
+  Defaults (2026-07-07).** `canView()`'s 7 special tabs (contracts/spend/
+  network/economics/forecast/reports/tiers) were fixed for this months
+  ago (`a99030d`), and the PER-USER Tab Access UI's own `tabState()`
+  already correctly used `resolveRoleTabState()` — but this ONE remaining
+  generic fallback, used for every other ordinary tab
+  (today/callsheet/expiring/calendar/itw/reviews/history/vendordb/etc)
+  whenever a user has NO per-user override on that specific tab, never
+  got the same fix. `ROLE_PERMS.director_ops.tabs` (the static baseline)
+  explicitly lists today/callsheet/expiring/calendar/itw/reviews/history
+  as included — directly contradicting a role-level default an admin
+  configures to restrict them. Any user of that role with no PER-USER
+  override on those specific tabs (the common case) saw them regardless
+  of the role-level setting, no matter how many times it was re-saved.
+  This is why the symptom kept recurring even after multiple genuinely
+  correct save-path fixes earlier tonight: the SAVE was working fine, but
+  the READ (permission-check) side had its own, completely separate bug.
+  Fixed: `isTabAllowedForUser()`'s fallback now calls
+  `resolveRoleTabState(role, tabId, staticBaselineIncludes)` — the same
+  canonical function already proven correct everywhere else — using the
+  static array only as the last-resort default when NO dynamic override
+  has ever been configured for that role+tab pair at all.
+  Verified live against the exact real-world case that exposed this: a
+  director_ops user with an EMPTY per-user tabOverrides object (no
+  per-user customization at all) now correctly inherits the restrictive
+  role-level default for all 7 tabs, instead of silently falling back to
+  the permissive static baseline.
+  **If a role-level Tab Access Defaults change ever again appears to
+  "not take" for a user, check whether that specific user has a
+  PER-USER override on the tab in question — if not, the read path now
+  correctly goes through `resolveRoleTabState()`, so the bug is very
+  unlikely to be this exact one recurring; look at the save path instead
+  (`_hydrateRoleConfigFromSettings`/`_TOUCHED_USERS`/the pre-save-merge
+  fixes above).**
 - **CRITICAL DATA LOSS (2026-07-07): `_saveUsersViaProxyImpl()`'s pre-save
   merge-fetch failure path used to silently push an unmerged, possibly-
   incomplete local user list to the server, permanently deleting any user
