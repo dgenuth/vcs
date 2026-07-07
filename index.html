@@ -1185,6 +1185,25 @@ async function handleOAuthLogin(email, name, provider) {
     return false;
   }
   if (users.length === 0) {
+    // CRITICAL SECURITY FIX (2026-07-07): this branch used to fire
+    // unconditionally whenever the (post-sync) local list was empty --
+    // the comment above claimed it "only fires if the server sync also
+    // came back empty," but only the CMS_PRODUCTION_MODE branch above
+    // actually checked _syncOk. In sandbox mode (CMS_PRODUCTION_MODE ===
+    // false), a transient GAS failure/timeout for ANY existing, already-
+    // configured, restricted user silently treated them as a brand-new
+    // installation and bootstrapped them with a plain admin/EMPLOYEE_DIRECTORY
+    // seed -- discarding every real per-user restriction (hiddenFields,
+    // tabOverrides, permissions) David had actually configured for them.
+    // Confirmed live: a director_ops user showed as full admin with zero
+    // restrictions after a sync that didn't confirm success. Now requires
+    // a CONFIRMED successful sync (_syncOk) before ever bootstrapping --
+    // an inconclusive sync gets the same "try again" treatment production
+    // already had, instead of silently granting admin.
+    if (!_syncOk) {
+      $('login-error').textContent = 'Could not verify your access — check your connection and try again in a moment.';
+      return false;
+    }
     // Pre-populate full employee directory on first ever login
     const EMPLOYEE_DIRECTORY = buildEmployeeDirectorySeed();
     const loginEmail = email.toLowerCase();

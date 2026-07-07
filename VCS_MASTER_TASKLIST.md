@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Tue Jul 07, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `d15074d8c9b243264dd02a51e2656078`, 31,595 lines
+**Checkpoint at this update:** MD5 `588e496b9576a4d5776e1880431c8386`, 31,614 lines
 **Easy revert point (pre-cleanup):** commit `2f87c8d` / MD5
 `3836efef35df40f7cd667179712249d2`, 32,599 lines — `git checkout 2f87c8d -- index.html`
 
@@ -11,6 +11,27 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **CRITICAL SECURITY: sandbox login could silently grant full admin to
+  any user on a mere sync hiccup (2026-07-07, found by David live-testing
+  right after the cleanup adoption).** He logged in as a director_ops
+  user and got shown as full, unrestricted admin — none of his configured
+  restrictions applied. Root cause: `handleOAuthLogin()`'s "bootstrap
+  admin on first ever login" path fires whenever the post-sync approved-
+  users list is empty. Production correctly gates this on a CONFIRMED
+  successful sync (`_syncOk`) — a failed/slow GAS call gets a "try again"
+  message, never bootstraps. Sandbox mode skipped that check entirely, so
+  ANY transient sync failure — for ANY existing, already-restricted user,
+  not just a genuinely brand-new one — silently treated them as a fresh
+  install and handed them admin (or their static seed role with none of
+  their real per-user restrictions, which only live server-side).
+  **This is a PRE-EXISTING bug, confirmed present in the pre-cleanup
+  backup file too — not something the Fable5 cleanup introduced.** It
+  just surfaced now because David is actively re-testing permissions.
+  Fixed: sandbox's bootstrap path now requires a confirmed-successful sync
+  before ever seeding, matching production's existing safety check.
+  Verified live: simulated a failed sync with an empty local cache — login
+  now correctly refuses instead of granting admin; confirmed a normal
+  successful login still works and assigns the correct real role.
 - **Adopted a ~1,000-line dead-code cleanup (2026-07-07), sourced from a
   separate Fable5 session David ran, after independently re-verifying it
   end-to-end rather than trusting its own summary.** David hoped this
