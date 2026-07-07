@@ -1073,6 +1073,48 @@ function verifyApprovedUser(email) {
   return found ? {status:'approved', user:found} : {status:'denied', email:email};
 }
 
+// Confirmed employee directory — single source of truth for the first-login
+// bootstrap (handleOAuthLogin) and the old-config migration (loadConfigFromDrive),
+// which previously each carried their own identical copy of this list.
+// Only confirmed users from User Accounts tab in Vendor_Catalogue.xlsm;
+// unconfirmed employees are NOT included — add them via User Management when ready.
+// NOTE: deliberately NOT exposed as a module-level EMPLOYEE_DIRECTORY: several
+// far-away call sites probe `typeof EMPLOYEE_DIRECTORY!=='undefined'` expecting
+// the block-scoped const from handleOAuthLogin (never in scope there); naming
+// this EMPLOYEE_DIRECTORY would silently activate those branches.
+function buildEmployeeDirectorySeed(){
+  return [
+    // Admins
+    {email:'dgenuth@primesourcex.com',name:'David Genuth',role:'admin'},
+    {email:'dgenuthps@gmail.com',name:'David Genuth',role:'admin'},
+    // Procurement (full access)
+    {email:'jmanguray@primesourcex.com',name:'Jane Manguray',role:'procurement'},
+    {email:'mgenuth@primesourcex.com',name:'Mark Genuth',role:'procurement'},
+    {email:'mdelora@primesourcex.com',name:'Monica DeLora',role:'procurement'},
+    // CRO
+    {email:'aschwartz@primesourcex.com',name:'Abraham Ushy Schwartz',role:'cro'},
+    // Director of Operations
+    {email:'nkornfeld@primesourcex.com',name:'Nathalie Kornfeld',role:'director_ops'},
+    // Operations QC
+    {email:'hkabbabe@primesourcex.com',name:'Hammurabi Rabi Kabbabe',role:'ops_qc'},
+    // Senior Finance
+    {email:'ewiesel@primesourcex.com',name:'Elliot Wiesel',role:'finance_sr'},
+    {email:'aalmeida@primesourcex.com',name:'Amanda Almeida',role:'finance_sr'},
+    // Junior Finance (Veruschka "thefi")
+    {email:'vbadenhorst@primesourcex.com',name:'Varuscjcka Badenhorst',role:'finance_jr'},
+    // Sales Reps
+    {email:'bflekel@primesourcex.com',name:'Ben Flekel',role:'sales_rep'},
+    {email:'swithers@primesourcex.com',name:'Shane Withers',role:'sales_rep'},
+    {email:'erock@primesourcex.com',name:'Eitan Rock',role:'sales_rep'},
+    // SSA (confirmed from spreadsheet only)
+    {email:'agenuth@primesourcex.com',name:'Abe Genuth',role:'ssa'},
+    {email:'bmparagas@primesourcex.com',name:'Bridget Monica Paragas',role:'ssa'},
+    {email:'eaugustin@primesourcex.com',name:'Emer Jean Agustin',role:'ssa'},
+    {email:'kgepiga@primesourcex.com',name:'Kyle Opel Gepiga',role:'ssa'},
+    {email:'rkabuya@primesourcex.com',name:'Rob Kabuya',role:'ssa'},
+  ].map(u=>({...u,added:new Date().toISOString(),addedBy:'system',password:'',hiddenFields:getDefaultHiddenFields(u.role)}));
+}
+
 async function handleOAuthLogin(email, name, provider) {
   // Check against approved users list
   let users = getApprovedUsers();
@@ -1144,38 +1186,7 @@ async function handleOAuthLogin(email, name, provider) {
   }
   if (users.length === 0) {
     // Pre-populate full employee directory on first ever login
-    // Employee directory — only confirmed users from User Accounts tab in Vendor_Catalogue.xlsm
-    // Unconfirmed employees are NOT included — add them via User Management when ready
-    const EMPLOYEE_DIRECTORY = [
-      // Admins
-      {email:'dgenuth@primesourcex.com',name:'David Genuth',role:'admin'},
-      {email:'dgenuthps@gmail.com',name:'David Genuth',role:'admin'},
-      // Procurement (full access)
-      {email:'jmanguray@primesourcex.com',name:'Jane Manguray',role:'procurement'},
-      {email:'mgenuth@primesourcex.com',name:'Mark Genuth',role:'procurement'},
-      {email:'mdelora@primesourcex.com',name:'Monica DeLora',role:'procurement'},
-      // CRO
-      {email:'aschwartz@primesourcex.com',name:'Abraham Ushy Schwartz',role:'cro'},
-      // Director of Operations
-      {email:'nkornfeld@primesourcex.com',name:'Nathalie Kornfeld',role:'director_ops'},
-      // Operations QC
-      {email:'hkabbabe@primesourcex.com',name:'Hammurabi Rabi Kabbabe',role:'ops_qc'},
-      // Senior Finance
-      {email:'ewiesel@primesourcex.com',name:'Elliot Wiesel',role:'finance_sr'},
-      {email:'aalmeida@primesourcex.com',name:'Amanda Almeida',role:'finance_sr'},
-      // Junior Finance (Veruschka "thefi")
-      {email:'vbadenhorst@primesourcex.com',name:'Varuscjcka Badenhorst',role:'finance_jr'},
-      // Sales Reps
-      {email:'bflekel@primesourcex.com',name:'Ben Flekel',role:'sales_rep'},
-      {email:'swithers@primesourcex.com',name:'Shane Withers',role:'sales_rep'},
-      {email:'erock@primesourcex.com',name:'Eitan Rock',role:'sales_rep'},
-      // SSA (confirmed from spreadsheet only)
-      {email:'agenuth@primesourcex.com',name:'Abe Genuth',role:'ssa'},
-      {email:'bmparagas@primesourcex.com',name:'Bridget Monica Paragas',role:'ssa'},
-      {email:'eaugustin@primesourcex.com',name:'Emer Jean Agustin',role:'ssa'},
-      {email:'kgepiga@primesourcex.com',name:'Kyle Opel Gepiga',role:'ssa'},
-      {email:'rkabuya@primesourcex.com',name:'Rob Kabuya',role:'ssa'},
-    ].map(u=>({...u,added:new Date().toISOString(),addedBy:'system',password:'',hiddenFields:getDefaultHiddenFields(u.role)}));
+    const EMPLOYEE_DIRECTORY = buildEmployeeDirectorySeed();
     const loginEmail = email.toLowerCase();
     const inDir = EMPLOYEE_DIRECTORY.some(u=>u.email===loginEmail);
     const allUsers = inDir ? EMPLOYEE_DIRECTORY : [{email:loginEmail,name,role:'admin',added:new Date().toISOString(),addedBy:'system',password:'',hiddenFields:[]}, ...EMPLOYEE_DIRECTORY];
@@ -1255,15 +1266,6 @@ function loginAs(userObj) {
   return {ok:true};
 }
 
-function toRelativeTime(date) {
-  if(!date) return 'Never';
-  const diff=Date.now()-date.getTime();
-  if(diff<60000) return 'Just now';
-  if(diff<3600000) return Math.floor(diff/60000)+'m ago';
-  if(diff<86400000) return Math.floor(diff/3600000)+'h ago';
-  if(diff<604800000) return Math.floor(diff/86400000)+'d ago';
-  return date.toLocaleDateString();
-}
 function migrateSearchHistory(){try{const dk='vcs_search_history_default';const uk='vcs_search_history_'+(USER&&USER.email||'');if(!uk.includes('@'))return;const dh=JSON.parse(localStorage.getItem(dk)||'[]');if(!dh.length)return;const uh=JSON.parse(localStorage.getItem(uk)||'[]');const mg=[].concat(uh);dh.forEach(function(t){if(!mg.includes(t))mg.push(t);});localStorage.setItem(uk,JSON.stringify(mg.slice(0,10)));localStorage.removeItem(dk);}catch(_){}}
 async function recordLogin() {
   if (!USER || !USER.email) return;
@@ -2060,14 +2062,6 @@ function getHolidaysForDate(date) {
   for (const h of JH) if (h.date===iso) res.push(h);
   return res;
 }
-function isHolidayOrWeekend(date) {
-  const dow = date.getDay();
-  if (dow === 0 || dow === 6) return true;
-  const iso = isoDate(date);
-  if ((S.settings.closedDays||[]).includes(iso)) return true;
-  if ((S.settings.oooDays||[]).includes(iso)) return true;
-  return getHolidaysForDate(date).length > 0;
-}
 
 function toggleTheme() {
   const themes = ['dark','light','ps-dark','ps-light'];
@@ -2094,13 +2088,6 @@ function applyTheme(theme) {
 // applyFontSize removed along with the Font Size setting -- CSS values
 // above are now hardcoded to their former default (11px base).
 
-function buildSimpleSheetXml(rows) {
-  const esc=(s)=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  const cells=rows.map((row,r)=>
-    `<row r="${r+1}">${row.map((v,c)=>{const ref=String.fromCharCode(65+c)+(r+1);return `<c r="${ref}" t="inlineStr"><is><t>${esc(v)}</t></is></c>`;}).join('')}</row>`
-  ).join('');
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${cells}</sheetData></worksheet>`;
-}
 
 // Safe mailto launcher — works inside iframes where window.location.href is blocked
 function launchMailto(toAddrs, subject, body) {
@@ -2128,14 +2115,6 @@ function launchMailto(toAddrs, subject, body) {
       });
     }
   }, 800);
-}
-function getCellComment(sheet, row, col) {
-  try {
-    const ref = XLSX.utils.encode_cell({r:row, c:col});
-    const cell = sheet[ref];
-    if (!cell || !cell.c) return '';
-    return cell.c.map(c=>(c.t||c.a||'')).join('\n').trim();
-  } catch(e) { return ''; }
 }
 
 // ─── Fuzzy Sheet Finder ───────────────────────────────────────────────────────
@@ -3100,21 +3079,9 @@ async function executeSave() {
         let tableEndRow     = tableRefMatch ? parseInt(tableRefMatch[3]) : lastDataRow;
 
         const DATE_FIELDS_PSD = new Set(['expiry','effectiveDate','inContractSince','lastComm','followUp']);
-        const COL_MAP_NEW = {
-          name:'C', gpo:'A', category:'D', subCategory:'E', product:'F',
-          classOfTrade:'G', markets:'H', website:'J', contractName:'K',
-          procContact:'S', title:'U', bizPhone:'V', mobile:'W', email:'X',
-          shared2:'Y', title2:'AA', mobile2:'AB', email2:'AC',
-          expiry:'AF', autoRenew:'AG', autoRenewType:'AH', status:'AI',
-          contractTerm:'AM', currentTerm:'AN', terminationNotice:'AO',
-          adminFee:'AZ', adminFeeNotes:'BA', tiers:'BB', perpetuity:'BC',
-          tail:'BD', contractNo:'BF',
-          // BG=Payment Distribution Freq (read-only), BH=Report Frequency (read-only)
-          // BI=Agreement Type, BJ=Comments, BK=Notes, BL=Latest Comm Date, BM=About, BN=Follow-Up, BO=AKA
-          agreementType:'BI', comments:'BJ',
-          notes:'BK', lastComm:'BL', about:'BM', followUp:'BN', aka:'BO',
-          trainualUrl:'BT', vendorAliasOf:'BU', extraContacts:'BV', vendorRelationships:'BW', sfAccountId:'BX', vendorAliases:'BY',
-        };
+        // Was an identical inline copy of COL_MAP above — aliased to keep the
+        // two write paths (dirty-vendor updates and new-vendor rows) in sync.
+        const COL_MAP_NEW = COL_MAP;
 
         for (const nv of newPSDVendors) {
           const newRow = lastDataRow + 1;
@@ -3617,11 +3584,6 @@ function colLetterToNum(col) {
   return n;
 }
 
-// Extracts the style index (s="N") from an existing cell element
-function extractCellStyle(existingCellXml) {
-  const m = existingCellXml.match(/\ss="(\d+)"/);
-  return m ? m[1] : null;
-}
 
 function upsertCell(xml, rowNum, colLetter, value, forceStyle) {
   const cellRef = colLetter + rowNum;
@@ -3730,14 +3692,6 @@ const NOTE_TAG_COLORS = {
 };
 
 // ── Note History Model (C1) ───────────────────────────────────────────────────
-function parseNoteHistory(rawNotes) {
-  if (!rawNotes) return [];
-  try { const p=JSON.parse(rawNotes); if(Array.isArray(p)) return p; } catch(e) {}
-  return [{date:'',type:'general',author:'',body:rawNotes,legacy:true}];
-}
-function serializeNoteHistory(entries) {
-  return JSON.stringify(entries);
-}
 function openEditNoteModal(vendor, noteEntry, currentText, onSave) {
   const overlay=el('div',{style:{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center'}});
   const box=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'8px',padding:'20px',width:'460px',maxWidth:'90vw',display:'flex',flexDirection:'column',gap:'10px'}});
@@ -4676,94 +4630,7 @@ function renzoButton(label, size) {
 }
 
 // Show the full Renzo result modal (copy + open in mail) — branded
-function showRenzoModal(vendor, message) {
-  openModal(body => {
-    // Branded header
-    const hdr = el('div',{style:{display:'flex',gap:'10px',alignItems:'center',marginBottom:'14px',
-      padding:'10px 12px',background:'#f5f0eb',borderRadius:'6px',border:'1px solid #d6cfc6'}});
-    hdr.appendChild(renzoLogoSVG(28));
-    const htxt = el('div',{style:{flex:'1'}});
-    htxt.appendChild(el('div',{style:{fontWeight:'700',fontSize:'13px',color:'#1F6B47',fontFamily:'Georgia,serif'}},'Renzo'));
-    const email = vendor.email || '';
-    const contact = vendor.procContact || '';
-    htxt.appendChild(el('div',{style:{fontSize:'10px',color:'#6b7280',marginTop:'1px'}},
-      vendor.name + (contact?' · '+contact:'') + (email?' · '+email:'')));
-    hdr.appendChild(htxt);
-    body.appendChild(hdr);
-    const msgBox = el('div',{style:{
-      background:'var(--bg)',border:'1px solid var(--border)',borderRadius:'6px',
-      padding:'12px',fontSize:'11px',lineHeight:'1.7',color:'var(--text)',
-      whiteSpace:'pre-wrap',maxHeight:'400px',overflowY:'auto',
-      marginBottom:'12px',userSelect:'text'
-    }}, message);
-    body.appendChild(msgBox);
-    const btnRow = el('div',{class:'modal-btns'});
-    // Copy button — branded green
-    const copyBtn = el('button',{style:{
-      display:'inline-flex',alignItems:'center',gap:'5px',
-      padding:'6px 14px',background:'#1F6B47',color:'#f5f0eb',
-      border:'1px solid #1F6B47',borderRadius:'4px',fontSize:'11px',
-      fontWeight:'600',cursor:'pointer',transition:'background .15s'
-    },onmouseenter(){this.style.background='#2d7a52';},
-      onmouseleave(){this.style.background='#1F6B47';},
-    onclick(){
-      navigator.clipboard.writeText(message).then(()=>{
-        copyBtn.querySelector('span').textContent='✓ Copied!';
-        copyBtn.style.background='#2d7a52';
-        setTimeout(()=>{copyBtn.querySelector('span').textContent='📋 Copy to Clipboard';copyBtn.style.background='#1F6B47';},2000);
-      }).catch(()=>{
-        const ta=document.createElement('textarea');
-        ta.value=message; ta.style.position='fixed'; ta.style.opacity='0';
-        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
-        copyBtn.querySelector('span').textContent='✓ Copied!';
-        setTimeout(()=>{copyBtn.querySelector('span').textContent='📋 Copy to Clipboard';},2000);
-      });
-    }});
-    copyBtn.appendChild(renzoLogoSVG(14));
-    const copySpan = document.createElement('span'); copySpan.textContent='📋 Copy to Clipboard';
-    copyBtn.appendChild(copySpan);
-    if (email) {
-      btnRow.appendChild(el('button',{class:'btn-ghost',onclick(){
-        const subject = encodeURIComponent('Checking In — ' + vendor.name);
-        window.open('mailto:'+email+'?subject='+subject+'&body='+encodeURIComponent(message),'_blank');
-      }},'✉ Open in Mail'));
-    }
-    btnRow.appendChild(copyBtn);
-    btnRow.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));
-    body.appendChild(btnRow);
-  });
-}
 
-// Factory: returns a branded Renzo button that calls the API and shows the result modal
-// size: 'xs' | 'sm' (default) | 'md'
-// trigger: optional Renzo trigger string override
-function makeRenzoBtn(vendor, _unused, trigger, _unusedLabel, size) {
-  // Renzo feature flag check — admin can always use; others need renzoEnabled
-  const _renzoUser = getApprovedUsers().find(u=>u.email===USER.email);
-  if (USER.role !== 'admin' && _renzoUser?.featureFlags?.renzoEnabled === false) return null;
-  const btn = renzoButton('Renzo', size || 'sm');
-  btn.title = 'Generate personalized outreach with Renzo AI';
-  const labelSpan = btn.querySelector('span');
-  btn.addEventListener('click', async function() {
-    const origLabel = labelSpan.textContent;
-    labelSpan.textContent = 'Generating...';
-    btn.disabled = true;
-    btn.style.opacity = '0.7';
-    try {
-      const msg = await generateRenzoOutreach(vendor, trigger || 'Check in on relationship');
-      labelSpan.textContent = origLabel;
-      btn.disabled = false;
-      btn.style.opacity = '';
-      showRenzoModal(vendor, msg);
-    } catch(err) {
-      labelSpan.textContent = origLabel;
-      btn.disabled = false;
-      btn.style.opacity = '';
-      toast('⚠ Renzo: ' + err.message, '#ef4444');
-    }
-  });
-  return btn;
-}
 
 function openEmailModal(vendor, opts) {
   openModal(body => {
@@ -4961,6 +4828,30 @@ function openAnalyticsPopup(title, vendors) {
   $('analytics-popup-wrap').style.display='flex';
 }
 function closeAnalyticsPopup() { $('analytics-popup-wrap').style.display='none'; }
+
+// Removes a vendor alias key from every store it lives in: in-memory S,
+// per-user localStorage settings, and the shared Drive config (pushed via the
+// proxy after a short delay). Extracted verbatim from the three unlink
+// handlers inside openDetail that each carried this exact block inline.
+function removeVendorAliasEverywhere(key){
+  if(S.vendorAliases) delete S.vendorAliases[key];
+  try {
+    const ls = JSON.parse(localStorage.getItem('vcs_user_settings_v2')||'{}');
+    if(ls.vendorAliases) delete ls.vendorAliases[key];
+    localStorage.setItem('vcs_user_settings_v2', JSON.stringify(ls));
+  } catch(e){}
+  try {
+    const cfg = JSON.parse(localStorage.getItem('vcs_config')||'{}');
+    if(cfg.vendorAliases) delete cfg.vendorAliases[key];
+    localStorage.setItem('vcs_config', JSON.stringify(cfg));
+    setTimeout(async()=>{
+      try{
+        await _safeguardGlobalSettingsBeforePush(cfg);
+        await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
+        body:JSON.stringify({action:'saveConfig',config:JSON.stringify(cfg)})}); }catch(e){}
+    },300);
+  } catch(e){}
+}
 
 // ─── Detail Panel ─────────────────────────────────────────────────────────────
 function openDetail(vendor, fromAnalytics, pushStack=true) {
@@ -5352,27 +5243,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
         linkBanner.appendChild(el('button',{class:'btn-xs btn-ghost',style:{color:'var(--muted)',fontSize:'8px'},
           onclick(){
             if(!confirm('Unlink "'+vendor.name+'" from "'+linkedName+'"?')) return;
-            // Remove alias
-            const key = normName(vendor.name);
-            if(S.vendorAliases) delete S.vendorAliases[key];
-            // Remove from localStorage
-            try {
-              const ls = JSON.parse(localStorage.getItem('vcs_user_settings_v2')||'{}');
-              if(ls.vendorAliases) delete ls.vendorAliases[key];
-              localStorage.setItem('vcs_user_settings_v2', JSON.stringify(ls));
-            } catch(e){}
-            // Remove from Drive config
-            try {
-              const cfg = JSON.parse(localStorage.getItem('vcs_config')||'{}');
-              if(cfg.vendorAliases) delete cfg.vendorAliases[key];
-              localStorage.setItem('vcs_config', JSON.stringify(cfg));
-              setTimeout(async()=>{
-                try{
-                  await _safeguardGlobalSettingsBeforePush(cfg);
-                  await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
-                  body:JSON.stringify({action:'saveConfig',config:JSON.stringify(cfg)})}); }catch(e){}
-              },300);
-            } catch(e){}
+            // Remove alias from S, localStorage, and Drive config
+            removeVendorAliasEverywhere(normName(vendor.name));
             // Clear vendorAliasOf on the PSD vendor
             const psd = S.vendors.find(v=>v.source==='psd'&&vendorNamesMatch(v.name,linkedName));
             if(psd){ psd.vendorAliasOf=''; markDirty(psd); }
@@ -5701,9 +5573,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
         daSec.appendChild(el('button', {class:'btn-xs btn-ghost', style:{color:'var(--muted)', fontSize:'8px', flexShrink:'0'},
           onclick() {
             if (!confirm('Remove Drive folder alias "' + _ownAliasTarget + '" from "' + vendor.name + '"?')) return;
-            if (S.vendorAliases) delete S.vendorAliases[_ownAliasKey];
-            try { const ls=JSON.parse(localStorage.getItem('vcs_user_settings_v2')||'{}'); if(ls.vendorAliases) delete ls.vendorAliases[_ownAliasKey]; localStorage.setItem('vcs_user_settings_v2',JSON.stringify(ls)); } catch(e){}
-            try { const cfg=JSON.parse(localStorage.getItem('vcs_config')||'{}'); if(cfg.vendorAliases) delete cfg.vendorAliases[_ownAliasKey]; localStorage.setItem('vcs_config',JSON.stringify(cfg)); setTimeout(async()=>{ try{ await _safeguardGlobalSettingsBeforePush(cfg); await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({action:'saveConfig',config:JSON.stringify(cfg)})}); }catch(e){} },300); } catch(e){}
+            removeVendorAliasEverywhere(_ownAliasKey);
             saveSessionState();
             toast('Drive folder alias removed');
             refreshDetailIfOpen(vendor);
@@ -5756,23 +5626,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
             title:'Remove this alias link',
             onclick(){
               if(!confirm('Unlink "'+name+'" from this vendor record?')) return;
-              if(S.vendorAliases) delete S.vendorAliases[key];
-              try {
-                const ls = JSON.parse(localStorage.getItem('vcs_user_settings_v2')||'{}');
-                if(ls.vendorAliases) delete ls.vendorAliases[key];
-                localStorage.setItem('vcs_user_settings_v2', JSON.stringify(ls));
-              } catch(e){}
-              try {
-                const cfg = JSON.parse(localStorage.getItem('vcs_config')||'{}');
-                if(cfg.vendorAliases) delete cfg.vendorAliases[key];
-                localStorage.setItem('vcs_config', JSON.stringify(cfg));
-                setTimeout(async()=>{
-                  try{
-                    await _safeguardGlobalSettingsBeforePush(cfg);
-                    await fetch(VCS_PROXY_URL,{method:'POST',headers:{'Content-Type':'text/plain'},
-                    body:JSON.stringify({action:'saveConfig',config:JSON.stringify(cfg)})}); }catch(e){}
-                },300);
-              } catch(e){}
+              removeVendorAliasEverywhere(key);
               logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),
                 vendor:vendor.name,action:'Unlinked alias "'+name+'"',note:'Alias removed from vendor record'});
               saveSessionState();
@@ -6677,17 +6531,6 @@ async function saveToSupabase(vendor) {
 // GAS config (saveUsersViaProxy, already called by every caller of this)
 // remains the primary persistence path — this is purely a secondary copy,
 // and never throws even if the table doesn't exist yet.
-async function savePermToSupabase(userEmail, perms) {
-  try {
-    if (!SB.ready()) return;
-    await SB.upsert('user_permissions', [{
-      email: userEmail, perms: JSON.stringify(perms||{}),
-      updated_at: new Date().toISOString(), updated_by: (USER&&USER.email)||'unknown'
-    }]);
-  } catch(e) {
-    console.warn('[CMS] Could not save perms to Supabase:', e.message);
-  }
-}
 
 async function seedSupabase() {
   if(!SB.ready()){toast('Supabase not configured','#ef4444');return;}
@@ -7544,102 +7387,6 @@ function debouncedSaveSessionToDrive() {
   _sessionDriveSaveTimer = setTimeout(()=>saveSessionToDrive(), 3000); // 3s debounce
 }
 
-function offerSessionRestore() {
-  const saved = loadSessionState();
-  if (!saved || !saved.dirtyVendors?.length) return false;
-  const savedTs = new Date(saved.ts);
-  const ageMin = Math.round((Date.now()-savedTs)/60000);
-  if (ageMin > 24*60) { clearSessionState(); return false; } // Don't restore sessions older than 24h
-
-  openModal(body=>{
-    body.appendChild(el('h3',{},'💾 Unsaved Session Found'));
-    body.appendChild(el('p',{style:{fontSize:'11px',color:'var(--text)',lineHeight:'1.6',marginBottom:'8px'}},'CMS found an unsaved session from '+ageMin+' minute'+(ageMin!==1?'s':'')+' ago. Would you like to restore your unsaved changes?'));
-    const details=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'4px',padding:'8px',marginBottom:'10px',fontSize:'10px'}});
-    details.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'3px'}},'Session details:'));
-    details.appendChild(el('div',{},'File: '+(saved.fileName||'—')));
-    details.appendChild(el('div',{},(()=>{const _vd=saved.dirtyVendors?.length||0;const _rd=saved.dirtyReviews?.length||0;const _parts=[];if(_vd)_parts.push(_vd+' vendor record'+(_vd!==1?'s':''));if(_rd)_parts.push(_rd+' review note'+(_rd!==1?'s':''));return(_parts.join(', ')||'0 items')+' with unsaved changes';})()));
-    details.appendChild(el('div',{},(saved.history||[]).length+' history entries'));
-    details.appendChild(el('div',{},'Saved: '+savedTs.toLocaleString()));
-    body.appendChild(details);
-    const btns=el('div',{class:'modal-btns'});
-    btns.appendChild(el('button',{class:'btn-primary',onclick(){
-      // Restore dirty vendor fields — match by name first, fall back to _row
-      for (const saved_v of saved.dirtyVendors) {
-        let live = S.vendors.find(v=>v.name===saved_v.name);
-        if (!live && saved_v.fields?._row != null) {
-          live = S.vendors.find(v=>v._row===saved_v.fields._row);
-        }
-        if (!live) {
-          // Vendor may be new (added this session) — add it back
-          if (saved_v.fields && saved_v.fields.name) {
-            const newV = {...saved_v.fields};
-            newV._dirty = true;
-            if (newV.expiry && typeof newV.expiry === 'string' && newV.expiry.match(/^\d{4}-\d{2}-\d{2}T/)) newV.expiry = new Date(newV.expiry);
-            newV.score = calcScore(newV); newV.tier = getActionTier(newV);
-            S.vendors.push(newV);
-            S.dirty.add(newV.name);
-          }
-          continue;
-        }
-        const oldName = live.name;
-        for (const [k,val] of Object.entries(saved_v.fields)) {
-          if (k.startsWith('_')) continue;
-          if (typeof val==='string'&&val.match(/^\d{4}-\d{2}-\d{2}T/)) live[k]=new Date(val);
-          else live[k]=val;
-        }
-        live.score=calcScore(live); live.tier=getActionTier(live);
-        // If name changed, update dirty tracking to new name
-        S.dirty.delete(oldName);
-        S.dirty.add(live.name);
-        live._dirty=true;
-      }
-      // Restore dirty review notes
-      if (saved.dirtyReviews) {
-        if (!S.dirtyReviews) S.dirtyReviews = new Set();
-        for (const sr of saved.dirtyReviews) {
-          const live = S.reviews.find(r=>r._row===sr._row || r.name===sr.name);
-          if (!live) continue;
-          if (sr.progressNotes !== undefined) live.progressNotes = sr.progressNotes;
-          if (sr.sfNotes !== undefined) live.sfNotes = sr.sfNotes;
-          if (sr.contractNotes !== undefined) live.contractNotes = sr.contractNotes;
-          live._dirty = true;
-          S.dirtyReviews.add(live._row);
-        }
-      }
-      // Restore dirty ITW records
-      if (saved.dirtyITW) {
-        if (!S.dirtyITW) S.dirtyITW = new Set();
-        for (const si of saved.dirtyITW) {
-          const live = S.itw.find(v=>v._row===si._row || v.name===si.name);
-          if (!live) continue;
-          if (si.notes !== undefined) live.notes = si.notes;
-          live._dirty = true;
-          S.dirtyITW.add(live._row);
-        }
-      }
-      if (saved.history) S.history=[...saved.history];
-      if (saved.calEvents) S.calEvents={...saved.calEvents};
-      if (saved.snoozed) Object.entries(saved.snoozed).forEach(([k,v])=>{S.snoozed[k]=new Date(v);});
-      if (saved.dismissed) saved.dismissed.forEach(n=>S.dismissed.add(n));
-      if (saved.vendorAliases && typeof saved.vendorAliases === 'object') {
-      if (!S.vendorAliases) S.vendorAliases = {};
-      Object.assign(S.vendorAliases, saved.vendorAliases);
-    }
-      // Re-save session so dirty state persists through further page loads
-      saveSessionState();
-      closeModal(); render(); updateSidebar();
-      toast((()=>{const _vd=S.dirty?.size||0;const _rd=S.dirtyReviews?.size||0;const _id=S.dirtyITW?.size||0;const _parts=[];if(_vd)_parts.push(_vd+' vendor'+(_vd!==1?'s':''));if(_rd)_parts.push(_rd+' review note'+(_rd!==1?'s':''));if(_id)_parts.push(_id+' ITW change'+(_id!==1?'s':''));return'✓ Session restored — '+(_parts.join(', ')||'changes')+' reapplied. Save to persist.';})());
-    }},'✅ Restore Session'));
-    btns.appendChild(el('button',{class:'btn-secondary',onclick(){
-      if(confirm('Discard all unsaved changes from this session and start fresh?')) {
-        clearSessionState(); closeModal();
-        toast('Session cleared — starting fresh.');
-      }
-    }},'🗑 Discard & Start Fresh'));
-    body.appendChild(btns);
-  });
-  return true;
-}
 
 // Auto-save every 60 seconds while working
 let _autoSaveInterval = null;
@@ -8058,17 +7805,6 @@ function canEdit(key){
   return true;
 }
 
-// Migration: convert any legacy hiddenFields entries into 'vendor.<field>' perms
-// entries (additive — hiddenFields itself keeps being read by its ~21 existing
-// enforcement sites; this just makes the new keyspace aware of them too).
-function migrateHiddenFieldsToPerms(userObj){
-  if(!userObj||!Array.isArray(userObj.hiddenFields)||!userObj.hiddenFields.length) return;
-  if(!userObj.perms) userObj.perms={};
-  userObj.hiddenFields.forEach(function(fieldKey){
-    const permKey='vendor.'+fieldKey;
-    if(userObj.perms[permKey]===undefined) userObj.perms[permKey]={v:false,e:false};
-  });
-}
 
 // ─── S46: Field Visibility — section-level View/Edit ────────────────────────
 // Hoisted to module level (was previously declared twice, once inside each
@@ -8100,12 +7836,6 @@ function migrateFieldGroupPerms(user){
     result[groupName]={view:!allHidden,edit:!allHidden&&roleEditDefault};
   });
   return result;
-}
-function fieldGroupOf(fieldKey){
-  for(const entry of Object.entries(FIELD_GROUPS)){
-    if(entry[1].includes(fieldKey)) return entry[0];
-  }
-  return null;
 }
 function canViewField(fieldKey){
   // S47: reverted to individual per-field visibility (hiddenFields) — the
@@ -8478,27 +8208,7 @@ async function loadConfigFromDrive() {
       } else {
         // Old config — keep Drive users but add new directory users not already present
         const existing = new Set(config.users.map(u => u.email.toLowerCase()));
-        const FRESH_DIRECTORY = [
-          {email:'dgenuth@primesourcex.com',name:'David Genuth',role:'admin'},
-          {email:'dgenuthps@gmail.com',name:'David Genuth',role:'admin'},
-          {email:'jmanguray@primesourcex.com',name:'Jane Manguray',role:'procurement'},
-          {email:'mgenuth@primesourcex.com',name:'Mark Genuth',role:'procurement'},
-          {email:'mdelora@primesourcex.com',name:'Monica DeLora',role:'procurement'},
-          {email:'aschwartz@primesourcex.com',name:'Abraham Ushy Schwartz',role:'cro'},
-          {email:'nkornfeld@primesourcex.com',name:'Nathalie Kornfeld',role:'director_ops'},
-          {email:'hkabbabe@primesourcex.com',name:'Hammurabi Rabi Kabbabe',role:'ops_qc'},
-          {email:'ewiesel@primesourcex.com',name:'Elliot Wiesel',role:'finance_sr'},
-          {email:'aalmeida@primesourcex.com',name:'Amanda Almeida',role:'finance_sr'},
-          {email:'vbadenhorst@primesourcex.com',name:'Varuscjcka Badenhorst',role:'finance_jr'},
-          {email:'bflekel@primesourcex.com',name:'Ben Flekel',role:'sales_rep'},
-          {email:'swithers@primesourcex.com',name:'Shane Withers',role:'sales_rep'},
-          {email:'erock@primesourcex.com',name:'Eitan Rock',role:'sales_rep'},
-          {email:'agenuth@primesourcex.com',name:'Abe Genuth',role:'ssa'},
-          {email:'bmparagas@primesourcex.com',name:'Bridget Monica Paragas',role:'ssa'},
-          {email:'eaugustin@primesourcex.com',name:'Emer Jean Agustin',role:'ssa'},
-          {email:'kgepiga@primesourcex.com',name:'Kyle Opel Gepiga',role:'ssa'},
-          {email:'rkabuya@primesourcex.com',name:'Rob Kabuya',role:'ssa'},
-        ].map(u=>({...u,added:new Date().toISOString(),addedBy:'system',password:'',hiddenFields:getDefaultHiddenFields(u.role)}));
+        const FRESH_DIRECTORY = buildEmployeeDirectorySeed();
         const merged = [...config.users];
         FRESH_DIRECTORY.forEach(d => {
           if (!existing.has(d.email.toLowerCase())) merged.push(d);
@@ -10414,7 +10124,6 @@ function startSFTokenMonitor(){
     }catch(e){}
   },30000);
 }
-function stopSFTokenMonitor(){ if(_sfTokenMonitor){clearInterval(_sfTokenMonitor);_sfTokenMonitor=null;} }
 async function _loadSFCard(container, vendor, card) {
   card._loaded=true;
   container.innerHTML='';
@@ -11031,199 +10740,11 @@ function openAddRelationshipModal(vendor) {
 }
 
 // ─── Unified Notes Timeline ────────────────────────────────────────────────────
-// Merges PSD contract notes, ITW pipeline notes, and Review notes into one
-// sorted, collapsible timeline. All sources visible in one place.
-// ─── Contracts Drawer Section (in vendor detail panel) ───────────────────────
-function addContractsDrawerSection(body, vendor) {
-  const records = loadContractRecords(vendor.name);
-  // Also scan Drive folder if connected
-  const sec = el('div',{class:'detail-section'});
-  const titleRow = el('div',{style:{display:'flex',alignItems:'center',gap:'6px',marginBottom:'6px'}});
-  titleRow.appendChild(el('h4',{class:'detail-sec-title',style:{margin:'0',flex:'1'}},'📄 Contracts'));
-  titleRow.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},records.length+' uploaded'));
-  // Upload shortcut
-  const uploadLink = el('button',{class:'btn-xs btn-ghost',onclick(){S.view='contracts';render();toast('Use the Contracts tab to upload for '+vendor.name,'#4f7cff');}}, '+ Upload');
-  titleRow.appendChild(uploadLink);
-  sec.appendChild(titleRow);
 
-  if(!records.length) {
-    const empty = el('div',{style:{fontSize:'10px',color:'var(--muted)',fontStyle:'italic',padding:'4px 0'}});
-    empty.textContent='No contracts uploaded yet.';
-    sec.appendChild(empty);
-    body.appendChild(sec); return;
-  }
-
-  // Grid of contract file cards
-  const grid = el('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:'6px'}});
-  records.forEach(r=>{
-    const card = el('div',{style:{
-      border:'1px solid var(--border)',borderRadius:'5px',padding:'8px 10px',
-      background:'var(--card)',cursor:'pointer',
-      transition:'border-color .15s',
-    }});
-    card.addEventListener('mouseenter',()=>card.style.borderColor='var(--blue)');
-    card.addEventListener('mouseleave',()=>card.style.borderColor='var(--border)');
-
-    // File icon based on type
-    const ext = (r.fileName||'').split('.').pop().toLowerCase();
-    const icon = ext==='pdf'?'📕':ext==='docx'||ext==='doc'?'📘':ext==='txt'?'📄':'📎';
-    const iconEl = el('div',{style:{fontSize:'22px',marginBottom:'5px',textAlign:'center'}},icon);
-    card.appendChild(iconEl);
-
-    const fname = el('div',{style:{fontSize:'9px',fontWeight:'600',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textAlign:'center',marginBottom:'3px'}},r.fileName||'Contract');
-    card.appendChild(fname);
-
-    const meta = el('div',{style:{fontSize:'8px',color:'var(--muted)',textAlign:'center',lineHeight:'1.4'}});
-    if(r.uploadDate) meta.appendChild(el('div',{},r.uploadDate));
-    if(r.confidence) {
-      const confColor = r.confidence==='HIGH'?'var(--green)':r.confidence==='MEDIUM'?'var(--amber)':'var(--red)';
-      meta.appendChild(el('div',{style:{color:confColor}},r.confidence+' CONFIDENCE'));
-    }
-    card.appendChild(meta);
-
-    // Action row
-    const actions = el('div',{style:{display:'flex',gap:'4px',marginTop:'6px',justifyContent:'center'}});
-    if(r.driveLink) {
-      const viewBtn = el('a',{href:r.driveLink,target:'_blank',class:'btn-xs btn-blue',style:{textDecoration:'none',fontSize:'8px'},onclick(e){e.stopPropagation();}},'☁ Open');
-      actions.appendChild(viewBtn);
-    }
-    const detailBtn = el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'},onclick(e){e.stopPropagation();openContractDetailModal(r,vendor);}}, '🔍 Details');
-    actions.appendChild(detailBtn);
-    card.appendChild(actions);
-
-    // Double-click opens in Drive
-    card.addEventListener('dblclick',()=>{if(r.driveLink)window.open(r.driveLink,'_blank');});
-    card.title = r.driveLink?'Double-click to open in Google Drive':'No Drive link — upload again with Drive connected';
-    grid.appendChild(card);
-  });
-  sec.appendChild(grid);
-
-  // Drive folder link
-  if(GDriveToken) {
-    const driveRow = el('div',{style:{marginTop:'6px',fontSize:'9px',color:'var(--muted)'}});
-    driveRow.appendChild(el('span',{},'Stored in: '));
-    const driveLink = el('a',{
-      href:'https://drive.google.com/drive/search?q='+encodeURIComponent('VCS Contracts '+vendor.name),
-      target:'_blank',style:{color:'var(--blue)',textDecoration:'none',fontSize:'9px'}
-    },'VCS Contracts / '+vendor.name+' ↗');
-    driveRow.appendChild(driveLink);
-    sec.appendChild(driveRow);
-  }
-
-  body.appendChild(sec);
-}
-
-function openContractDetailModal(record, vendor) {
-  openModal(body=>{
-    const ex = record.extractedData||{};
-    body.appendChild(el('h3',{style:{marginTop:'0',marginBottom:'4px'}},'📄 '+record.fileName));
-    body.appendChild(el('p',{style:{fontSize:'9px',color:'var(--muted)',marginBottom:'8px'}},'Uploaded '+record.uploadDate+(record.driveLink?' · ':'')+(record.driveLink?'[Drive]':'')));
-
-    const rows=[
-      ['Agreement Type',ex.agreementType],['Contract #',ex.contractNumber],
-      ['Effective',ex.effectiveDate],['Expiry',ex.expirationDate],
-      ['Admin Fee',ex.adminFee?.percentage?(ex.adminFee.percentage+'% — '+ex.adminFee.basis):''],
-      ['Auto-Renewal',ex.autoRenewal],['Term',ex.contractTermMonths?ex.contractTermMonths+'mo':(ex.contractTermYears?ex.contractTermYears+'yr':'')],
-      ['Termination',ex.terminationNotice||ex.terminationNoticeDays?String(ex.terminationNoticeDays)+'d':''],
-      ['Markets',ex.markets],['Classes of Trade',ex.classesOfTrade],
-      ['Products',ex.products],['Notes',ex.notes],
-    ];
-    const grid2=el('div',{class:'detail-grid',style:{marginBottom:'8px'}});
-    rows.forEach(([l,v])=>{if(v){grid2.appendChild(el('span',{class:'detail-label'},l));grid2.appendChild(el('span',{class:'detail-value'},String(v)));}});
-    body.appendChild(grid2);
-
-    if(record.driveLink){
-      const linkRow=el('div',{style:{marginBottom:'8px'}});
-      const a=el('a',{href:record.driveLink,target:'_blank',class:'btn-primary',style:{display:'inline-flex',alignItems:'center',gap:'4px',textDecoration:'none',fontSize:'10px'}});
-      a.textContent='☁ Open in Google Drive';
-      linkRow.appendChild(a);
-      body.appendChild(linkRow);
-    }
-    const btns=el('div',{class:'modal-btns'});
-    btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Close'));
-    body.appendChild(btns);
-  });
-}
 
 // ─── Review Notes Section ─────────────────────────────────────────────────────
 // Shown in vendor detail panel when a review record is linked or matched.
 // Keeps the three review categories distinct and each independently editable.
-function addReviewNotesSection(body, reviewRecord, vendor) {
-  const sec=el('div',{class:'detail-section'});
-  const hdr=el('div',{class:'detail-sec-hdr'});
-  const totalReviewNotes = [reviewRecord.progressNotes, reviewRecord.sfNotes, reviewRecord.contractNotes].filter(Boolean).length;
-  hdr.appendChild(el('h4',{class:'detail-sec-title',style:{marginBottom:'0'}}, '🔍 Review Notes'+(totalReviewNotes?' ('+totalReviewNotes+' section'+( totalReviewNotes!==1?'s':'')+')'   :'')));
-  sec.appendChild(hdr);
-
-  const REVIEW_SUBSECTIONS = [
-    {key:'progressNotes', label:'📋 Progress Notes', color:'#a855f7'},
-    {key:'sfNotes', label:'☁ SF / Meeting Notes', color:'#3b82f6'},
-    {key:'contractNotes', label:'📄 Contract Notes', color:'#f59e0b'},
-  ];
-
-  let hasAny = false;
-  REVIEW_SUBSECTIONS.forEach(({key, label, color})=>{
-    const text = reviewRecord[key];
-
-    const subSec=el('div',{style:{marginTop:'4px',border:'1px solid var(--border)',borderLeft:'3px solid '+color,borderRadius:'4px',overflow:'hidden'}});
-    const subHdr=el('div',{style:{display:'flex',gap:'6px',alignItems:'center',padding:'5px 8px',background:'var(--card)',cursor:'pointer',userSelect:'none'}});
-    subHdr.appendChild(el('span',{style:{fontSize:'10px',fontWeight:'600',color,flex:'1'}},label));
-
-    const countBadge = text ? el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'has notes') : el('span',{style:{fontSize:'9px',color:'var(--muted)',fontStyle:'italic'}},'empty');
-    subHdr.appendChild(countBadge);
-
-    if(hasPermission('editNotes')){
-      const editBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick(e){
-        e.stopPropagation();
-        openModal(body2=>{
-          body2.appendChild(el('h3',{style:{marginTop:'0'}},label+' — '+reviewRecord.name));
-          const toolbar=el('div',{class:'note-toolbar',style:{marginBottom:'5px'}});
-          const ta=el('textarea',{class:'modal-textarea notes-editor',style:{height:'200px'}});
-          ta.value=String(text||'');
-          const applyWrap=(pre,suf)=>{const s=ta.selectionStart,e2=ta.selectionEnd,sel=ta.value.slice(s,e2);if(!sel)return;ta.setRangeText(sel.startsWith(pre)?sel.slice(pre.length,-suf.length):pre+sel+suf,s,e2,'select');ta.focus();};
-          [['B',()=>applyWrap('**','**')],['I',()=>applyWrap('_','_')],['U',()=>applyWrap('[u]','[/u]')],['🔴',()=>applyWrap('[red]','[/red]')],['🟢',()=>applyWrap('[green]','[/green]')],['🟡',()=>applyWrap('[amber]','[/amber]')],['🔵',()=>applyWrap('[blue]','[/blue]')],['📅',()=>{ta.setRangeText(isoDate(new Date())+': ',ta.selectionStart,ta.selectionEnd,'end');}]].forEach(([lbl,fn])=>toolbar.appendChild(el('button',{class:'note-tb-btn',onclick:fn},lbl)));
-          body2.appendChild(toolbar); body2.appendChild(ta);
-          const btns2=el('div',{class:'modal-btns',style:{marginTop:'8px'}});
-          btns2.appendChild(el('button',{class:'btn-primary',onclick(){
-            reviewRecord[key]=ta.value;reviewRecord._dirty=true;
-            if(!S.dirtyReviews)S.dirtyReviews=new Set();S.dirtyReviews.add(reviewRecord._row);
-            logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:reviewRecord.name,action:'Updated '+label});
-            saveSessionState();updateSidebar();refreshDetailIfOpen(vendor||{name:reviewRecord.name});render();closeModal();toast('✓ Saved');
-          }},'Save'));
-          btns2.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
-          body2.appendChild(btns2);
-          setTimeout(()=>ta.focus(),50);
-        });
-      }},'Edit');
-      subHdr.appendChild(editBtn);
-    }
-
-    const chevron=el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'▶');
-    subHdr.appendChild(chevron);
-
-    const subBody=el('div',{style:{padding:'7px 10px',background:'var(--bg)',display:'none'}});
-    if(text){
-      const nd=el('div',{class:'notes-area',style:{fontSize:'10px',lineHeight:'1.6'}});
-      renderNotesStr(nd, text); subBody.appendChild(nd);
-      hasAny=true;
-      countBadge.textContent='';
-    } else {
-      subBody.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',fontStyle:'italic',margin:'0'}},'No notes yet — click Edit to add.'));
-    }
-
-    subHdr.onclick=(e)=>{
-      if(e.target.tagName==='BUTTON') return; // don't toggle on edit button click
-      const open=subBody.style.display!=='none';
-      subBody.style.display=open?'none':'block';
-      chevron.textContent=open?'▶':'▼';
-    };
-
-    subSec.appendChild(subHdr); subSec.appendChild(subBody);
-    sec.appendChild(subSec);
-  });
-
-  body.appendChild(sec);
-}
 
 function buildNoteSubsection(label, entries, vendor, isArchivedView) {
   const wrap = el('div',{style:{marginBottom:'6px',border:'1px solid var(--border)',borderRadius:'3px',overflow:'hidden'}});
@@ -11541,175 +11062,6 @@ function addUnifiedNotesSection(body, vendor, itwVendor, reviewRecord) {
   sec.appendChild(notesSec);
 }
 
-function addNotesSection(body, vendor, title) {
-  const sec=el('div',{class:'detail-section'});
-  const hdr=el('div',{class:'detail-sec-hdr'});
-  hdr.appendChild(el('h4',{class:'detail-sec-title',style:{marginBottom:'0'}},title||'📝 Notes'));
-  if (hasPermission('editNotes')) {
-    const btnGrp=el('div',{style:{display:'flex',gap:'3px'}});
-    btnGrp.appendChild(el('button',{class:'btn-xs btn-green',onclick(){openStructuredNoteModal(vendor);}},'+ Add'));
-    btnGrp.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){openEditNotesModal(vendor);}},'Edit Raw'));
-    hdr.appendChild(btnGrp);
-  }
-  sec.appendChild(hdr);
-
-  // V1: render from _notesLog (structured) as primary source; legacy text notes at bottom
-  const logEntries=(vendor._notesLog||[]).map(n=>({
-    date:n.date||n.ts?.slice(0,10)||'',
-    tag:n.type||'general',
-    author:n.user?n.user.split('@')[0]:'',
-    content:n.text||''
-  }));
-
-  // Also parse legacy text notes — ones not already in _notesLog (by first-line match)
-  const logTexts=new Set(logEntries.map(e=>e.content.slice(0,40)));
-  const textEntries=parseNoteEntries(vendor.notes).filter(e=>!logTexts.has(e.content.slice(0,40)));
-
-  const allEntries=logEntries.length?logEntries:textEntries;
-  const hasLegacy=logEntries.length>0&&textEntries.length>0;
-
-  if(!allEntries.length&&!hasLegacy){
-    sec.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',padding:'6px 0',fontStyle:'italic'}},'No notes yet. Click + Add to start tracking activity.'));
-    body.appendChild(sec); return;
-  }
-
-  // Filter chips — unique tags/types
-  const uniqueTags=[...new Set(allEntries.map(e=>e.tag).filter(Boolean))];
-  let activeFilter='all';
-  const filterRow=el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginTop:'6px',marginBottom:'4px'}});
-  const list=el('div',{style:{marginTop:'4px',display:'flex',flexDirection:'column',gap:'4px'}});
-
-  const applyFilter=(tag)=>{
-    activeFilter=tag;
-    [...filterRow.querySelectorAll('button')].forEach(b=>{
-      const isActive=b.dataset.tag===activeFilter;
-      b.style.background=isActive?'var(--blue)':'var(--card)';
-      b.style.color=isActive?'#fff':'var(--muted)';
-      b.style.borderColor=isActive?'var(--blue)':'var(--border)';
-    });
-    [...list.querySelectorAll('.note-card')].forEach(c=>{
-      const ct=c.dataset.tag||'';
-      c.style.display=(activeFilter==='all'||ct===activeFilter)?'':'none';
-    });
-  };
-
-  if(uniqueTags.length>1){
-    const allBtn=el('button',{dataset:{tag:'all'},style:{fontSize:'8px',padding:'2px 7px',borderRadius:'3px',cursor:'pointer',border:'1px solid var(--blue)',background:'var(--blue)',color:'#fff'},onclick(){applyFilter('all');}},'All ('+allEntries.length+')');
-    filterRow.appendChild(allBtn);
-    uniqueTags.forEach(tag=>{
-      const count=allEntries.filter(e=>e.tag===tag).length;
-      const col=NOTE_TAG_COLORS[tag]||'#94a3b8';
-      const btn=el('button',{dataset:{tag},style:{fontSize:'8px',padding:'2px 7px',borderRadius:'3px',cursor:'pointer',border:'1px solid var(--border)',background:'var(--card)',color:'var(--muted)'},onclick(){applyFilter(tag);}},tag.toUpperCase()+' ('+count+')');
-      filterRow.appendChild(btn);
-    });
-    sec.appendChild(filterRow);
-  }
-
-  const _buildNoteCard=(entry,idx,editCtx)=>{
-    const isFirst=idx===0;
-    const tag=entry.tag||'';
-    const card=el('div',{class:'note-card',dataset:{tag},style:{
-      border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden',
-      borderLeft:'3px solid '+(tag?NOTE_TAG_COLORS[tag]||'var(--border)':'var(--border)'),
-    }});
-    const entryHdr=el('div',{style:{
-      display:'flex',gap:'6px',alignItems:'center',padding:'5px 8px',
-      background:isFirst?'rgba(34,197,94,.04)':'var(--sb)',cursor:'pointer',userSelect:'none',
-    }});
-    entryHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)',minWidth:'70px'}},entry.date||'(no date)'));
-    if(tag){entryHdr.appendChild(el('span',{style:{fontSize:'8px',fontWeight:'700',padding:'1px 5px',borderRadius:'3px',background:(NOTE_TAG_COLORS[tag]||'#94a3b8')+'22',color:NOTE_TAG_COLORS[tag]||'#94a3b8'}},tag.toUpperCase()));}
-    if(entry.author){entryHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},entry.author));}
-    const previewText=entry.content.split('\n')[0].slice(0,80)+(entry.content.length>80||entry.content.includes('\n')?'...':'');
-    entryHdr.appendChild(el('span',{style:{fontSize:'10px',flex:'1',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text)'}},previewText));
-    const chevron=el('span',{style:{fontSize:'9px',color:'var(--muted)',flexShrink:'0'}},isFirst?'▼':'▶');
-    entryHdr.appendChild(chevron);
-    const entryBody=el('div',{style:{padding:'6px 10px',background:'var(--bg)',display:isFirst?'block':'none'}});
-    const nd=el('div',{class:'notes-area',style:{fontSize:'10px',lineHeight:'1.6'}});
-    renderNotesStr(nd,entry.content);
-    entryBody.appendChild(nd);
-    // A6: inline edit button — edit this note entry in-place
-    if(hasPermission('editNotes')&&editCtx){
-      const editActRow=el('div',{style:{display:'flex',gap:'4px',marginTop:'5px'}});
-      const editBtn=el('button',{class:'btn-xs btn-ghost',style:{fontSize:'8px'}});
-      editBtn.textContent='✏ Edit';
-      editBtn.onclick=(e)=>{
-        e.stopPropagation();
-        // Toggle inline editor
-        const existing=entryBody.querySelector('.note-inline-editor');
-        if(existing){existing.remove();editBtn.textContent='✏ Edit';return;}
-        editBtn.textContent='✕ Cancel';
-        const editor=el('div',{class:'note-inline-editor',style:{marginTop:'6px',borderTop:'1px solid var(--border)',paddingTop:'6px'}});
-        const ta=el('textarea',{rows:'4',style:{width:'100%',fontSize:'10px',padding:'4px 6px',border:'1px solid var(--border)',borderRadius:'3px',background:'var(--bg)',color:'var(--text)',resize:'vertical',boxSizing:'border-box'}});
-        ta.value=entry.content;
-        editor.appendChild(ta);
-        const saveBtnEl=el('button',{class:'btn-xs btn-primary',style:{marginTop:'4px',fontSize:'8px'}});
-        saveBtnEl.textContent='💾 Save';
-        saveBtnEl.onclick=(e2)=>{
-          e2.stopPropagation();
-          const newContent=ta.value.trim();
-          if(!newContent){toast('Note cannot be empty','#f59e0b');return;}
-          // Rebuild the notes string for this vendor/key
-          const src=editCtx.vendor;
-          const key=editCtx.key;
-          const rawNotes=src[key]||'';
-          const parts=rawNotes.split(/\n---\n/).map(p=>p.trim()).filter(Boolean);
-          if(parts[idx]!==undefined){
-            // Reconstruct header from entry metadata
-            const header=(entry.date||'')+((entry.tag)?' ['+entry.tag+']':'')+(entry.author?' '+entry.author+':':'');
-            parts[idx]=(header?header+' ':'')+newContent;
-            src[key]=parts.join('\n---\n');
-          } else {
-            src[key]=rawNotes+(rawNotes?'\n---\n':'')+newContent;
-          }
-          markDirty(src);
-          editor.remove();editBtn.textContent='✏ Edit';
-          nd.innerHTML='';renderNotesStr(nd,newContent);
-          toast('✓ Note updated');
-        };
-        editor.appendChild(saveBtnEl);
-        entryBody.appendChild(editor);
-      };
-      editActRow.appendChild(editBtn);
-      entryBody.appendChild(editActRow);
-    }
-    entryHdr.onclick=()=>{const open=entryBody.style.display!=='none';entryBody.style.display=open?'none':'block';chevron.textContent=open?'▶':'▼';};
-    card.appendChild(entryHdr);card.appendChild(entryBody);
-    return card;
-  };
-
-  const _noteEditCtx=logEntries.length?null:{vendor,key:'notes'};
-  allEntries.forEach((entry,idx)=>list.appendChild(_buildNoteCard(entry,idx,_noteEditCtx)));
-
-  if(allEntries.length>3){
-    const showBtn=el('button',{class:'btn-xs btn-ghost',style:{width:'100%',marginTop:'2px',fontSize:'9px'},onclick(){
-      const allCards=[...list.querySelectorAll('.note-card')];
-      const hidden=allCards.slice(3);
-      const anyHidden=hidden[0]?.style.display==='none';
-      hidden.forEach(c=>c.style.display=anyHidden?'':'none');
-      showBtn.textContent=anyHidden?'▲ Show less':'▼ Show '+(allEntries.length-3)+' older entries';
-    }},'▼ Show '+(allEntries.length-3)+' older entries');
-    [...list.querySelectorAll('.note-card')].slice(3).forEach(c=>c.style.display='none');
-    list.appendChild(showBtn);
-  }
-
-  sec.appendChild(list);
-
-  // V1: Legacy text notes at bottom (collapsible) if any weren't captured in _notesLog
-  if(hasLegacy){
-    const legWrap=el('div',{style:{marginTop:'8px',border:'1px solid var(--border)',borderRadius:'4px',overflow:'hidden'}});
-    const legHdr=el('div',{style:{padding:'4px 8px',background:'var(--sb)',cursor:'pointer',fontSize:'9px',color:'var(--muted)',display:'flex',gap:'6px',alignItems:'center'},
-      onclick(){const b=legWrap.querySelector('.leg-body');const open=b.style.display!=='none';b.style.display=open?'none':'';legHdr.querySelector('span').textContent=open?'▶':'▼';}});
-    legHdr.appendChild(el('span',{},'▶'));
-    legHdr.appendChild(el('span',{style:{flex:'1'}},'Legacy Notes ('+textEntries.length+' entries — pre-structured format)'));
-    legWrap.appendChild(legHdr);
-    const legBody=el('div',{class:'leg-body',style:{display:'none',padding:'6px 8px'}});
-    textEntries.forEach((entry,idx)=>legBody.appendChild(_buildNoteCard(entry,idx,{vendor,key:'notes'})));
-    legWrap.appendChild(legBody);
-    sec.appendChild(legWrap);
-  }
-
-  body.appendChild(sec);
-}
 
 // Structured note add modal — tag picker + content + optional follow-up
 function openStructuredNoteModal(vendor) {
@@ -14362,16 +13714,6 @@ function getSFContext(vendorName) {
   return Object.keys(result).length?result:null;
 }
 
-function renderSFMini(vendorName) {
-  // Returns a compact SF badge row element (or null if no data)
-  const ctx=getSFContext(vendorName);
-  if(!ctx) return null;
-  const row=el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap',marginTop:'2px'}});
-  if(ctx.spend) row.appendChild(el('span',{style:{fontSize:'8px',color:'var(--blue)',background:'rgba(79,124,255,.1)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'3px',padding:'0 4px'}},'💰 $'+Math.round(ctx.spend).toLocaleString()+' YTD'));
-  if(ctx.openOpps) row.appendChild(el('span',{style:{fontSize:'8px',color:'var(--green)',background:'rgba(34,197,94,.08)',border:'1px solid rgba(34,197,94,.2)',borderRadius:'3px',padding:'0 4px'}},'💼 '+ctx.openOpps+' opp'+(ctx.openOpps!==1?'s':'')));
-  if(ctx.openCases) row.appendChild(el('span',{style:{fontSize:'8px',color:ctx.highCases?'var(--red)':'var(--amber)',background:ctx.highCases?'rgba(239,68,68,.08)':'rgba(245,158,11,.08)',border:'1px solid '+(ctx.highCases?'rgba(239,68,68,.2)':'rgba(245,158,11,.2)'),borderRadius:'3px',padding:'0 4px'}},'🎫 '+ctx.openCases+' case'+(ctx.openCases!==1?'s':'')));
-  return row.children.length?row:null;
-}
 
 // ─── Salesforce Dashboard Board ───────────────────────────────────────────────
 function renderSFBoard(c) {
@@ -15735,179 +15077,7 @@ const CONTRACT_FIELD_MAP = [
 ];
 
 
-function openApplyContractModal(vendor, extracted, onApplied) {
-  // Show ALL CONTRACT_FIELD_MAP fields, not just extracted ones
-  const allFields = CONTRACT_FIELD_MAP.map(def=>({
-    ...def,
-    newVal: def.extract(extracted),
-    oldVal: vendor[def.field] || null,
-  }));
-  // Fields with extracted values come first, then empty fields
-  const fields = [...allFields.filter(f=>f.newVal), ...allFields.filter(f=>!f.newVal)];
 
-  const hasConflicts = fields.some(f=>f.oldVal && f.newVal && f.oldVal !== f.newVal);
-  const fieldSelections = {}; // field → 'new'|'keep'|'skip'
-  const editedValues = {}; // user-edited values override extracted
-  fields.forEach(f=>{
-    fieldSelections[f.field] = f.newVal ? (f.oldVal&&f.oldVal!==f.newVal?'new':'new') : 'keep';
-    editedValues[f.field] = f.newVal || '';
-  });
-
-  openModal(body=>{
-    body.appendChild(el('h3',{style:{marginTop:'0',marginBottom:'4px'}},'📄 Apply Contract Data — '+vendor.name));
-    body.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',marginBottom:'8px',lineHeight:'1.5'}},(hasConflicts?'⚠ Some fields have different values. Choose which to keep for each field.':'All fields are new or unchanged. Click Apply to fill empty fields.')));
-
-    // ── Discrepancy questions at the top ──
-  if(extracted.discrepancies?.length){
-    const discWrap=el('div',{style:{background:'rgba(245,158,11,.06)',border:'1px solid rgba(245,158,11,.3)',borderRadius:'5px',padding:'10px 12px',marginBottom:'12px'}});
-    discWrap.appendChild(el('div',{style:{fontWeight:'700',fontSize:'11px',color:'var(--amber)',marginBottom:'6px'}},'⚠ '+extracted.discrepancies.length+' Discrepancy'+(extracted.discrepancies.length!==1?'ies':'')+' Found — Choose Which Value to Use'));
-    extracted.discrepancies.forEach((d,di)=>{
-      const row=el('div',{style:{background:'rgba(0,0,0,.12)',borderRadius:'3px',padding:'8px 10px',marginBottom:'6px',fontSize:'10px',border:'1px solid rgba(245,158,11,.2)'}});
-      row.appendChild(el('div',{style:{fontWeight:'600',marginBottom:'5px',color:'var(--amber)'}},d.field+': '+d.question));
-      const optRow=el('div',{style:{display:'flex',gap:'8px',flexWrap:'wrap',alignItems:'center'}});
-      // Option A
-      const lblA=el('label',{style:{display:'flex',gap:'5px',alignItems:'center',cursor:'pointer',padding:'3px 8px',borderRadius:'4px',border:'1px solid rgba(255,255,255,.1)',flex:'1',minWidth:'120px'}});
-      const radioA=el('input',{type:'radio',name:'disc_'+di,value:'a'});
-      radioA.checked=true; // default to A
-      radioA.addEventListener('change',()=>{
-        // Update extracted data with chosen value
-        extracted[d.field]=d.valueA;
-        // Update editedValues if this field is in our field map
-        const matchedField=fields.find(f=>f.label.toLowerCase().includes(d.field.toLowerCase())||f.field.toLowerCase().includes(d.field.toLowerCase().replace(/[^a-z]/g,'')));
-        if(matchedField){editedValues[matchedField.field]=d.valueA||'';fieldSelections[matchedField.field]='new';}
-      });
-      lblA.appendChild(radioA);
-      lblA.appendChild(el('span',{style:{fontSize:'9px'}},'📄 '+d.sourceA+': '));
-      lblA.appendChild(el('strong',{style:{color:'var(--text)'}},d.valueA||'—'));
-      optRow.appendChild(lblA);
-      // Option B
-      const lblB=el('label',{style:{display:'flex',gap:'5px',alignItems:'center',cursor:'pointer',padding:'3px 8px',borderRadius:'4px',border:'1px solid rgba(255,255,255,.1)',flex:'1',minWidth:'120px'}});
-      const radioB=el('input',{type:'radio',name:'disc_'+di,value:'b'});
-      radioB.addEventListener('change',()=>{
-        extracted[d.field]=d.valueB;
-        const matchedField=fields.find(f=>f.label.toLowerCase().includes(d.field.toLowerCase())||f.field.toLowerCase().includes(d.field.toLowerCase().replace(/[^a-z]/g,'')));
-        if(matchedField){editedValues[matchedField.field]=d.valueB||'';fieldSelections[matchedField.field]='new';}
-      });
-      lblB.appendChild(radioB);
-      lblB.appendChild(el('span',{style:{fontSize:'9px'}},'📄 '+d.sourceB+': '));
-      lblB.appendChild(el('strong',{style:{color:'var(--text)'}},d.valueB||'—'));
-      optRow.appendChild(lblB);
-      // Custom / skip option
-      const lblC=el('label',{style:{display:'flex',gap:'5px',alignItems:'center',cursor:'pointer',padding:'3px 8px',borderRadius:'4px',border:'1px solid rgba(255,255,255,.1)'}});
-      const radioC=el('input',{type:'radio',name:'disc_'+di,value:'skip'});
-      lblC.appendChild(radioC);
-      lblC.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},'Skip (keep existing)'));
-      optRow.appendChild(lblC);
-      row.appendChild(optRow);
-      discWrap.appendChild(row);
-    });
-    body.appendChild(discWrap);
-  }
-
-  const grid=el('div',{style:{display:'grid',gridTemplateColumns:'120px 1fr 1fr',gap:'0',marginBottom:'12px',border:'1px solid var(--border)',borderRadius:'5px',overflow:'hidden',fontSize:'10px'}});
-
-    // Header row
-    ['Field','Current Value','Extracted Value'].forEach((h,i)=>{
-      const hd=el('div',{style:{padding:'5px 8px',background:'var(--card)',borderBottom:'1px solid var(--border)',fontWeight:'700',fontSize:'9px',color:'var(--muted)',borderRight:i<2?'1px solid var(--border)':''}},h);
-      grid.appendChild(hd);
-    });
-
-    fields.forEach(f=>{
-      const hasConflict = f.oldVal && f.newVal && f.oldVal !== f.newVal;
-      const hasExtracted = !!f.newVal;
-      const bg = hasConflict ? 'rgba(245,158,11,.04)' : '';
-
-      // Field label
-      const labelCell=el('div',{style:{padding:'6px 8px',borderBottom:'1px solid var(--border)',borderRight:'1px solid var(--border)',background:bg,color:hasExtracted?'var(--text)':'var(--muted)',fontWeight:hasExtracted?'500':'400'}},f.label+(hasExtracted?'':' ✏'));
-      grid.appendChild(labelCell);
-
-      // Current value cell (what's already in VCS)
-      const oldCell=el('div',{style:{padding:'6px 8px',borderBottom:'1px solid var(--border)',borderRight:'1px solid var(--border)',background:bg,color:f.oldVal?'var(--text)':'var(--muted)',fontStyle:f.oldVal?'normal':'italic'}});
-      if(f.oldVal && hasExtracted){
-        const radio=el('input',{type:'radio',name:'field_'+f.field,value:'keep',style:{marginRight:'4px'}});
-        radio.checked = fieldSelections[f.field]==='keep';
-        radio.addEventListener('change',()=>{fieldSelections[f.field]='keep';newCell.style.background='';oldCell.style.background='rgba(34,197,94,.08)';});
-        oldCell.appendChild(radio);
-        oldCell.onclick=()=>{const r=oldCell.querySelector('input[type=radio]');if(r){r.checked=true;r.dispatchEvent(new Event('change'));}};
-      }
-      oldCell.appendChild(document.createTextNode(f.oldVal||'(empty)'));
-      grid.appendChild(oldCell);
-
-      // Extracted/new value cell — EDITABLE
-      const newCell=el('div',{style:{padding:'4px 6px',borderBottom:'1px solid var(--border)',background:hasConflict?'rgba(79,124,255,.06)':hasExtracted?'rgba(34,197,94,.03)':'var(--bg)'}});
-      if(hasExtracted){
-        const radio2=el('input',{type:'radio',name:'field_'+f.field,value:'new',style:{marginRight:'4px',verticalAlign:'middle',flexShrink:'0'}});
-        radio2.checked = fieldSelections[f.field]==='new';
-        radio2.addEventListener('change',()=>{fieldSelections[f.field]='new';oldCell.style.background='';newCell.style.background='rgba(79,124,255,.08)';});
-        newCell.appendChild(radio2);
-        // Editable input for the extracted value
-        const editIn=el('input',{type:'text',class:'detail-edit-field',style:{flex:'1',width:'calc(100% - 24px)',fontSize:'10px',color:'var(--blue)',fontWeight:hasConflict?'600':'400',display:'inline-block'},value:editedValues[f.field]||f.newVal||''});
-        editIn.addEventListener('input',()=>{editedValues[f.field]=editIn.value;fieldSelections[f.field]='new';radio2.checked=true;});
-        editIn.addEventListener('focus',()=>{radio2.checked=true;fieldSelections[f.field]='new';});
-        newCell.appendChild(editIn);
-      } else {
-        // No extracted value — show editable empty field so user can type a custom value
-        const customIn=el('input',{type:'text',class:'detail-edit-field',style:{width:'100%',fontSize:'10px',color:'var(--muted)'},placeholder:'Type to override...'});
-        customIn.addEventListener('input',()=>{
-          if(customIn.value.trim()){
-            editedValues[f.field]=customIn.value.trim();
-            fieldSelections[f.field]='custom';
-          } else {
-            fieldSelections[f.field]='keep';
-          }
-        });
-        newCell.appendChild(customIn);
-      }
-      grid.appendChild(newCell);
-    });
-
-    body.appendChild(grid);
-
-    // Tiers & channel partner splits (always new from contract)
-    if(extracted.tiers?.length){
-      body.appendChild(el('div',{style:{fontSize:'10px',color:'var(--blue)',marginBottom:'4px',fontWeight:'600'}},'📋 Tier structure will be saved to notes ('+extracted.tiers.length+' tiers)'));
-    }
-    if(extracted.channelPartnerSplits?.length){
-      body.appendChild(el('div',{style:{fontSize:'10px',color:'var(--blue)',marginBottom:'4px',fontWeight:'600'}},'🤝 '+extracted.channelPartnerSplits.length+' channel partner split(s) will be saved to notes'));
-    }
-
-    const btns=el('div',{class:'modal-btns',style:{marginTop:'10px'}});
-    btns.appendChild(el('button',{class:'btn-primary',onclick(){
-      let changed=0;
-      fields.forEach(f=>{
-        if(fieldSelections[f.field]==='new' && (editedValues[f.field]||f.newVal)){
-          vendor[f.field]=editedValues[f.field]||f.newVal; changed++;
-        } else if(fieldSelections[f.field]==='custom' && editedValues[f.field]){
-          vendor[f.field]=editedValues[f.field]; changed++;
-        }
-      });
-      // Save tier and split info to notes as structured entry
-      let noteAdditions='';
-      if(extracted.tiers?.length) noteAdditions+='\nTiers:\n'+extracted.tiers.map(t=>`  ${t.level}: ${t.threshold} → ${t.rate}`).join('\n');
-      if(extracted.channelPartnerSplits?.length) noteAdditions+='\nChannel Partner Splits:\n'+extracted.channelPartnerSplits.map(s=>`  ${s.partner}: Their rate ${s.theirRate}% | Our rate ${s.ourRate}%`).join('\n');
-      if(noteAdditions) prependStructuredNote(vendor, 'Contract data applied from OCR extraction.'+noteAdditions, 'Contract');
-      if(changed>0||noteAdditions){markDirty(vendor);saveSessionState();updateSidebar();}
-      closeModal();
-      toast('✓ '+changed+' field'+(changed!==1?'s':'')+' applied to '+vendor.name+(noteAdditions?' + tier/split notes':''));
-      if(onApplied) onApplied(changed);
-      refreshDetailIfOpen(vendor);
-    }},'✓ Apply Selected'));
-    btns.appendChild(el('button',{class:'btn-secondary',onclick:closeModal},'Cancel'));
-    body.appendChild(btns);
-  }, true); // lockDismiss=true for safety
-}
-
-function applyContractToVendor(vendor, extracted) {
-  // Legacy quick-apply: fills only empty fields, no dialog
-  if(!vendor||!extracted) return 0;
-  let changed=0;
-  CONTRACT_FIELD_MAP.forEach(({field,extract})=>{
-    const val=extract(extracted);
-    if(val && !vendor[field]) { vendor[field]=val; changed++; }
-  });
-  if(changed>0) { markDirty(vendor); saveSessionState(); }
-  return changed;
-}
 
 // ── Drive File Picker Modal ──────────────────────────────────────────────────
 function openDriveFilePicker(files, onSelect) {
@@ -17700,50 +16870,6 @@ function renderSpendTable(wrap) {
 }
 
 
-async function _renderSpendBySF(wrap,c) {
-  if(!USER.sfToken){
-    const b=el('div',{style:{background:'rgba(79,124,255,.06)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'6px',padding:'20px',textAlign:'center'}});
-    b.appendChild(el('p',{style:{fontWeight:'600',marginBottom:'4px'}},'Connect Salesforce to view SF spend data'));
-    wrap.appendChild(b); return;
-  }
-  const loadMsg=el('p',{style:{padding:'20px',color:'var(--muted)'}},'Loading SF spend data…');
-  wrap.appendChild(loadMsg);
-  c.appendChild(wrap);
-  try {
-    const soql='SELECT Id, Name, Sales__c, Admin_Fee__c, Period__c FROM AP_Spend__c ORDER BY Period__c DESC LIMIT 500';
-    const data=await sfQuery(soql);
-    const records=(data&&data.records)||[];
-    wrap.removeChild(loadMsg);
-    if(!records.length){wrap.appendChild(el('p',{style:{padding:'20px',color:'var(--muted)'}},'No AP_Spend__c records found.'));return;}
-    const totalSales=records.reduce(function(s,r){return s+(r.Sales__c||0);},0);
-    const totalFee=records.reduce(function(s,r){return s+(r.Admin_Fee__c||0);},0);
-    const summRow=el('div',{style:{display:'flex',gap:'16px',marginBottom:'12px',padding:'10px 12px',background:'rgba(79,124,255,.05)',borderRadius:'6px'}});
-    summRow.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:'var(--blue)'}},'Records: '+records.length));
-    summRow.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:'var(--green)'}},'Total Sales: $'+Math.round(totalSales).toLocaleString()));
-    summRow.appendChild(el('span',{style:{fontSize:'11px',fontWeight:'700',color:'var(--amber)'}},'Total Admin Fee: $'+Math.round(totalFee).toLocaleString()));
-    wrap.appendChild(summRow);
-    const tbl=el('table',{class:'data-table',style:{minWidth:'unset'}});
-    const thead=el('thead');const trh=el('tr');
-    ['Record Name','Period','Sales','Admin Fee','Total'].forEach(function(h){trh.appendChild(el('th',{},h));});
-    thead.appendChild(trh);tbl.appendChild(thead);
-    const tbody=el('tbody');
-    records.forEach(function(r){
-      const tr=el('tr');
-      tr.appendChild(el('td',{style:{fontWeight:'600'}},r.Name||'—'));
-      tr.appendChild(el('td',{},(r.Period__c||'').toString()));
-      tr.appendChild(el('td',{style:{color:'var(--green)'}},r.Sales__c!=null?'$'+Number(r.Sales__c).toLocaleString():'—'));
-      tr.appendChild(el('td',{style:{color:'var(--amber)'}},r.Admin_Fee__c!=null?'$'+Number(r.Admin_Fee__c).toLocaleString():'—'));
-      const total=(r.Sales__c||0)+(r.Admin_Fee__c||0);
-      tr.appendChild(el('td',{style:{fontWeight:'600'}},total?'$'+Math.round(total).toLocaleString():'—'));
-      tbody.appendChild(tr);
-    });
-    tbl.appendChild(tbody);
-    const tw=el('div',{class:'tbl-wrap',style:{overflowX:'auto'}});tw.appendChild(tbl);wrap.appendChild(tw);
-  } catch(err) {
-    wrap.removeChild(loadMsg);
-    wrap.appendChild(el('p',{style:{color:'var(--red)',padding:'12px'}},'SF spend query failed: '+err.message));
-  }
-}
 
 function renderSpendByCustomer(wrap) {
   if(!USER.sfToken){
@@ -20679,7 +19805,6 @@ function openAddVendorRecordModal(opts) {
 }
 
 // Convenience wrappers — preserve existing call sites
-function openAddNewVendorModal() { openAddVendorRecordModal({destination:'psd'}); }
 function openAddToITWModal(prefillName) { openAddVendorRecordModal({destination:'itw',prefillName}); }
 
 // Promote ITW vendor to Vendor DB — pre-fills all known fields
@@ -21542,7 +20667,22 @@ function renderToday(c) {
 // ─── Discovery Module ─────────────────────────────────────────────────────────
 // Upload client spend data (PDF/Excel) → Claude AI extracts category breakdown
 // → Display annualized spend estimates → Seed checklist
-// ─── Discovery Module ────────────────────────────────────────────────────────
+
+
+
+
+
+
+
+
+
+
+
+// ─── Discovery helpers (RESTORED 2026-07-07) ─────────────────────────────────
+// These 11 _disc* section builders are from an earlier decomposed version of
+// the Discovery tab. NOTHING calls them right now — renderDiscovery below does
+// all the work inline — but they are kept intentionally as building blocks for
+// planned Discovery development. Restored verbatim from the pre-cleanup file.
 function _discRerender() {
   const c2=$('content'); if(c2){c2.innerHTML='';renderDiscovery(c2);}
 }
@@ -23096,46 +22236,6 @@ function openAIBriefingModal(vendor) {
 }
 
 // ─── Outlook Calendar Integration ────────────────────────────────────────────
-// Generates a single .ics file for one event — Outlook opens it as a meeting invite
-function generateEventICS(event) {
-  const {title, vendorName, date, startTime, endTime, notes, type, teamsLink} = event;
-  const now = new Date();
-  const fmt = dt => dt.toISOString().replace(/[-:]/g,'').split('.')[0]+'Z';
-  const uid = 'vcs-'+Date.now()+'-'+Math.random().toString(36).slice(2,8)+'@primesource';
-  const dtDate = new Date((date||isoDate(now))+'T'+(startTime||'09:00:00'));
-  const dtEnd = new Date((date||isoDate(now))+'T'+(endTime||'10:00:00'));
-  const desc = [
-    'Vendor: '+(vendorName||''),
-    'Type: '+(type||'Meeting'),
-    notes?'Notes: '+notes:'',
-    teamsLink?'Teams: '+teamsLink:'',
-    '',
-    'Scheduled via Prime Source CMS',
-  ].filter(Boolean).join('\\n');
-
-  const lines = [
-    'BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Prime Source CMS//EN',
-    'CALSCALE:GREGORIAN',
-    // PUBLISH = adds to YOUR calendar only. No invitations sent to anyone automatically.
-    // User must add attendees and hit Send themselves inside Outlook.
-    'METHOD:PUBLISH',
-    'BEGIN:VEVENT',
-    'UID:'+uid,
-    'DTSTART:'+fmt(dtDate),
-    'DTEND:'+fmt(dtEnd),
-    'DTSTAMP:'+fmt(now),
-    'SUMMARY:'+(title||vendorName||'Meeting'),
-    'DESCRIPTION:'+desc,
-    'CATEGORIES:'+(type||'MEETING').toUpperCase(),
-  ];
-  if (teamsLink) {
-    lines.push('URL:'+teamsLink);
-    lines.push('X-MICROSOFT-SKYPETEAMSMEETINGURL:'+teamsLink);
-  }
-  lines.push('BEGIN:VALARM','TRIGGER:-PT15M','ACTION:DISPLAY','DESCRIPTION:Reminder: '+(title||vendorName),'END:VALARM');
-  lines.push('END:VEVENT','END:VCALENDAR');
-  return lines.join('\r\n');
-}
 
 function sendEventToOutlook(event) {
   const psd = event.vendorName ? findPSDVendor(event.vendorName) : null;
@@ -24909,15 +24009,6 @@ function renderAnalytics(c) {
   }
 }
 
-async function loadAnalyticsSpend() {
-  // Wrapper — routes through the main loadSpendData pipeline
-  await loadSpendData();
-  S._analyticsSpendData = SPEND_STATE.data?.vendors||[];
-  S._analyticsSpendLoaded = new Date().toLocaleTimeString();
-  const c2=$('content');
-  if(c2&&S.view==='analytics'){c2.innerHTML='';renderAnalytics(c2);}
-  else render();
-}
 
 function renderSummary(c) {
   const today=new Date();
@@ -28660,19 +27751,6 @@ window._buildConnectionsSection = _buildConnectionsSection;
     c.appendChild(secRoles);
   }
 
-function buildUserSubSection(label,bodyBuilderFn){
-  const key='vcs_usr_sub_'+label.toLowerCase().replace(/\s+/g,'_');
-  const isOpen=localStorage.getItem(key)==='1';
-  const wrap=el('div',{style:{border:'1px solid var(--border)',borderRadius:'3px',marginBottom:'4px',overflow:'hidden'}});
-  const arrow=el('span',{style:{fontSize:'8px',color:'var(--muted)',marginRight:'6px'}},isOpen?'▼':'▶');
-  const hdr=el('div',{style:{padding:'4px 8px',cursor:'pointer',display:'flex',alignItems:'center',background:'var(--bg)',fontSize:'10px',fontWeight:'700'},onclick:function(){const open=subBody.style.display!=='none';subBody.style.display=open?'none':'';arrow.textContent=open?'▶':'▼';localStorage.setItem(key,open?'0':'1');}});
-  hdr.appendChild(arrow);hdr.appendChild(el('span',{},label));
-  wrap.appendChild(hdr);
-  const subBody=el('div',{style:{display:isOpen?'':'none',padding:'8px',flexDirection:'column',gap:'4px'}});
-  bodyBuilderFn(subBody);
-  wrap.appendChild(subBody);
-  return wrap;
-}
 
 // ── User Management (Admin only, or Assistant Admin — S48 Part D) ──
   if (hasPermission('manageUsers') || isAssistantAdmin()) {
@@ -30188,12 +29266,6 @@ function deleteAISession(id) {
   saveAISessions();
   renderAISessionTabs();
 }
-function renameAISession(id) {
-  const session = _aiSessions.find(s=>s.id===id);
-  if(!session) return;
-  const name = prompt('Rename conversation:', session.title);
-  if(name?.trim()) { session.title=name.trim(); saveAISessions(); renderAISessionTabs(); }
-}
 function autoTitleSession(session) {
   if(session.title && !session.title.match(/^Chat \d+$/)) return; // already custom titled
   // session.history is flushed by saveAIHistory() before this is called
@@ -30453,82 +29525,6 @@ function stopAIResponse() {
   const sendBtn = $('ai-send-btn');
   if(stopBtn) stopBtn.style.display = 'none';
   if(sendBtn) sendBtn.style.display = '';
-}
-function getAISuggestions() {
-  if (!S.loaded) return ['What can you help me with?','How do I load my file?'];
-  const today=new Date();
-  const role=USER.role||'restricted';
-  const urgent=S.vendors.filter(v=>isVisible(v)&&v.tier==='CALL');
-  const exp30=S.vendors.filter(v=>{const e=getCurrentExpiry(v);return e&&dayDiff(e,today)>=0&&dayDiff(e,today)<=30;});
-  const exp90=S.vendors.filter(v=>{const e=getCurrentExpiry(v);return e&&dayDiff(e,today)>30&&dayDiff(e,today)<=90;});
-  const overdue=S.vendors.filter(v=>{const fu=parseDate(v.followUp);return fu&&dayDiff(today,fu)>0;});
-  const noFee=S.vendors.filter(v=>isVisible(v)&&!parseFee(v.adminFee));
-  const autoRenewRisk=exp30.filter(v=>isAutoRenew(v));
-
-  // Role-specific + context-aware suggestions
-  const byRole={
-    admin:[
-      'Who should I call today and why?',
-      exp30.length?exp30.length+' contracts expiring in 30 days — give me a prioritized action plan':'Which contracts need attention this week?',
-      overdue.length?'I have '+overdue.length+' overdue follow-ups — help me triage them':'Which vendors have not been contacted in 60+ days?',
-      'Which vendors are at risk of auto-renewing without action?',
-      'Generate a vendor business review brief for '+(urgent[0]?.name||'our top vendor'),
-      'Which categories are we getting the lowest admin fees in?',
-      'Draft a renewal negotiation email for '+(exp30[0]?.name||'an expiring vendor'),
-      'Which vendors should we prioritize for fee renegotiation?',
-      noFee.length?'We have '+noFee.length+' vendors with no admin fee set — which are highest priority to address?':'What is our total expected commission this year?',
-    ],
-    procurement:[
-      'Who should I call today and why?',
-      exp30.length?exp30.length+' contracts expiring soon — what should I prioritize?':'Which contracts expire in the next 90 days?',
-      'Which vendors have no auto-renewal and expiring soon?',
-      autoRenewRisk.length?autoRenewRisk.length+' auto-renewing contracts need action — what are the deadlines?':'Draft a call prep brief for my next vendor meeting',
-      'Draft a vendor renewal email for '+(exp30[0]?.name||'an expiring vendor'),
-      'Which staffing vendors have the best admin fee terms?',
-      'Compare admin fees across Medical/Surgical vendors',
-      'What should I negotiate for the '+(exp30[0]?.name||'next')+'  contract renewal?',
-    ],
-    sales_rep:[
-      'Which of my vendors have open opportunities in Salesforce?',
-      'Which vendors are we losing spend with?',
-      'Help me prep for a business review with a vendor',
-      'Which vendors could we be doing more business with?',
-      'Draft an outreach email to a vendor we have not contacted recently',
-      'What is our pipeline status for new vendor agreements?',
-    ],
-    finance:[
-      'Which vendors owe us commission we have not received yet?',
-      'What is our total expected vs received commission this year?',
-      'Which vendors are approaching a tier threshold?',
-      'Show me all vendors with contracted fees but no spend recorded',
-      'Which contracts have the highest revenue risk if they expire?',
-      'What is our commission gap across all tiered contracts?',
-    ],
-  };
-
-  // View-specific overrides
-  const byView={
-    today:['Who should I call today and why?','Draft a call script for '+(urgent[0]?.name||'my top vendor'),'What follow-ups are overdue?'],
-    callsheet:['Who should I call today and why?','Draft a call script for '+(urgent[0]?.name||'my top vendor'),'What are the top 3 vendors I should prioritize this week?'],
-    expiring:['Which expiring contracts are highest revenue risk?','Which auto-renewing contracts need action before the notice deadline?','Draft renewal emails for all contracts expiring in 30 days'],
-    sfboard:['Which vendors have the most open cases right now?','What opportunities are stuck in pipeline?','Which vendors have spend but no contracted admin fee?'],
-    spend:['Which vendors have a commission gap?','Which vendor is our highest spend with no fee agreement?','Show me spend trends for our top 5 vendors'],
-    analytics:['Which categories have the lowest admin fees vs market average?','What is our total revenue at risk from expiring contracts?','Which vendors are approaching a tier threshold this year?'],
-    tiers:['Which vendors are closest to hitting the next tier threshold?','If we push more spend to McKesson, what fee increase do we get?','Which tier structures give us the best incremental return?'],
-    economics:['Which channel partners are underpaying based on our agreement?','What is our gross margin per category?','Which vendor agreements have the best ROI?'],
-    reviews:['Generate talking points for my next business review','What should I cover in a review with '+(urgent[0]?.name||'a vendor')+'?','Summarize the last 6 months of activity for my top vendor'],
-    itw:['Which pipeline vendors are most likely to close?','What is blocking the '+(S.itw[0]?.name||'top pipeline')+'  deal?','Which pipeline categories have the best admin fee potential?'],
-    vendordb:['Find all Medical/Surgical vendors with admin fees above 3%','Which vendors have contracts expiring in Q3?','Which vendors have no contact information?'],
-  };
-
-  const viewSuggs=byView[S.view]||[];
-  const roleSuggs=byRole[role]||byRole.admin;
-
-  // Merge: view-specific first, then role-specific, deduplicated
-  const combined=[...viewSuggs];
-  roleSuggs.forEach(s=>{if(!combined.includes(s))combined.push(s);});
-
-  return combined.slice(0,6);
 }
 
 function buildAIContext(userMsg) {

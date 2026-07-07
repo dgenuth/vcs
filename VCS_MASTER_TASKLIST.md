@@ -1,6 +1,8 @@
 # VCS — Master Task List
-**Last updated:** Mon Jul 06, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `3836efef35df40f7cd667179712249d2`, 32,599 lines
+**Last updated:** Tue Jul 07, 2026 (this session, continued — Claude Code)
+**Checkpoint at this update:** MD5 `d15074d8c9b243264dd02a51e2656078`, 31,595 lines
+**Easy revert point (pre-cleanup):** commit `2f87c8d` / MD5
+`3836efef35df40f7cd667179712249d2`, 32,599 lines — `git checkout 2f87c8d -- index.html`
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +11,36 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Adopted a ~1,000-line dead-code cleanup (2026-07-07), sourced from a
+  separate Fable5 session David ran, after independently re-verifying it
+  end-to-end rather than trusting its own summary.** David hoped this
+  would fix his recurring "permission/visibility default changes don't
+  reflect for an existing user" reports — I don't believe it does, since
+  the actual cause of that was already found and fixed earlier this
+  session (`_hydrateRoleConfigFromSettings`'s staleness bug,
+  `_TOUCHED_USERS` never clearing). Told David this plainly before
+  adopting it.
+  What I verified before accepting the swap: the claimed "duplicate user
+  base" was real — the same 19-employee bootstrap list was hardcoded
+  twice (`EMPLOYEE_DIRECTORY` for first-ever-login seeding,
+  `FRESH_DIRECTORY` inside a legacy pre-v3 config migration path,
+  identical data, not drifted) — now consolidated into
+  `buildEmployeeDirectorySeed()`. 3 near-identical vendor-alias-unlink
+  blocks consolidated into `removeVendorAliasEverywhere()` — confirmed it
+  still calls `_safeguardGlobalSettingsBeforePush` internally, so the
+  earlier data-loss protection isn't lost. All 27 removed functions
+  individually confirmed to have zero callers anywhere in the file before
+  accepting the removal (not just trusting the source session's claim).
+  Fixed a real defect in the incoming file (inconsistent CRLF/LF line
+  endings) before adopting.
+  Verified live in preview: app loads and logs in with zero console
+  errors, Vendor DB navigation works, vendor detail panel (Notes +
+  Contracts sections, both adjacent to removed dead code) renders
+  correctly.
+  **Backup for easy revert**: commit `2f87c8d` (pre-cleanup state) is
+  already on `origin/main` — `git checkout 2f87c8d -- index.html` reverts
+  instantly if anything surfaces. Also saved as a standalone file this
+  session for extra safety.
 - **SECURITY: Spend__c queries now use the FLS-safe `_P` field variants
   instead of the raw, Rep-hidden fields (2026-07-06, per David's own
   Salesforce Setup investigation — see memory: vcs-salesforce-p-fields).**
