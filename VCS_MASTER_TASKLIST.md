@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Mon Jul 06, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `808347001fa146e7b5a9af87796d5ea7`, 32,593 lines
+**Checkpoint at this update:** MD5 `3836efef35df40f7cd667179712249d2`, 32,599 lines
 
 This is the standing, running list for VCS. Update it at the end of any
 session with real progress — add anything new, remove anything fully done,
@@ -9,6 +9,39 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **SECURITY: Spend__c queries now use the FLS-safe `_P` field variants
+  instead of the raw, Rep-hidden fields (2026-07-06, per David's own
+  Salesforce Setup investigation — see memory: vcs-salesforce-p-fields).**
+  Every SOQL query against `Spend__c` previously selected `Sales__c`/
+  `Admin_Fee__c` directly — fields David confirmed are hidden from the
+  Sales Rep profile via Field-Level Security. Swapped to `Sales_P__c`/
+  `Admin_Fee_P__c` (the formula-field variants Salesforce's own permission
+  model intends every role to query — they resolve to the real value for
+  non-Rep-Level users/record owners, NULL otherwise) at all 7 code sites:
+  vendor detail panel's Spend tab query + totals + row rendering, the SF
+  Board vendor-spend leaderboard aggregate, the SF Signals "new spend this
+  month" aggregate, and the full Spend page's query + per-vendor rollup.
+  Deliberately did NOT touch: `Vendor__c`'s own separate `Admin_Fee__c`
+  field (different object, no `_P` variant exists/was confirmed for it),
+  or the AP_Spend__c query at ~line 17713 (see below — a distinct,
+  pre-existing bug, not a permissions issue).
+  Verified: syntax-checked clean (acorn), no duplicate functions, CRLF
+  intact, app loads and logs in with zero console errors. **Could not be
+  live-tested against real Salesforce data in this environment** — no live
+  SF OAuth connection available here; these are mechanical field-name
+  substitutions in query strings (confirmed correct via careful per-object
+  code tracing, not guessed), but David should verify the Spend
+  tab/dashboard still show real numbers once this is live, since a wrong
+  field name would return `undefined`/silently-empty values rather than an
+  error.
+  **Still pending, not part of this fix**: 8 Opportunity-object "(P)" fields
+  (`PrimeSource_Estimated_Fee_P__c`, `PrimeSource_Estimated_Fee_by_Stage_P__c`,
+  `Probable_Value_P__c`, `Projected_Customer_Spend_P__c`,
+  `Sales_Commission_Estimate_P__c`, `Total_Sales_Commission_Estimate_P__c`,
+  `Total_Sales_P__c`, `Total_Admin_Fee_P__c`) — API names now confirmed
+  (see memory) but none of these (or their base fields) are referenced
+  anywhere in the app yet, so wiring them in is net-new work requiring
+  David to specify where/how he wants them surfaced, not a find-and-replace.
 - **Two more real gaps, found from David's report that Permissions
   Defaults' "Apply Changes to Existing Users" sometimes doesn't stick, and
   that per-user permission changes never get the honest save-confirmation

@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Mon Jul 06, 2026 (this session, continued)
-**Current checkpoint:** MD5 `808347001fa146e7b5a9af87796d5ea7`, 32,593 lines
+**Current checkpoint:** MD5 `3836efef35df40f7cd667179712249d2`, 32,599 lines
 
 Read this in full before touching the file. This is a large, single-file
 production app with no test suite and one shared live database — mistakes
@@ -78,6 +78,26 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **Query `Spend__c.Sales_P__c`/`Spend__c.Admin_Fee_P__c`, never the raw
+  `Sales__c`/`Admin_Fee__c`** — confirmed via David's own Salesforce Setup
+  audit that the raw fields are FLS-hidden from the Sales Rep profile; the
+  `_P` formula-field variants are what Salesforce's permission model
+  actually intends every role to read (see memory: vcs-salesforce-p-fields
+  for the full investigation). If you add a NEW Spend__c query anywhere,
+  use the `_P` fields from the start — don't copy an old raw-field query
+  as a template. This does NOT apply to `Vendor__c`'s own `Admin_Fee__c`
+  (a different, unrelated field on a different object, no confirmed `_P`
+  variant) — don't conflate the two just because the name matches.
+- **`AP_Spend__c`'s existing query (~line 17713: `SELECT Id, Name,
+  Sales__c, Admin_Fee__c, Period__c FROM AP_Spend__c`) references fields
+  that don't exist on that object at all** — confirmed via the same
+  Salesforce audit: AP_Spend__c only has `AP_Spend_Amount__c`,
+  `Invoiced_Date__c`, `AP_Vendor__c`, `Facility__c`, and a checkbox field.
+  This is almost certainly silently failing/returning nothing today. NOT
+  fixed yet — it's a different bug (wrong field names for the actual
+  schema, not a permissions issue) and AP_Spend__c has no `_P` field built
+  yet either. Don't confuse this with the Spend__c fix above when working
+  in this area.
 - **`_TOUCHED_USERS` (the set of user emails THIS tab has authority to
   overwrite the server's copy of) must be cleared once a save actually
   succeeds — never let it accumulate for the whole session.** It used to

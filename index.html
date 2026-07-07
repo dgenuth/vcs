@@ -6189,7 +6189,13 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
           sfQuery("SELECT Id,CaseNumber,Subject,Status,Priority,Owner.Name,CreatedDate FROM Case WHERE AccountId='"+accId+"' ORDER BY CreatedDate DESC LIMIT 20")),
         sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM Task WHERE WhatId='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5").catch(()=>
           sfQuery("SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM Task WHERE WhatId='"+accId+"' AND IsClosed=false ORDER BY ActivityDate ASC LIMIT 5")),
-        sfQuery("SELECT Id,Name,Reported_Date__c,Category__c,Sales__c,Admin_Fee__c FROM Spend__c WHERE Vendor__c='"+accId+"' ORDER BY Reported_Date__c DESC LIMIT 50").catch(()=>({records:[]})),
+        // SECURITY FIX (2026-07-06): Sales__c/Admin_Fee__c are FLS-hidden from
+        // Sales Reps in this org -- Sales_P__c/Admin_Fee_P__c are the formula-
+        // field variants Salesforce's permission model actually intends every
+        // role to read (they resolve to the real value for non-Rep-Level
+        // users/record owners, NULL otherwise). Confirmed via David's own
+        // Salesforce Setup investigation -- see memory: vcs-salesforce-p-fields.
+        sfQuery("SELECT Id,Name,Reported_Date__c,Category__c,Sales_P__c,Admin_Fee_P__c FROM Spend__c WHERE Vendor__c='"+accId+"' ORDER BY Reported_Date__c DESC LIMIT 50").catch(()=>({records:[]})),
         // S50: pulls every field that actually exists and is populated on this
         // Vendor__c record, not just the fixed subset in vFields above — the
         // hand-picked field list was missing whatever custom fields the SF
@@ -6300,8 +6306,8 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
         }
         if(!sp?.records?.length){sfWrap.appendChild(el("p",{style:{fontSize:"10px",color:"var(--muted)",fontStyle:"italic",padding:"4px 0"}},"No spend records."));}
         else{
-          const totalSales=sp.records.reduce((s2,r)=>s2+Number(r.Sales__c||0),0);
-          const totalFees=sp.records.reduce((s2,r)=>s2+Number(r.Admin_Fee__c||0),0);
+          const totalSales=sp.records.reduce((s2,r)=>s2+Number(r.Sales_P__c||0),0);
+          const totalFees=sp.records.reduce((s2,r)=>s2+Number(r.Admin_Fee_P__c||0),0);
           const sfRate=totalSales>0?((totalFees/totalSales)*100):null;
           const contractedRate=parseFee(vendor.adminFee); // parseFee caps at 30%, ignores large numbers
           const rateMismatch=sfRate&&contractedRate&&Math.abs(sfRate-contractedRate)>0.5;
@@ -6315,7 +6321,7 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
           if(rateMismatch){const w=el("div",{style:{background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.3)",borderRadius:"3px",padding:"5px 8px",marginBottom:"6px",fontSize:"9px",color:"var(--red)"}});w.innerHTML="⚠ <strong>Rate discrepancy:</strong> SF shows "+sfRate.toFixed(2)+"% actual vs "+contractedRate.toFixed(1)+"% contracted.";sfWrap.appendChild(w);}
           if(!contractedRate)sfWrap.appendChild(el("div",{style:{fontSize:"9px",color:"var(--amber)",marginBottom:"6px"}},"⚠ No contracted admin fee % on file — upload contract to auto-fill."));
           sfWrap.appendChild(el("div",{style:{fontSize:"9px",fontWeight:"700",color:"var(--muted)",marginBottom:"3px",letterSpacing:".05em"}},"SPEND RECORDS ("+sp.records.length+(sp.totalSize>sp.records.length?" of "+sp.totalSize:"")+")"));
-          sp.records.forEach(s2=>{const row2=el("div",{style:{display:"flex",gap:"6px",alignItems:"center",padding:"3px 0",borderBottom:"1px solid var(--border)",fontSize:"10px"}});row2.style.cursor='pointer'; row2.title='Open spend record in Salesforce'; row2.onclick=function(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/AP_Spend__c/'+s2.Id+'/view','_blank');}; row2.appendChild(el("span",{style:{flex:"1"}},s2.Name||"Spend"));if(s2.Category__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},s2.Category__c));row2.appendChild(el("span",{style:{color:"var(--green)",fontWeight:"600"}},"$"+Number(s2.Sales__c||0).toLocaleString()));if(s2.Admin_Fee__c)row2.appendChild(el("span",{style:{color:"var(--amber)",fontSize:"9px"}},"Fee: $"+Number(s2.Admin_Fee__c||0).toLocaleString()));if(s2.Reported_Date__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},new Date(s2.Reported_Date__c).toLocaleDateString()));sfWrap.appendChild(row2);});
+          sp.records.forEach(s2=>{const row2=el("div",{style:{display:"flex",gap:"6px",alignItems:"center",padding:"3px 0",borderBottom:"1px solid var(--border)",fontSize:"10px"}});row2.style.cursor='pointer'; row2.title='Open spend record in Salesforce'; row2.onclick=function(){if(USER.sfInstance)window.open(USER.sfInstance+'/lightning/r/AP_Spend__c/'+s2.Id+'/view','_blank');}; row2.appendChild(el("span",{style:{flex:"1"}},s2.Name||"Spend"));if(s2.Category__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},s2.Category__c));row2.appendChild(el("span",{style:{color:"var(--green)",fontWeight:"600"}},"$"+Number(s2.Sales_P__c||0).toLocaleString()));if(s2.Admin_Fee_P__c)row2.appendChild(el("span",{style:{color:"var(--amber)",fontSize:"9px"}},"Fee: $"+Number(s2.Admin_Fee_P__c||0).toLocaleString()));if(s2.Reported_Date__c)row2.appendChild(el("span",{style:{fontSize:"9px",color:"var(--muted)"}},new Date(s2.Reported_Date__c).toLocaleDateString()));sfWrap.appendChild(row2);});
           if(sp.totalSize>sp.records.length){sfWrap.appendChild(el("button",{class:"btn-xs btn-ghost",style:{marginTop:"5px",fontSize:"9px"},onclick(){S.view="spend";render();toast("See full spend data in Spend tab","#4f7cff");}},"See all "+sp.totalSize+" records in Spend tab →"));}
         }
       } else if(tab==="Opportunities"){
@@ -15223,7 +15229,7 @@ async function loadSFBoard(){
       sfQuery('SELECT Id,Name,StageName,Amount,CloseDate,Probability,AccountId,Account.Name,OwnerId,Owner.Name FROM Opportunity WHERE IsClosed=false ORDER BY CloseDate ASC NULLS LAST LIMIT 200').catch(e=>{console.error('[SF Board] Opp query failed:',e);return {records:[]}}),
       sfQuery("SELECT Id,Subject,Status,Priority,CreatedDate,CaseNumber,AccountId,Account.Name,OwnerId,Owner.Name FROM Case WHERE Status!='Closed' ORDER BY Priority,CreatedDate DESC LIMIT 200").catch(()=>({records:[]})),
       sfQuery('SELECT Id,Subject,ActivityDate,Status,Owner.Name FROM Task WHERE IsClosed=false ORDER BY ActivityDate ASC LIMIT 100').catch(()=>({records:[]})),
-      sfQuery('SELECT Vendor__c,Vendor__r.Name,SUM(Sales__c) spendTotal FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= '+yearStart+(yearEnd?' AND Reported_Date__c <= '+yearEnd:'')+' GROUP BY Vendor__c,Vendor__r.Name ORDER BY SUM(Sales__c) DESC LIMIT 100').catch(()=>({records:[]})),
+      sfQuery('SELECT Vendor__c,Vendor__r.Name,SUM(Sales_P__c) spendTotal FROM Spend__c WHERE Vendor__c != null AND Reported_Date__c >= '+yearStart+(yearEnd?' AND Reported_Date__c <= '+yearEnd:'')+' GROUP BY Vendor__c,Vendor__r.Name ORDER BY SUM(Sales_P__c) DESC LIMIT 100').catch(()=>({records:[]})),
     ]);
 
     console.log('[SF Board] opps:',(openOpps?.records?.length||0),(openOpps?._error||'ok'),
@@ -15317,7 +15323,7 @@ async function loadSFSignals() {
 
     // Parallel: new spend this month, stuck opps, overdue tasks, open high-priority cases
     const [newSpend, stuckOpps, overdueTasks, highCases] = await Promise.all([
-      sfQuery("SELECT Vendor__r.Name,SUM(Sales__c) FROM Spend__c WHERE Reported_Date__c >= "+thisMonthStart+" GROUP BY Vendor__r.Name ORDER BY SUM(Sales__c) DESC LIMIT 10"),
+      sfQuery("SELECT Vendor__r.Name,SUM(Sales_P__c) FROM Spend__c WHERE Reported_Date__c >= "+thisMonthStart+" GROUP BY Vendor__r.Name ORDER BY SUM(Sales_P__c) DESC LIMIT 10"),
       sfQuery("SELECT Id,Name,StageName,Amount,LastStageChangeDate,Vendor__r.Name FROM Opportunity WHERE IsClosed=false AND LastStageChangeDate <= "+sixtyDaysAgo+"T00:00:00Z ORDER BY Amount DESC NULLS LAST LIMIT 10"),
       sfQuery("SELECT Id,Subject,ActivityDate,WhatId,Owner.Name FROM Task WHERE IsClosed=false AND ActivityDate < TODAY ORDER BY ActivityDate ASC LIMIT 10"),
       sfQuery("SELECT Id,Subject,Priority,Status,Vendor__r.Name,CreatedDate FROM Case WHERE Priority='High' AND Status!='Closed' ORDER BY CreatedDate DESC LIMIT 8"),
@@ -17962,7 +17968,7 @@ async function loadSpendData(){
     }
     // 'all' = no date filter
 
-    const spendResult=await sfQuery('SELECT Id,Name,Vendor__c,Vendor__r.Name,Reported_Date__c,Category__c,Sales__c,Admin_Fee__c FROM Spend__c WHERE Vendor__c != null'+dateFilter+' ORDER BY Reported_Date__c DESC LIMIT 2000');
+    const spendResult=await sfQuery('SELECT Id,Name,Vendor__c,Vendor__r.Name,Reported_Date__c,Category__c,Sales_P__c,Admin_Fee_P__c FROM Spend__c WHERE Vendor__c != null'+dateFilter+' ORDER BY Reported_Date__c DESC LIMIT 2000');
     console.log('[SF Spend] result:', spendResult?.records?.length, spendResult?._error||'ok');
 
     if(!spendResult){
@@ -17985,8 +17991,8 @@ async function loadSpendData(){
       // Normalize key to lowercase for dedup, preserve display name
       const key=vName.toLowerCase();
       if(!byVendor[key]) byVendor[key]={name:vName,totalSpend:0,totalFees:0,records:[],categories:new Set(),category:''};
-      byVendor[key].totalSpend+=Number(rec.Sales__c||0);
-      byVendor[key].totalFees+=Number(rec.Admin_Fee__c||0);
+      byVendor[key].totalSpend+=Number(rec.Sales_P__c||0);
+      byVendor[key].totalFees+=Number(rec.Admin_Fee_P__c||0);
       byVendor[key].records.push(rec);
       if(rec.Category__c) byVendor[key].categories.add(rec.Category__c);
     });
