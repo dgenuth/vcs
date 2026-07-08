@@ -1,7 +1,13 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Wed Jul 08, 2026 (this session, continued — Fable 5)
-**Current checkpoint:** MD5 `4041b279ff0e273573eead2216547e8b`, 32,050 lines
+**Current checkpoint:** MD5 `8407834731c1d100f2672bda1f591060`, 32,097 lines, BUILD `2026-07-08.1`
+
+**NEW NON-NEGOTIABLE RULE: bump `window.VCS_BUILD` (near the top of
+index.html, inside `<head>`) on EVERY commit that changes index.html.**
+The in-app self-updater compares this stamp against the deployed file and
+auto-reloads stale browsers; if two different builds ship with the same
+stamp, stale tabs will never converge. Format: `YYYY-MM-DD.N`.
 **Prior checkpoint (pre-cleanup, easy revert point):** commit `2f87c8d` /
 MD5 `3836efef35df40f7cd667179712249d2`, 32,599 lines. Also saved as a
 standalone file at

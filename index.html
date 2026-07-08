@@ -39,6 +39,16 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<!-- BUILD STAMP (2026-07-08): single source of truth for which build a
+     browser is running. Bump on EVERY commit that touches this file (see
+     CLAUDE.md workflow rules). Deliberately in the first ~2KB of the file
+     so the self-update checker can read it from a tiny ranged fetch.
+     This exists because GitHub Pages caches this page for up to 10
+     minutes and a logout/login never re-downloads the app -- so after a
+     deploy, different browsers silently run DIFFERENT builds, which both
+     corrupts testing conclusions and lets old-build tabs (without the
+     newest data-safety fixes) keep writing to the shared backend. -->
+<script>window.VCS_BUILD='2026-07-08.1';</script>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -825,6 +835,7 @@ var VCS_VERSION = 'v1778431112';
     <button type="submit" class="login-btn" id="login-btn">Sign In</button>
     <div class="login-error" id="login-error"></div>
     <p style="font-size:9px;color:var(--muted);margin-top:14px">Access requires pre-approved company email.<br>Contact your administrator for access.</p>
+    <p id="login-build-stamp" style="font-size:8px;color:var(--muted);opacity:.6;margin-top:10px"></p>
   </div>
 </div>
 
@@ -31055,7 +31066,43 @@ function hideSearchDropdown() {
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
+// ── Build-staleness self-check (2026-07-08) ─────────────────────────────
+// GitHub Pages serves this file with Cache-Control max-age=600, and a
+// logout/login never re-downloads the app -- so after every deploy,
+// different browsers can silently run DIFFERENT builds for a long time.
+// Confirmed live as a testing-confounder (and a real data hazard: an
+// old-build tab lacks the newest save-safety fixes yet keeps writing to
+// the shared backend). This fetches the first few KB of index.html from
+// the server with a cache-buster, reads the VCS_BUILD stamp near the top
+// of the file, and self-reloads once (loop-guarded) when a newer build is
+// live. Checked at startup and every 5 minutes.
+async function _checkForNewerBuild(){
+  try{
+    const r = await fetch(window.location.pathname + '?vbust=' + Date.now(), {
+      headers: {'Range': 'bytes=0-4095'}, cache: 'no-store'
+    });
+    const txt = await r.text();
+    const m = txt.match(/VCS_BUILD='([^']+)'/);
+    if (m && m[1] && window.VCS_BUILD && m[1] !== window.VCS_BUILD) {
+      if (sessionStorage.getItem('vcs_build_reload') === m[1]) return; // already tried once for this build -- never loop
+      sessionStorage.setItem('vcs_build_reload', m[1]);
+      console.log('[VCS] Newer build detected:', m[1], '(running:', window.VCS_BUILD + ') -- reloading');
+      toast('⬆ A newer version of the app is available — updating…', '#4f7cff', 4000);
+      setTimeout(function(){ window.location.href = window.location.pathname + '?v=' + encodeURIComponent(m[1]); }, 1500);
+    }
+  }catch(e){ /* offline/backend hiccup -- try again on the next interval */ }
+}
 async function init() {
+  // Show which build this browser is running -- on the login screen, in the
+  // tab title's tooltip-equivalent, and in the console -- so "which build am
+  // I actually on?" is answerable at a glance during testing and rollout.
+  try {
+    console.log('[VCS] BUILD:', window.VCS_BUILD);
+    const _bs = document.getElementById('login-build-stamp');
+    if (_bs) _bs.textContent = 'Build ' + (window.VCS_BUILD || 'unknown');
+  } catch(e) {}
+  _checkForNewerBuild();
+  setInterval(_checkForNewerBuild, 300000);
   // ── Production auth gate: Microsoft + Google sign-in, no email/password ──
   // Both OAuth providers stay available in production -- handleOAuthLogin's
   // approved-users check is based purely on email address, independent of

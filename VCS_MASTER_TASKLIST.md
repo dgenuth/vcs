@@ -1,6 +1,28 @@
 # VCS — Master Task List
 **Last updated:** Wed Jul 08, 2026 (this session, continued — Fable 5)
-**Checkpoint at this update:** MD5 `4041b279ff0e273573eead2216547e8b`, 32,050 lines
+**Checkpoint at this update:** MD5 `8407834731c1d100f2672bda1f591060`, 32,097 lines, BUILD `2026-07-08.1`
+
+## JUST FIXED — confirm before treating as closed
+- **Build stamp + self-updater (2026-07-08), prompted by David's SSA→
+  Sales Rep repro that showed NO error anywhere yet didn't propagate.**
+  Server forensics showed the test user (`janepsx2026@gmail.com`) was
+  still `ssa` ON THE SERVER — the user's login honestly reflected the
+  server; the admin-side save never persisted (or was reverted). Root
+  enabler: the write-verify fixes had deployed at 16:22, but GitHub Pages
+  caches index.html up to 10 minutes and logout/login never re-downloads
+  the app — so the test almost certainly ran on PRE-fix cached builds,
+  where saves could still fail/revert silently. Stale builds were both
+  corrupting test conclusions AND remained a real data hazard (old tabs
+  keep writing to the shared backend without the newest safety fixes).
+  Now: `window.VCS_BUILD` stamp in <head> (first 4KB), shown on the login
+  screen ("Build 2026-07-08.1") and logged to console; `_checkForNewerBuild()`
+  runs at startup + every 5 minutes, fetches the deployed file's first
+  4KB with a cache-buster, and self-reloads once (session-guarded, can
+  never loop) when a newer stamp is live. Verified live: stamp displays;
+  real-build check produces no false positive; simulated newer build
+  fires the update toast + guard. **Every browser needs ONE final manual
+  hard-refresh to receive the build that contains the updater; after
+  that, convergence is automatic forever.**
 **Easy revert point (pre-cleanup):** commit `2f87c8d` / MD5
 `3836efef35df40f7cd667179712249d2`, 32,599 lines — `git checkout 2f87c8d -- index.html`
 
