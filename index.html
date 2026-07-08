@@ -48,7 +48,7 @@
      deploy, different browsers silently run DIFFERENT builds, which both
      corrupts testing conclusions and lets old-build tabs (without the
      newest data-safety fixes) keep writing to the shared backend. -->
-<script>window.VCS_BUILD='2026-07-08.3';</script>
+<script>window.VCS_BUILD='2026-07-08.4';</script>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -9470,8 +9470,26 @@ function setApprovedUsers(u, skipDriveSync){
 // is taken fresh from the server at save time. This is what stops a stale
 // tab (e.g. a sandbox tab left open from before a role change) from
 // reverting changes made elsewhere just by saving its own login timestamp.
-const _TOUCHED_USERS = new Set();
-function touchUser(email){ if(email) _TOUCHED_USERS.add(String(email).toLowerCase()); }
+// FIX A (2026-07-08, BUILD .4 -- the ANOMALY-1 root cause, the "touched-set
+// swallow"): these were Sets, and touchUser was a bare Set.add. A save
+// snapshots the set at start and, after success, deletes every snapshot
+// email from the live set. Re-touching a user ALREADY in the set while a
+// save is in flight was invisible (Set.add of an existing member is a
+// no-op), so the completing save's clear deleted the email out from under
+// the NEXT save -- which then ran with "touched: none", took the SERVER's
+// (stale) copy of the user, pushed it, skipped per-user verification
+// entirely, and still toasted VERIFIED. Confirmed live: an admin's Sales
+// Rep correction was swallowed this way and the server kept 'manager'.
+// Now: Maps of email -> integer generation. Every touch bumps the
+// generation; the post-save clear removes an email ONLY if its generation
+// is unchanged since the snapshot, so a touch that arrives during an
+// in-flight save always survives into the next save's authority set.
+const _TOUCHED_USERS = new Map();        // email -> generation
+function touchUser(email){
+  if(!email) return;
+  const k = String(email).toLowerCase();
+  _TOUCHED_USERS.set(k, (_TOUCHED_USERS.get(k)||0) + 1);
+}
 // CRITICAL FIX (2026-07-08, BUILD .3 -- found via David's console capture of
 // a role change that was VERIFIED saved on the server yet reverted before
 // the user's next login): the login-timestamp save (recordLogin /
@@ -9487,24 +9505,30 @@ function touchUser(email){ if(email) _TOUCHED_USERS.add(String(email).toLowerCas
 // grafts ONLY the local lastLogin onto it, so a login can never assert
 // anything about roles or permissions. A user in BOTH sets is treated as
 // fully-touched (a real edit outranks a login stamp).
-const _TOUCHED_LOGIN_ONLY = new Set();
-function touchUserLoginOnly(email){ if(email) _TOUCHED_LOGIN_ONLY.add(String(email).toLowerCase()); }
-let _saveUsersInFlight = null;
-async function saveUsersViaProxy() {
-  // Hard mutex: only one save ever actually runs at a time, regardless of
-  // entry point (the debounced toggle path, or a direct awaited call like
-  // Remove User / Password Update / bulk actions). A concurrent call waits
-  // for the in-flight one to finish, then runs fresh rather than racing it.
-  if (_saveUsersInFlight) {
-    await _saveUsersInFlight.catch(function(){});
-  }
-  const _thisSave = _saveUsersViaProxyImplWithRetry();
-  _saveUsersInFlight = _thisSave;
-  try {
-    return await _thisSave;
-  } finally {
-    if (_saveUsersInFlight === _thisSave) _saveUsersInFlight = null;
-  }
+const _TOUCHED_LOGIN_ONLY = new Map();   // email -> generation (see Fix A comment above)
+function touchUserLoginOnly(email){
+  if(!email) return;
+  const k = String(email).toLowerCase();
+  _TOUCHED_LOGIN_ONLY.set(k, (_TOUCHED_LOGIN_ONLY.get(k)||0) + 1);
+}
+// FIX B (2026-07-08, BUILD .4): the previous "mutex" was check-then-act --
+// two callers could both observe the same in-flight save, both await it,
+// and then BOTH fall through and run their own impl concurrently (two
+// interleaved pre-fetch/push pairs from the same tab -- one enabler of the
+// ANOMALY-1 window). Strict promise chain instead: each caller appends to
+// the chain tail SYNCHRONOUSLY (before any await), so a second caller runs
+// strictly after the first, always. A prior save's failure must neither
+// block nor poison later saves (hence the identical fulfilled/rejected
+// handlers and the swallowed tail). In-tab serialization only --
+// cross-tab/browser safety is the server-side version check's job.
+let _saveChain = Promise.resolve();
+function saveUsersViaProxy() {
+  const run = _saveChain.then(
+    function(){ return _saveUsersViaProxyImplWithRetry(); },
+    function(){ return _saveUsersViaProxyImplWithRetry(); }
+  );
+  _saveChain = run.catch(function(){});
+  return run;
 }
 // CRITICAL FIX (2026-07-07): a single transient GAS backend hiccup (the
 // confirmed-real, intermittent free-tier concurrency ceiling -- see the
@@ -9618,6 +9642,7 @@ async function _saveUsersViaProxyImpl() {
   try {
     let users = getApprovedUsers();
     let serverGlobalSettings = null;
+    let _baseVersion; // CAS: config version the merge below is based on (undefined until server V41 returns one)
     // CRITICAL FIX (2026-07-06): _TOUCHED_USERS was NEVER cleared -- once
     // touched, a user's email stayed in this set for the rest of the
     // browser tab's session, forever. Since every save re-pushes THIS
@@ -9637,8 +9662,11 @@ async function _saveUsersViaProxyImpl() {
     // version, since the server's version IS this tab's own last push.
     // Any user touched again WHILE this save is in flight stays protected
     // (it's not in this snapshot, so it isn't cleared below).
-    const _touchedSnapshotAtStart = new Set(_TOUCHED_USERS);
-    const _loginTouchedSnapshotAtStart = new Set(_TOUCHED_LOGIN_ONLY);
+    // FIX A (BUILD .4): snapshots now carry email -> generation, so the
+    // post-save clear can tell "same touch I saved" from "re-touched while
+    // I was in flight" (the latter must survive the clear).
+    const _touchedSnapshotAtStart = new Map(_TOUCHED_USERS);
+    const _loginTouchedSnapshotAtStart = new Map(_TOUCHED_LOGIN_ONLY);
     // ── Sync-before-save merge ─────────────────────────────────────────
     // Pull the server's CURRENT list and merge: records this tab touched
     // win locally (including local deletion); untouched records take the
@@ -9658,6 +9686,13 @@ async function _saveUsersViaProxyImpl() {
       if (preData && preData.config && preData.config.globalSettings && typeof preData.config.globalSettings === 'object') {
         serverGlobalSettings = preData.config.globalSettings;
       }
+      // CAS plumbing (BUILD .4): capture the config version this merge is
+      // based on. Phase 1: the server (Version 40) doesn't return one yet
+      // -- _baseVersion stays undefined and the push omits it, which the
+      // upgraded server (Version 41) legacy-accepts. Once V41 is live,
+      // this becomes the compare-and-swap base.
+      if (preData && preData.configVersion !== undefined) _baseVersion = preData.configVersion;
+      else if (preData && preData.config && preData.config._configVersion !== undefined) _baseVersion = preData.config._configVersion;
       if (serverUsers && serverUsers.length > 0) {
         const lk = u => (u && u.email ? String(u.email).toLowerCase() : '');
         const localMap = new Map(users.map(u => [lk(u), u]));
@@ -9785,12 +9820,32 @@ async function _saveUsersViaProxyImpl() {
     // feedback rather than failing honestly. Same 30s budget as the
     // pre-check for consistency.
     // Timeout owned by _gasFetch, started at dispatch (2026-07-08).
+    // CAS (BUILD .4): send the version this merge was based on. Server
+    // Version 40 ignores it; Version 41 rejects a stale one with
+    // {status:'stale'} so the retry wrapper re-fetches/re-merges/re-pushes.
+    const _savePayload = {action:'saveConfig', config: JSON.stringify(cfg)};
+    if (_baseVersion !== undefined) _savePayload.baseVersion = _baseVersion;
     const resp = await _gasFetch(VCS_PROXY_URL, {
       method:'POST',
       headers:{'Content-Type':'text/plain'},
-      body: JSON.stringify({action:'saveConfig', config: JSON.stringify(cfg)})
+      body: JSON.stringify(_savePayload)
     }, 30000);
     if(!resp.ok) throw new Error('HTTP '+resp.status);
+    // FIX C (BUILD .4): actually READ the response body. GAS always
+    // returns HTTP 200 via ContentService -- even for error/stale JSON --
+    // so resp.ok alone was blind to a rejected write. Non-JSON (an HTML
+    // error interstitial) and status!=='ok' both throw, which routes into
+    // the retry wrapper exactly like a network failure.
+    let _saveRespData = null;
+    try { _saveRespData = await resp.json(); } catch(parseErr) {
+      throw new Error('Server returned a non-JSON response to the save — likely overloaded; try again.');
+    }
+    if (_saveRespData && _saveRespData.status === 'stale') {
+      throw new Error('Save rejected: the config changed on the server since this save read it (version conflict) — retrying against the newer state.');
+    }
+    if (_saveRespData && _saveRespData.status && _saveRespData.status !== 'ok') {
+      throw new Error('Server rejected the save: ' + (_saveRespData.message || _saveRespData.code || _saveRespData.status));
+    }
     // WRITE-THEN-VERIFY (2026-07-08, David's requirement: "it pushes
     // perfectly every time"). A 200 from GAS only proves OUR write landed
     // at some moment -- it does not prove it's what the server holds NOW.
@@ -9809,7 +9864,7 @@ async function _saveUsersViaProxyImpl() {
     // BUILD .3) -- a login-only push is server-record + grafted lastLogin,
     // so a mismatch there means another writer interleaved and the retry
     // will re-fetch/re-graft/re-push against the newer state.
-    const _verifyEmails = new Set([..._touchedSnapshotAtStart, ..._loginTouchedSnapshotAtStart]);
+    const _verifyEmails = new Set([..._touchedSnapshotAtStart.keys(), ..._loginTouchedSnapshotAtStart.keys()]);
     if (_verifyEmails.size > 0) {
       const _stable=function s(o){ if(o===null||typeof o!=='object') return JSON.stringify(o); if(Array.isArray(o)) return '['+o.map(s).join(',')+']'; return '{'+Object.keys(o).sort().map(function(k){return JSON.stringify(k)+':'+s(o[k]);}).join(',')+'}'; };
       // Timeout owned by _gasFetch, started at dispatch (2026-07-08).
@@ -9835,14 +9890,30 @@ async function _saveUsersViaProxyImpl() {
       }
       console.log('[VCS] Save VERIFIED on server for:', [..._verifyEmails].join(','));
     }
-    console.log('[VCS] Users saved to Drive via proxy ✅ (touched:', [..._TOUCHED_USERS].join(',')||'none', ')');
+    console.log('[VCS] Users saved to Drive via proxy ✅ (touched:', [..._TOUCHED_USERS.keys()].join(',')||'none', ')');
     // Server now has this tab's current data for everyone in this push --
-    // stop protecting them from future "server wins" merges. Only the
-    // start-of-call snapshot is cleared, so anyone touched WHILE this save
-    // was in flight (not yet included in `users` above) stays protected
-    // until their own subsequent save completes.
-    _touchedSnapshotAtStart.forEach(k => _TOUCHED_USERS.delete(k));
-    _loginTouchedSnapshotAtStart.forEach(k => _TOUCHED_LOGIN_ONLY.delete(k));
+    // stop protecting them from future "server wins" merges. FIX A (BUILD
+    // .4): delete ONLY if the generation is unchanged since the snapshot.
+    // A re-touch during this save bumped the generation, so it survives
+    // here and keeps its authority for the next save -- the old Set-based
+    // clear deleted it unconditionally, which is what silently downgraded
+    // the next save to "touched: none" (the ANOMALY-1 swallow).
+    _touchedSnapshotAtStart.forEach((gen, k) => {
+      if (_TOUCHED_USERS.get(k) === gen) _TOUCHED_USERS.delete(k);
+    });
+    _loginTouchedSnapshotAtStart.forEach((gen, k) => {
+      if (_TOUCHED_LOGIN_ONLY.get(k) === gen) _TOUCHED_LOGIN_ONLY.delete(k);
+    });
+    // FIX C (BUILD .4): structured result so callers can gate their toasts
+    // on what was ACTUALLY verified, never on "the promise didn't throw".
+    // settingsOnly = an empty-authority save: it still pushed (this call
+    // is the sole network carrier for globalSettings -- do NOT no-op it),
+    // but no per-user record was verified, so no per-user claim may be
+    // made from it.
+    if (_verifyEmails.size > 0) {
+      return { verified: true, verifiedEmails: [..._verifyEmails], settingsOnly: false };
+    }
+    return { verified: false, verifiedEmails: [], settingsOnly: true };
   } catch(e) {
     console.warn('[VCS] saveUsersViaProxy failed:', e.message);
     throw e;
@@ -28318,14 +28389,25 @@ window._buildConnectionsSection = _buildConnectionsSection;
         }});
         checked.forEach(touchUser);
         setApprovedUsers(all);
-        try{
-          await saveUsersViaProxy();
-          toast('✅ Role set to '+newRole+' for '+checked.length+' user(s) — VERIFIED saved on server');
-        }catch(e){
+        // FIX C (BUILD .4): same verification-gated toast + shared revert as
+        // the single-user handler -- a resolved-but-unverified save (any
+        // checked email missing from the verify result) is a failure.
+        function _revertBulkRoleChange(reasonMsg){
           const all2=getApprovedUsers();
           all2.forEach(u=>{const p=_prevByEmail[u.email];if(p){u.role=p.role;u.hiddenFields=p.hiddenFields;u.hiddenFieldOverrides=p.hiddenFieldOverrides;u.featureFlags=p.featureFlags;u.requireSearchToList=p.requireSearchToList;u.tabOverrides=p.tabOverrides;}});
           localStorage.setItem(AUTH_KEY,JSON.stringify(all2));
-          toast('❌ Role change did NOT save — all '+checked.length+' user(s) reverted. Server unreachable: '+e.message,'#ef4444',10000);
+          toast('❌ Role change did NOT save — all '+checked.length+' user(s) reverted. '+reasonMsg,'#ef4444',10000);
+        }
+        try{
+          const _res = await saveUsersViaProxy();
+          const _allVerified = _res && _res.verified && checked.every(function(em){ return _res.verifiedEmails.indexOf(String(em).toLowerCase())!==-1; });
+          if (_allVerified) {
+            toast('✅ Role set to '+newRole+' for '+checked.length+' user(s) — VERIFIED saved on server');
+          } else {
+            _revertBulkRoleChange('The save completed without verifying every selected user — try again.');
+          }
+        }catch(e){
+          _revertBulkRoleChange('Server error: '+e.message);
         }
         renderSettings(c);return;
       }
@@ -28384,6 +28466,12 @@ window._buildConnectionsSection = _buildConnectionsSection;
         mainLine.appendChild(el('span',{style:{fontSize:'9px',padding:'2px 6px',borderRadius:'8px',background:'rgba(34,197,94,.1)',color:'var(--green)',border:'1px solid rgba(34,197,94,.2)'}},'🔒 locked'));
       } else {
         const sel=el('select',{class:'detail-edit-field',style:{fontSize:'9px',padding:'2px 3px',width:'130px'}});
+        // FIX D (BUILD .4): scroll-wheel over a focused <select> silently
+        // changes its value and fires 'change' -- on THIS control that's a
+        // silent, security-relevant role change one notch away (manager is
+        // directly adjacent to sales_rep). The inferred origin of the
+        // phantom-manager incident; cheap insurance either way.
+        sel.addEventListener('wheel', function(e){ e.preventDefault(); }, { passive:false });
         const assignableRoles=Object.keys(ROLES);
         for(const r of assignableRoles){const o=el('option',{value:r},ROLES[r]||r);if(r===u.role)o.selected=true;sel.appendChild(o);}
         sel.addEventListener('change',async ()=>{
@@ -28452,12 +28540,12 @@ window._buildConnectionsSection = _buildConnectionsSection;
             // existed in the admin's own browser. Any other session logging
             // in as this user would keep pulling the old role indefinitely,
             // since nothing ever told the server anything had changed.
-            try {
-              await saveUsersViaProxy();
-              toast('✅ Role updated to '+(ROLES[sel.value]||sel.value)+' — VERIFIED saved on server','#10b981');
-            } catch(e) {
-              // Put back EVERYTHING this handler stamped, so the UI shows
-              // the truth (the server's state) instead of the failed change.
+            // FIX C (BUILD .4): the revert is shared by BOTH failure modes --
+            // a thrown save AND a resolved-but-unverified save. The old code
+            // only reverted on throw; a save that resolved without this
+            // user's email in the verify result (the ANOMALY-1 swallow:
+            // "touched: none", verify skipped) still toasted VERIFIED.
+            function _revertFailedRoleChange(reasonMsg){
               const all2=getApprovedUsers();const i2=all2.findIndex(x=>x.email===u.email);
               if(i2>=0){
                 all2[i2].role=_prev.role;
@@ -28469,7 +28557,23 @@ window._buildConnectionsSection = _buildConnectionsSection;
                 localStorage.setItem(AUTH_KEY,JSON.stringify(all2));
               }
               if(isYou){USER.role=_prev.role;updateUserBadge();}
-              toast('❌ Role change did NOT save — reverted to '+(ROLES[_prev.role]||_prev.role)+'. Server unreachable: '+e.message,'#ef4444',10000);
+              toast('❌ Role change did NOT save — reverted to '+(ROLES[_prev.role]||_prev.role)+'. '+reasonMsg,'#ef4444',10000);
+            }
+            try {
+              const _res = await saveUsersViaProxy();
+              const _email=(u.email||'').toLowerCase();
+              if (_res && _res.verified && _res.verifiedEmails.indexOf(_email)!==-1) {
+                toast('✅ Role updated to '+(ROLES[sel.value]||sel.value)+' — VERIFIED saved on server','#10b981');
+              } else {
+                // Resolved but this user was never verified -- treat exactly
+                // like a failure. Fix A should make this branch unreachable
+                // (a role change always holds authority now); it exists as
+                // defense in depth so a green toast can never again outrun
+                // the verification it claims.
+                _revertFailedRoleChange('The save completed without verifying this user (authority was lost mid-save) — try again.');
+              }
+            } catch(e) {
+              _revertFailedRoleChange('Server error: '+e.message);
             }
             renderSettings(c); // re-render to show the real (saved or reverted) state
           }
@@ -28884,6 +28988,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
     const addRow=el('div',{style:{display:'flex',gap:'5px',alignItems:'center',flexWrap:'wrap'}});
     const emailIn=el('input',{type:'email',class:'modal-input',placeholder:'user@company.com',style:{flex:'1',minWidth:'160px',height:'26px',fontSize:'10px',marginBottom:'0'}});
     const roleIn=el('select',{class:'detail-edit-field',style:{width:'130px',fontSize:'9px'}});
+    roleIn.addEventListener('wheel', function(e){ e.preventDefault(); }, { passive:false }); // FIX D: no silent wheel role changes
     Object.keys(ROLES).forEach(r=>roleIn.appendChild(el('option',{value:r},ROLES[r]||r)));
     const pwNewIn=el('input',{type:'password',class:'modal-input',placeholder:'Password (optional)',style:{width:'140px',height:'26px',fontSize:'10px',marginBottom:'0'}});
     addRow.appendChild(emailIn); addRow.appendChild(roleIn); addRow.appendChild(pwNewIn);

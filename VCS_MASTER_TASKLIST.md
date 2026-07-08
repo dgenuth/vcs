@@ -1,8 +1,41 @@
 # VCS — Master Task List
 **Last updated:** Wed Jul 08, 2026 (this session, continued — Fable 5)
-**Checkpoint at this update:** MD5 `9ecfe90364be369b89b9a7b0592d291a`, 32,168 lines, BUILD `2026-07-08.3`
+**Checkpoint at this update:** MD5 `de96b1e11ee96c0177283010286f85f4`, 32,273 lines, BUILD `2026-07-08.4`
 
 ## JUST FIXED — confirm before treating as closed
+- **BUILD 2026-07-08.4 — DDR paired patch integrated (Fixes A–D + client
+  CAS plumbing). All six live tests PASS.** Diagnosis was joint (external
+  DDR review + this session's live forensics); patch authored by the DDR,
+  critically reviewed, integrated, and verified here.
+  - [x] Fix A: generation counters replace the touched Sets — the
+        ANOMALY-1 root cause ("touched-set swallow"). Verified live:
+        a mid-flight re-touch survives the completing save's clear.
+  - [x] Fix B: strict promise-chain save mutex (closes the check-then-act
+        race). Verified live: 3 concurrent callers, max impl concurrency 1.
+  - [x] Fix C: verification-driven toasts. Structured save result
+        {verified, verifiedEmails, settingsOnly}; role toasts gate on the
+        exact email; resolved-but-unverified saves run the full revert;
+        settings-only saves STILL PUSH (sole globalSettings carrier) but
+        never claim per-user verification; saveConfig response body now
+        parsed (GAS returns 200 even for error JSON). Verified live.
+  - [x] Client CAS plumbing: pre-fetch captures configVersion, push sends
+        baseVersion, {status:'stale'} routes into the retry wrapper.
+        Verified live with a mocked stale-then-ok server.
+  - [x] Fix D: wheel guard on role selects (User Management + Add User).
+        Verified live on all 32 rendered selects.
+  - [ ] SERVER (Apps Script Version 41) — IN DAVID'S HANDS: LockService
+        lock + _configVersion compare-and-swap in saveConfig; getConfig
+        returns configVersion; legacy-accept missing baseVersion (phase 1).
+        Deploy by REPOINTING THE SAME DEPLOYMENT ID (V40 → V41). Flip hard
+        enforcement only after the fleet converges on version-aware builds.
+  - [ ] REPRO (after fleet converges + V41 live): two browsers, rapid
+        role-flips + concurrent logins; no green toast without a matching
+        per-email verify; _configVersion increments once per accepted
+        write; concurrent write gets {status:'stale'} and retries clean.
+  - ANOMALY-2 origin (accidental Manager flip via wheel/mis-click)
+    remains INFERRED, not proven — Fix D is cheap insurance either way.
+  - HOUSEKEEPING (still open): janepsx is 'manager' on the live server —
+    reset her role in Settings before the repro.
 - **THE VERIFIED-YET-REVERTED RACE (2026-07-08, BUILD .3): a user's own
   login was silently overwriting admin role changes.** David's test:
   Director of Operations → SSA, green VERIFIED toast on the admin side —

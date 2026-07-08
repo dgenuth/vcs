@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Wed Jul 08, 2026 (this session, continued — Fable 5)
-**Current checkpoint:** MD5 `9ecfe90364be369b89b9a7b0592d291a`, 32,168 lines, BUILD `2026-07-08.3`
+**Current checkpoint:** MD5 `de96b1e11ee96c0177283010286f85f4`, 32,273 lines, BUILD `2026-07-08.4`
 
 **NEW NON-NEGOTIABLE RULE: bump `window.VCS_BUILD` (near the top of
 index.html, inside `<head>`) on EVERY commit that changes index.html.**
@@ -90,6 +90,69 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **TRAP: touched-set swallow silently downgraded a save to "touched:
+  none" (fixed 2026-07-08, BUILD .4 — diagnosed jointly with an external
+  DDR engineering review; patch authored by the DDR, integrated and
+  verified here).** Symptom: a role change toasts "VERIFIED saved on
+  server" with NO preceding "Save VERIFIED on server for: <email>" line,
+  and the save logs "(touched: none)"; the change doesn't survive — the
+  server keeps the PRIOR role (this is how the phantom-'manager' incident
+  persisted against repeated Sales Rep corrections). Mechanism:
+  `touchUser` was a bare `Set.add`; the post-save clear deleted every
+  snapshot email unconditionally. Re-touching a user ALREADY in the set
+  during an in-flight save was invisible (Set.add no-op), so the
+  completing save's clear deleted the email out from under the NEXT save
+  — which then ran with an empty authority set, took the SERVER's stale
+  copy, pushed the whole config, SKIPPED write-then-verify (empty
+  _verifyEmails), and toasted VERIFIED because nothing threw.
+  Fix A: `_TOUCHED_USERS`/`_TOUCHED_LOGIN_ONLY` are now Maps of
+  email → integer GENERATION; every touch bumps the generation; the
+  post-save clear deletes only if the generation is unchanged since the
+  snapshot. A mid-flight re-touch survives and keeps authority.
+  (Verified live: gen bumped 1→2 mid-flight, survived the clear.)
+- **TRAP: the save mutex was check-then-act, not a real lock (fixed
+  BUILD .4).** Two callers could both observe the same in-flight save,
+  both await it, then BOTH fall through and run concurrently — two
+  interleaved pre-fetch/push pairs from one tab. Now a strict promise
+  chain: `saveUsersViaProxy` appends to the chain tail SYNCHRONOUSLY
+  (before any await), so callers serialize absolutely; a failed save
+  neither blocks nor poisons later saves. In-tab only — cross-browser
+  safety is the server CAS's job. (Verified live: 3 concurrent callers,
+  max impl concurrency = 1.)
+- **TRAP: "VERIFIED" toasts fired on promise-resolution, not on
+  verification (fixed BUILD .4).** `_saveUsersViaProxyImpl` now returns a
+  structured result: `{verified, verifiedEmails, settingsOnly}`. The
+  role-change handlers (single + bulk) gate their green toast on the
+  exact email(s) appearing in `verifiedEmails`; a resolved-but-unverified
+  save runs the SAME full revert as a thrown save. An empty-authority
+  save returns `{settingsOnly:true}` — it MUST STILL PUSH (this call is
+  the sole network carrier for globalSettings/role defaults/vendor
+  aliases via saveConfigToDrive/debouncedSaveSettings — the DDR's
+  original "no-op empty saves" proposal was retracted for exactly this
+  reason; do NOT reintroduce it) but may never claim per-user
+  verification. Also: the saveConfig RESPONSE BODY is now parsed — GAS
+  returns HTTP 200 even for error/stale JSON, so `resp.ok` alone was
+  blind; non-JSON responses and status!=='ok' now throw into the retry
+  wrapper.
+- **CAS plumbing (client side live in BUILD .4; server side pending
+  Apps Script Version 41).** The pre-save fetch captures `configVersion`
+  when the server provides one; the push sends it as `baseVersion`;
+  `{status:'stale'}` throws a retryable version-conflict error (the
+  retry wrapper re-fetches/re-merges/re-pushes once). Server V40 ignores
+  all of this — the V41 patch (LockService lock + integer _configVersion
+  compare-and-swap, legacy-accepting a MISSING baseVersion until the
+  fleet converges) is in David's hands to deploy BY REPOINTING THE SAME
+  DEPLOYMENT ID (a new deployment changes the exec URL and breaks every
+  client). Hard enforcement flips only after all clients are
+  version-aware.
+- **TRAP: scroll-wheel over a focused role <select> silently commits a
+  role change (guarded BUILD .4).** 'manager' sits directly adjacent to
+  'sales_rep' in the dropdown; a single wheel notch fired the full
+  role-change handler. Inferred (not proven) origin of the
+  phantom-'manager' incident. Wheel events on the User Management role
+  select and Add User role select are now preventDefault'd. (Verified
+  live: wheel dispatch prevented, value unchanged, on all 32 rendered
+  role selects.)
 - **THE VERIFIED-YET-REVERTED RACE (2026-07-08, BUILD .3 — found via
   David's capture of a role change that showed the green VERIFIED toast
   yet the user still logged in with the OLD role): a user's OWN login was
