@@ -1,6 +1,6 @@
 # VCS — Master Task List
 **Last updated:** Tue Jul 07, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `a081a3f98cabe1629616bf1d9ecdbcb5`, 31,861 lines
+**Checkpoint at this update:** MD5 `60f684aa6d79a419886a8de457477adf`, 31,905 lines
 **Easy revert point (pre-cleanup):** commit `2f87c8d` / MD5
 `3836efef35df40f7cd667179712249d2`, 32,599 lines — `git checkout 2f87c8d -- index.html`
 
@@ -11,6 +11,41 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Implemented David's clarified permission spec + found/fixed the last
+  "sometimes it applies, sometimes it doesn't" root cause (2026-07-07,
+  Fable 5).** Two changes:
+  1. **Tab Access's "Apply Changes to Existing Users" was PINNING users
+     instead of recalibrating them.** It stamped an explicit tabOverrides
+     entry for every page/child onto each selected user — a frozen copy
+     of that day's role defaults. Per-user overrides beat role defaults
+     at runtime, so from that moment those users were pinned: future
+     role-default changes silently never reached them, while
+     never-Applied users kept tracking the role live. Two invisible
+     classes of users behaving differently — the literal mechanism behind
+     David's "sometimes it's switching the role automatically and doing
+     it correctly, and sometimes it isn't." Now recalibration CLEARS
+     per-user tabOverrides (users match the current defaults immediately
+     AND keep tracking future changes), matching the field-visibility
+     model from the structural fix below.
+  2. **New per-role "⚡ Apply All" button** on each role's title bar
+     (outside the three expandable sections), per David's request: one
+     click pushes ALL THREE sections' current defaults (Permissions + Tab
+     Access + Field Visibility) to selected existing users at once, with
+     the same user-selection checkbox modal, instead of clicking each
+     section's own Apply button separately. Recalibrates even customized
+     users (that's the point — per the spec); unchecked users keep what
+     they have. Sync logic hoisted to top-level functions
+     (syncPermissionsDefaultsToUsers / syncTabAccessDefaultsToUsers /
+     syncFieldVisibilityDefaultsToUsers / applyAllRoleDefaultsToUsers) so
+     both the per-section buttons and Apply All share one implementation.
+  Verified live: Apply All button renders on all 11 role headers; a
+  local-only test user with deliberate customizations in all three
+  sections (field override, pinned tab overrides, permissive feature
+  flags contrary to role defaults) was fully recalibrated by the exact
+  Apply All code path — permissions matched resolved role defaults, tab
+  overrides cleared, field overrides cleared, hiddenFields exactly
+  matched the role default; test user fully cleaned up (never touched
+  the server); no console errors.
 - **STRUCTURAL FIX: per-user field visibility rebuilt to track only
   explicit per-field overrides, per David's explicit requirement (2026-07-07):
   "a user's visibility should always match what's set for them and their

@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Tue Jul 07, 2026 (this session, continued)
-**Current checkpoint:** MD5 `a081a3f98cabe1629616bf1d9ecdbcb5`, 31,861 lines
+**Current checkpoint:** MD5 `60f684aa6d79a419886a8de457477adf`, 31,905 lines
 **Prior checkpoint (pre-cleanup, easy revert point):** commit `2f87c8d` /
 MD5 `3836efef35df40f7cd667179712249d2`, 32,599 lines. Also saved as a
 standalone file at
@@ -84,6 +84,39 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **THE CANONICAL PERMISSION MODEL (2026-07-07, David's clarified spec —
+  read this before touching ANY role/user permission code):**
+  1. A user follows their role's CURRENT defaults for anything not
+     explicitly overridden for them individually. Role-default changes
+     reach these users automatically (at next login/recompute) — no
+     button click needed.
+  2. An explicit per-user override (one field, one tab) sticks and shows
+     the amber dashed outline. Role-default changes do NOT touch
+     overridden items.
+  3. "Apply Changes to Existing Users" (per section) = full recalibration
+     of the SELECTED users to the role's then-current defaults for that
+     section — INCLUDING wiping their per-user overrides. Unchecked users
+     keep everything. Implemented by CLEARING the override store
+     (tabOverrides / hiddenFieldOverrides / fieldEditPerms), never by
+     stamping explicit copies of today's defaults — stamping PINS users
+     to a frozen snapshot so future role changes silently skip them,
+     which was the root cause of "sometimes a role change applies,
+     sometimes it doesn't" (users who'd been through an old-style Apply
+     were pinned; users who hadn't were tracking live — two invisible
+     classes). `_syncTabAccessToUsers` did exactly this stamping until
+     2026-07-07; the hoisted `syncTabAccessDefaultsToUsers()` now clears
+     instead. If you ever write a new "apply defaults to users" path:
+     CLEAR overrides, don't copy values.
+  4. The per-role "⚡ Apply All" button (role title bar, outside the three
+     expandable sections) runs all three sections' recalibration at once
+     via `applyAllRoleDefaultsToUsers(role, users)` → hoisted
+     `syncPermissionsDefaultsToUsers` + `syncTabAccessDefaultsToUsers` +
+     `syncFieldVisibilityDefaultsToUsers` + one save. Same
+     user-selection modal (`showAffectedUsersModal`).
+  5. View As and a real login must agree — both read the same recomputed
+     effective state. If they ever diverge again, check whether a SAVE
+     failed (View As reads local state; a real login reads the server) —
+     see the "View As isn't proof the save landed" trap below.
 - **STRUCTURAL FIX (2026-07-07): per-user field visibility now tracks only
   explicit per-field overrides (`hiddenFieldOverrides`), matching how
   `tabOverrides` already worked — the old flat `hiddenFields` array +

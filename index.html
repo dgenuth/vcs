@@ -25785,6 +25785,86 @@ function syncFieldVisibilityDefaultsToUsers(role, targetUsers){
     });
   }catch(e3){}
 }
+// STRUCTURAL FIX (2026-07-07, David's clarified spec): "Apply Changes to
+// Existing Users" for Tab Access used to stamp an EXPLICIT tabOverrides
+// entry for every single page/child onto each selected user — a frozen
+// copy of that day's role defaults. Per-user tabOverrides win over the
+// role default in isTabAllowedForUser(), so from that moment those users
+// were PINNED: any future role-default change silently never reached
+// them, while users who'd never been through an Apply kept tracking the
+// role default live. Two invisible classes of users behaving differently
+// — the literal source of David's "sometimes it updates correctly and
+// sometimes it isn't, depending on which role I'm going from/to."
+// Recalibrating now CLEARS per-user tabOverrides instead: the user
+// exactly matches the role's current Tab Access Defaults immediately
+// (that's what the role-default fallback resolves to), AND keeps
+// tracking future role-default changes automatically — same model the
+// field-visibility sync above uses. Hoisted top-level (was a closure
+// inside the Tab Access Defaults section builder) so the per-role
+// "Apply All" button can call it too.
+function syncTabAccessDefaultsToUsers(role, targetUsers){
+  try{
+    const allU=getApprovedUsers();
+    targetUsers.forEach(function(su){
+      const u=allU.find(function(x){return x.email===su.email;});
+      if(!u) return;
+      u.tabOverrides={};
+      touchUser(u.email);
+    });
+    localStorage.setItem(AUTH_KEY,JSON.stringify(allU));
+    // Rebuild any already-open per-user Tab Access panels so the UI
+    // reflects the recalibration immediately (same reason as the
+    // [data-bfa-email] refresh in the field sync above).
+    document.querySelectorAll('[data-bta-email]').forEach(function(el2){
+      const em=el2.dataset.btaEmail;
+      if(targetUsers.some(function(su){return su.email===em;})){ el2.innerHTML=''; buildTabAccessSection(el2, em); }
+    });
+  }catch(e3){}
+}
+// Permissions-section recalibration, hoisted top-level for the same
+// reason. Reads the CURRENT resolved role defaults (same accessors the
+// Permissions Defaults tiles themselves use) and applies them to each
+// selected user's real storage locations (featureFlags for most keys,
+// top-level requireSearchToList, aiEnabled/renzoEnabled naming).
+// Deliberately does NOT include the Financials field-group piece here —
+// callers that want it (the Permissions section button, per its "See
+// Financials" tile sharing storage with Field Visibility) compose it via
+// syncFieldVisibilityDefaultsToUsers, and the Apply All button calls
+// that anyway; baking it in here would double-apply.
+function syncPermissionsDefaultsToUsers(role, targetUsers){
+  const _resolved=getResolvedRolePermissionDefaults(role);
+  try{
+    const allU=getApprovedUsers();
+    targetUsers.forEach(function(su){
+      const u=allU.find(function(x){return x.email===su.email;});
+      if(!u) return;
+      if(!u.featureFlags) u.featureFlags={};
+      u.featureFlags.export=_resolved.export;
+      u.featureFlags.addVendor=_resolved.addVendor;
+      u.featureFlags.canAccessArchive=_resolved.canAccessArchive;
+      u.featureFlags.aiEnabled=_resolved.aiEnabled;
+      u.featureFlags.renzoEnabled=_resolved.renzoEnabled;
+      u.requireSearchToList=_resolved.requireSearchToList;
+      touchUser(u.email);
+    });
+    localStorage.setItem(AUTH_KEY,JSON.stringify(allU));
+  }catch(e3){}
+}
+// The per-role "Apply All" recalibration David asked for (2026-07-07):
+// one button on each role's title bar that pushes ALL THREE sections'
+// current defaults (Permissions + Tab Access + Field Visibility) to the
+// selected existing users at once, instead of clicking each section's
+// own Apply button separately. Same user-selection modal, same
+// semantics: selected users — including ones with per-user
+// customizations — are fully recalibrated to the role's then-current
+// defaults across every section; unchecked users keep what they have.
+async function applyAllRoleDefaultsToUsers(role, selectedUsers){
+  syncPermissionsDefaultsToUsers(role, selectedUsers);
+  syncTabAccessDefaultsToUsers(role, selectedUsers);
+  syncFieldVisibilityDefaultsToUsers(role, selectedUsers);
+  saveSettings();
+  await saveUsersViaProxy();
+}
 
 // Field access builder — standalone so role tab toggle can call it for any user
 // S48 Part A: split from the combined S47 buildFieldAccess into two
@@ -27325,6 +27405,23 @@ window._buildConnectionsSection = _buildConnectionsSection;
       _roleInfoWrap.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_rtabsOnCount+' tabs on'));
       if(_rhidden.length>0)_roleInfoWrap.appendChild(el('span',{style:{fontSize:'9px',color:'var(--amber)',background:'rgba(245,158,11,.08)',borderRadius:'9px',padding:'0 5px',border:'1px solid rgba(245,158,11,.2)'}},_rhidden.length+' fields hidden'));
       roleSectionHdr.appendChild(_roleInfoWrap);
+      // 2026-07-07, David's request: one button on the role's title bar
+      // (outside the three expandable sections) that applies ALL THREE
+      // sections' current defaults -- Permissions + Tab Access + Field
+      // Visibility -- to selected existing users at once, instead of
+      // clicking each section's own "Apply Changes to Existing Users"
+      // separately. Same user-selection modal, same recalibration
+      // semantics (selected users, including customized ones, fully match
+      // the role's then-current defaults; unchecked users keep what they
+      // have).
+      roleSectionHdr.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px',padding:'2px 8px',color:'var(--green)',border:'1px solid rgba(34,197,94,.25)',borderRadius:'4px'},title:'Apply ALL current defaults for this role (Permissions + Tab Access + Field Visibility) to selected existing users at once',onclick(e){
+        e.stopPropagation();
+        showAffectedUsersModal(role, 'Apply ALL sections at once (Permissions + Tab Access + Field Visibility)', async function(selectedUsers){
+          if(!selectedUsers.length){ toast('No existing '+(ROLES[role]||role)+' users selected — nothing applied','#4f7cff'); return; }
+          toast('⏳ Applying all 3 sections to '+selectedUsers.length+' user(s)...','#4f7cff');
+          _toastSaveResult(applyAllRoleDefaultsToUsers(role, selectedUsers), 'All sections applied to '+selectedUsers.length+' '+(ROLES[role]||role)+' user(s)');
+        });
+      }},'⚡ Apply All'));
       // Rename works for ANY role. Delete works for any role except admin
       // (hard-blocked, hidden entirely rather than shown-then-always-
       // rejected). Both positioned after the tabs/fields info, at the far
@@ -27449,43 +27546,14 @@ window._buildConnectionsSection = _buildConnectionsSection;
         // users is a deliberate, separate action via the "Apply Changes to
         // Existing Users" button at the bottom, per David's explicit
         // request — a confirmation popup after every single toggle
-        // interrupted making several changes in a row. _applyPermissionToUser/
-        // _applyPermissionsToUsers still do the real per-user write (maps
-        // each key to its real storage location — most live under
-        // featureFlags, but requireSearchToList is a top-level field, and
-        // ai/renzo use differently-named featureFlags keys); they're just
-        // called from the sync button now instead of per-toggle.
-        function _applyPermissionToUser(u, permKey, value){
-          if(permKey==='requireSearchToList'){ u.requireSearchToList=value; return; }
-          if(!u.featureFlags) u.featureFlags={};
-          if(permKey==='ai'){ u.featureFlags.aiEnabled=value; return; }
-          if(permKey==='renzo'){ u.featureFlags.renzoEnabled=value; return; }
-          u.featureFlags[permKey]=value; // export, addVendor, canAccessArchive
-        }
-        function _applyPermissionsToUsers(changes, targetUsers){
-          try{
-            const allU=getApprovedUsers();
-            targetUsers.forEach(function(su){
-              const u=allU.find(function(x){return x.email===su.email;});
-              if(!u) return;
-              changes.forEach(function(ch){ _applyPermissionToUser(u, ch.permKey, ch.value); });
-              touchUser(u.email);
-            });
-            localStorage.setItem(AUTH_KEY,JSON.stringify(allU));
-          }catch(e3){}
-        }
-        // Reads the CURRENT resolved default for all 6 featureFlags-backed
-        // permission keys (same accessors/fallbacks every tile below already
-        // uses) and syncs them onto selectedUsers, plus the Financials
-        // field-group state via the shared syncFieldVisibilityDefaultsToUsers
-        // (since "See Financials" writes to that exact same
-        // vcs_role_fields_<role> key Field Visibility Defaults owns).
+        // interrupted making several changes in a row.
+        // 2026-07-07: the actual per-user write logic is now the hoisted
+        // top-level syncPermissionsDefaultsToUsers() (shared with the
+        // role-bar "Apply All" button); this thin wrapper just composes it
+        // with the Financials field-group piece ("See Financials" shares
+        // vcs_role_fields_<role> storage with Field Visibility) + save.
         async function _syncPermissionsToUsers(selectedUsers){
-          const _resolved=getResolvedRolePermissionDefaults(role);
-          _applyPermissionsToUsers([
-            {permKey:'export',value:_resolved.export},{permKey:'addVendor',value:_resolved.addVendor},{permKey:'canAccessArchive',value:_resolved.canAccessArchive},
-            {permKey:'requireSearchToList',value:_resolved.requireSearchToList},{permKey:'ai',value:_resolved.aiEnabled},{permKey:'renzo',value:_resolved.renzoEnabled},
-          ], selectedUsers);
+          syncPermissionsDefaultsToUsers(role, selectedUsers);
           syncFieldVisibilityDefaultsToUsers(role, selectedUsers);
           saveSettings();
           await saveUsersViaProxy();
@@ -27735,42 +27803,18 @@ window._buildConnectionsSection = _buildConnectionsSection;
         if(_restrictedChildren.length) toast('✓ Also restricted '+_restrictedChildren.join(', ')+' as the role default — unreachable with the parent restricted','#f59e0b');
         return _saveOk;
       }
-      function _applyTabStateToUsers(changes, targetUsers){
-        try{
-          const allU=getApprovedUsers();
-          targetUsers.forEach(function(su){
-            const u=allU.find(function(x){return x.email===su.email;});
-            if(!u) return;
-            if(!u.tabOverrides) u.tabOverrides={};
-            changes.forEach(function(ch){ u.tabOverrides[ch.id]=ch.showEdit?{view:ch.view,edit:ch.edit}:{view:ch.view}; });
-            touchUser(u.email);
-          });
-          localStorage.setItem(AUTH_KEY,JSON.stringify(allU));
-        }catch(e3){}
-      }
-      function refreshOpenUserTabSections(){
-        document.querySelectorAll('[data-bta-email]').forEach(function(el2){
-          const em=el2.dataset.btaEmail;
-          const uu=getApprovedUsers().find(function(u){return u.email===em;});
-          if(uu&&(uu.role||'admin')===role){ el2.innerHTML=''; buildTabAccessSection(el2,em); }
-        });
-      }
-      // S50 v5: reads the CURRENT resolved state for every PAGE_HIERARCHY
-      // entry (same roleTabState() every tile above already uses) and
-      // syncs all of it onto selectedUsers wholesale -- called only from
-      // the "Apply Changes to Existing Users" button below, not per-toggle.
+      // STRUCTURAL FIX (2026-07-07): this used to build an explicit
+      // tabOverrides entry for EVERY page/child from today's resolved role
+      // state and stamp it onto each selected user -- pinning them to a
+      // frozen copy of that day's defaults, so future role-default changes
+      // silently never reached them again (while never-Applied users kept
+      // tracking the role live). The actual recalibration logic now lives
+      // in the hoisted top-level syncTabAccessDefaultsToUsers() (shared
+      // with the role-bar "Apply All" button), which CLEARS per-user
+      // tabOverrides instead -- users match the role's current defaults
+      // immediately AND keep tracking future changes.
       async function _syncTabAccessToUsers(selectedUsers){
-        const allChanges=[];
-        PAGE_HIERARCHY.forEach(function(page){
-          const st=roleTabState(page.id);
-          allChanges.push({id:page.id, view:st.view, edit:st.edit, showEdit:!!page.editable});
-          (page.children||[]).forEach(function(child){
-            const cst=roleTabState(child.id, true);
-            allChanges.push({id:child.id, view:cst.view, edit:false, showEdit:false});
-          });
-        });
-        _applyTabStateToUsers(allChanges, selectedUsers);
-        refreshOpenUserTabSections();
+        syncTabAccessDefaultsToUsers(role, selectedUsers);
         await saveUsersViaProxy();
       }
 
