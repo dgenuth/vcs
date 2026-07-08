@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
-**Last updated:** Tue Jul 07, 2026 (this session, continued)
-**Current checkpoint:** MD5 `60f684aa6d79a419886a8de457477adf`, 31,905 lines
+**Last updated:** Wed Jul 08, 2026 (this session, continued — Fable 5)
+**Current checkpoint:** MD5 `4041b279ff0e273573eead2216547e8b`, 32,050 lines
 **Prior checkpoint (pre-cleanup, easy revert point):** commit `2f87c8d` /
 MD5 `3836efef35df40f7cd667179712249d2`, 32,599 lines. Also saved as a
 standalone file at
@@ -84,6 +84,59 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **THE FULL LOGIN-FIDELITY AUDIT (2026-07-08, Fable 5 — five distinct
+  defects found by tracing the ENTIRE admin-click → server → separate-
+  browser-login pipeline after David's report that role changes were
+  intermittently not taking effect at real login while Settings looked
+  perfect):**
+  1. **Login proceeded silently on a STALE cache when the pre-auth sync
+     failed.** `handleOAuthLogin()` only retried/blocked when the local
+     cache was EMPTY; any browser that had logged in before had a cache,
+     so a GAS hiccup meant logging in with the OLD role, no warning.
+     Now: pre-auth sync retries once on any failure, and if still
+     unverified the login BLOCKS with "could not verify" — a login is
+     never issued from unverifiable data.
+  2. **The pre-auth sync was rate-limited into a no-op.**
+     `loadGlobalSettingsViaProxy()` short-circuits (returns success!)
+     within 10s of any prior successful sync — so rapid test cycles
+     (change role → user logs in seconds later) validated against a
+     PRE-change list while reporting `_syncOk=true`. Now takes a `force`
+     param; login always passes `force=true`. Anyone adding a call where
+     freshness is a correctness requirement must pass force too.
+  3. **`completeLogin()`'s post-sync block and `restoreSession()` both
+     copied the RAW stored hiddenFields snapshot onto USER**, overwriting
+     the structural recompute `loginAs()` had just done — so REAL logins
+     got stale field state while View As (which skips completeLogin) got
+     the correct recomputed state. Both now recompute via
+     `_getHiddenFieldOverrides()` + `_computeEffectiveHiddenFields()` +
+     the tier/days hard rule, identical to loginAs(). If a FOURTH place
+     ever applies a user record to USER, it must recompute the same way.
+  4. **featureFlags stamped from the STATIC role map.** Role change (single
+     + bulk), Add User, and the permissions recalibration used
+     `getDefaultFeatureFlags()`/hand-built lists that ignore admin-
+     customized Permissions Defaults and can contradict the role's real
+     Financials field default (David saw "See Financials: restricted" on
+     a role configured financials-visible). `_featureFlagsForRole(role)`
+     is now the ONE source: resolved permission defaults + showFinancials
+     agreeing with the role's actual current field config. Use it for any
+     new stamping site.
+  5. **No write-read-back — "saved" didn't mean "on the server now."** GAS
+     has no transactions; a concurrent tab whose pre-save fetch predated
+     our write could push right after us and silently revert the change
+     (admin's browser + the target user's own browser both save
+     frequently — login timestamps etc). `_saveUsersViaProxyImpl()` now
+     does WRITE-THEN-VERIFY whenever the save carries touched users:
+     reads the config back and byte-compares (stable-stringified) each
+     touched record against what was pushed; mismatch throws, the retry
+     wrapper re-fetches/re-merges/re-pushes once, and only then surfaces
+     an honest failure. Console logs "Save VERIFIED on server for: ..."
+     on success. A green save toast now genuinely means the server holds
+     this change.
+  Also fixed: the per-user "Requires search/Full list browsable" tile
+  showed a false amber override outline for ANY explicit boolean — even
+  one stamped equal to the role default by a role change/Apply. Amber now
+  means "differs from the role's current resolved default," same as
+  every other amber in the app.
 - **THE CANONICAL PERMISSION MODEL (2026-07-07, David's clarified spec —
   read this before touching ANY role/user permission code):**
   1. A user follows their role's CURRENT defaults for anything not

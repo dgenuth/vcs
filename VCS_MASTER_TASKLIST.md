@@ -1,6 +1,6 @@
 # VCS — Master Task List
-**Last updated:** Tue Jul 07, 2026 (this session, continued — Claude Code)
-**Checkpoint at this update:** MD5 `60f684aa6d79a419886a8de457477adf`, 31,905 lines
+**Last updated:** Wed Jul 08, 2026 (this session, continued — Fable 5)
+**Checkpoint at this update:** MD5 `4041b279ff0e273573eead2216547e8b`, 32,050 lines
 **Easy revert point (pre-cleanup):** commit `2f87c8d` / MD5
 `3836efef35df40f7cd667179712249d2`, 32,599 lines — `git checkout 2f87c8d -- index.html`
 
@@ -11,6 +11,44 @@ never silently drop something that isn't actually finished.
 ---
 
 ## JUST FIXED — confirm before treating as closed
+- **Full login-fidelity audit: five distinct defects in the admin-click →
+  server → real-login pipeline (2026-07-08, Fable 5).** David: role
+  changes intermittently didn't take effect at real login while Settings
+  always looked correct; retrying the same transition later worked; a
+  recalibrated Viewer showed a false amber override and a wrong "See
+  Financials" tile. Found and fixed, each verified live:
+  1. Login proceeded silently on a stale cache when the pre-auth server
+     sync failed (only the empty-cache case retried/blocked). Now retries
+     once on ANY failure and blocks with "could not verify" if still
+     unverified — never logs in from unverifiable data. (Verified:
+     simulated outage with a populated cache → login correctly blocked.)
+  2. The pre-auth sync was silently short-circuited by a 10s success
+     cache — rapid role-change→login test cycles validated against a
+     PRE-change list while reporting success. Login now forces a real
+     server fetch every attempt. (Verified: unforced call = 0 fetches
+     inside the window, forced call = real fetch.)
+  3. completeLogin()'s post-sync block and restoreSession() overwrote
+     USER.hiddenFields with the raw stored snapshot, undoing loginAs()'s
+     structural recompute — real logins got stale field state while View
+     As got the correct state. Both now recompute identically to
+     loginAs(). (Verified: real login carries recomputed state.)
+  4. featureFlags stamped from the static role map on role change / Add
+     User / recalibration — ignoring admin-customized Permissions
+     Defaults and contradicting the role's real Financials default. New
+     _featureFlagsForRole() is the single source. (Verified: viewer now
+     yields showFinancials:true matching its real field config, where the
+     static map said false — the exact case David reported.)
+  5. No write-read-back: GAS has no transactions, so a concurrent tab
+     could silently revert a just-saved change (the last way "Role
+     updated and saved" could be true at toast-time yet wrong minutes
+     later). Saves carrying user edits now READ BACK the config and
+     byte-verify each touched record; mismatch auto-retries once, then
+     fails honestly. (Verified against the real server: "Save VERIFIED
+     on server for: dgenuth@primesourcex.com".)
+  Plus: the "Requires search/Full list browsable" tile's amber outline
+  now means "differs from the role's current resolved default" instead of
+  "any explicit value" — kills the false amber on freshly-recalibrated
+  users. (Verified: stamped-equal-to-default no longer flags amber.)
 - **Implemented David's clarified permission spec + found/fixed the last
   "sometimes it applies, sometimes it doesn't" root cause (2026-07-07,
   Fable 5).** Two changes:

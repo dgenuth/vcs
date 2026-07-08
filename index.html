@@ -1146,14 +1146,30 @@ async function handleOAuthLogin(email, name, provider) {
   // the list as genuinely empty; if it's STILL empty after that, this is an
   // inconclusive "couldn't verify" state, not a confirmed "you're not
   // approved" state, and must not show the same permanent denial screen.
-  let _syncOk = await loadGlobalSettingsViaProxy();
+  // CRITICAL FIX (2026-07-08): two gaps here caused David's intermittent
+  // "role changed in settings but the user logged in with the OLD role":
+  // (1) this sync went through the 10s success-cache, so a login within
+  // ~10s of any earlier successful sync silently used a PRE-role-change
+  // list while reporting _syncOk=true -- force=true now guarantees a real
+  // server fetch on every login attempt; (2) when the sync genuinely
+  // failed but a CACHED list existed (any browser that had logged in
+  // before), login proceeded silently with the stale cached record -- old
+  // role, old permissions -- with no indication anything was wrong. Roles
+  // and permissions are security state: a login must never be issued from
+  // data we couldn't verify. Now retries once on ANY failure (not just the
+  // empty-cache case), and if still unverified, blocks with an honest
+  // "try again" instead of silently logging in stale.
+  let _syncOk = await loadGlobalSettingsViaProxy(true);
+  if (!_syncOk) {
+    console.warn('[VCS] Pre-auth server sync failed, retrying once before giving up...');
+    _syncOk = await loadGlobalSettingsViaProxy(true);
+  }
   users = getApprovedUsers();
   found = users.find(u => u.email.toLowerCase() === email);
-  if (!_syncOk && users.length === 0) {
-    console.warn('[VCS] Pre-auth server sync failed, retrying once before giving up...');
-    _syncOk = await loadGlobalSettingsViaProxy();
-    users = getApprovedUsers();
-    found = users.find(u => u.email.toLowerCase() === email);
+  if (!_syncOk) {
+    logLoginAttempt(email, false, 'could not verify approved-users list (server sync failed twice)');
+    $('login-error').textContent = 'Could not verify your access — check your connection and try again in a moment.';
+    return false;
   }
 
   if (users.length > 0 && !found) {
@@ -1400,7 +1416,21 @@ async function completeLogin() {
     if (_freshMe) {
       const _roleChanged = USER.role !== _freshMe.role;
       USER.role = _freshMe.role;
-      USER.hiddenFields = Array.isArray(_freshMe.hiddenFields) ? _freshMe.hiddenFields : [];
+      // CRITICAL FIX (2026-07-08): this post-sync correction used to copy the
+      // RAW stored hiddenFields snapshot straight onto USER -- overwriting
+      // the structurally-recomputed value loginAs() had just set moments
+      // earlier on a fresh login. Since this block runs on EVERY real login
+      // and session restore, but the same-tab View As path skips
+      // completeLogin() entirely, real logins got the stale stored snapshot
+      // while View As got the correct recomputed state -- a direct cause of
+      // David's "View As shows one thing, the real login shows another."
+      // Now recomputes exactly like loginAs(): role's CURRENT default +
+      // this user's own per-field overrides, plus the tier/days hard rule.
+      USER.hiddenFieldOverrides = _getHiddenFieldOverrides(_freshMe);
+      USER.hiddenFields = _computeEffectiveHiddenFields(_freshMe.role, USER.hiddenFieldOverrides);
+      if (USER.role !== 'admin') {
+        ['tier','days'].forEach(function(f){ if (USER.hiddenFields.indexOf(f) === -1) USER.hiddenFields.push(f); });
+      }
       USER.tabOverrides = _freshMe.tabOverrides || {};
       USER.permissions = _freshMe.permissions || {};
       USER.perms = _freshMe.perms || {};
@@ -8320,10 +8350,21 @@ async function loadConfigFromDrive() {
 // succeeded, closing that gap without needing to touch every one of this
 // function's ~7 call sites individually.
 let _lastProxySyncSuccessAt = 0;
-async function loadGlobalSettingsViaProxy() {
+async function loadGlobalSettingsViaProxy(force) {
   // Uses the existing 'getConfig' GAS action which returns {status:'ok', config:{...}}
   // The config object contains globalSettings, users, vendorAliases etc.
-  if (Date.now() - _lastProxySyncSuccessAt < 10000) return true;
+  // CRITICAL FIX (2026-07-08): the 10s success-cache below used to apply to
+  // EVERY caller unconditionally -- including handleOAuthLogin()'s pre-auth
+  // security sync, whose whole job is to fetch the CURRENT approved-users
+  // list at the moment of login. During rapid admin test cycles (change a
+  // user's role, then log in as them within seconds -- exactly David's
+  // testing pattern), the pre-auth "sync" silently short-circuited and
+  // reported success against a list fetched BEFORE the role change,
+  // producing the maddening "the role change worked in settings but the
+  // user logged in with the old role... but retrying later worked"
+  // intermittency. Callers for whom staleness is a correctness bug (login)
+  // pass force=true to always hit the server; everyone else keeps the cache.
+  if (!force && Date.now() - _lastProxySyncSuccessAt < 10000) return true;
   try {
     // 15s timeout -- without this, a slow/overloaded GAS backend hangs this
     // fetch indefinitely, and since completeLogin() awaits this directly,
@@ -9711,6 +9752,50 @@ async function _saveUsersViaProxyImpl() {
       clearTimeout(_timer3);
     }
     if(!resp.ok) throw new Error('HTTP '+resp.status);
+    // WRITE-THEN-VERIFY (2026-07-08, David's requirement: "it pushes
+    // perfectly every time"). A 200 from GAS only proves OUR write landed
+    // at some moment -- it does not prove it's what the server holds NOW.
+    // GAS has no transactions: another tab/browser whose pre-save fetch
+    // predated our write can push its own whole-config copy right after
+    // ours and silently revert our change (the classic lost-update race --
+    // the admin's browser and the target user's own browser both save
+    // frequently, e.g. login timestamps, so this interleaving is real, and
+    // it's the last remaining way "Role updated and saved" could be true
+    // at toast-time yet wrong minutes later). When this save carries real
+    // user edits, read the config back and confirm each touched user's
+    // record is byte-identical to what we pushed; a mismatch throws, which
+    // the retry wrapper turns into one automatic re-fetch/re-merge/re-push
+    // before surfacing an honest failure.
+    if (_touchedSnapshotAtStart.size > 0) {
+      const _stable=function s(o){ if(o===null||typeof o!=='object') return JSON.stringify(o); if(Array.isArray(o)) return '['+o.map(s).join(',')+']'; return '{'+Object.keys(o).sort().map(function(k){return JSON.stringify(k)+':'+s(o[k]);}).join(',')+'}'; };
+      const _ctrlV = new AbortController();
+      const _timerV = setTimeout(() => _ctrlV.abort(), 30000);
+      let vData;
+      try {
+        const vResp = await _gasFetch(VCS_PROXY_URL, {
+          method:'POST', headers:{'Content-Type':'text/plain'},
+          body: JSON.stringify({action:'getConfig'}), signal: _ctrlV.signal
+        });
+        vData = await vResp.json();
+      } finally {
+        clearTimeout(_timerV);
+      }
+      const vUsers = (vData && vData.config && Array.isArray(vData.config.users)) ? vData.config.users : [];
+      const vLk = u => (u && u.email ? String(u.email).toLowerCase() : '');
+      for (const em of _touchedSnapshotAtStart) {
+        const pushed = users.find(u => vLk(u) === em);
+        const onServer = vUsers.find(u => vLk(u) === em);
+        if (!pushed) {
+          // We deleted this user locally -- verify they're really gone.
+          if (onServer) throw new Error('Save verification failed for '+em+' — the server still has a record this save deleted. Another device may have saved at the same moment; try again.');
+          continue;
+        }
+        if (!onServer || _stable(pushed) !== _stable(onServer)) {
+          throw new Error('Save verification failed for '+em+' — the server\'s copy does not match what was just saved. Another device may have saved at the same moment; try again.');
+        }
+      }
+      console.log('[VCS] Save VERIFIED on server for:', [..._touchedSnapshotAtStart].join(','));
+    }
     console.log('[VCS] Users saved to Drive via proxy ✅ (touched:', [..._TOUCHED_USERS].join(',')||'none', ')');
     // Server now has this tab's current data for everyone in this push --
     // stop protecting them from future "server wins" merges. Only the
@@ -9777,6 +9862,30 @@ function getResolvedRolePermissionDefaults(role){
     aiEnabled: flags.aiEnabled,
     renzoEnabled: flags.renzoEnabled
   };
+}
+// FIX (2026-07-08, David's report): the featureFlags a user gets stamped
+// with on role change / role bulk-change / Add User / Apply-to-users used
+// to come from getDefaultFeatureFlags() -- the STATIC role map, which
+// ignores every admin customization made via the role's Permissions
+// Defaults page (export/addVendor/canAccessArchive live under
+// setRolePermissionDefault, not the static map), and whose static
+// showFinancials value can directly contradict the role's ACTUAL current
+// Financials field-group default (the real enforcement since S47 is the
+// hiddenFields Financials group; featureFlags.showFinancials is the
+// Permissions panel's display/bulk-toggle convenience). Confirmed live by
+// David: switching a user to Viewer showed "See Financials: restricted"
+// in their panel even though that role's actual configured default has
+// financials visible. This helper is now the ONE source for "what
+// featureFlags should a user of this role have": resolved (admin-
+// customized) permission defaults + a showFinancials that agrees with
+// the role's real current field-visibility default.
+function _featureFlagsForRole(role){
+  const r=getResolvedRolePermissionDefaults(role);
+  const finKeys=FIELD_GROUPS['Financials']||[];
+  const roleHf=new Set(getDefaultHiddenFields(role)||[]);
+  const finAllHidden=finKeys.length>0&&finKeys.every(function(k){return roleHf.has(k);});
+  return {export:r.export, addVendor:r.addVendor, canAccessArchive:r.canAccessArchive,
+    aiEnabled:r.aiEnabled, renzoEnabled:r.renzoEnabled, showFinancials:!finAllHidden};
 }
 // Login attempt log — stored in localStorage, admin-viewable
 function getLoginLog(){try{return JSON.parse(localStorage.getItem(LOGIN_LOG_KEY)||'[]');}catch(e){return[];}}
@@ -9853,7 +9962,22 @@ function restoreSession(){
     USER.role=foundUser?foundUser.role:s.role;
     USER.loggedIn=true;
     USER.loginTime=new Date(s.loginTime);
-    USER.hiddenFields=foundUser?(Array.isArray(foundUser.hiddenFields)?foundUser.hiddenFields:[]):(Array.isArray(s.hiddenFields)?s.hiddenFields:[]);
+    // CRITICAL FIX (2026-07-08): same raw-snapshot bug as completeLogin()'s
+    // post-sync block -- restoring a session copied the stored hiddenFields
+    // array verbatim instead of recomputing from the role's CURRENT default
+    // + this user's own per-field overrides, so a role-default change made
+    // while a user had a live session never reached them on refresh. Now
+    // recomputes exactly like loginAs(), including the tier/days hard rule.
+    if(foundUser){
+      USER.hiddenFieldOverrides=_getHiddenFieldOverrides(foundUser);
+      USER.hiddenFields=_computeEffectiveHiddenFields(foundUser.role, USER.hiddenFieldOverrides);
+    } else {
+      USER.hiddenFieldOverrides={};
+      USER.hiddenFields=Array.isArray(s.hiddenFields)?s.hiddenFields:[];
+    }
+    if(USER.role!=='admin'){
+      ['tier','days'].forEach(function(f){ if(USER.hiddenFields.indexOf(f)===-1) USER.hiddenFields.push(f); });
+    }
     USER.tabOverrides=foundUser?(foundUser.tabOverrides||{}):(s.tabOverrides||{});
     USER.permissions=foundUser?(foundUser.permissions||{}):{};
     USER.perms=foundUser?(foundUser.perms||{}):{};
@@ -25833,17 +25957,17 @@ function syncTabAccessDefaultsToUsers(role, targetUsers){
 // that anyway; baking it in here would double-apply.
 function syncPermissionsDefaultsToUsers(role, targetUsers){
   const _resolved=getResolvedRolePermissionDefaults(role);
+  // FIX (2026-07-08): also stamp showFinancials via _featureFlagsForRole so
+  // the recalibrated user's Permissions panel tile agrees with the role's
+  // actual current Financials field default (David confirmed live that
+  // these could contradict each other after a recalibration).
+  const _flags=_featureFlagsForRole(role);
   try{
     const allU=getApprovedUsers();
     targetUsers.forEach(function(su){
       const u=allU.find(function(x){return x.email===su.email;});
       if(!u) return;
-      if(!u.featureFlags) u.featureFlags={};
-      u.featureFlags.export=_resolved.export;
-      u.featureFlags.addVendor=_resolved.addVendor;
-      u.featureFlags.canAccessArchive=_resolved.canAccessArchive;
-      u.featureFlags.aiEnabled=_resolved.aiEnabled;
-      u.featureFlags.renzoEnabled=_resolved.renzoEnabled;
+      u.featureFlags=Object.assign({}, u.featureFlags||{}, _flags);
       u.requireSearchToList=_resolved.requireSearchToList;
       touchUser(u.email);
     });
@@ -28144,7 +28268,7 @@ window._buildConnectionsSection = _buildConnectionsSection;
       if(action==='set_role'){
         const newRole=prompt('Enter role for '+checked.length+' user(s): admin, procurement, manager, viewer, sales, restricted');
         if(!isValidRole(newRole)){toast('Invalid role — must be one of: '+Object.keys(ROLE_PERMS).join(', '),'var(--amber)');return;}
-        all.forEach(u=>{if(checked.includes(u.email)){u.role=newRole;u.featureFlags=getDefaultFeatureFlags(newRole);u.requireSearchToList=getResolvedRolePermissionDefaults(newRole).requireSearchToList;u.hiddenFieldOverrides=_getHiddenFieldOverrides(u);u.hiddenFields=_computeEffectiveHiddenFields(newRole,u.hiddenFieldOverrides);u.tabOverrides={};}});
+        all.forEach(u=>{if(checked.includes(u.email)){u.role=newRole;u.featureFlags=_featureFlagsForRole(newRole);u.requireSearchToList=getResolvedRolePermissionDefaults(newRole).requireSearchToList;u.hiddenFieldOverrides=_getHiddenFieldOverrides(u);u.hiddenFields=_computeEffectiveHiddenFields(newRole,u.hiddenFieldOverrides);u.tabOverrides={};}});
         checked.forEach(touchUser);
         setApprovedUsers(all);
         try{await saveUsersViaProxy();toast('✓ Role set to '+newRole+' for '+checked.length+' user(s) and saved');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
@@ -28228,7 +28352,11 @@ window._buildConnectionsSection = _buildConnectionsSection;
             // Entries the admin genuinely set persist; anything not
             // explicitly set already falls back to the new role's edit
             // default via getRoleFieldEditDefault(), same as fields do.
-            all[i].featureFlags = getDefaultFeatureFlags(sel.value);
+            // FIX (2026-07-08): was getDefaultFeatureFlags() -- the STATIC
+            // map, ignoring admin-customized Permissions Defaults and
+            // contradicting the role's real Financials field default (see
+            // _featureFlagsForRole's own comment; David hit this live).
+            all[i].featureFlags = _featureFlagsForRole(sel.value);
             // CRITICAL FIX (2026-07-06): requireSearchToList was the one
             // permission field this handler never touched at all -- every
             // sibling (hiddenFields/fieldEditPerms/featureFlags/tabOverrides)
@@ -28492,10 +28620,22 @@ window._buildConnectionsSection = _buildConnectionsSection;
         // anything" — role default (restricted/sales_rep) preserved via
         // userRequiresSearchToList()'s fallback when no override is set.
         b.appendChild(el('div',{style:{fontSize:'8px',fontWeight:'700',color:'var(--muted)',marginTop:'8px',marginBottom:'3px',textTransform:'uppercase'}},'Vendor DB Browsing'));
-        const _rstOverride=typeof _cuFresh.requireSearchToList==='boolean'?_cuFresh.requireSearchToList:['restricted','sales_rep'].includes((u.role||'restricted').toLowerCase());
+        // FIX (2026-07-08, David's report): the amber "overriding role
+        // default" outline used to show for ANY explicit boolean on the
+        // user -- but role changes/Apply stamp an explicit boolean equal to
+        // the role default, so a freshly-recalibrated user showed a
+        // false-positive amber ("Full list browsable" green, wrapped in
+        // amber, on a Viewer whose role default IS full-list-browsable).
+        // Amber now means what it means everywhere else: this user's value
+        // DIFFERS from the role's current (resolved, admin-customized)
+        // default. The no-override fallback uses the same resolved default
+        // instead of the static restricted/sales_rep list, matching
+        // userRequiresSearchToList()'s own runtime resolution order.
+        const _rstRoleDefault=getResolvedRolePermissionDefaults((u.role||'restricted').toLowerCase()).requireSearchToList;
+        const _rstOverride=typeof _cuFresh.requireSearchToList==='boolean'?_cuFresh.requireSearchToList:_rstRoleDefault;
         const rstRow=el('div',{style:{display:'flex',gap:'6px',alignItems:'center'}});
         rstRow.appendChild(buildPermTile({
-          label:_rstOverride?'Requires search':'Full list browsable', isViewable:!_rstOverride, isOverridden:typeof _cuFresh.requireSearchToList==='boolean', showEditCheckbox:false,
+          label:_rstOverride?'Requires search':'Full list browsable', isViewable:!_rstOverride, isOverridden:typeof _cuFresh.requireSearchToList==='boolean'&&_cuFresh.requireSearchToList!==_rstRoleDefault, showEditCheckbox:false,
           onToggleView:function(){
             const all=getApprovedUsers();const i=all.findIndex(function(x){return x.email===u.email;});if(i<0)return;
             all[i].requireSearchToList=!_rstOverride;
@@ -28679,7 +28819,12 @@ window._buildConnectionsSection = _buildConnectionsSection;
       // defaults the Permissions Defaults page itself shows as current.
       const _newUserPerms=getResolvedRolePermissionDefaults(roleIn.value);
       all.push({email:e,name:e.split('@')[0],role:roleIn.value,password:pwNewIn.value.trim(),hiddenFields:getDefaultHiddenFields(roleIn.value),hiddenFieldOverrides:{},
-        featureFlags:{export:_newUserPerms.export,addVendor:_newUserPerms.addVendor,canAccessArchive:_newUserPerms.canAccessArchive,aiEnabled:_newUserPerms.aiEnabled,renzoEnabled:_newUserPerms.renzoEnabled},
+        // FIX (2026-07-08): _featureFlagsForRole includes showFinancials
+        // (consistent with the role's real Financials field default) --
+        // the hand-built flag list here omitted it entirely, so every new
+        // user's "See Financials" tile defaulted to enabled regardless of
+        // their role's actual configuration.
+        featureFlags:_featureFlagsForRole(roleIn.value),
         requireSearchToList:_newUserPerms.requireSearchToList,
         added:isoDate(new Date()),addedBy:USER.email});
       touchUser(e);
