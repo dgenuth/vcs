@@ -1,8 +1,26 @@
 # VCS — Master Task List
 **Last updated:** Wed Jul 08, 2026 (this session, continued — Fable 5)
-**Checkpoint at this update:** MD5 `f40bfa3556801440c8e558b8e81f46d3`, 32,130 lines, BUILD `2026-07-08.2`
+**Checkpoint at this update:** MD5 `9ecfe90364be369b89b9a7b0592d291a`, 32,168 lines, BUILD `2026-07-08.3`
 
 ## JUST FIXED — confirm before treating as closed
+- **THE VERIFIED-YET-REVERTED RACE (2026-07-08, BUILD .3): a user's own
+  login was silently overwriting admin role changes.** David's test:
+  Director of Operations → SSA, green VERIFIED toast on the admin side —
+  yet the user (on confirmed BUILD .2) logged in as Director of
+  Operations, and the fresh server fetch agreed. Root cause: the user's
+  browser records lastLogin at every login via saveUsersViaProxy(), and
+  that save used the same full-record-authority touchUser() as real admin
+  edits. If the user's browser had fetched its data seconds BEFORE the
+  admin's change landed, its login-stamp save pushed the STALE ROLE back
+  over the verified change — and its own write-verify passed (it verified
+  its own stale push). Two honest green verifies, last writer wins.
+  Fixed: login stamps now use touchUserLoginOnly() — the save takes the
+  SERVER's current record and grafts only the local lastLogin, so a
+  login can never assert roles/permissions. Verified via full mocked
+  reproduction of the exact race (login-only push carried the server's
+  role + local timestamp; a real-edit control still won as designed),
+  plus a real-server login regression. This closes the final known way a
+  verified role change could fail to reach the user's real login.
 - **David's console capture of the failed SSA→Sales Rep test confirmed the
   full story + exposed two more defects, both fixed (2026-07-08, BUILD .2):**
   The capture showed the honest-failure system WORKED — the SSA→Sales Rep

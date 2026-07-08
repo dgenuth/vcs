@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Wed Jul 08, 2026 (this session, continued — Fable 5)
-**Current checkpoint:** MD5 `f40bfa3556801440c8e558b8e81f46d3`, 32,130 lines, BUILD `2026-07-08.2`
+**Current checkpoint:** MD5 `9ecfe90364be369b89b9a7b0592d291a`, 32,168 lines, BUILD `2026-07-08.3`
 
 **NEW NON-NEGOTIABLE RULE: bump `window.VCS_BUILD` (near the top of
 index.html, inside `<head>`) on EVERY commit that changes index.html.**
@@ -90,6 +90,29 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **THE VERIFIED-YET-REVERTED RACE (2026-07-08, BUILD .3 — found via
+  David's capture of a role change that showed the green VERIFIED toast
+  yet the user still logged in with the OLD role): a user's OWN login was
+  overwriting admin role changes.** Every login records lastLogin via
+  `saveUsersViaProxy()`, and that save used the same full-authority
+  `touchUser()` as real admin edits — so the merge asserted the
+  logging-in user's ENTIRE local record (role included) as this tab's
+  truth. If the user's browser fetched its data seconds BEFORE the
+  admin's role change landed, its login-stamp save pushed the STALE ROLE
+  back over the admin's verified change — and its own write-verify
+  passed, because it verified its own (stale) push. Both browsers showed
+  honest green verifies; last writer won. Fixed: login-stamp saves now
+  use `touchUserLoginOnly()` — the merge takes the SERVER's current
+  record and grafts ONLY the local lastLogin onto it, so a login can
+  never assert anything about roles/permissions. Real edits
+  (`touchUser()`) still win as before; a user in both sets is treated as
+  fully-touched. Verified with a full mocked reproduction of the exact
+  race: login-only push carried the server's role + local timestamp;
+  full-touch control still carried the local edit.
+  **RULE: `touchUser()` is ONLY for records this tab genuinely edited.
+  Any automatic/bookkeeping write (login stamps, counters, telemetry)
+  must use `touchUserLoginOnly()` or an equivalent field-scoped
+  mechanism — never full-record authority.**
 - **CONSOLE-CONFIRMED (2026-07-08, from David's own capture of the failed
   SSA→Sales Rep test): two more defects, both fixed in BUILD 2026-07-08.2.**
   1. **`_gasFetch` queue + caller-owned abort timers = cascade spiral.**

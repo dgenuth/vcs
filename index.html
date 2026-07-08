@@ -48,7 +48,7 @@
      deploy, different browsers silently run DIFFERENT builds, which both
      corrupts testing conclusions and lets old-build tabs (without the
      newest data-safety fixes) keep writing to the shared backend. -->
-<script>window.VCS_BUILD='2026-07-08.2';</script>
+<script>window.VCS_BUILD='2026-07-08.3';</script>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -1352,7 +1352,11 @@ async function recordLogin() {
       if (!all[idx].added) all[idx].added = new Date().toISOString();
       setApprovedUsers(all, true);
       migrateSearchHistory();
-      touchUser(USER.email);
+      // CRITICAL FIX (2026-07-08, BUILD .3): was touchUser() -- full record
+      // authority, letting a stale tab's login stamp push an OLD ROLE back
+      // over an admin's just-verified role change. Login saves may only
+      // ever assert lastLogin -- see touchUserLoginOnly's comment.
+      touchUserLoginOnly(USER.email);
       await saveUsersViaProxy();
       console.log('[VCS] lastLogin recorded for',USER.email,'at',all[idx].lastLogin);
     } else {
@@ -9468,6 +9472,23 @@ function setApprovedUsers(u, skipDriveSync){
 // reverting changes made elsewhere just by saving its own login timestamp.
 const _TOUCHED_USERS = new Set();
 function touchUser(email){ if(email) _TOUCHED_USERS.add(String(email).toLowerCase()); }
+// CRITICAL FIX (2026-07-08, BUILD .3 -- found via David's console capture of
+// a role change that was VERIFIED saved on the server yet reverted before
+// the user's next login): the login-timestamp save (recordLogin /
+// logLoginAttempt) used the same full-authority touchUser() as real admin
+// edits -- so the merge treated the logging-in user's ENTIRE local record
+// (role, permissions, everything) as this tab's truth. If the user's
+// browser had fetched its data seconds BEFORE an admin's role change
+// landed on the server, its harmless "record my login time" save pushed
+// the STALE ROLE back over the admin's verified change -- and its own
+// write-verify passed, because it verified its own (stale) push. Two
+// browsers, both honestly verified, last writer wins. Login saves now use
+// this login-only touch: the merge takes the SERVER's current record and
+// grafts ONLY the local lastLogin onto it, so a login can never assert
+// anything about roles or permissions. A user in BOTH sets is treated as
+// fully-touched (a real edit outranks a login stamp).
+const _TOUCHED_LOGIN_ONLY = new Set();
+function touchUserLoginOnly(email){ if(email) _TOUCHED_LOGIN_ONLY.add(String(email).toLowerCase()); }
 let _saveUsersInFlight = null;
 async function saveUsersViaProxy() {
   // Hard mutex: only one save ever actually runs at a time, regardless of
@@ -9617,6 +9638,7 @@ async function _saveUsersViaProxyImpl() {
     // Any user touched again WHILE this save is in flight stays protected
     // (it's not in this snapshot, so it isn't cleared below).
     const _touchedSnapshotAtStart = new Set(_TOUCHED_USERS);
+    const _loginTouchedSnapshotAtStart = new Set(_TOUCHED_LOGIN_ONLY);
     // ── Sync-before-save merge ─────────────────────────────────────────
     // Pull the server's CURRENT list and merge: records this tab touched
     // win locally (including local deletion); untouched records take the
@@ -9646,6 +9668,15 @@ async function _saveUsersViaProxyImpl() {
             const lu = localMap.get(k);
             if (lu) mergedForSave.push(lu); // this tab's edit wins
             // else: deleted in this tab -- honor the deletion by skipping
+          } else if (_TOUCHED_LOGIN_ONLY.has(k)) {
+            // CRITICAL FIX (2026-07-08, BUILD .3): a login-timestamp save
+            // asserts ONLY lastLogin -- the SERVER's record (role,
+            // permissions, everything else) is authoritative. This is what
+            // stops a user's own login from pushing their stale role back
+            // over an admin's just-verified role change (confirmed live
+            // via David's console: both saves "VERIFIED", last writer won).
+            const lu = localMap.get(k);
+            mergedForSave.push(lu && lu.lastLogin ? Object.assign({}, su, {lastLogin: lu.lastLogin}) : su);
           } else {
             mergedForSave.push(su); // untouched: server's fresh copy wins
           }
@@ -9774,7 +9805,12 @@ async function _saveUsersViaProxyImpl() {
     // record is byte-identical to what we pushed; a mismatch throws, which
     // the retry wrapper turns into one automatic re-fetch/re-merge/re-push
     // before surfacing an honest failure.
-    if (_touchedSnapshotAtStart.size > 0) {
+    // Verify covers BOTH real edits and login-only stamps (2026-07-08,
+    // BUILD .3) -- a login-only push is server-record + grafted lastLogin,
+    // so a mismatch there means another writer interleaved and the retry
+    // will re-fetch/re-graft/re-push against the newer state.
+    const _verifyEmails = new Set([..._touchedSnapshotAtStart, ..._loginTouchedSnapshotAtStart]);
+    if (_verifyEmails.size > 0) {
       const _stable=function s(o){ if(o===null||typeof o!=='object') return JSON.stringify(o); if(Array.isArray(o)) return '['+o.map(s).join(',')+']'; return '{'+Object.keys(o).sort().map(function(k){return JSON.stringify(k)+':'+s(o[k]);}).join(',')+'}'; };
       // Timeout owned by _gasFetch, started at dispatch (2026-07-08).
       const vResp = await _gasFetch(VCS_PROXY_URL, {
@@ -9784,19 +9820,20 @@ async function _saveUsersViaProxyImpl() {
       const vData = await vResp.json();
       const vUsers = (vData && vData.config && Array.isArray(vData.config.users)) ? vData.config.users : [];
       const vLk = u => (u && u.email ? String(u.email).toLowerCase() : '');
-      for (const em of _touchedSnapshotAtStart) {
+      for (const em of _verifyEmails) {
         const pushed = users.find(u => vLk(u) === em);
         const onServer = vUsers.find(u => vLk(u) === em);
         if (!pushed) {
-          // We deleted this user locally -- verify they're really gone.
-          if (onServer) throw new Error('Save verification failed for '+em+' — the server still has a record this save deleted. Another device may have saved at the same moment; try again.');
+          // Deleted locally (real edits only -- login-only never deletes):
+          // verify they're really gone.
+          if (onServer && _touchedSnapshotAtStart.has(em)) throw new Error('Save verification failed for '+em+' — the server still has a record this save deleted. Another device may have saved at the same moment; try again.');
           continue;
         }
         if (!onServer || _stable(pushed) !== _stable(onServer)) {
           throw new Error('Save verification failed for '+em+' — the server\'s copy does not match what was just saved. Another device may have saved at the same moment; try again.');
         }
       }
-      console.log('[VCS] Save VERIFIED on server for:', [..._touchedSnapshotAtStart].join(','));
+      console.log('[VCS] Save VERIFIED on server for:', [..._verifyEmails].join(','));
     }
     console.log('[VCS] Users saved to Drive via proxy ✅ (touched:', [..._TOUCHED_USERS].join(',')||'none', ')');
     // Server now has this tab's current data for everyone in this push --
@@ -9805,6 +9842,7 @@ async function _saveUsersViaProxyImpl() {
     // was in flight (not yet included in `users` above) stays protected
     // until their own subsequent save completes.
     _touchedSnapshotAtStart.forEach(k => _TOUCHED_USERS.delete(k));
+    _loginTouchedSnapshotAtStart.forEach(k => _TOUCHED_LOGIN_ONLY.delete(k));
   } catch(e) {
     console.warn('[VCS] saveUsersViaProxy failed:', e.message);
     throw e;
@@ -9900,7 +9938,7 @@ function logLoginAttempt(email,success,reason){
   if(success){
     const all=getApprovedUsers();
     const idx=all.findIndex(u=>u.email.toLowerCase()===email.toLowerCase());
-    if(idx>=0){all[idx].lastLogin=new Date().toISOString();touchUser(all[idx].email);setApprovedUsers(all,true);saveUsersViaProxy().catch(()=>{});} // immediate sync to Drive so admin can see last login
+    if(idx>=0){all[idx].lastLogin=new Date().toISOString();touchUserLoginOnly(all[idx].email);setApprovedUsers(all,true);saveUsersViaProxy().catch(()=>{});} // immediate sync to Drive so admin can see last login -- LOGIN-ONLY touch (2026-07-08): may never assert role/permissions
   }
 }
 
