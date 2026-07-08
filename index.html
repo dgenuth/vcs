@@ -48,7 +48,7 @@
      deploy, different browsers silently run DIFFERENT builds, which both
      corrupts testing conclusions and lets old-build tabs (without the
      newest data-safety fixes) keep writing to the shared backend. -->
-<script>window.VCS_BUILD='2026-07-08.1';</script>
+<script>window.VCS_BUILD='2026-07-08.2';</script>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -9545,11 +9545,30 @@ async function _saveUsersViaProxyImplWithRetry(){
 const _GAS_MAX_CONCURRENT = 4;
 let _gasInFlightCount = 0;
 const _gasQueue = [];
-function _gasFetch(url, opts){
+// CRITICAL FIX (2026-07-08, confirmed from David's console capture): the
+// abort timers used to be started by CALLERS at enqueue time -- but this
+// queue can hold a request for a long while when GAS is slow, so queued
+// requests burned their entire timeout budget waiting in line and aborted
+// the moment they were (or before they were) dispatched: the "signal is
+// aborted without reason" cascade all over his log. Worse, each abort
+// triggered a retry that joined the BACK of the same queue and died the
+// same way -- a self-sustaining failure spiral exactly when the backend
+// most needed breathing room. Timeouts are now owned by _gasFetch itself
+// via the timeoutMs param and start ONLY when the request is actually
+// dispatched, so queue wait time never counts against the network budget.
+function _gasFetch(url, opts, timeoutMs){
   return new Promise(function(resolve, reject){
     function run(){
       _gasInFlightCount++;
-      fetch(url, opts).then(resolve, reject).finally(function(){
+      let finalOpts = opts || {};
+      let timer = null;
+      if (timeoutMs && !finalOpts.signal) {
+        const ctrl = new AbortController();
+        finalOpts = Object.assign({}, finalOpts, {signal: ctrl.signal});
+        timer = setTimeout(function(){ ctrl.abort(); }, timeoutMs);
+      }
+      fetch(url, finalOpts).then(resolve, reject).finally(function(){
+        if (timer) clearTimeout(timer);
         _gasInFlightCount--;
         if (_gasQueue.length) _gasQueue.shift()();
       });
@@ -9560,7 +9579,7 @@ function _gasFetch(url, opts){
 }
 async function _safeguardGlobalSettingsBeforePush(cfg){
   try{
-    const pre = await _gasFetch(VCS_PROXY_URL, {method:'POST', headers:{'Content-Type':'text/plain'}, body: JSON.stringify({action:'getConfig'})});
+    const pre = await _gasFetch(VCS_PROXY_URL, {method:'POST', headers:{'Content-Type':'text/plain'}, body: JSON.stringify({action:'getConfig'})}, 30000);
     const preData = await pre.json();
     const serverGs = (preData && preData.config && preData.config.globalSettings && typeof preData.config.globalSettings==='object') ? preData.config.globalSettings : {};
     cfg.globalSettings = cfg.globalSettings || {};
@@ -9605,28 +9624,13 @@ async function _saveUsersViaProxyImpl() {
     // blind -- so whichever tab saved last (even just to record a login
     // timestamp) overwrote every other tab's changes wholesale.
     try {
-      const _ctrl2 = new AbortController();
-      // CRITICAL FIX (2026-07-07): 15s was tuned against earlier-session GAS
-      // response times -- directly measured just now at 6+ seconds for a
-      // plain read alone, consistently exceeding 15s under current backend
-      // load. Since the abort-on-failure fix above (rightly) refuses to
-      // save on ANY pre-check failure, a too-tight timeout here meant EVERY
-      // save attempt failed, repeatedly, regardless of how many times it
-      // was retried -- confirmed live as the direct cause of David's
-      // "keeps failing no matter how many times I try" report. 30s gives a
-      // genuinely slow (not hung) backend room to actually respond instead
-      // of being treated identically to a real failure.
-      const _timer2 = setTimeout(() => _ctrl2.abort(), 30000);
-      let pre;
-      try {
-        pre = await _gasFetch(VCS_PROXY_URL, {
-          method:'POST', headers:{'Content-Type':'text/plain'},
-          body: JSON.stringify({action:'getConfig'}),
-          signal: _ctrl2.signal
-        });
-      } finally {
-        clearTimeout(_timer2);
-      }
+      // 30s network budget (2026-07-07), now owned by _gasFetch itself and
+      // started at DISPATCH, not enqueue (2026-07-08) -- see _gasFetch's
+      // comment for the queued-request abort cascade this fixes.
+      const pre = await _gasFetch(VCS_PROXY_URL, {
+        method:'POST', headers:{'Content-Type':'text/plain'},
+        body: JSON.stringify({action:'getConfig'})
+      }, 30000);
       const preData = await pre.json();
       const serverUsers = (preData && preData.config && Array.isArray(preData.config.users)) ? preData.config.users : null;
       if (preData && preData.config && preData.config.globalSettings && typeof preData.config.globalSettings === 'object') {
@@ -9749,19 +9753,12 @@ async function _saveUsersViaProxyImpl() {
     // leaving the whole save appearing to just hang forever with zero
     // feedback rather than failing honestly. Same 30s budget as the
     // pre-check for consistency.
-    const _ctrl3 = new AbortController();
-    const _timer3 = setTimeout(() => _ctrl3.abort(), 30000);
-    let resp;
-    try {
-      resp = await _gasFetch(VCS_PROXY_URL, {
-        method:'POST',
-        headers:{'Content-Type':'text/plain'},
-        body: JSON.stringify({action:'saveConfig', config: JSON.stringify(cfg)}),
-        signal: _ctrl3.signal
-      });
-    } finally {
-      clearTimeout(_timer3);
-    }
+    // Timeout owned by _gasFetch, started at dispatch (2026-07-08).
+    const resp = await _gasFetch(VCS_PROXY_URL, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain'},
+      body: JSON.stringify({action:'saveConfig', config: JSON.stringify(cfg)})
+    }, 30000);
     if(!resp.ok) throw new Error('HTTP '+resp.status);
     // WRITE-THEN-VERIFY (2026-07-08, David's requirement: "it pushes
     // perfectly every time"). A 200 from GAS only proves OUR write landed
@@ -9779,18 +9776,12 @@ async function _saveUsersViaProxyImpl() {
     // before surfacing an honest failure.
     if (_touchedSnapshotAtStart.size > 0) {
       const _stable=function s(o){ if(o===null||typeof o!=='object') return JSON.stringify(o); if(Array.isArray(o)) return '['+o.map(s).join(',')+']'; return '{'+Object.keys(o).sort().map(function(k){return JSON.stringify(k)+':'+s(o[k]);}).join(',')+'}'; };
-      const _ctrlV = new AbortController();
-      const _timerV = setTimeout(() => _ctrlV.abort(), 30000);
-      let vData;
-      try {
-        const vResp = await _gasFetch(VCS_PROXY_URL, {
-          method:'POST', headers:{'Content-Type':'text/plain'},
-          body: JSON.stringify({action:'getConfig'}), signal: _ctrlV.signal
-        });
-        vData = await vResp.json();
-      } finally {
-        clearTimeout(_timerV);
-      }
+      // Timeout owned by _gasFetch, started at dispatch (2026-07-08).
+      const vResp = await _gasFetch(VCS_PROXY_URL, {
+        method:'POST', headers:{'Content-Type':'text/plain'},
+        body: JSON.stringify({action:'getConfig'})
+      }, 30000);
+      const vData = await vResp.json();
       const vUsers = (vData && vData.config && Array.isArray(vData.config.users)) ? vData.config.users : [];
       const vLk = u => (u && u.email ? String(u.email).toLowerCase() : '');
       for (const em of _touchedSnapshotAtStart) {
@@ -28279,10 +28270,25 @@ window._buildConnectionsSection = _buildConnectionsSection;
       if(action==='set_role'){
         const newRole=prompt('Enter role for '+checked.length+' user(s): admin, procurement, manager, viewer, sales, restricted');
         if(!isValidRole(newRole)){toast('Invalid role — must be one of: '+Object.keys(ROLE_PERMS).join(', '),'var(--amber)');return;}
-        all.forEach(u=>{if(checked.includes(u.email)){u.role=newRole;u.featureFlags=_featureFlagsForRole(newRole);u.requireSearchToList=getResolvedRolePermissionDefaults(newRole).requireSearchToList;u.hiddenFieldOverrides=_getHiddenFieldOverrides(u);u.hiddenFields=_computeEffectiveHiddenFields(newRole,u.hiddenFieldOverrides);u.tabOverrides={};}});
+        // REVERT-ON-FAILURE (2026-07-08): same as the single-user role
+        // dropdown -- snapshot every stamped field per user, and on save
+        // failure restore them all, so the UI never shows an unsaved change.
+        const _prevByEmail={};
+        all.forEach(u=>{if(checked.includes(u.email)){
+          _prevByEmail[u.email]={role:u.role, hiddenFields:[...(u.hiddenFields||[])], hiddenFieldOverrides:Object.assign({},u.hiddenFieldOverrides||{}), featureFlags:Object.assign({},u.featureFlags||{}), requireSearchToList:u.requireSearchToList, tabOverrides:Object.assign({},u.tabOverrides||{})};
+          u.role=newRole;u.featureFlags=_featureFlagsForRole(newRole);u.requireSearchToList=getResolvedRolePermissionDefaults(newRole).requireSearchToList;u.hiddenFieldOverrides=_getHiddenFieldOverrides(u);u.hiddenFields=_computeEffectiveHiddenFields(newRole,u.hiddenFieldOverrides);u.tabOverrides={};
+        }});
         checked.forEach(touchUser);
         setApprovedUsers(all);
-        try{await saveUsersViaProxy();toast('✓ Role set to '+newRole+' for '+checked.length+' user(s) and saved');}catch(e){toast('⚠ Changed locally but failed to save: '+e.message,'#ef4444');}
+        try{
+          await saveUsersViaProxy();
+          toast('✅ Role set to '+newRole+' for '+checked.length+' user(s) — VERIFIED saved on server');
+        }catch(e){
+          const all2=getApprovedUsers();
+          all2.forEach(u=>{const p=_prevByEmail[u.email];if(p){u.role=p.role;u.hiddenFields=p.hiddenFields;u.hiddenFieldOverrides=p.hiddenFieldOverrides;u.featureFlags=p.featureFlags;u.requireSearchToList=p.requireSearchToList;u.tabOverrides=p.tabOverrides;}});
+          localStorage.setItem(AUTH_KEY,JSON.stringify(all2));
+          toast('❌ Role change did NOT save — all '+checked.length+' user(s) reverted. Server unreachable: '+e.message,'#ef4444',10000);
+        }
         renderSettings(c);return;
       }
     }},'Apply'));
@@ -28345,6 +28351,20 @@ window._buildConnectionsSection = _buildConnectionsSection;
         sel.addEventListener('change',async ()=>{
           const all=getApprovedUsers();const i=all.findIndex(x=>x.email===u.email);
           if(i>=0 && isValidRole(sel.value)){
+            // REVERT-ON-FAILURE (2026-07-08, from David's console capture):
+            // when the save below failed, the LOCAL list kept the new role
+            // -- so User Management went on showing "Sales Rep" while the
+            // server still held "SSA". The red failure toast fired but is
+            // easy to miss among toast traffic; the on-screen state was the
+            // thing David trusted, and it was lying. Snapshot everything
+            // this handler stamps, and on save failure put it ALL back and
+            // re-render, so the UI only ever shows what the server actually
+            // holds.
+            const _prev={role:all[i].role, hiddenFields:[...(all[i].hiddenFields||[])],
+              hiddenFieldOverrides:Object.assign({},all[i].hiddenFieldOverrides||{}),
+              featureFlags:Object.assign({},all[i].featureFlags||{}),
+              requireSearchToList:all[i].requireSearchToList,
+              tabOverrides:Object.assign({},all[i].tabOverrides||{})};
             all[i].role=sel.value;
             // STRUCTURAL FIX (2026-07-07): used to gate on the blanket
             // _customHiddenFields flag -- if a user had EVER had one field
@@ -28396,11 +28416,24 @@ window._buildConnectionsSection = _buildConnectionsSection;
             // since nothing ever told the server anything had changed.
             try {
               await saveUsersViaProxy();
-              toast('Role updated to '+(ROLES[sel.value]||sel.value)+' and saved','#10b981');
+              toast('✅ Role updated to '+(ROLES[sel.value]||sel.value)+' — VERIFIED saved on server','#10b981');
             } catch(e) {
-              toast('⚠ Role changed locally but failed to save to server: '+e.message,'#ef4444');
+              // Put back EVERYTHING this handler stamped, so the UI shows
+              // the truth (the server's state) instead of the failed change.
+              const all2=getApprovedUsers();const i2=all2.findIndex(x=>x.email===u.email);
+              if(i2>=0){
+                all2[i2].role=_prev.role;
+                all2[i2].hiddenFields=_prev.hiddenFields;
+                all2[i2].hiddenFieldOverrides=_prev.hiddenFieldOverrides;
+                all2[i2].featureFlags=_prev.featureFlags;
+                all2[i2].requireSearchToList=_prev.requireSearchToList;
+                all2[i2].tabOverrides=_prev.tabOverrides;
+                localStorage.setItem(AUTH_KEY,JSON.stringify(all2));
+              }
+              if(isYou){USER.role=_prev.role;updateUserBadge();}
+              toast('❌ Role change did NOT save — reverted to '+(ROLES[_prev.role]||_prev.role)+'. Server unreachable: '+e.message,'#ef4444',10000);
             }
-            renderSettings(c); // re-render to show updated field restrictions
+            renderSettings(c); // re-render to show the real (saved or reverted) state
           }
         });
         mainLine.appendChild(sel);

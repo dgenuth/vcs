@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Wed Jul 08, 2026 (this session, continued — Fable 5)
-**Current checkpoint:** MD5 `8407834731c1d100f2672bda1f591060`, 32,097 lines, BUILD `2026-07-08.1`
+**Current checkpoint:** MD5 `f40bfa3556801440c8e558b8e81f46d3`, 32,130 lines, BUILD `2026-07-08.2`
 
 **NEW NON-NEGOTIABLE RULE: bump `window.VCS_BUILD` (near the top of
 index.html, inside `<head>`) on EVERY commit that changes index.html.**
@@ -90,6 +90,32 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
 
+- **CONSOLE-CONFIRMED (2026-07-08, from David's own capture of the failed
+  SSA→Sales Rep test): two more defects, both fixed in BUILD 2026-07-08.2.**
+  1. **`_gasFetch` queue + caller-owned abort timers = cascade spiral.**
+     Callers started their 30s AbortController timers at ENQUEUE, but the
+     concurrency queue can hold a request for a long time when GAS is
+     slow — queued requests burned their whole budget waiting in line and
+     aborted guaranteed ("signal is aborted without reason" all over the
+     log), and each abort spawned a retry that joined the BACK of the
+     queue and died the same way. Timeouts are now owned by `_gasFetch`
+     itself (`timeoutMs` third param) and start at DISPATCH. Never pass an
+     externally-started abort timer through the queue again. Verified: a
+     request with a 1s budget survived a 2.5s queue wait.
+  2. **The UI kept showing a FAILED role change.** The local list was
+     mutated before the save; on save failure only a transient toast
+     fired while User Management went on showing the new role — David
+     reasonably trusted the screen over a vanished toast, believed the
+     change took, and the server still had the old role. Both role-change
+     handlers (single dropdown + bulk set_role) now SNAPSHOT everything
+     they stamp and fully REVERT the local record + re-render on save
+     failure, with a 10s "❌ Role change did NOT save — reverted to X"
+     toast. The screen now only ever shows what the server actually
+     holds. Any NEW handler that mutates local user state then saves must
+     follow this revert-on-failure pattern.
+  Note also from that capture: the honest-failure system DID work — the
+  red toasts fired repeatedly. The problem was discoverability (missed
+  toast + lying UI state), not detection.
 - **THE FULL LOGIN-FIDELITY AUDIT (2026-07-08, Fable 5 — five distinct
   defects found by tracing the ENTIRE admin-click → server → separate-
   browser-login pipeline after David's report that role changes were

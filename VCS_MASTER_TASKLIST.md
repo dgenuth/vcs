@@ -1,8 +1,27 @@
 # VCS — Master Task List
 **Last updated:** Wed Jul 08, 2026 (this session, continued — Fable 5)
-**Checkpoint at this update:** MD5 `8407834731c1d100f2672bda1f591060`, 32,097 lines, BUILD `2026-07-08.1`
+**Checkpoint at this update:** MD5 `f40bfa3556801440c8e558b8e81f46d3`, 32,130 lines, BUILD `2026-07-08.2`
 
 ## JUST FIXED — confirm before treating as closed
+- **David's console capture of the failed SSA→Sales Rep test confirmed the
+  full story + exposed two more defects, both fixed (2026-07-08, BUILD .2):**
+  The capture showed the honest-failure system WORKED — the SSA→Sales Rep
+  save failed against a flaky GAS backend (404s returning HTML) and the
+  red "Role changed locally but failed to save" toasts fired repeatedly;
+  the user's browser then honestly loaded the server's real state (ssa).
+  What was actually broken: (1) `_gasFetch`'s callers started their 30s
+  abort timers at ENQUEUE, so queued requests burned their budget waiting
+  in line and aborted guaranteed, with retries re-joining the back of the
+  queue — a self-sustaining "signal is aborted without reason" cascade
+  exactly when the backend was slow. Timeouts now start at DISPATCH
+  (owned by _gasFetch). Verified: 1s-budget request survived a 2.5s queue
+  wait. (2) After a failed save the UI KEPT SHOWING the new role (local
+  list was already mutated), so the screen contradicted the server and
+  the vanished toast was the only truth-teller. Both role-change handlers
+  now snapshot + fully revert on save failure with a 10-second ❌ toast.
+  Verified through the real dropdown handler under a simulated outage:
+  role visibly reverted to SSA, revert toast fired. Success toasts now
+  read "VERIFIED saved on server" to reflect what they actually mean.
 - **Build stamp + self-updater (2026-07-08), prompted by David's SSA→
   Sales Rep repro that showed NO error anywhere yet didn't propagate.**
   Server forensics showed the test user (`janepsx2026@gmail.com`) was
