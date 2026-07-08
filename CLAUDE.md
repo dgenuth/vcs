@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Wed Jul 08, 2026 (this session, continued — Sonnet 5)
-**Current checkpoint:** MD5 `d60bf41aa420dc499a6c37aa0e8eb728`, 32,302 lines, BUILD `2026-07-08.5`
+**Current checkpoint:** MD5 `2f5e08a4ffbdcc47eb840f72b0cb5444`, 32,334 lines, BUILD `2026-07-08.6`
 
 **NEW NON-NEGOTIABLE RULE: bump `window.VCS_BUILD` (near the top of
 index.html, inside `<head>`) on EVERY commit that changes index.html.**
@@ -89,6 +89,44 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
+
+- **CRITICAL TRAP: the build-staleness self-updater (added 2026-07-08.1)
+  could fire INSIDE the Microsoft sign-in popup and corrupt the OAuth
+  handshake, producing "AADSTS50196: client request loop" and wedging the
+  browser (fixed BUILD 2026-07-08.6).** `getMsalInstance()`'s
+  `redirectUri` is this app's OWN url — so when `signInWithMicrosoft()`'s
+  `loginPopup()` finishes authenticating, Microsoft navigates the POPUP
+  WINDOW ITSELF back to our full `index.html` (auth response in the URL)
+  so MSAL's code, running inside that popup, can process the token and
+  `postMessage` the result back to the opener before closing. `init()`
+  runs unconditionally on every load — including inside that popup — and
+  `_checkForNewerBuild()` fires at startup with no awareness it might be
+  running somewhere other than the main app window. Shipping several
+  builds in rapid succession (a normal night of iteration, not unusual)
+  meant that popup reload was very likely to detect "newer build
+  available" and, 1.5s later, force ANOTHER full navigation — landing
+  right in the middle of MSAL's handshake, before it had processed the
+  response and messaged the opener. Confirmed live via a user report
+  (screenshot of the exact Microsoft error + a frozen "Not Responding"
+  Chrome window). Fixed with `_inOAuthPopupOrCallback()`: hard-excludes
+  any window with `window.opener` set (any popup, MSAL or otherwise —
+  a popup is transient/single-purpose and has no business self-updating)
+  AND any URL whose hash/query contains OAuth response params
+  (`code=`/`access_token=`/`id_token=`/`session_state=`/`error=`, for
+  BOTH popup and redirect-style callbacks). Checked three times: before
+  the network fetch, again right before the reload is scheduled, and a
+  final time at the actual moment of navigation — a login popup can open
+  at any point between the periodic 5-minute check firing and its own
+  1.5s reload delay elapsing. Verified live: simulated popup skips
+  `_checkForNewerBuild()`'s network call entirely; simulated OAuth hash
+  params (code/session_state/error) all correctly detected; normal
+  (non-popup, non-callback) operation unaffected, self-updater still
+  fires normally in the main app window.
+  **RULE: any future code that runs unconditionally in `init()` must
+  consider whether it could be running inside the Microsoft OAuth popup
+  (redirectUri = own origin) — check `window.opener` / OAuth response URL
+  params before doing anything that navigates, reloads, or otherwise
+  disrupts page state.**
 
 - **TRAP: 'manager' had a hardcoded unconditional tab-access bypass, same
   line as 'admin' (fixed BUILD 2026-07-08.5).** `isTabAllowedForUser()`

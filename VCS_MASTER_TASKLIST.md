@@ -1,8 +1,29 @@
 # VCS — Master Task List
 **Last updated:** Wed Jul 08, 2026 (this session, continued — Sonnet 5)
-**Checkpoint at this update:** MD5 `d60bf41aa420dc499a6c37aa0e8eb728`, 32,302 lines, BUILD `2026-07-08.5`
+**Checkpoint at this update:** MD5 `2f5e08a4ffbdcc47eb840f72b0cb5444`, 32,334 lines, BUILD `2026-07-08.6`
 
 ## JUST FIXED — confirm before treating as closed
+- **URGENT, BUILD 2026-07-08.6 — the self-updater broke Microsoft sign-in
+  entirely.** David reported "AADSTS50196: client request loop" from
+  Microsoft plus a fully frozen ("Not Responding") Chrome window while
+  trying to log in to the sandbox. Root cause: Microsoft's OAuth popup for
+  Sign-in-with-Microsoft redirects back to OUR OWN app URL to complete the
+  handshake (MSAL's redirectUri = own origin) — so the popup window loads
+  our full index.html, including the build-staleness self-updater added
+  earlier tonight. Shipping 5 builds in rapid succession this session
+  meant that popup reload very likely detected "newer build available"
+  and forced ANOTHER full navigation 1.5s later, landing mid-handshake
+  and corrupting it. Fixed: the self-updater now hard-excludes any popup
+  window (`window.opener` set) and any URL carrying OAuth response params
+  in the hash/query, checked three times (before fetching, before
+  scheduling the reload, and immediately before navigating) since a login
+  popup can open at any point in that window. Verified live: simulated
+  popup context skips the self-updater's network call entirely; OAuth
+  hash params (code/session_state/error) all correctly detected; normal
+  main-window operation confirmed unaffected. **This was a real
+  regression introduced by tonight's own build-stamp feature — Microsoft
+  login should be re-tested first thing next session to confirm this is
+  fully resolved from the user's side, not just verified in isolation.**
 - **BUILD 2026-07-08.5 — two more tab-access bugs, found from David's
   post-V8-deploy testing of Manager and SSA/Contracts.**
   1. `isTabAllowedForUser()` had a hardcoded `role==='manager' return
