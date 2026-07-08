@@ -48,7 +48,7 @@
      deploy, different browsers silently run DIFFERENT builds, which both
      corrupts testing conclusions and lets old-build tabs (without the
      newest data-safety fixes) keep writing to the shared backend. -->
-<script>window.VCS_BUILD='2026-07-08.4';</script>
+<script>window.VCS_BUILD='2026-07-08.5';</script>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -4231,7 +4231,19 @@ function isTabAllowedForUser(tabId){
   // still respected. Previously this returned true unconditionally before
   // even checking overrides, meaning it could never actually be turned off.
   if(tabId==='feedback') return true;
-  if (USER.role === 'admin' || USER.role === 'manager') return true;
+  // FIX (2026-07-08): 'manager' used to get the SAME unconditional bypass
+  // as 'admin' here -- for any tab with no per-user override (the common
+  // case), a manager saw it regardless of the role-level Tab Access
+  // Defaults an admin had configured. Confirmed live: janepsx (manager)
+  // had a restrictive role default correctly stored on the server (only
+  // checklist/feedback/settings/vendordb visible) plus one small per-user
+  // override (calendar), yet still saw every tab after login -- because
+  // this line granted blanket access before resolveRoleTabState() below
+  // was ever consulted. Admin remains a genuine, intentional exception
+  // (same as canAccessArchive() and other admin-unconditional gates
+  // throughout this file); manager now falls through to the same
+  // role-default resolution every other non-admin role already uses.
+  if (USER.role === 'admin') return true;
   if(typeof userCanSeeTab==='function'&&(tabId==='contracts'||tabId==='spend'||tabId==='network'||tabId==='economics'||tabId==='forecast'||tabId==='reports'||tabId==='tiers')){return userCanSeeTab(tabId);}
   // CRITICAL FIX (2026-07-07): this used to read ROLE_PERMS[role].tabs
   // directly -- a STATIC, hardcoded baseline that never reflects any
@@ -5090,7 +5102,15 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
     if(ph2) qBar.appendChild(qBtn('📞','Call '+vendor.procContact,()=>dialPhone(ph2,vendor)));
     if(_canAct2) qBar.appendChild(qBtn('📧','Send email',()=>openEmailModal(vendor),'var(--blue)'));
     if(hasPermission('editNotes')){const _nb=qBtn('📝','Add note',()=>openStructuredNoteModal(vendor),'var(--green)');if(vendor.notes&&vendor.notes.trim()){_nb.style.position='relative';const _dot=el('span',{style:{position:'absolute',top:'0',right:'0',width:'7px',height:'7px',borderRadius:'50%',background:'#22c55e',display:'block'}});_nb.appendChild(_dot);}qBar.appendChild(_nb);}
-    if(hasPermission('editContract')) qBar.appendChild(qBtn('📄','Edit contract',()=>{S._contractsPresetVendor=vendor.name;S.view='contracts';render();},'var(--amber)'));
+    // FIX (2026-07-08): hasPermission('editContract') is a STATIC role flag
+    // -- independent of the dynamic Tab Access Defaults an admin configures
+    // for the Contracts tab itself (isTabAllowedForUser/resolveRoleTabState,
+    // see canView()'s matching fix above). This button could appear for a
+    // role whose Contracts tab was explicitly restricted, leading straight
+    // into a page that then blocked them anyway -- confirmed live for SSA.
+    // Both conditions must now hold: the role has contract-editing
+    // capability at all, AND this specific user can actually reach Contracts.
+    if(hasPermission('editContract') && isTabAllowedForUser('contracts')) qBar.appendChild(qBtn('📄','Edit contract',()=>{S._contractsPresetVendor=vendor.name;S.view='contracts';render();},'var(--amber)'));
     // S50 QA fix: there were two icons here doing the exact same thing
     // (identical onclick, identical URL) — the '📊 SF Dashboard' button was
     // a dead duplicate of '☁ Open in Salesforce', removed. Both also used
@@ -7856,6 +7876,38 @@ function canView(key){
   const roleDefaults=_PERM_DEFAULTS[role]||{};
   const userOverride=(USER&&USER.perms||{})[key];
   if(userOverride!==undefined) return userOverride.v!==false;
+  // FIX (2026-07-08): keys that map to one of the 7 dynamically-
+  // configurable special tabs (contracts/spend/network/economics/forecast/
+  // reports/tiers, plus a few sfboard/analytics sub-tabs -- see
+  // _PERM_KEY_TO_LEGACY_TAB) must resolve through resolveRoleTabState()/
+  // vcs_role_tab_overrides FIRST -- the single source of truth the Tab
+  // Access Defaults UI itself reads and writes. This used to run AFTER the
+  // generic roleDefaults[key] static check below, so any key present in
+  // BOTH maps let the static _PERM_DEFAULTS value win outright -- and
+  // _PERM_DEFAULTS flatly disagrees with the already-correct
+  // TAB_PAGE_DEFAULTS fallback in several places (e.g. ssa's
+  // 'page.contracts' is hardcoded {v:true} here vs.
+  // TAB_PAGE_DEFAULTS.ssa.contracts:false). The exact same "a static value
+  // never reflects dynamic Tab Access config" bug class already fixed once
+  // for isTabAllowedForUser() (2026-07-07) and for this branch's OWN
+  // fallback (2026-07-06) -- just a second static map nobody had
+  // reconciled. Confirmed live: SSA's Contracts tab stayed visible and
+  // clickable despite being correctly configured as restricted, because
+  // the old roleDefaults[key] check fired before this branch was ever
+  // reached. Both static maps are still consulted -- just demoted to
+  // fallback candidates for when no ADMIN-CONFIGURED override exists.
+  const legacyTabId=_PERM_KEY_TO_LEGACY_TAB[key];
+  if(legacyTabId && typeof resolveRoleTabState==='function'){
+    const legacyOverride=(USER&&USER.tabOverrides||{})[legacyTabId];
+    // S46: tabOverrides entries may now be {view,edit} objects (written by
+    // the new Tab Access checkboxes) as well as the older bare boolean.
+    if(legacyOverride&&typeof legacyOverride==='object') return legacyOverride.view!==false;
+    if(typeof legacyOverride==='boolean') return legacyOverride;
+    const _staticFallback = roleDefaults[key]!==undefined
+      ? (roleDefaults[key].v!==false)
+      : (TAB_PAGE_DEFAULTS[role]||{})[legacyTabId];
+    return resolveRoleTabState(role, legacyTabId, _staticFallback).view;
+  }
   if(roleDefaults[key]!==undefined) return roleDefaults[key].v!==false;
   if(key==='vendor.notes'){
     const legacyDefaults=ROLE_PERMISSION_DEFAULTS[role]||ROLE_PERMISSION_DEFAULTS.rep;
@@ -7863,37 +7915,14 @@ function canView(key){
     if(typeof legacyOverride==='boolean') return legacyOverride;
     return legacyDefaults.notesVisible!==false;
   }
-  const legacyTabId=_PERM_KEY_TO_LEGACY_TAB[key];
   if(legacyTabId){
+    // Defensive fallback only -- resolveRoleTabState is always defined in
+    // this file; this branch preserves old static-only behavior in case
+    // that ever changes.
     const legacyDefaults=TAB_PAGE_DEFAULTS[role]||{};
     const legacyOverride=(USER&&USER.tabOverrides||{})[legacyTabId];
-    // S46: tabOverrides entries may now be {view,edit} objects (written by
-    // the new Tab Access checkboxes) as well as the older bare boolean.
     if(legacyOverride&&typeof legacyOverride==='object') return legacyOverride.view!==false;
     if(typeof legacyOverride==='boolean') return legacyOverride;
-    // CRITICAL FIX (2026-07-06): this used to fall straight to the static
-    // TAB_PAGE_DEFAULTS snapshot below, which predates the Role & Feature
-    // Defaults "Tab Access Defaults" UI (vcs_role_tab_overrides,
-    // resolveRoleTabState()) and was never wired to it. contracts/spend/
-    // network/economics/forecast/reports/tiers are the ONLY ids that ever
-    // reach this branch (see _PERM_KEY_TO_LEGACY_TAB above) -- for every
-    // one of them, an admin's role-level Tab Access toggle had ZERO effect
-    // on actual access. Confirmed live: SSA's "tiers" has no entry in
-    // TAB_PAGE_DEFAULTS.ssa at all, so it fell through to the hardcoded
-    // `return true` below regardless of being marked restricted in
-    // Settings; roles where TAB_PAGE_DEFAULTS hardcodes a tab to `false`
-    // (e.g. ssa's contracts/spend/network/economics/forecast/reports) could
-    // never be un-restricted via the UI either, no matter what an admin
-    // configured. Now consults the same resolveRoleTabState() the Tab
-    // Access Defaults panel itself uses to decide what checkbox to show --
-    // guaranteeing actual access always matches the displayed setting. The
-    // old TAB_PAGE_DEFAULTS value is passed through as the fallback default
-    // ONLY for a role/tab combination that has never been explicitly
-    // configured via the new UI, preserving prior behavior exactly until an
-    // admin actually touches it.
-    if(typeof resolveRoleTabState==='function'){
-      return resolveRoleTabState(role, legacyTabId, legacyDefaults[legacyTabId]).view;
-    }
     if(legacyDefaults[legacyTabId]!==undefined) return legacyDefaults[legacyTabId]!==false;
   }
   return true;

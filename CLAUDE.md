@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
-**Last updated:** Wed Jul 08, 2026 (this session, continued — Fable 5)
-**Current checkpoint:** MD5 `de96b1e11ee96c0177283010286f85f4`, 32,273 lines, BUILD `2026-07-08.4`
+**Last updated:** Wed Jul 08, 2026 (this session, continued — Sonnet 5)
+**Current checkpoint:** MD5 `d60bf41aa420dc499a6c37aa0e8eb728`, 32,302 lines, BUILD `2026-07-08.5`
 
 **NEW NON-NEGOTIABLE RULE: bump `window.VCS_BUILD` (near the top of
 index.html, inside `<head>`) on EVERY commit that changes index.html.**
@@ -89,6 +89,69 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
+
+- **TRAP: 'manager' had a hardcoded unconditional tab-access bypass, same
+  line as 'admin' (fixed BUILD 2026-07-08.5).** `isTabAllowedForUser()`
+  had `if (USER.role === 'admin' || USER.role === 'manager') return true;`
+  — for ANY tab without a per-user override (the common case), a manager
+  saw it regardless of the role-level Tab Access Defaults an admin had
+  configured. Confirmed live against the real server: janepsx (manager)
+  had a correctly restrictive role default stored (only checklist/
+  feedback/settings/vendordb visible) plus one small per-user override
+  (calendar) — yet still saw every tab, because this line granted access
+  before resolveRoleTabState() was ever reached, no matter how many times
+  "Apply Changes to Existing Users" was run (it recalibrates the STORED
+  data correctly; this bug was purely in how the CLIENT read it back).
+  Admin's exception is intentional and stays (matches canAccessArchive()
+  and other admin-unconditional gates elsewhere); manager now falls
+  through to the same resolution every other non-admin role uses.
+  Verified live against real server data: manager sees calendar (own
+  override)/vendordb/checklist (role default) but NOT today/itw/reviews/
+  history/network (role default) — exactly matching stored config.
+- **TRAP: canView() checked the static `_PERM_DEFAULTS[role][key]` map
+  BEFORE the legacyTabId/resolveRoleTabState() branch for the 7 special
+  tabs, so a stale static entry could silently override BOTH the admin's
+  live Tab Access config AND the correct legacy fallback it duplicates
+  (fixed BUILD 2026-07-08.5).** `_PERM_DEFAULTS.ssa['page.contracts']` was
+  hardcoded `{v:true}`, directly contradicting `TAB_PAGE_DEFAULTS.ssa.
+  contracts:false` (the correct legacy fallback) AND the admin's dynamic
+  `vcs_role_tab_overrides.ssa.contracts:{view:false}` (confirmed correct
+  on the live server) — but since `canView()` checked `_PERM_DEFAULTS`
+  FIRST, unconditionally, it won every time. This is the exact same
+  "static value never reflects dynamic Tab Access config" bug class
+  already fixed once for `isTabAllowedForUser()` (2026-07-07) and once
+  for THIS SAME branch's own internal fallback (2026-07-06) — a second,
+  parallel static map nobody had reconciled with the first fix. Symptom
+  reported live: SSA's Contracts tab stayed visible and clickable (the
+  sidebar link — governed by `isTabAllowedForUser`→`userCanSeeTab`→
+  `canView` — incorrectly resolved to accessible) even though the
+  content, once opened, was separately blocked by a THIRD, unrelated
+  static check (`renderContracts()`'s `hasPermission('editContract')`,
+  untouched by this fix, not part of the Tab Access system at all) —
+  producing the confusing "tab shows, but says data is restricted"
+  report. Fixed: for any key with a `legacyTabId` mapping, `canView()`
+  now resolves through `resolveRoleTabState()` FIRST; both static maps
+  (`_PERM_DEFAULTS[role][key].v` and `TAB_PAGE_DEFAULTS[role][legacyTabId]`)
+  are demoted to fallback candidates used only when no admin override
+  exists — never allowed to override a live dynamic config again.
+  Also fixed the one confirmed downstream symptom: the "📄 Edit contract"
+  quick-action button in the vendor detail toolbar was gated ONLY on the
+  static `hasPermission('editContract')`, so it could appear (and lead
+  straight into a page that then blocked the user anyway) for a role
+  whose Contracts tab was explicitly restricted. Now requires
+  `hasPermission('editContract') && isTabAllowedForUser('contracts')`.
+  NOTE: `hasPermission('editContract')` gates several OTHER, genuinely
+  unrelated things (inline field-edit permissions within a vendor's own
+  detail form — Trainual link, editable sections, relationships section;
+  see lines using it elsewhere) — those are deliberately NOT touched,
+  they're a separate field-level permission, not Contracts-tab access.
+  Verified live against real server data: SSA correctly gets
+  `canView('page.contracts')===false`,
+  `isTabAllowedForUser('contracts')===false`,
+  `userCanSeeTab('contracts')===false`; procurement's spend (no dynamic
+  override on server) still correctly falls back to its static default
+  (regression check); admin remains fully unconditional (regression
+  check).
 
 - **TRAP: touched-set swallow silently downgraded a save to "touched:
   none" (fixed 2026-07-08, BUILD .4 — diagnosed jointly with an external

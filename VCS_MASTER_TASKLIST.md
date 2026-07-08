@@ -1,8 +1,38 @@
 # VCS — Master Task List
-**Last updated:** Wed Jul 08, 2026 (this session, continued — Fable 5)
-**Checkpoint at this update:** MD5 `de96b1e11ee96c0177283010286f85f4`, 32,273 lines, BUILD `2026-07-08.4`
+**Last updated:** Wed Jul 08, 2026 (this session, continued — Sonnet 5)
+**Checkpoint at this update:** MD5 `d60bf41aa420dc499a6c37aa0e8eb728`, 32,302 lines, BUILD `2026-07-08.5`
 
 ## JUST FIXED — confirm before treating as closed
+- **BUILD 2026-07-08.5 — two more tab-access bugs, found from David's
+  post-V8-deploy testing of Manager and SSA/Contracts.**
+  1. `isTabAllowedForUser()` had a hardcoded `role==='manager' return
+     true`, same line as admin's legitimate exception — a manager saw
+     every non-per-user-overridden tab regardless of role-level Tab
+     Access Defaults. Server forensics confirmed the STORED config for
+     janepsx (manager) was already correct (restrictive role default +
+     one calendar override) — this was purely a client read-side bug, so
+     "Apply Changes to Existing Users" correctly recalibrated the data
+     but could never have fixed the symptom. Verified live against real
+     server data: manager now correctly sees calendar/vendordb/checklist
+     but not today/itw/reviews/history/network.
+  2. `canView()` checked a static `_PERM_DEFAULTS[role][key]` map BEFORE
+     the dynamic `resolveRoleTabState()` branch for the 7 special tabs
+     (contracts/spend/network/economics/forecast/reports/tiers) —
+     `_PERM_DEFAULTS.ssa['page.contracts']` was hardcoded `{v:true}`,
+     contradicting both the correct legacy fallback AND the admin's live
+     dynamic config, and won because it was checked first. This is why
+     SSA's Contracts tab stayed visible/clickable despite being correctly
+     configured restricted (the DATA was separately blocked by a third,
+     unrelated static check in renderContracts(), producing the confusing
+     "tab shows but data is restricted" report). Reordered so
+     resolveRoleTabState() always wins when a dynamic override exists;
+     both static maps demoted to fallback-only. Also fixed the one
+     downstream symptom: the "Edit contract" vendor-detail quick-button
+     was gated only on the unrelated static hasPermission('editContract')
+     — now also requires isTabAllowedForUser('contracts').
+  Verified live against real server data for both fixes; procurement/
+  admin regression checks passed (procurement's un-overridden spend still
+  falls back to its static default; admin remains fully unconditional).
 - **BUILD 2026-07-08.4 — DDR paired patch integrated (Fixes A–D + client
   CAS plumbing). All six live tests PASS.** Diagnosis was joint (external
   DDR review + this session's live forensics); patch authored by the DDR,
