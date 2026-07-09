@@ -1,8 +1,29 @@
 # VCS — Master Task List
 **Last updated:** Thu Jul 09, 2026 (this session, continued — Sonnet 5)
-**Checkpoint at this update:** MD5 `9008823c936443a99dced7b23a21812c`, 32,491 lines, BUILD `2026-07-09.3`
+**Checkpoint at this update:** MD5 `865637dfa838910af8a102b2fd792613`, 32,519 lines, BUILD `2026-07-09.4`
 
 ## JUST FIXED — confirm before treating as closed
+- **BUILD 2026-07-09.4 — found the REAL cause of the recurring
+  "AADSTS50196" Microsoft popup (the BUILD .6 self-updater fix was real
+  but was fixing a different, unrelated mechanism).** Root cause,
+  confirmed directly from David's console: `ensureMSToken()` -- a
+  separate, hand-rolled MS Graph calendar/mail token-refresh path, not
+  the Sign-in-with-Microsoft MSAL flow -- runs UNCONDITIONALLY on every
+  single login inside completeLogin(), labeled "Silent MS token
+  restore/refresh." A stale/revoked MS 365 refresh token gets HTTP 400
+  back from Microsoft, but fetch() doesn't throw on HTTP error status, so
+  the code silently fell through into opening an actual popup as a
+  fallback -- which then rendered a full Microsoft error page instead of
+  failing invisibly per prompt=none's own contract. This fired on every
+  login, forever, explaining the recurrence perfectly. Fixed: fetch
+  response status now checked explicitly; the automatic background caller
+  now passes allowPopupFallback=false so a dead connection just quietly
+  returns null instead of surprising the user with a popup; the two
+  genuinely user-initiated call sites (expand calendar section, "Add to
+  Outlook") keep their existing popup-fallback behavior, unchanged.
+  Verified live: reproduced David's exact failure condition (stale
+  refresh token + mocked 400 response) -- silent path opens zero popups,
+  interactive path still works correctly (no regression).
 - **BUILD 2026-07-09.3 — a fully-restricted role got dumped onto Today's
   page even though it was correctly hidden from their own sidebar.**
   David caught it testing "Restricted Viewer": nav link correctly hidden,

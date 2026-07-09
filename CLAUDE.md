@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Thu Jul 09, 2026 (this session, continued — Sonnet 5)
-**Current checkpoint:** MD5 `9008823c936443a99dced7b23a21812c`, 32,491 lines, BUILD `2026-07-09.3`
+**Current checkpoint:** MD5 `865637dfa838910af8a102b2fd792613`, 32,519 lines, BUILD `2026-07-09.4`
 
 **NEW NON-NEGOTIABLE RULE: bump `window.VCS_BUILD` (near the top of
 index.html, inside `<head>`) on EVERY commit that changes index.html.**
@@ -89,6 +89,56 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
+
+- **RESOLVED: the recurring "AADSTS50196 client request loop" Microsoft
+  popup was NEVER the self-updater/OAuth-popup collision fixed in BUILD
+  2026-07-08.6 (fixed for real BUILD 2026-07-09.4).** That earlier fix was
+  real, correct, and necessary for its own mechanism (self-updater firing
+  inside the Sign-in-with-Microsoft popup) — but it was NOT the cause of
+  this issue recurring afterward. The actual, confirmed-via-console
+  mechanism: `ensureMSToken()` (an entirely separate, hand-rolled MS
+  Graph calendar/mail token-refresh path, unrelated to `signInWithMicrosoft()`'s
+  MSAL popup) is called UNCONDITIONALLY inside `completeLogin()` on EVERY
+  single login/session-restore, regardless of Google/Microsoft/password
+  login method, labeled "Silent MS token restore/refresh". If a
+  previously-connected MS 365 refresh token has gone stale (expired/
+  revoked), its direct `fetch()`-based refresh attempt gets HTTP 400 back
+  from Microsoft -- but `fetch()` does NOT throw on an HTTP error status,
+  so `td.access_token` was just undefined and execution silently fell
+  through into a "fallback: silent popup OAuth flow" that opens an ACTUAL
+  `window.open()` popup with `prompt=none`. Despite `prompt=none`'s
+  contract to never show UI, a genuinely dead refresh token can make
+  Microsoft's server render a full interactive AADSTS50196 error page
+  inside that popup instead of failing fast -- on EVERY LOGIN, forever,
+  until the connection is manually redone, explaining the "why do we
+  keep getting these surprises" recurrence perfectly. Confirmed directly
+  from David's own console: the 400 to `oauth2/v2.0/token`, immediately
+  followed by the Microsoft popup and a "Failed to initiate navigation"
+  Chrome cross-origin warning.
+  Fixed with an `allowPopupFallback` param on `ensureMSToken(allowPopupFallback)`
+  (default `true`, preserving existing behavior): (1) `fetch()` response
+  status is now checked explicitly (`resp.ok`) before trying to read
+  `access_token` -- a real HTTP failure is now treated as a real failure,
+  not "fall through to the next thing." (2) `completeLogin()`'s
+  background call now passes `ensureMSToken(false)` -- silent truly means
+  silent now; on failure it just quietly returns null and the calendar
+  feature stays disconnected until the user explicitly reconnects via
+  "Connect Microsoft Account" (the separate, reliable
+  `connectMicrosoft365()` full-interactive flow, unaffected). The two
+  OTHER callers (clicking to expand the calendar section; clicking "Add
+  to Outlook calendar") are both genuinely user-initiated actions where a
+  popup fallback is defensible UX, so they keep the default
+  `allowPopupFallback=true` -- unchanged, verified via regression test.
+  Verified live: reproduced David's EXACT failure condition (a stale
+  refresh token + a mocked 400 response from Microsoft's token endpoint)
+  -- the silent/background call path correctly opens zero popups and
+  returns null; the interactive call path still correctly attempts the
+  popup fallback (no regression).
+  **If this specific symptom (a Microsoft error window appearing
+  unprompted) EVER recurs again, check `getMSRefresh()`'s stored token
+  first** -- it may simply mean the underlying MS 365 connection itself
+  needs to be redone via Settings → Connect Microsoft Account, which is
+  now a silent-and-safe no-op failure instead of a popup.
 
 - **CRITICAL TRAP: a fully (or near-fully) restricted role/user got
   redirected onto 'today' even when 'today' itself was explicitly hidden

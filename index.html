@@ -48,7 +48,7 @@
      deploy, different browsers silently run DIFFERENT builds, which both
      corrupts testing conclusions and lets old-build tabs (without the
      newest data-safety fixes) keep writing to the shared backend. -->
-<script>window.VCS_BUILD='2026-07-09.3';</script>
+<script>window.VCS_BUILD='2026-07-09.4';</script>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -1398,7 +1398,7 @@ async function completeLogin() {
     if(msTok&&msExp&&Date.now()<msExp){
       console.log('[VCS] MS token valid on load');
     } else if(typeof getMSRefresh==='function'&&getMSRefresh()){
-      if(typeof ensureMSToken==='function') ensureMSToken().catch(function(){});
+      if(typeof ensureMSToken==='function') ensureMSToken(false).catch(function(){}); // FIX (2026-07-09): silent means silent -- never allowed to pop a Microsoft window from this automatic, unattended login-time call
     }
   } catch(_) {}
 
@@ -32292,7 +32292,8 @@ async function connectMicrosoft365(clientId, tenantId, onDone){
 }
 
 // Auto-refresh MS token silently using stored refresh token
-async function ensureMSToken() {
+async function ensureMSToken(allowPopupFallback) {
+  if (allowPopupFallback === undefined) allowPopupFallback = true;
   const tok = getMSToken();
   const exp = getMSTokenExp();
   if (tok && Date.now() < exp - 60000) return tok; // Token still valid
@@ -32309,15 +32310,42 @@ async function ensureMSToken() {
           body: new URLSearchParams({ client_id:clientId, grant_type:'refresh_token',
             refresh_token:refresh, scope:'Calendars.ReadWrite Mail.Read Mail.ReadWrite offline_access openid profile' }) }
       );
-      const td = await resp.json();
-      if (td.access_token) {
-        setMSToken(td.access_token, Date.now()+(td.expires_in-60)*1000, td.refresh_token||refresh, getMSUserName());
-        if(typeof refreshConnectionsSummary==='function')refreshConnectionsSummary();
-        console.log('[VCS] MS token silently refreshed via refresh_token');
-        return td.access_token;
+      // CRITICAL FIX (2026-07-09): fetch() does NOT throw on an HTTP error
+      // status -- a 400 (expired/revoked refresh token) resolved normally
+      // here, td.access_token was undefined, and execution silently fell
+      // through into the popup fallback below. Confirmed live from
+      // David's console: exactly this 400, immediately followed by a
+      // Microsoft popup hitting AADSTS50196. Now checks resp.ok explicitly
+      // so a genuinely dead refresh token is treated as a real failure,
+      // not "try the next thing."
+      if (resp.ok) {
+        const td = await resp.json();
+        if (td.access_token) {
+          setMSToken(td.access_token, Date.now()+(td.expires_in-60)*1000, td.refresh_token||refresh, getMSUserName());
+          if(typeof refreshConnectionsSummary==='function')refreshConnectionsSummary();
+          console.log('[VCS] MS token silently refreshed via refresh_token');
+          return td.access_token;
+        }
+      } else {
+        console.warn('[VCS] Direct MS token refresh rejected by server (HTTP '+resp.status+') -- refresh token is likely expired/revoked.');
       }
     } catch(e) { console.warn('[VCS] Direct refresh failed (CORS expected):', e.message); }
   }
+  // CRITICAL FIX (2026-07-09): this "silent" popup fallback is anything
+  // but silent when it fails -- Microsoft can render a full interactive
+  // error page (AADSTS50196, seen live) inside it instead of just failing
+  // fast per prompt=none's contract. This function is called from THREE
+  // places: two are genuine user-initiated actions (clicking to expand
+  // the calendar section, clicking "Add to Outlook") where a popup is
+  // defensible UX -- but completeLogin()'s "Silent MS token restore" step
+  // calls this UNCONDITIONALLY on every single login, with zero user
+  // action, explicitly labeled silent. A background step popping an
+  // unexpected Microsoft error window on every login (confirmed live,
+  // repeatedly, this session) is never acceptable. That caller now passes
+  // allowPopupFallback=false; silent truly means silent -- give up
+  // quietly and let the calendar feature stay disconnected until the user
+  // explicitly reconnects, rather than surprising them with a popup.
+  if (!allowPopupFallback) return null;
   // Fallback: silent popup OAuth flow (prompt=none reuses existing session, no user interaction)
   return new Promise((resolve) => {
     const scope = encodeURIComponent('Calendars.ReadWrite Mail.Read Mail.ReadWrite offline_access openid profile');
