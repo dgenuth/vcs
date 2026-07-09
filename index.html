@@ -48,7 +48,7 @@
      deploy, different browsers silently run DIFFERENT builds, which both
      corrupts testing conclusions and lets old-build tabs (without the
      newest data-safety fixes) keep writing to the shared backend. -->
-<script>window.VCS_BUILD='2026-07-09.2';</script>
+<script>window.VCS_BUILD='2026-07-09.3';</script>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -31302,8 +31302,18 @@ function render() {
   // the same override-aware logic as the sidebar (previously it used only
   // static ROLE_PERMS tabs, ignoring per-user grants entirely).
   if (S.view!=='settings' && S.view!=='health' && !isTabAllowedForUser(S.view)) {
+    // FIX (2026-07-09, David's report): fell back to the LITERAL STRING
+    // 'today' whenever no allowed tab was found -- with zero check that
+    // 'today' itself was actually permitted. A fully (or near-fully)
+    // restricted role, exactly like "Restricted Viewer", has nothing
+    // that passes the .find() below, so this ALWAYS landed them back on
+    // Today regardless of it being explicitly hidden from their own
+    // sidebar. Confirmed live: sidebar correctly hid Today, content area
+    // rendered it anyway. 'settings' is the only view this whole guard
+    // treats as unconditionally reachable (see the exemption one line
+    // up) -- it's the one fallback actually proven safe, not just assumed.
     const _firstAllowed = NAV_DEFS.map(n=>n[0]).find(id=>!id.startsWith('_div') && isTabAllowedForUser(id));
-    S.view = _firstAllowed || 'today';
+    S.view = _firstAllowed || 'settings';
   }
   $('view-title').textContent=titles[S.view]||S.view;
   const fl=$('filter-label');

@@ -1,8 +1,24 @@
 # VCS — Master Task List
 **Last updated:** Thu Jul 09, 2026 (this session, continued — Sonnet 5)
-**Checkpoint at this update:** MD5 `ec498d959e73c6c3e1da074eae88abe8`, 32,481 lines, BUILD `2026-07-09.2`
+**Checkpoint at this update:** MD5 `9008823c936443a99dced7b23a21812c`, 32,491 lines, BUILD `2026-07-09.3`
 
 ## JUST FIXED — confirm before treating as closed
+- **BUILD 2026-07-09.3 — a fully-restricted role got dumped onto Today's
+  page even though it was correctly hidden from their own sidebar.**
+  David caught it testing "Restricted Viewer": nav link correctly hidden,
+  content area rendered Today anyway. Root cause: render()'s access
+  guard fell back to the LITERAL STRING 'today' whenever no allowed tab
+  could be found — with zero check that 'today' was itself actually
+  permitted. Any role denied from nearly everything always hits this
+  path. Fixed: fallback is now 'settings', the one view this exact same
+  guard already treats as unconditionally reachable one line up — a
+  fallback proven safe by the surrounding code, not assumed. Verified
+  live: fully-denied test user correctly lands on Settings (confirmed via
+  actual rendered page title, not just state); partially-restricted test
+  user still correctly lands on their one allowed tab. Third bug this
+  session in the same root-cause family (Manager tab-bypass, feedback-tab
+  bypass, now this) — a hardcoded assumption silently overriding actual
+  configured permission.
 - **BUILD 2026-07-09.2 — Field Visibility (hiddenFields) was only ever
   enforced in the main grid + detail panel. David's report + explicit
   standing principle: a restricted field must not be reflected ANYWHERE

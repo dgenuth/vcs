@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Thu Jul 09, 2026 (this session, continued — Sonnet 5)
-**Current checkpoint:** MD5 `ec498d959e73c6c3e1da074eae88abe8`, 32,481 lines, BUILD `2026-07-09.2`
+**Current checkpoint:** MD5 `9008823c936443a99dced7b23a21812c`, 32,491 lines, BUILD `2026-07-09.3`
 
 **NEW NON-NEGOTIABLE RULE: bump `window.VCS_BUILD` (near the top of
 index.html, inside `<head>`) on EVERY commit that changes index.html.**
@@ -89,6 +89,36 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
+
+- **CRITICAL TRAP: a fully (or near-fully) restricted role/user got
+  redirected onto 'today' even when 'today' itself was explicitly hidden
+  from their own sidebar (fixed BUILD 2026-07-09.3).** `render()`'s
+  access-redirect guard: `S.view = _firstAllowed || 'today'` — when
+  `_firstAllowed` (the first NAV_DEFS tab that passes
+  `isTabAllowedForUser`) comes back `undefined` because literally nothing
+  is allowed, the fallback was the LITERAL STRING `'today'`, with zero
+  check that 'today' was actually permitted. A role like "Restricted
+  Viewer" — nearly everything denied — always fails to find any
+  `_firstAllowed` tab, so this ALWAYS landed them on Today regardless of
+  it being explicitly hidden. Confirmed live by David: sidebar correctly
+  hid the Today nav link; content area rendered it anyway. Fixed:
+  fallback is now `'settings'` — the ONE view this same guard already
+  treats as unconditionally reachable (see the `S.view!=='settings'`
+  exemption one line up in the same `if`), so it's a fallback actually
+  PROVEN safe by the surrounding code, not just assumed. Verified live:
+  fully-denied test user (every NAV_DEFS tab explicitly `{view:false}`)
+  correctly lands on Settings (confirmed via `#view-title` DOM text, not
+  just the `S.view` variable); partially-restricted test user (only
+  vendordb allowed) still correctly lands on vendordb, not settings —
+  the `_firstAllowed` path itself was never broken, only the
+  nothing-is-allowed fallback was.
+  **RULE: any "redirect to a safe default" fallback in this codebase must
+  itself be verified reachable by the SAME access-control path, never
+  hardcoded to an arbitrary tab name.** This is the third distinct bug
+  this session where a hardcoded assumption ("everyone can obviously see
+  X") silently overrode the actual configured permission — same root
+  cause class as the Manager tab-bypass and the feedback-tab bypass
+  above, just manifesting as a bad fallback instead of a bad default.
 
 - **STRUCTURAL GAP: canViewField()/hiddenFields was only ever enforced in
   the main grid + vendor detail panel — every OTHER surface that reads a
