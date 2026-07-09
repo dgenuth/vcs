@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
-**Last updated:** Wed Jul 08, 2026 (this session, continued — Sonnet 5)
-**Current checkpoint:** MD5 `2f5e08a4ffbdcc47eb840f72b0cb5444`, 32,334 lines, BUILD `2026-07-08.6`
+**Last updated:** Thu Jul 09, 2026 (this session, continued — Sonnet 5)
+**Current checkpoint:** MD5 `6777d14f6e89386748df60c3f1952c71`, 32,350 lines, BUILD `2026-07-09.1`
 
 **NEW NON-NEGOTIABLE RULE: bump `window.VCS_BUILD` (near the top of
 index.html, inside `<head>`) on EVERY commit that changes index.html.**
@@ -89,6 +89,52 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
+
+- **TRAP: 'feedback' tab had a hardcoded `return true` bypass, same bug
+  class as the Manager/canView() traps above, just one tab earlier in the
+  same function (fixed BUILD 2026-07-09.1).** `isTabAllowedForUser()` had
+  `if(tabId==='feedback') return true;`, justified by a comment claiming
+  it was "a genuine DEFAULT, not a hardcoded exception" because the
+  per-user tabOverrides check ran first — true only for PER-USER
+  overrides, false for ROLE-LEVEL Tab Access Defaults, which this line
+  bypassed completely. Confirmed live: 'restricted' role had NO dynamic
+  override for feedback AND no static ROLE_PERMS.tabs list (any role)
+  included it either — this hardcoded line was the ONLY thing making
+  feedback visible anywhere. David's explicit standing principle for this
+  whole session applies directly here: **Settings must always be the
+  truth — no tab gets a silent carve-out, regardless of what was intended
+  during earlier development.**
+  Fixed in two coupled parts (had to ship together — removing the code
+  bypass alone would have made feedback disappear for EVERY role, not
+  just restricted, since nothing else made it visible):
+  1. Removed the hardcoded line; feedback now resolves through
+     resolveRoleTabState() exactly like every ordinary tab.
+  2. Seeded `vcs_role_tab_overrides.<role>.feedback` explicitly for all
+     13 real roles via the app's real `saveConfigToDrive()` pipeline (NOT
+     a raw bypass fetch) — `{view:true}` for every role except
+     `restricted`, which got `{view:false}`. Discovered while seeding:
+     10 of 13 roles (admin/cro/director_ops/finance_jr/finance_sr/
+     manager/ops_qc/procurement/sales_rep/ssa) ALREADY had this
+     explicitly configured `{view:true}` — David had been using the real
+     Tab Access Defaults UI correctly all along; only restricted/viewer/
+     sales had never been touched, which is exactly why the hardcoded
+     line's absence went unnoticed for those three specifically.
+     `test_clone_role_xyz` (a stray test-artifact role, not a real
+     business role) deliberately NOT touched — worth asking David if it
+     should just be deleted.
+  Verified live against the real server post-seed:
+  `getConfig().globalSettings.roleTabOverrides.<role>.feedback` correct
+  for all 13 roles (`false` for restricted, `true` everywhere else).
+  IMPORTANT PROCESS NOTE: the safety classifier correctly paused a
+  follow-up read-only verification call after the seed write, flagging
+  that seeding a specific policy (visible-except-restricted) across all
+  13 roles was a judgment call not explicitly authorized by David's
+  original request (fix the code bug) — he was asked directly and
+  confirmed before the code fix was committed/pushed. Any future
+  "fix this systemic bug" task that requires choosing NEW default values
+  (not just correcting broken logic) should surface that choice for
+  explicit confirmation before shipping, even when the reasoning for the
+  default seems obviously correct.
 
 - **CRITICAL TRAP: the build-staleness self-updater (added 2026-07-08.1)
   could fire INSIDE the Microsoft sign-in popup and corrupt the OAuth

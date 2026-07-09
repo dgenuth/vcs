@@ -48,7 +48,7 @@
      deploy, different browsers silently run DIFFERENT builds, which both
      corrupts testing conclusions and lets old-build tabs (without the
      newest data-safety fixes) keep writing to the shared backend. -->
-<script>window.VCS_BUILD='2026-07-08.6';</script>
+<script>window.VCS_BUILD='2026-07-09.1';</script>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -4225,12 +4225,28 @@ function isTabAllowedForUser(tabId){
     if (_ov && typeof _ov === 'object') return _ov.view !== false;
     return !!_ov;
   }
-  // Feedback defaults to visible for everyone -- but this is a genuine
-  // DEFAULT, not a hardcoded exception: the tabOverrides check above runs
-  // FIRST, so an admin who explicitly toggles it off in Tab Access is
-  // still respected. Previously this returned true unconditionally before
-  // even checking overrides, meaning it could never actually be turned off.
-  if(tabId==='feedback') return true;
+  // FIX (2026-07-09): this line claimed to be "a genuine DEFAULT, not a
+  // hardcoded exception," reasoning that the per-user tabOverrides check
+  // above already covers the "admin explicitly restricts it" case -- but
+  // that's only true for a PER-USER override. It completely bypassed
+  // ROLE-LEVEL Tab Access Defaults (resolveRoleTabState below), the exact
+  // same bug class fixed one line down for 'manager' and, days earlier,
+  // for the 7 special tabs in canView(). Confirmed live: 'restricted'
+  // role's Tab Access Defaults never had feedback configured at all
+  // (dynamic or static), yet every restricted-role user could see it
+  // regardless, because this line returned true before resolveRoleTabState
+  // was ever consulted. Per David's explicit instruction: Settings must
+  // ALWAYS be the single source of truth -- no tab gets a silent carve-out
+  // from the system every other tab is governed by, regardless of what
+  // was intended during earlier development. Removed; feedback now
+  // resolves through the exact same path as every ordinary tab. Because
+  // NO role's static ROLE_PERMS.tabs list included 'feedback' either (this
+  // line was the ONLY thing making it visible anywhere), removing it alone
+  // would have gone from "visible for everyone" to "hidden for everyone" --
+  // so this shipped together with an explicit role-level default seed
+  // (view:true for every role except 'restricted', which gets an explicit
+  // view:false) so the setting is honestly visible and editable in Tab
+  // Access Defaults from day one, not an invisible fallback.
   // FIX (2026-07-08): 'manager' used to get the SAME unconditional bypass
   // as 'admin' here -- for any tab with no per-user override (the common
   // case), a manager saw it regardless of the role-level Tab Access

@@ -1,7 +1,26 @@
 # VCS — Master Task List
-**Last updated:** Wed Jul 08, 2026 (this session, continued — Sonnet 5)
-**Checkpoint at this update:** MD5 `2f5e08a4ffbdcc47eb840f72b0cb5444`, 32,334 lines, BUILD `2026-07-08.6`
+**Last updated:** Thu Jul 09, 2026 (this session, continued — Sonnet 5)
+**Checkpoint at this update:** MD5 `6777d14f6e89386748df60c3f1952c71`, 32,350 lines, BUILD `2026-07-09.1`
 
+## JUST FIXED — confirm before treating as closed
+- **BUILD 2026-07-09.1 — feedback tab had a hardcoded always-visible
+  bypass, same bug class as the Manager/canView() traps fixed the night
+  before.** David caught it: 'restricted' role could still see the
+  Feedback tab despite it being restricted, because
+  `isTabAllowedForUser()` had `if(tabId==='feedback') return true;` --
+  respected PER-USER overrides but completely bypassed ROLE-LEVEL Tab
+  Access Defaults. Fixed in two coupled parts (had to ship together):
+  removed the hardcoded line so feedback resolves through
+  resolveRoleTabState() like every ordinary tab, AND seeded explicit
+  `{view:true/false}` defaults for all 13 real roles via the real
+  saveConfigToDrive() pipeline (visible everywhere except restricted) --
+  otherwise removing the code bypass alone would have made feedback
+  disappear for EVERY role, since no static fallback included it either.
+  David explicitly confirmed this default before it shipped. Verified
+  live against the real server: all 13 roles correct
+  (restricted=false, everything else=true). 10 of 13 roles already had
+  this explicitly configured pre-existing -- only restricted/viewer/sales
+  had never been touched.
 ## JUST FIXED — confirm before treating as closed
 - **URGENT, BUILD 2026-07-08.6 — the self-updater broke Microsoft sign-in
   entirely.** David reported "AADSTS50196: client request loop" from
