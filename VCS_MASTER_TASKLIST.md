@@ -1,8 +1,36 @@
 # VCS — Master Task List
 **Last updated:** Thu Jul 09, 2026 (this session, continued — Sonnet 5)
-**Checkpoint at this update:** MD5 `6777d14f6e89386748df60c3f1952c71`, 32,350 lines, BUILD `2026-07-09.1`
+**Checkpoint at this update:** MD5 `ec498d959e73c6c3e1da074eae88abe8`, 32,481 lines, BUILD `2026-07-09.2`
 
 ## JUST FIXED — confirm before treating as closed
+- **BUILD 2026-07-09.2 — Field Visibility (hiddenFields) was only ever
+  enforced in the main grid + detail panel. David's report + explicit
+  standing principle: a restricted field must not be reflected ANYWHERE
+  in the app.** Fixed for the CONTACTS field group across ~15 confirmed
+  display surfaces: Today panel sticky contact header + quick actions
+  (the original reported leak), Today panel's pre-call prep widget, the
+  "Call section" Vendor Briefing modal, vCard/Share Contact export, email
+  compose modal, Renzo AI outreach generator, meeting talking-points AI
+  generator, outreach campaign composer (including the actual send path),
+  the detail panel's OWN Contacts section (was also leaking despite being
+  assumed already-safe), activity log, communication-history/calendar
+  matching, contract-summary document's contact lines. New shared
+  `visField(vendor,fieldKey)` accessor added next to `canViewField`.
+  `getAllContacts()` itself deliberately left unredacted (used for
+  edit/sync where idx-mapping and full data must stay intact) — display
+  callers build their own redacted view instead; the detail panel's Edit
+  button now requires full field visibility before it appears at all,
+  closing a blank-on-save data-loss risk.
+  **NOT YET COVERED (explicitly, do not assume done):** Financials,
+  Contract, Docs & Pricing, Vendor Info, and most of the Activity field
+  groups, PLUS the contract-summary document's non-contact rows, PLUS any
+  display surface not caught by a Contacts-field-name search specifically.
+  A full sweep across all ~66 restrictable fields has NOT been done —
+  this pass covered one field group end-to-end, not the whole system.
+  Verified live against the real server (jgeorge@primesourcex.com,
+  restricted, 69 real hidden fields): visField unit-tested correct; full
+  DOM-level render test of the Vendor Briefing modal with a planted
+  "LEAK_TEST_VENDOR_XYZ" record found zero leaked strings.
 - **BUILD 2026-07-09.1 — feedback tab had a hardcoded always-visible
   bypass, same bug class as the Manager/canView() traps fixed the night
   before.** David caught it: 'restricted' role could still see the

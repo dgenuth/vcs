@@ -48,7 +48,7 @@
      deploy, different browsers silently run DIFFERENT builds, which both
      corrupts testing conclusions and lets old-build tabs (without the
      newest data-safety fixes) keep writing to the shared backend. -->
-<script>window.VCS_BUILD='2026-07-09.1';</script>
+<script>window.VCS_BUILD='2026-07-09.2';</script>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -3820,22 +3820,30 @@ function openEditNoteModal(vendor, noteEntry, currentText, onSave) {
   setTimeout(function(){ta.focus();},50);
 }
 function openShareContactModal(contact,vendor) {
+  // FIX (2026-07-09): fell back to vendor.procContact/title directly
+  // whenever the caller didn't pass a name/title -- re-introducing the
+  // leak even for callers that correctly gate their OWN inputs (contact
+  // is undefined for a hidden field, but this function's own fallback
+  // then read the raw vendor field anyway). Fallbacks now go through
+  // visField() too, so this function can never surface a hidden field
+  // regardless of what any caller passes in.
+  const _vProcContact=visField(vendor,'procContact'), _vTitle=visField(vendor,'title');
   const phones=typeof contact.phones==='string'?(function(){try{return JSON.parse(contact.phones||'[]');}catch(_){return[];}}()):(contact.phones||[]);
   const emails=typeof contact.emails==='string'?(function(){try{return JSON.parse(contact.emails||'[]');}catch(_){return[];}}()):(contact.emails||[]);
-  const cardLines=[contact.name||vendor.procContact||'',contact.title||vendor.title||'',vendor.name||'']
+  const cardLines=[contact.name||_vProcContact||'',contact.title||_vTitle||'',vendor.name||'']
     .concat(phones.map(function(p){return p.number||p;}))
     .concat(emails.map(function(e){return e.address||e;}))
     .concat([vendor.website||'']).filter(Boolean);
   const cardText=cardLines.join('\n');
-  const vcardLines=['BEGIN:VCARD','VERSION:3.0','FN:'+(contact.name||vendor.procContact||''),
-    'ORG:'+vendor.name,'TITLE:'+(contact.title||vendor.title||'')]
+  const vcardLines=['BEGIN:VCARD','VERSION:3.0','FN:'+(contact.name||_vProcContact||''),
+    'ORG:'+vendor.name,'TITLE:'+(contact.title||_vTitle||'')]
     .concat(phones.map(function(p){return 'TEL:'+(p.number||p);}))
     .concat(emails.map(function(e){return 'EMAIL:'+(e.address||e);}))
     .concat(['URL:'+(vendor.website||''),'END:VCARD']).join('\r\n');
   const overlay=el('div',{style:{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center'}});
   const box=el('div',{style:{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'8px',padding:'20px',width:'320px',display:'flex',flexDirection:'column',gap:'8px'}});
   box.appendChild(el('h3',{style:{margin:0,fontSize:'13px'}},'📤 Share Contact'));
-  box.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',margin:0}},(contact.name||vendor.procContact||'Unknown')+' · '+vendor.name));
+  box.appendChild(el('p',{style:{fontSize:'10px',color:'var(--muted)',margin:0}},(contact.name||_vProcContact||'Unknown')+' · '+vendor.name));
   var acts=[
     {icon:'📋',label:'Copy Contact Card',action:function(){navigator.clipboard&&navigator.clipboard.writeText(cardText);toast('✅ Copied to clipboard','#10b981');document.body.removeChild(overlay);}},
     {icon:'📧',label:'Share via Email',action:function(){window.open('mailto:?subject='+encodeURIComponent('Contact: '+(contact.name||'')+' at '+vendor.name)+'&body='+encodeURIComponent(cardText));document.body.removeChild(overlay);}},
@@ -4654,16 +4662,23 @@ function openEditNotesModal(vendor) {
 // Returns a Promise<string> with the generated message, or throws on error.
 // All communication modals use this so the API call lives in one place.
 async function generateRenzoOutreach(vendor, trigger) {
-  const contactName = vendor.procContact || '';
+  // FIX (2026-07-09): this sent restrictable fields (procContact/email/
+  // notes/adminFee/status/lastComm) straight to an EXTERNAL third-party
+  // API (meetrenzo.com) with zero visibility gating -- a restricted user
+  // could trigger an AI-generated outreach message and have the AI's own
+  // response echo back data they can't otherwise see. Every field here
+  // now goes through visField().
+  const contactName = visField(vendor,'procContact') || '';
   const companyName = vendor.name || '';
-  const email       = vendor.email || '';
-  const lastComm    = vendor.lastComm ? fmtDate(parseDate(vendor.lastComm)) : '';
-  const contractStatus = vendor.status || '';
+  const email       = visField(vendor,'email') || '';
+  const lastComm    = visField(vendor,'lastComm') ? fmtDate(parseDate(vendor.lastComm)) : '';
+  const contractStatus = visField(vendor,'status') || '';
   const expiry      = getCurrentExpiry(vendor);
   const expiryStr   = expiry ? ('Expires: ' + fmtDate(expiry)) : '';
-  const fee         = vendor.adminFee ? ('Admin fee: ' + vendor.adminFee) : '';
+  const _vAdminFee  = visField(vendor,'adminFee');
+  const fee         = _vAdminFee ? ('Admin fee: ' + _vAdminFee) : '';
   const notes = [
-    vendor.notes || '',
+    visField(vendor,'notes') || '',
     contractStatus ? ('Contract status: ' + contractStatus) : '',
     expiryStr,
     fee,
@@ -4774,7 +4789,19 @@ function openEmailModal(vendor, opts) {
   openModal(body => {
     body.appendChild(el('h3',{},opts?.title||`✉️ Draft Email — ${vendor.name}`));
     // Build email list from all contacts dynamically
+    // FIX (2026-07-09): read c.email/c.name straight off getAllContacts()'s
+    // raw output -- a restricted role could still see (and email) a
+    // contact's address here even with 'email'/'procContact' hidden.
+    // Slot 0 -> email/procContact, slot 1 -> email2/title2 (no name2 key
+    // exists so slot-1 label falls back to raw, same as before), slot 2+
+    // (dynamic extra contacts) has no matching restrictable key, left as-is.
+    const _emailKeyForIdx = i => i===0?'email':i===1?'email2':null;
+    const _nameKeyForIdx = i => i===0?'procContact':null;
     const emails = getAllContacts(vendor)
+      .map((c,origIdx)=>{
+        const ek=_emailKeyForIdx(origIdx), nk=_nameKeyForIdx(origIdx);
+        return { name: nk?visField(vendor,nk):c.name, email: ek?visField(vendor,ek):c.email };
+      })
       .filter(c=>c.email)
       .map((c,i)=>({label:c.name||(i===0?'Primary':'Contact '+(i+1)),addr:c.email,checked:i===0}));
 
@@ -4796,7 +4823,7 @@ function openEmailModal(vendor, opts) {
     let subj='', draft='';
     if(opts?.subject) { subj=opts.subject; draft=opts.body||''; }
     else {
-      const greeting = vendor.procContact ? `Dear ${vendor.procContact},` : 'Hello,';
+      const greeting = visField(vendor,'procContact') ? `Dear ${visField(vendor,'procContact')},` : 'Hello,'; // FIX (2026-07-09)
       if (exp) {
         const d=dayDiff(exp,today);
         if (d<0) { subj=`Contract Follow-Up: ${vendor.name} — Renewal Discussion`; draft=`${greeting}\n\nI'm following up regarding our contract with ${vendor.name}, which expired on ${fmtDate(exp)}. I'd like to schedule time to discuss renewal options at your earliest convenience.\n\nPlease let me know your availability for a brief call.\n\nThank you,`; }
@@ -5062,15 +5089,22 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
   if (snoozedUntil && snoozedUntil>new Date()) stickySlot.appendChild(el('span',{class:'snoozed-badge'},`💤 until ${fmtDate(snoozedUntil)}`));
 
   // V4: Contact info always visible in header
-  if(vendor.procContact||vendor.bizPhone||vendor.mobile||vendor.email){
+  // FIX (2026-07-09): this read vendor.procContact/bizPhone/mobile/email
+  // directly, completely bypassing Field Visibility -- confirmed the exact
+  // leak David reported (restricted role saw full contact info here
+  // regardless of hiddenFields). Every value below now goes through
+  // visField(), which returns undefined for a field this user can't view.
+  const _hProcContact=visField(vendor,'procContact'), _hBizPhone=visField(vendor,'bizPhone'),
+    _hMobile=visField(vendor,'mobile'), _hEmail=visField(vendor,'email'), _hTitle=visField(vendor,'title');
+  if(_hProcContact||_hBizPhone||_hMobile||_hEmail){
     const contactRow=el('div',{style:{display:'flex',gap:'10px',flexWrap:'wrap',alignItems:'center',fontSize:'10px',padding:'2px 0 0 0',width:'100%'}});
-    if(vendor.procContact) {
-      contactRow.appendChild(el('span',{style:{color:'var(--text)',fontWeight:'600'}},vendor.procContact));
-      contactRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick:function(e){e.stopPropagation();openShareContactModal({name:vendor.procContact,title:vendor.title,phones:[{number:vendor.mobile||vendor.bizPhone}],emails:[{address:vendor.email}]},vendor);}},'📤 Share'));
+    if(_hProcContact) {
+      contactRow.appendChild(el('span',{style:{color:'var(--text)',fontWeight:'600'}},_hProcContact));
+      contactRow.appendChild(el('button',{class:'btn-xs btn-ghost',style:{fontSize:'9px'},onclick:function(e){e.stopPropagation();openShareContactModal({name:_hProcContact,title:_hTitle,phones:[{number:_hMobile||_hBizPhone}],emails:[{address:_hEmail}]},vendor);}},'📤 Share'));
     }
-    const ph=vendor.bizPhone||vendor.mobile;
+    const ph=_hBizPhone||_hMobile;
     if(ph) contactRow.appendChild(el('a',{href:'tel:'+ph.replace(/[^+\d]/g,''),style:{color:'var(--blue)',textDecoration:'none',fontSize:'10px'}},ph));
-    if(vendor.email) contactRow.appendChild(el('a',{href:'#',style:{color:'var(--blue)',textDecoration:'none',fontSize:'10px'},onclick(e){e.preventDefault();e.stopPropagation();openEmailModal(vendor);}},vendor.email));
+    if(_hEmail) contactRow.appendChild(el('a',{href:'#',style:{color:'var(--blue)',textDecoration:'none',fontSize:'10px'},onclick(e){e.preventDefault();e.stopPropagation();openEmailModal(vendor);}},_hEmail));
     stickySlot.appendChild(contactRow);
     // D6: Split Contacts button when ' / ' detected in any contact field
     const _contactNameFields=['procContact','contactName','contact','primaryContact','contactFullName'];
@@ -5114,10 +5148,13 @@ function openDetail(vendor, fromAnalytics, pushStack=true) {
       b.addEventListener('mouseleave',()=>b.style.background='none');
       return b;
     };
-    const ph2=vendor.bizPhone||vendor.mobile;
-    if(ph2) qBar.appendChild(qBtn('📞','Call '+vendor.procContact,()=>dialPhone(ph2,vendor)));
-    if(_canAct2) qBar.appendChild(qBtn('📧','Send email',()=>openEmailModal(vendor),'var(--blue)'));
-    if(hasPermission('editNotes')){const _nb=qBtn('📝','Add note',()=>openStructuredNoteModal(vendor),'var(--green)');if(vendor.notes&&vendor.notes.trim()){_nb.style.position='relative';const _dot=el('span',{style:{position:'absolute',top:'0',right:'0',width:'7px',height:'7px',borderRadius:'50%',background:'#22c55e',display:'block'}});_nb.appendChild(_dot);}qBar.appendChild(_nb);}
+    // FIX (2026-07-09): ph2/the tooltip both read raw vendor fields
+    // directly (bizPhone/mobile/procContact) -- same leak class as the
+    // sticky header above, just for the Call button specifically.
+    const ph2=visField(vendor,'bizPhone')||visField(vendor,'mobile');
+    if(ph2) qBar.appendChild(qBtn('📞','Call'+(visField(vendor,'procContact')?' '+visField(vendor,'procContact'):''),()=>dialPhone(ph2,vendor)));
+    if(_canAct2 && visField(vendor,'email')) qBar.appendChild(qBtn('📧','Send email',()=>openEmailModal(vendor),'var(--blue)'));
+    if(hasPermission('editNotes')){const _nb=qBtn('📝','Add note',()=>openStructuredNoteModal(vendor),'var(--green)');const _hNotes=visField(vendor,'notes');if(_hNotes&&_hNotes.trim()){_nb.style.position='relative';const _dot=el('span',{style:{position:'absolute',top:'0',right:'0',width:'7px',height:'7px',borderRadius:'50%',background:'#22c55e',display:'block'}});_nb.appendChild(_dot);}qBar.appendChild(_nb);}
     // FIX (2026-07-08): hasPermission('editContract') is a STATIC role flag
     // -- independent of the dynamic Tab Access Defaults an admin configures
     // for the Contracts tab itself (isTabAllowedForUser/resolveRoleTabState,
@@ -6510,9 +6547,13 @@ function renderCommPanel(body, vendor) {
       } else {
         // S42: contact-email-only matching — build the list of known contact
         // emails for this vendor/customer; no name/company keyword search.
+        // FIX (2026-07-09): matching communication history against a
+        // restricted email address indirectly re-surfaces it -- the
+        // matched message's "from" field is the raw address itself.
         const contactEmails=[];
-        if(vendor.email) contactEmails.push(vendor.email);
-        if(vendor.email2) contactEmails.push(vendor.email2);
+        const _vE1=visField(vendor,'email'), _vE2=visField(vendor,'email2');
+        if(_vE1) contactEmails.push(_vE1);
+        if(_vE2) contactEmails.push(_vE2);
         (vendor._sbContacts||[]).forEach(function(ct){
           let em=ct.emails||[];
           if(typeof em==='string'){try{em=JSON.parse(em);}catch(_){em=[];}}
@@ -7998,6 +8039,27 @@ function canViewField(fieldKey){
   // is the single source of truth for view state, matching the rebuilt
   // buildFieldAccess UI below which toggles it directly per field.
   return !(USER.hiddenFields||[]).includes(fieldKey);
+}
+// FIX (2026-07-09, David's report): canViewField() was correctly enforced
+// in the main grid and the vendor detail panel, but MANY other surfaces
+// throughout the app (Today panel's sticky contact header + quick-action
+// bar, the call-approach/talking-points generator, vCard/share-contact
+// export, outreach email composer, etc.) read restrictable fields
+// (vendor.procContact/bizPhone/mobile/email/etc.) DIRECTLY off the raw
+// vendor object, completely bypassing the field-visibility system. A role
+// with 'bizPhone'/'mobile'/'procContact' hidden in Field Visibility
+// Defaults could still see a vendor's phone number and contact name the
+// moment they opened Today, clicked Call, or used Share Contact -- the
+// restriction only ever applied to the one surface it was originally
+// built for. Per David's explicit standing principle: a restricted field
+// must not be reflected ANYWHERE in the app, regardless of which screen
+// is doing the reading. visField() is the single, reusable accessor for
+// every OTHER surface to use instead of touching vendor[key] directly for
+// any key in ALL_RESTRICTABLE_FIELDS -- returns the real value if this
+// user can view it, undefined otherwise (so existing `||''`/truthiness
+// checks at call sites keep working unchanged).
+function visField(vendor, fieldKey){
+  return canViewField(fieldKey) ? (vendor ? vendor[fieldKey] : undefined) : undefined;
 }
 function canEditField(fieldKey){
   // S47: per-field edit override (fieldEditPerms) replaces the S46
@@ -11047,17 +11109,47 @@ function renderContactsSection(body, vendor) {
   const contacts = getAllContacts(vendor);
   if(!contacts.length) { sec.appendChild(el('p',{class:'muted',style:{padding:'4px 0 0 0',fontSize:'10px'}},'No contacts on record.')); body.appendChild(sec); return; }
 
+  // FIX (2026-07-09): this section rendered getAllContacts()'s raw output
+  // directly -- name/title/type/phone/mobile/email all bypassed Field
+  // Visibility entirely, even in the vendor DETAIL PANEL, which was
+  // assumed to already be fully gated. Each contact slot maps to real
+  // restrictable field keys (slot 0/primary: procContact/title/
+  // contactType/bizPhone/mobile/email; slot 1/secondary: title2/
+  // contactType2/mobile2/email2 -- 'shared2' itself has no matching
+  // restrictable key, so it's left ungated same as before; slot 2+/extra
+  // contacts are dynamic, user-added rows with no Field Visibility entry
+  // at all, so they're intentionally left as-is). getAllContacts() itself
+  // is UNCHANGED (still used for Supabase sync above and edit save-back
+  // below, where idx-based mapping and full data must stay intact) --
+  // only what gets DISPLAYED and what the Edit button can open is gated.
+  // The Edit button requires ALL of a slot's mapped fields to be viewable
+  // before it appears at all, rather than showing an edit form pre-filled
+  // with blanked fields that could silently wipe real data on save.
+  const _SLOT_FIELD_MAP = {
+    primary: {name:'procContact', title:'title', type:'contactType', phone:'bizPhone', mobile:'mobile', email:'email'},
+    secondary: {title:'title2', type:'contactType2', mobile:'mobile2', email:'email2'},
+  };
   const grid = el('div',{style:{display:'flex',flexDirection:'column',gap:'6px',marginTop:'4px'}});
   contacts.forEach((contact, idx) => {
+    const _slotMap = idx===0 ? _SLOT_FIELD_MAP.primary : idx===1 ? _SLOT_FIELD_MAP.secondary : null;
+    const _dName = _slotMap&&_slotMap.name ? visField(vendor,_slotMap.name) : contact.name;
+    const _dTitle = _slotMap&&_slotMap.title ? visField(vendor,_slotMap.title) : contact.title;
+    const _dType = _slotMap&&_slotMap.type ? visField(vendor,_slotMap.type) : contact.type;
+    const _dPhone = _slotMap&&_slotMap.phone ? visField(vendor,_slotMap.phone) : (_slotMap?undefined:contact.phone);
+    const _dMobile = _slotMap&&_slotMap.mobile ? visField(vendor,_slotMap.mobile) : contact.mobile;
+    const _dEmail = _slotMap&&_slotMap.email ? visField(vendor,_slotMap.email) : contact.email;
+    const _allSlotFieldsVisible = !_slotMap || Object.values(_slotMap).every(k=>canViewField(k));
     const card = el('div',{style:{background:idx===0?'rgba(59,130,246,.05)':'var(--sb)',border:'1px solid var(--border)',borderRadius:'4px',padding:'7px 10px'}});
-    const cardHdr = el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:contact.title||contact.type?'4px':'0'}});
-    cardHdr.appendChild(el('span',{style:{fontWeight:'600',fontSize:'11px',flex:'1'}},contact.name||'(Unnamed contact)'));
-    if(contact.title) cardHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},contact.title));
-    if(contact.type) cardHdr.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(99,102,241,.12)',color:'#818cf8',padding:'1px 5px',borderRadius:'3px'}},contact.type));
+    const cardHdr = el('div',{style:{display:'flex',gap:'6px',alignItems:'center',marginBottom:_dTitle||_dType?'4px':'0'}});
+    cardHdr.appendChild(el('span',{style:{fontWeight:'600',fontSize:'11px',flex:'1'}},_dName||'(Unnamed contact)'));
+    if(_dTitle) cardHdr.appendChild(el('span',{style:{fontSize:'9px',color:'var(--muted)'}},_dTitle));
+    if(_dType) cardHdr.appendChild(el('span',{style:{fontSize:'9px',background:'rgba(99,102,241,.12)',color:'#818cf8',padding:'1px 5px',borderRadius:'3px'}},_dType));
     if(idx===0) cardHdr.appendChild(el('span',{style:{fontSize:'8px',background:'rgba(59,130,246,.15)',color:'var(--blue)',padding:'1px 5px',borderRadius:'3px',fontWeight:'700'}},'PRIMARY'));
     if(canEdit) {
-      const editBtn=el('button',{class:'btn-xs btn-ghost',onclick(e){e.stopPropagation();openEditContactModal(vendor,idx,contact);}}, 'Edit');
-      cardHdr.appendChild(editBtn);
+      if(_allSlotFieldsVisible){
+        const editBtn=el('button',{class:'btn-xs btn-ghost',onclick(e){e.stopPropagation();openEditContactModal(vendor,idx,contact);}}, 'Edit');
+        cardHdr.appendChild(editBtn);
+      }
       if(idx>0){
         const delBtn=el('button',{class:'btn-xs btn-ghost',style:{color:'var(--red)'},onclick(e){
           e.stopPropagation();
@@ -11073,9 +11165,9 @@ function renderContactsSection(body, vendor) {
 
     // Contact buttons row
     const btns = el('div',{style:{display:'flex',gap:'4px',flexWrap:'wrap'}});
-    if(contact.email) btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){openEmailModal(vendor);}}, '✉ '+contact.email.slice(0,28)+(contact.email.length>28?'…':'')));
-    if(contact.phone) btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){dialPhone(contact.phone, vendor.name||'');}}, '📞 '+contact.phone));
-    if(contact.mobile) btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){dialPhone(contact.mobile, vendor.name||'');}}, '📱 '+contact.mobile));
+    if(_dEmail) btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){openEmailModal(vendor);}}, '✉ '+_dEmail.slice(0,28)+(_dEmail.length>28?'…':'')));
+    if(_dPhone) btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){dialPhone(_dPhone, vendor.name||'');}}, '📞 '+_dPhone));
+    if(_dMobile) btns.appendChild(el('button',{class:'btn-xs btn-ghost',onclick(){dialPhone(_dMobile, vendor.name||'');}}, '📱 '+_dMobile));
     if(btns.children.length) card.appendChild(btns);
     grid.appendChild(card);
   });
@@ -11756,7 +11848,7 @@ function openLogActivityModal(vendor) {
     // Contact
     const contactRow=el('div',{style:{marginBottom:'8px'}});
     contactRow.appendChild(el('label',{style:{fontSize:'10px',color:'var(--muted)',display:'block',marginBottom:'2px'}},'Contact (vendor side)'));
-    const contactIn=el('input',{type:'text',placeholder:vendor.procContact||'Name, title...',style:{width:'100%',padding:'5px 8px',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--bg)',color:'var(--text)',fontSize:'11px'}});
+    const contactIn=el('input',{type:'text',placeholder:visField(vendor,'procContact')||'Name, title...',style:{width:'100%',padding:'5px 8px',border:'1px solid var(--border)',borderRadius:'4px',background:'var(--bg)',color:'var(--text)',fontSize:'11px'}}); // FIX (2026-07-09)
     contactRow.appendChild(contactIn);
     body.appendChild(contactRow);
 
@@ -11806,7 +11898,7 @@ function openLogActivityModal(vendor) {
         vendor_name:vendor.name||'',activity_type:typeSel.value||'other',
         itw_vendor_id:vendor._itwId||null,
         direction:'outbound',contact_name:contactIn.value.trim(),
-        contact_email:vendor.email||'',
+        contact_email:visField(vendor,'email')||'', // FIX (2026-07-09): don't write the real address into a saved record this user can't otherwise see
         ps_user_email:USER&&USER.email?USER.email:'',
         ps_user_name:USER&&USER.name?USER.name:'',
         activity_date:actDate,
@@ -11868,7 +11960,7 @@ async function loadCalendarMeetings(vendor) {
   const msExpiry = typeof getMSTokenExp === 'function' ? getMSTokenExp() : 0;
   if (!msToken || Date.now() > msExpiry - 10000) return [];
   const contactEmails = [];
-  if (vendor.email) contactEmails.push(vendor.email.toLowerCase());
+  const _vE=visField(vendor,'email'); if (_vE) contactEmails.push(_vE.toLowerCase()); // FIX (2026-07-09)
   (vendor._sbContacts||[]).forEach(function(ct) {
     let em = ct.emails||[];
     if (typeof em === 'string') { try { em = JSON.parse(em); } catch(_) { em = []; } }
@@ -11930,8 +12022,9 @@ async function loadFathomMeetings(vendor) {
   // vendor's name appearing in an unrelated meeting title, is not the same
   // as the call actually being with that vendor's contacts.
   const contactEmails=[];
-  if(vendor.email) contactEmails.push(vendor.email.toLowerCase());
-  if(vendor.email2) contactEmails.push(vendor.email2.toLowerCase());
+  const _vE1b=visField(vendor,'email'), _vE2b=visField(vendor,'email2'); // FIX (2026-07-09)
+  if(_vE1b) contactEmails.push(_vE1b.toLowerCase());
+  if(_vE2b) contactEmails.push(_vE2b.toLowerCase());
   (vendor._sbContacts||[]).forEach(function(ct){
     let em=ct.emails||[];
     if(typeof em==='string'){try{em=JSON.parse(em);}catch(_){em=[];}}
@@ -13290,16 +13383,20 @@ async function generateMeetingTalkingPoints(vendor) {
     sfCases.length?'Open SF Cases: '+sfCases.map(c=>c.subject||c.CaseNumber||'').join(', '):'',
     sfOpps.length?'SF Opportunities: '+sfOpps.map(o=>(o.name||o.Name||'')+(o.stageName||o.StageName?' ['+o.stageName+']':'')).join(', '):''
   ].filter(Boolean).join('\n');
+  // FIX (2026-07-09): sent adminFee/procContact/notes straight to the AI
+  // talking-points generator, unfiltered -- same leak class as
+  // generateRenzoOutreach above, just for meeting-prep instead of outreach.
+  const _vAdminFee2=visField(vendor,'adminFee'), _vProcContact2=visField(vendor,'procContact'), _vNotes2=visField(vendor,'notes');
   const ctx=[
     'Vendor: '+vendor.name,
     vendor.category?'Category: '+vendor.category:'',
-    vendor.adminFee?'Admin fee: '+vendor.adminFee:'',
+    _vAdminFee2?'Admin fee: '+_vAdminFee2:'',
     expiry?('Contract expires: '+fmtDate(expiry)+(daysAway!==null?(' ('+(daysAway>0?daysAway+' days away':Math.abs(daysAway)+' days overdue')+')'):'')):'No expiry date on file',
     vendor.tier?'Engagement tier: '+vendor.tier:'',
     vendor.status?'Status: '+vendor.status:'',
-    vendor.procContact?'Contact: '+vendor.procContact:'',
+    _vProcContact2?'Contact: '+_vProcContact2:'',
     vendor.lastComm?'Last contact: '+fmtDate(parseDate(vendor.lastComm)):'No contact recorded',
-    vendor.notes?'Vendor notes: '+vendor.notes.slice(0,600):'',
+    _vNotes2?'Vendor notes: '+_vNotes2.slice(0,600):'',
     sfCtx
   ].filter(Boolean).join('\n');
   const sysP='You are a GPO vendor relationship assistant for Prime Source Expense Experts, a healthcare GPO. Generate 5-8 concise, actionable meeting talking points tailored to this specific vendor\'s situation. Focus on: contract status/renewal urgency, fee reconciliation needs, relationship health, open issues, and strategic priorities. Return ONLY a JSON array of strings, no preamble, no markdown. Each item under 18 words. Example: ["Confirm renewal intent - contract expires in 45 days", "Review Q2 admin fee reconciliation - variance noted"]';
@@ -13451,15 +13548,16 @@ function openBulkEmailModal(vendors) {
         const row=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',padding:'5px 8px',borderBottom:'1px solid var(--border)',background:vs.included?'':'rgba(0,0,0,.2)',opacity:vs.included?1:0.5}});
         const cb=el('input',{type:'checkbox'}); cb.checked=vs.included; cb.addEventListener('change',()=>{vs.included=cb.checked;renderRecipients();});
         const nameSpan=el('span',{style:{flex:'1',fontSize:'10px',fontWeight:'500'}},vs.vendor.name);
-        const emailSpan=el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},vs.vendor.email||'');
+        const emailSpan=el('span',{style:{fontSize:'9px',color:'var(--muted)',flex:'1'}},visField(vs.vendor,'email')||''); // FIX (2026-07-09)
         const renzoTag=vs.customBody?el('span',{style:{fontSize:'8px',color:'#1F6B47',fontWeight:'700',background:'rgba(31,107,71,.1)',padding:'1px 5px',borderRadius:'3px',flexShrink:'0'}},'R✓'):null;
         const editBtn=el('button',{class:'btn-xs btn-ghost',onclick(){
           // Open individual editor
           openModal(b2=>{
             b2.appendChild(el('h3',{},`Edit: ${vs.vendor.name}`));
             const exp2=getCurrentExpiry(vs.vendor);
-            const defSubj=(vs.customSubj||subjTmpl.value).replace(/{vendor}/g,vs.vendor.name).replace(/{contact}/g,vs.vendor.procContact||'Team').replace(/{expiry}/g,fmtDate(exp2)||'N/A');
-            const defBody=(vs.customBody||bodyTmpl.value).replace(/{vendor}/g,vs.vendor.name).replace(/{contact}/g,vs.vendor.procContact||'Team').replace(/{expiry}/g,fmtDate(exp2)||'N/A');
+            const _vProcContact3=visField(vs.vendor,'procContact'); // FIX (2026-07-09)
+            const defSubj=(vs.customSubj||subjTmpl.value).replace(/{vendor}/g,vs.vendor.name).replace(/{contact}/g,_vProcContact3||'Team').replace(/{expiry}/g,fmtDate(exp2)||'N/A');
+            const defBody=(vs.customBody||bodyTmpl.value).replace(/{vendor}/g,vs.vendor.name).replace(/{contact}/g,_vProcContact3||'Team').replace(/{expiry}/g,fmtDate(exp2)||'N/A');
             b2.appendChild(el('label',{},'Subject:')); const s2=el('input',{type:'text',class:'modal-input',value:defSubj}); b2.appendChild(s2);
             // Renzo row — generates personalized body into textarea
             const renzoRow2=el('div',{style:{display:'flex',alignItems:'center',gap:'6px',margin:'6px 0 2px'}});
@@ -13511,7 +13609,7 @@ function openBulkEmailModal(vendors) {
     renzoAllRow.appendChild(renzoAllStatus);
     const renzoAllBtn=renzoButton('Generate All','sm');
     renzoAllBtn.addEventListener('click', async function(){
-      const toGen=vendorStates.filter(vs=>vs.included&&vs.vendor.email);
+      const toGen=vendorStates.filter(vs=>vs.included&&visField(vs.vendor,'email')); // FIX (2026-07-09)
       if(!toGen.length){toast('No vendors selected','#f59e0b');return;}
       renzoAllBtn.disabled=true; renzoAllBtn.style.opacity='0.7';
       renzoAllBtn.querySelector('span').textContent='Generating...';
@@ -13541,14 +13639,20 @@ function openBulkEmailModal(vendors) {
     const sendCount=()=>vendorStates.filter(vs=>vs.included).length;
     const btns=el('div',{class:'modal-btns',style:{marginTop:'12px'}});
     btns.appendChild(el('button',{class:'btn-primary',onclick(){
-      const toSend=vendorStates.filter(vs=>vs.included&&vs.vendor.email);
+      // FIX (2026-07-09): filtered on the raw v.email and used raw
+      // v.procContact for template substitution -- a restricted user could
+      // bulk-send (and see the pre-filled draft for) vendors whose contact
+      // fields they can't otherwise view. visField(vs.vendor,'email')
+      // excludes a vendor from the send entirely if email is hidden.
+      const toSend=vendorStates.filter(vs=>vs.included&&visField(vs.vendor,'email'));
       if(!toSend.length){toast('No recipients selected','#f59e0b');return;}
       toSend.forEach(vs=>{
         const v=vs.vendor;
         const exp=getCurrentExpiry(v);
-        const subj=(vs.customSubj||subjTmpl.value).replace(/{vendor}/g,v.name).replace(/{contact}/g,v.procContact||'Team').replace(/{expiry}/g,fmtDate(exp)||'N/A');
-        const bodyText=(vs.customBody||bodyTmpl.value).replace(/{vendor}/g,v.name).replace(/{contact}/g,v.procContact||'Team').replace(/{expiry}/g,fmtDate(exp)||'N/A');
-        launchMailto(v.email, subj, bodyText);
+        const _vEmail4=visField(v,'email'), _vProcContact4=visField(v,'procContact');
+        const subj=(vs.customSubj||subjTmpl.value).replace(/{vendor}/g,v.name).replace(/{contact}/g,_vProcContact4||'Team').replace(/{expiry}/g,fmtDate(exp)||'N/A');
+        const bodyText=(vs.customBody||bodyTmpl.value).replace(/{vendor}/g,v.name).replace(/{contact}/g,_vProcContact4||'Team').replace(/{expiry}/g,fmtDate(exp)||'N/A');
+        launchMailto(_vEmail4, subj, bodyText);
         logHistory({date:isoDate(new Date()),time:new Date().toLocaleTimeString(),vendor:v.name,action:'Bulk Email Sent',to:subj});
       });
       toast(`✉️ ${toSend.length} email${toSend.length!==1?'s':''} queued — check your taskbar`);
@@ -21748,12 +21852,23 @@ function renderCallSheet(c) {
   ];
 
   // Pre-call prep panel — expands below a vendor row to show key facts at a glance
+  // FIX (2026-07-09, David's report -- this IS "Today's panel"): read
+  // v.notes/v.adminFee directly and used getAllContacts()'s raw output for
+  // the primary contact, all with zero Field Visibility gating.
   function buildPrepPanel(v) {
     const exp=getCurrentExpiry(v); const days=exp?dayDiff(exp,today):null;
-    const lastNote = v.notes ? v.notes.split('\n').filter(l=>l.trim()).slice(0,2).join(' ') : '';
+    const _vNotesP=visField(v,'notes');
+    const lastNote = _vNotesP ? _vNotesP.split('\n').filter(l=>l.trim()).slice(0,2).join(' ') : '';
     const lastComm = v.lastComm ? fmtDate(parseDate(v.lastComm)) : null;
     const followUp = v.followUp ? fmtDate(parseDate(v.followUp)) : null;
-    const contacts = getAllContacts(v);
+    // Primary contact (slot 0) redacted per-field the same way
+    // renderContactsSection does -- name/email/phone/mobile map to
+    // procContact/email/bizPhone/mobile.
+    const _rawContacts = getAllContacts(v);
+    const contacts = _rawContacts.map((c,i)=> i===0 ? {
+      name: visField(v,'procContact'), email: visField(v,'email'),
+      phone: visField(v,'bizPhone'), mobile: visField(v,'mobile'),
+    } : c);
 
     const panel=el('div',{style:{
       background:'rgba(79,124,255,.04)',border:'1px solid rgba(79,124,255,.15)',
@@ -21767,7 +21882,7 @@ function renderCallSheet(c) {
     const facts=[
       ['Expiry', exp?(days!==null?(days<0?'⚠ Expired '+Math.abs(days)+'d ago':days+'d — '+fmtDate(exp)):'—'):'Not set', days!==null&&days<=60?'var(--red)':days!==null&&days<=90?'var(--amber)':''],
       ['Auto-Renew', v.autoRenew||'—', ''],
-      ['Admin Fee', v.adminFee||'—', v.adminFee?'var(--green)':''],
+      ['Admin Fee', visField(v,'adminFee')||'—', visField(v,'adminFee')?'var(--green)':''], // FIX (2026-07-09)
       ['Status', v.status||'—', ''],
     ];
     facts.forEach(([label,val,color])=>{
@@ -22684,7 +22799,7 @@ function openAIBriefingModal(vendor) {
   const fu=parseDate(vendor.followUp);
   const itwV=findITWVendor(vendor.name);
   const reviewR=findReviewRecord(vendor.name);
-    const fee=parseFee(vendor.adminFee);
+    const fee=parseFee(visField(vendor,'adminFee')); // FIX (2026-07-09): was raw vendor.adminFee -- this value gets displayed verbatim in the Suggested Approach text below
     // fee parsed above
   // Category benchmark
   const catVendors=(S.allVendors||S.vendors).filter(v=>v.category===vendor.category&&String(v.adminFee||'').match(/\d+/));
@@ -22695,16 +22810,25 @@ function openAIBriefingModal(vendor) {
     body.appendChild(el('h3',{},'🤖 Vendor Briefing — '+vendor.name));
     body.appendChild(el('p',{class:'modal-sub'},'Pre-call prep card. Key facts, context, and suggested approach.'));
 
+    // FIX (2026-07-09, David's report -- the "Call section" leak): this
+    // pre-call briefing card read adminFee/terminationNotice/procContact/
+    // title/email/bizPhone/mobile directly off the vendor, with zero Field
+    // Visibility gating -- a restricted user could open this card for any
+    // vendor and see full contact + financial details regardless of what
+    // was hidden. Every field below routed through visField().
+    const _vTerminationNotice=visField(vendor,'terminationNotice'), _vAdminFee5=visField(vendor,'adminFee'),
+      _vProcContact5=visField(vendor,'procContact'), _vTitle5=visField(vendor,'title'),
+      _vEmail5=visField(vendor,'email'), _vBizPhone5=visField(vendor,'bizPhone'), _vMobile5=visField(vendor,'mobile');
     const sections=[
       {title:'📋 Contract Status', items:[
         exp?(days<0?'⚠️ EXPIRED '+formatDuration(days)+' ago ('+fmtDate(exp)+')':'Expires: '+fmtDate(exp)+' ('+formatDuration(days)+')'):'No expiry on file',
         isAutoRenew(vendor)?'✅ Auto-renews: '+(vendor.autoRenewType||'Yes'):'❌ No auto-renewal — manual action required',
-        vendor.terminationNotice?'Notice period: '+vendor.terminationNotice:'',
-        vendor.adminFee?'Admin fee: '+vendor.adminFee+(catAvg?' (category avg: '+catAvg.toFixed(1)+'%)':''):'No admin fee on file',
+        _vTerminationNotice?'Notice period: '+_vTerminationNotice:'',
+        _vAdminFee5?'Admin fee: '+_vAdminFee5+(catAvg?' (category avg: '+catAvg.toFixed(1)+'%)':''):'No admin fee on file',
       ].filter(Boolean)},
       {title:'👤 Key Contact', items:[
-        vendor.procContact?vendor.procContact+(vendor.title?' — '+vendor.title:''):'No contact on file',
-        vendor.email||'', vendor.bizPhone||vendor.mobile||'',
+        _vProcContact5?_vProcContact5+(_vTitle5?' — '+_vTitle5:''):'No contact on file',
+        _vEmail5||'', _vBizPhone5||_vMobile5||'',
       ].filter(Boolean)},
       {title:'📌 Pipeline Status', items:[
         itwV?'In The Works: '+itwV.section+(itwV.vendorStatus?' ('+itwV.vendorStatus+')':''):'Not in active pipeline',
@@ -22732,7 +22856,7 @@ function openAIBriefingModal(vendor) {
     if (fee&&catAvg&&fee>=catAvg*1.1) approach.push('✅ Admin fee is above average — protect current terms');
     if (fu&&dayDiff(today,fu)>0) approach.push('📅 Follow-up is overdue by '+dayDiff(today,fu)+'d — acknowledge the delay');
     if (itwV?.vendorStatus==='W-Update') approach.push('📢 Weekly update flag — report progress to your team after this call');
-    if (!vendor.procContact) approach.push('❓ No contact on file — get their procurement contact during this call');
+    if (!_vProcContact5) approach.push('❓ No contact on file — get their procurement contact during this call'); // FIX (2026-07-09)
     if (approach.length) {
       const appSec=el('div',{style:{background:'rgba(79,124,255,.08)',border:'1px solid rgba(79,124,255,.2)',borderRadius:'5px',padding:'10px',marginTop:'8px'}});
       appSec.appendChild(el('div',{style:{fontSize:'10px',fontWeight:'700',color:'var(--blue)',marginBottom:'6px'}},'💡 Suggested Approach'));
@@ -31002,9 +31126,16 @@ function generateVendorDataSheet(vendor) {
   const contractSummary=summaryParts.filter(Boolean).join(' · ')||'See contract for full terms.';
 
   // Contact info
-  const contactName=vendor.procContact||vendor.sharedContact||'—';
-  const contactPhone=vendor.bizPhone||vendor.mobile||'—';
-  const contactEmail=vendor.email||'—';
+  // FIX (2026-07-09): this contract-summary document generator read
+  // procContact/bizPhone/mobile/email straight off the vendor, unguarded --
+  // NOTE: this function ALSO reads adminFee/tiers/contractName/gpo/
+  // category/etc. (Financials/Contract/Vendor Info groups) further below,
+  // none of which are gated yet either -- flagged as remaining scope, not
+  // silently left broken. Only the Contacts-group fields (this pass's
+  // scope) are fixed here.
+  const contactName=visField(vendor,'procContact')||vendor.sharedContact||'—';
+  const contactPhone=visField(vendor,'bizPhone')||visField(vendor,'mobile')||'—';
+  const contactEmail=visField(vendor,'email')||'—';
   const contactLine=[contactName,contactPhone,contactEmail].filter(s=>s&&s!=='—').join(' · ');
 
   // SF spend data if available

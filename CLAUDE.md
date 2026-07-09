@@ -1,7 +1,7 @@
 # CLAUDE.md — VCS (Vendor Contract Scheduler) Build Rules & State
 
 **Last updated:** Thu Jul 09, 2026 (this session, continued — Sonnet 5)
-**Current checkpoint:** MD5 `6777d14f6e89386748df60c3f1952c71`, 32,350 lines, BUILD `2026-07-09.1`
+**Current checkpoint:** MD5 `ec498d959e73c6c3e1da074eae88abe8`, 32,481 lines, BUILD `2026-07-09.2`
 
 **NEW NON-NEGOTIABLE RULE: bump `window.VCS_BUILD` (near the top of
 index.html, inside `<head>`) on EVERY commit that changes index.html.**
@@ -89,6 +89,79 @@ Prime Source Expense Experts. David Genuth (COO) is sole technical approver.
 
 ## KNOWN TRAPS (bugs already found — check these mechanisms first if a
 similar symptom reappears; don't rediscover them from scratch)
+
+- **STRUCTURAL GAP: canViewField()/hiddenFields was only ever enforced in
+  the main grid + vendor detail panel — every OTHER surface that reads a
+  restrictable field off the raw vendor object bypasses Field Visibility
+  entirely (partially fixed BUILD 2026-07-09.2; see below for exactly
+  what's covered vs. not).** David's report + explicit standing principle:
+  "a restricted field must not be reflected ANYWHERE in the app, regardless
+  of which screen is doing the reading." Confirmed live: a restricted role
+  with procContact/bizPhone/email/notes/adminFee hidden could still see all
+  of it via the Today panel's sticky contact header, the Today panel's
+  pre-call prep widget, the Vendor Briefing ("Call section") modal, the
+  vCard/Share Contact export, the email compose modal, and more — none of
+  these ever consulted canViewField.
+  **New shared accessor**: `visField(vendor, fieldKey)` (defined right next
+  to `canViewField`) — returns the real value if `canViewField(fieldKey)`
+  is true, `undefined` otherwise. Existing `||''`/truthiness checks at call
+  sites keep working unchanged when swapped from `vendor.key` to
+  `visField(vendor,'key')`.
+  **IMPORTANT: `getAllContacts(vendor)` was deliberately left UNCHANGED**
+  (still returns raw, unredacted data) — it's used for BOTH display AND
+  edit/sync (Supabase contact sync, `saveContactBack`'s idx-based
+  save-back mapping). Redacting it directly would have risked a data-loss
+  bug: an edit modal opened against redacted fields could silently blank
+  real hidden data on save. Instead, each DISPLAY-ONLY caller builds its
+  own redacted view via `visField()` before rendering; `renderContactsSection`
+  (the detail panel's own Contacts UI) additionally gates its "Edit" button
+  entirely — it only appears when ALL of that contact slot's mapped fields
+  are viewable, closing the blank-on-save risk instead of just hiding
+  the display.
+  **What IS fixed (Contacts field group: procContact/contactType/title/
+  bizPhone/mobile/email/sharedContact/contactType2/title2/mobile2/email2,
+  plus adminFee/notes/terminationNotice where they co-occurred in an
+  already-fixed function):** Today panel sticky contact header + quick
+  action bar (the original reported leak); Today panel's `buildPrepPanel`
+  pre-call widget (contacts + adminFee + notes); `openAIBriefingModal`
+  ("Call section" Vendor Briefing — contacts + adminFee + terminationNotice);
+  `openShareContactModal` (vCard/share export); `openEmailModal` (recipient
+  list + greeting); `generateRenzoOutreach` (external AI outreach —
+  contacts + adminFee + notes + status); the meeting talking-points AI
+  generator (contacts + adminFee + notes); the outreach campaign composer
+  (recipient list, template substitution, AND the actual mailto send path
+  — a vendor is now excluded from bulk-send entirely if email is hidden);
+  `renderContactsSection` (detail panel's own Contacts section — was
+  ALSO leaking despite being "the gated surface"); the activity-log modal
+  (placeholder + saved contact_email); communication-history/calendar
+  meeting matching (3 sites — a restricted email would otherwise
+  indirectly resurface via a matched message's "from" field); the
+  contract-summary document generator's contact lines only (this function
+  ALSO touches Financials/Contract/Vendor-Info fields — NOT fixed, see
+  below).
+  **What is explicitly NOT yet covered — do not assume complete:**
+  (1) The Financials group (adminFee/adminFeeNotes/tiers/perpetuity/tail/
+  minYears/contractNo/reportFrequency/agreementType/pricingCommitment)
+  beyond the few sites fixed incidentally above. (2) The Contract group
+  (contractName/inContractSince/autoRenewal/termEffective/etc). (3) Docs &
+  Pricing group. (4) Vendor Info group (gpo/category/subCategory/product/
+  classOfTrade/markets/addedValue/website). (5) The Activity group beyond
+  `notes` (comments/lastComm/followUp/engagementReminder/needsLOP).
+  (6) The contract-summary document generator's non-contact rows
+  (adminFee/tiers/contractName/agreementType/gpo/category/markets — all
+  still raw). (7) Any OTHER display surface not yet searched for — this
+  pass searched specifically for Contacts-group field names; a full sweep
+  for every one of the ~66 `ALL_RESTRICTABLE_FIELDS` keys has not been
+  done. **If a leak is reported for a NON-contact field, check this list
+  first before re-diagnosing from scratch — it's very likely the same
+  root cause (a surface reading `vendor.key` directly instead of through
+  `visField`), just a field group this pass didn't reach.**
+  Verified live against the real server (jgeorge@primesourcex.com,
+  restricted role, 69 real hidden fields): `visField` unit-tested correct
+  for procContact/bizPhone/email/notes/mobile/adminFee/title; full
+  end-to-end DOM render test of `openAIBriefingModal` with a planted
+  "LEAK_TEST_VENDOR_XYZ" record confirmed ZERO leaked strings in the
+  rendered modal body, correctly showing "No contact on file" instead.
 
 - **TRAP: 'feedback' tab had a hardcoded `return true` bypass, same bug
   class as the Manager/canView() traps above, just one tab earlier in the
